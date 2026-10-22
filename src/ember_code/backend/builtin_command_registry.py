@@ -27,6 +27,7 @@ from types import MappingProxyType
 from typing import TYPE_CHECKING
 
 from ember_code.backend.cmd_agents import cmd_agents
+from ember_code.backend.cmd_artifacts import cmd_artifacts
 from ember_code.backend.cmd_auth import cmd_login, cmd_logout, cmd_whoami
 from ember_code.backend.cmd_codeindex import cmd_codeindex
 from ember_code.backend.cmd_config import cmd_config
@@ -35,7 +36,6 @@ from ember_code.backend.cmd_eject import cmd_eject
 from ember_code.backend.cmd_evals import cmd_evals
 from ember_code.backend.cmd_help import cmd_help
 from ember_code.backend.cmd_hooks import cmd_hooks
-from ember_code.backend.cmd_knowledge import cmd_knowledge, cmd_sync_knowledge
 from ember_code.backend.cmd_loop import cmd_loop
 from ember_code.backend.cmd_memory import cmd_memory
 from ember_code.backend.cmd_misc import (
@@ -120,9 +120,6 @@ class BuiltinCommandRegistry:
         async def _ctx_wrapper(handler: CommandHandler, _args: str) -> CommandResult:
             return await cmd_ctx(handler)
 
-        async def _sync_knowledge_wrapper(handler: CommandHandler, _args: str) -> CommandResult:
-            return await cmd_sync_knowledge(handler)
-
         async def _clear_wrapper(handler: CommandHandler, _args: str) -> CommandResult:
             return await cmd_clear(handler)
 
@@ -151,7 +148,7 @@ class BuiltinCommandRegistry:
             BuiltinCommand("/rename", "Rename the current session", cmd_rename),
             BuiltinCommand("/fork", "Fork the current session under a new id", cmd_fork),
             BuiltinCommand("/memory", "Inspect or optimise learned memories", cmd_memory),
-            BuiltinCommand("/knowledge", "Search or add to the knowledge base", cmd_knowledge),
+            BuiltinCommand("/artifacts", "Search or add to the artifact store", cmd_artifacts),
             BuiltinCommand("/codeindex", "Manage the semantic code index", cmd_codeindex),
             BuiltinCommand("/config", "Show current settings", cmd_config),
             BuiltinCommand("/model", "Switch the active model", cmd_model),
@@ -187,11 +184,6 @@ class BuiltinCommandRegistry:
             ),
             BuiltinCommand("/bug", "Open a bug report", cmd_bug),
             BuiltinCommand("/evals", "Run evaluation suites", cmd_evals),
-            BuiltinCommand(
-                "/sync-knowledge",
-                "Sync the knowledge base with git",
-                _sync_knowledge_wrapper,
-            ),
         ]
 
     # ── Public API ─────────────────────────────────────────────

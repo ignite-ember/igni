@@ -7,7 +7,7 @@ igni's hook system is **compatible with Claude Code's** hook format. If you alre
 ## Overview
 
 ```
-Agent calls Edit tool
+Agent calls edit_file
     │
     ▼
 ┌──────────────────────┐
@@ -47,7 +47,9 @@ Agent calls Edit tool
 ### Permission events
 
 Fired by the permission evaluator, paired. Both carry
-`{session_id, tool_name, tool_args, rule?, reason?}`.
+`{session_id, tool_name, tool_args}`; `PermissionDenied` adds a
+`reason` naming the stage that blocked the call — `pre_tool_use_hook`
+or `permission_evaluator`. There is no `rule` field on either.
 
 | Event | When It Fires | Can Block? | Use Case |
 |---|---|---|---|
@@ -202,16 +204,21 @@ Matchers are regex patterns that filter when a hook fires. Only hooks whose matc
 >
 > | Friendly catalog name | Use this in `matcher` |
 > |---|---|
-> | `Bash` | `run_shell_command` |
-> | `Write` | `save_file` and/or `create_file` |
-> | `Edit` | `edit_file` and/or `edit_file_replace_all` |
-> | `Read` | `read_file` (registry-only — won't fire on the main team; see [TOOLS.md](TOOLS.md)) |
-> | `Grep` | `grep` / `grep_files` / `grep_count` (registry-only) |
-> | `Glob` | `glob_files` (registry-only) |
-> | `LS` | `list_files` (registry-only) |
-> | `WebSearch` | `duckduckgo_search` / `duckduckgo_news` |
+> | `Bash` | `run_shell_command` — plus `read_process_output`, `await_process`, `watch_process`, `stop_process`, `list_processes` for the background-process verbs |
+> | `Write` | `save_file` |
+> | `Edit` | `edit_file` / `edit_file_replace_all` / `create_file` |
+> | `NotebookEdit` | `notebook_read` / `notebook_read_cell` / `notebook_edit_cell` / `notebook_add_cell` / `notebook_remove_cell` |
+> | `WebSearch` | `web_search` / `search_news` |
 > | `WebFetch` | `fetch_url` / `fetch_json` |
 > | `Schedule` | `schedule_task` / `list_scheduled_tasks` / `cancel_scheduled_task` |
+>
+> Note `create_file` sits under `Edit`, not `Write` — `Write` is a
+> write-only `FileTools` that registers `save_file` and nothing else.
+>
+> There are no `Read` / `Grep` / `Glob` / `LS` rows because there are no
+> such toolkits: reading, searching and listing all go through `Bash`
+> (`cat` / `rg` / `find`), so a matcher for those file operations is a
+> matcher on `run_shell_command`. See [TOOLS.md](TOOLS.md).
 
 **Examples (corrected):**
 ```json
@@ -239,7 +246,8 @@ Every hook receives a JSON object on stdin with common fields plus event-specifi
 **PreToolUse / PostToolUse:**
 ```json
 {
-  "tool_name": "Edit",
+  "session_id": "abc-123",
+  "tool_name": "edit_file",
   "tool_args": {
     "file_path": "/path/to/file.py",
     "old_string": "def foo():",
@@ -249,6 +257,22 @@ Every hook receives a JSON object on stdin with common fields plus event-specifi
   // "error": "..."          // PostToolUseFailure only
 }
 ```
+
+`tool_name` carries the **internal tool function name** — the same value
+a `matcher` is tested against, never the friendly catalog name. A payload
+can contain `edit_file` or `run_shell_command`; it can never contain
+`Edit` or `Bash`.
+
+Two more things the wire shape guarantees:
+
+- **Every `tool_args` value is a string.** Args are stringified before
+  they are sent, so an `int` argument such as `stop_process`'s `pid`
+  arrives as `"4242"`, not `4242`. Each value is also truncated to 500
+  characters, so a large `new_string` or file body reaches the hook
+  clipped — never assume you received the whole argument.
+- **`session_id` is on every payload**, including this one. It is
+  injected at the wire boundary rather than by each event, so the key is
+  always present even when the session id is the empty string.
 
 **UserPromptSubmit:**
 ```json

@@ -2188,6 +2188,23 @@ button {
   background: var(--danger);
 }
 
+/* Never ran — rejected in the approval dialog. Neither success nor
+   failure, so a hollow ring in muted ink rather than green or red. */
+.tool-status.rejected {
+  background: transparent;
+  box-shadow: inset 0 0 0 1.5px var(--fg-muted);
+}
+
+.tool-rejected-tag {
+  flex-shrink: 0;
+  font-size: 11px;
+  letter-spacing: 0.02em;
+  color: var(--fg-muted);
+  border: 1px solid var(--border-soft);
+  border-radius: 4px;
+  padding: 0 6px;
+}
+
 .tool-name {
   font-weight: 600;
   flex-shrink: 0;
@@ -2311,6 +2328,31 @@ button {
   border-top-color: var(--accent-blue-text);
   animation: ember-spin 0.9s linear infinite;
   flex-shrink: 0;
+}
+
+/* The safety check's description of a call is being written. Same
+   spinner as the orchestrate card, in the dialog's muted ink. */
+.hitl-explaining {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.hitl-explaining-spinner {
+  display: inline-block;
+  width: 11px;
+  height: 11px;
+  border-radius: 50%;
+  border: 1.5px solid color-mix(in srgb, var(--fg-muted) 30%, transparent);
+  border-top-color: var(--fg-muted);
+  animation: ember-spin 0.9s linear infinite;
+  flex-shrink: 0;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .hitl-explaining-spinner {
+    animation-duration: 2.4s;
+  }
 }
 
 @keyframes ember-spin {
@@ -4301,6 +4343,76 @@ button {
   display: flex;
   flex-direction: column;
   background: var(--bg);
+
+  /* How far the scrolling area starts below this box, and therefore
+     where a column docked to it has to begin. Not one number: the
+     breadcrumbs are always there, and ``.page-head`` is there for a
+     list and absent for a document. Assuming either one puts the
+     hierarchy forty pixels below the text or on top of the panel's
+     own buttons — this file has had both bugs, so it is measured
+     from what is actually on the page. */
+  /* Where the hierarchy starts, and nothing else. ``.page-crumbs``
+     is a full-width box holding text that ends around 190px in, so
+     treating its height as a band above *everything* pushed the
+     document and the conversation down for a row they do not sit
+     under — they sit beside it. Those two are placed from
+     ``--doc-air`` now; this is the offset for the one column that
+     really is underneath the crumbs.
+
+     The crumb row measures about 23px, so the rest of this is the
+     air below it — the same air the header case leaves, which is
+     why ``82px`` there is larger than that header measures too. Cut
+     to the row's own height, the hierarchy cleared the crumbs by
+     three pixels on a document while clearing the rule by fourteen
+     on the list, and the same column looked like two different
+     columns depending on which page you came from. */
+  --page-chrome-h: 35px;
+  --dock-top: var(--doc-air);
+  /* The hierarchy, which shares the crumbs' gutter and so has to
+     start below them.
+     
+     **One number for every page, deliberately not
+     ``--page-chrome-h``.** The hierarchy is the one thing on screen
+     that does not change when you open a document: the same tree,
+     the same rows, and you are usually about to click another of
+     them. Deriving its top from the chrome above it made it jump
+     forty-seven pixels every time — up on opening a document,
+     back down on returning to the list — while the rows under the
+     pointer stayed put, which is how a click lands on the wrong
+     document.
+     
+     So it is placed to clear the *tallest* thing that can sit above
+     it, and air is the right price for whatever is shorter: the
+     alternative is a column that moves under the hand reaching for
+     it.
+
+     What that tallest thing is, is the whole question. It used to be
+     the list's header — a row carrying the page's own name and its
+     buttons, 82px of it — so 82px is what this was. That row is
+     gone; the trail is now the only thing above the hierarchy on
+     every page of this panel, and 82px left sixty-one pixels of
+     nothing between them.
+
+     Derived rather than retyped, so the next row that comes or goes
+     moves the column with it instead of stranding it. */
+  --crumb-row-h: 23px;
+  --tree-dock-top: calc(var(--crumb-row-h) + var(--tree-dock-air));
+  /* The gap between the trail and the first thing in the column.
+     Wider than ``--doc-air`` because this one is read as a gap —
+     two different things, one under the other — where the air
+     beside the text is read as a margin. */
+  --tree-dock-air: 8px;
+}
+
+/* A page that still has a header row is still cleared by it. Nothing
+   in this panel does any more; a page that grows one will not have
+   to remember why its hierarchy overlaps its buttons. */
+.page:has(> .page-head) {
+  --tree-dock-top: calc(82px + var(--doc-air));
+}
+
+.page:has(> .page-head) {
+  --page-chrome-h: 82px;
 }
 
 .main--paged > .conversation-frame,
@@ -4308,13 +4420,40 @@ button {
   visibility: hidden;
 }
 
+/* 18px is the page's left edge, and it is the crumb's *text* that has
+   to sit on it — so the container gives back the 4px of padding the
+   crumb carries for its hover fill. Align the boxes instead and every
+   label ends up four pixels right of everything below it. The fill
+   hangs into the gutter, where there is nothing to hit. */
 .page-crumbs {
   display: flex;
   align-items: center;
   flex-wrap: wrap;
   gap: 2px;
-  padding: 10px 18px 0;
+  /* Was 10px of air above a 12.5px line, under a header that
+     already supplies its own. The band read as a gap rather than as
+     a row, and everything docked below it — the tree, the document,
+     the conversation — started lower than it needed to. */
+  padding: 0 18px 0 14px;
   font-size: 12.5px;
+}
+
+/* Out of the flow — but only on a page whose columns sit *beside* it.
+   Full-width in the layout, this row took a band off the top of all
+   three columns when what it actually occupies is the first 190
+   pixels of the first one, so a document started a row lower than it
+   needed to for a line it sits next to.
+
+   Not on a page with a ``.page-head``. There the crumbs really are
+   above something — a title and its buttons, full width — and taking
+   them out of the flow drops that header underneath them. Which is
+   the same distinction ``--page-chrome-h`` is already drawn on, and
+   the reason it is two numbers rather than one. */
+.page:not(:has(> .page-head)) > .page-crumbs {
+  position: absolute;
+  top: 0;
+  left: 0;
+  z-index: 2;
 }
 
 .page-crumb-group {
@@ -4323,10 +4462,35 @@ button {
   gap: 2px;
 }
 
+/* A document's name, which is the only crumb that can be any
+   length. "Chat" and the destination above it are fixed words; this
+   one is whatever somebody called the thing, and left to itself it
+   pushed the trail across the window. Cut with the full name a
+   hover away.
+
+   In ``ch`` rather than pixels: what has to fit is a number of
+   characters, and the two stop agreeing the moment the type scale
+   moves. */
+.page-crumb-name {
+  display: inline-block;
+  max-width: 15ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  /* The box now has a height of its own, so it needs saying where
+     the baseline sits — an inline-block among inline text otherwise
+     rides on its bottom edge. */
+  vertical-align: bottom;
+}
+
 .page-crumb {
   background: none;
   border: none;
-  padding: 2px 4px;
+  /* 1px, not 2. The row is the one thing between the header and the
+     document, and its height is what everything below it starts
+     under — so the padding a hover fill needs is worth exactly the
+     two pixels it costs and not one more. */
+  padding: 1px 4px;
   border-radius: var(--radius-sm);
   color: var(--fg-faint);
   font: inherit;
@@ -4355,6 +4519,19 @@ button {
   gap: 8px;
   padding: 6px 18px 12px;
   border-bottom: 1px solid var(--border-soft);
+  /* Air below the rule, not above the thing under it.
+     ``--page-chrome-h`` already says this header is 82px tall — more
+     than the box measures — and the difference is exactly this gap:
+     the hierarchy docks at that number and so clears the rule
+     comfortably, while the content in the flow below had only what
+     ``--doc-air`` gave it. That was six pixels when the air was 12,
+     and one pixel once a document needed less of it, which put the
+     search field's focus ring on the rule.
+
+     Here rather than on each view, because all four of them — the
+     list, the comments queue, Ask and Add — sit under this same
+     header and were all one pixel clear of it. */
+  margin-bottom: 12px;
 }
 
 .page-title {
@@ -4369,18 +4546,169 @@ button {
   border-bottom: 1px solid var(--border-soft);
 }
 
+/* The scrolling element, full width, so the scrollbar is where a
+   scrollbar belongs: at the right edge of the window. It used to be
+   the measure as well, which put the bar against the text — a rail
+   floating in the middle of the page that reads as belonging to
+   whatever it happens to be beside. */
 .page-body {
   flex: 1;
   overflow-y: auto;
   overscroll-behavior: contain;
-  padding: 16px 18px;
   font-size: 13.5px;
-  /* Wider than the drawer's 620px, but not the full width of a
-     27-inch display — these are lists and forms, and a line of
-     metadata stretched across a metre reads worse than it did in
-     the modal. */
+  /* Deliberately *not* ``position: relative``. This box scrolls, and
+     the hierarchy is positioned against ``.page`` above it, which
+     does not — that is the whole of what keeps the tree still while
+     the document moves under it. Making this a containing block
+     again would re-attach the tree to the scrolling content.
+
+     The tree escapes this box's ``overflow`` for the same reason: an
+     absolutely positioned element is only clipped by ancestors in its
+     containing-block chain, and this is not one. */
+}
+
+/* The room the pinned hierarchy needs, taken off this box.
+   It is pinned to the frame *outside* this one, so it costs the
+   layout nothing on its own — and everything in here was therefore
+   centring in the whole window while the tree covered the left of it.
+   The document ended up hard against the rule on its right with a
+   field of nothing on its left. Reserved here, what remains centres
+   in what is left, which is what "centred" has to mean when one side
+   of the window is spoken for. */
+.page-body:has(.kb-shell-with-tree) {
+  /* 18px to the tree, the tree itself, then 26px on to where the
+     text starts. The measure's own 18px of padding makes up the
+     rest of the gutter. */
+  padding-left: calc(18px + var(--tree-width) + 26px);
+}
+
+/* And the conversation's width on the other side, so the document
+   centres between the two of them rather than in the whole window
+   with a docked column sitting on top of it.
+
+   **Only when that column is there.** It is the document's own
+   conversation — pinned outside the measure, like the tree — and it
+   exists on the document view and nowhere else. Keyed on the panel
+   instead, the list reserved 430px for a column it does not have and
+   read in a 331px gutter beside an empty half-window. */
+.page-body:has(.kb-doc-aside):not(:has(.kb-doc-comparing)):not(
+    :has(.kb-doc-tracing)
+  ) {
+  padding-right: var(--rail-width);
+}
+
+/* The conversation's width is only worth reserving while all three
+   columns still fit: the tree, a readable measure, and the
+   conversation behind the page. Below that, reserving it takes more
+   from the measure than the conversation was ever going to use —
+   at 1040px it left the list 331px wide with 430px of nothing
+   beside it.
+
+   The number is what the three of them need: the tree's column,
+   ``min(756px, 100%)`` of text, and the rail. */
+@media (max-width: 64rem) {
+  /* The same selector as the rule it overrides, not a shorter one.
+     That rule carries three ``:has()`` clauses and therefore more
+     specificity than ``.page-body:has(.kb-shell-with-tree)`` — so
+     the narrow-window override never applied at all, whichever
+     order the two were written in. */
+  .page-body:has(.kb-doc-aside):not(:has(.kb-doc-comparing)):not(
+      :has(.kb-doc-tracing)
+    ) {
+    padding-right: 0;
+  }
+}
+
+/* The left column is reserved at every width, because the tree is
+   docked at every width. This used to zero it below 78rem, where the
+   tree left its column and rejoined the flow — remove one without
+   the other and the tree floats over a page that has made no room
+   for it, which is what the list view looked like: two sets of words
+   in the same place. */
+
+/* The measure. Wider than the drawer's 620px, but not the full width
+   of a 27-inch display — these are lists and forms, and a line of
+   metadata stretched across a metre reads worse than it did in the
+   modal. */
+.page-measure {
+  padding: 16px 18px;
   width: min(900px, 100%);
   margin: 0 auto;
+}
+
+/* Tighter above a document than above a conversation: the title is
+   the first thing on the page and does not need a band of nothing
+   over it. Half the air here and half on the article, so the sum is
+   ``--doc-air``. */
+.page-measure:has(.kb-shell) {
+  padding-top: calc(var(--doc-air) / 2);
+}
+
+/* Comparing is the exception: two columns of text where everything
+   else on the page is one, so one measure's worth of room gives each
+   side half of it. It takes the width by widening the centred column
+   rather than by overflowing it — an element wider than its scroll
+   container scrolls the page sideways, which is the one thing a diff
+   must never do. */
+.page-measure:has(.kb-doc-comparing) {
+  width: min(1500px, 100%);
+}
+
+
+/* Tracing is the same bargain as comparing: a document beside the
+   sources each of its passages draws on is two columns where the rest
+   of the page is one. Narrower than the diff, because only one of the
+   two columns is prose. */
+.page-measure:has(.kb-doc-tracing) {
+  width: min(1240px, 100%);
+}
+
+
+/* And so is reading, now that the conversation sits beside the text.
+   Without this the rail takes its 24rem out of the 900px measure and
+   leaves the document a 19-em column — narrower than the prose it is
+   setting, which is the one thing a reading view cannot be. */
+
+
+
+
+
+/* …and gives some of it back when the conversation is put away. Not
+   all of it, the way it used to: the version history lives in that
+   column now, so putting the thread away narrows the column rather
+   than emptying it. Taking the whole 280px back left the document
+   running into the history with nothing between them. */
+.page-measure:has(.kb-doc-reading .doc-rail-stowed) {
+  width: min(1060px, 100%);
+}
+
+/* Where the hierarchy is pinned, two widths and no more.
+
+   Reading and the list share one: 45rem of prose plus the measure's
+   own padding. With a gutter reserved on each side of the page,
+   centring that measure centres the document between the hierarchy
+   and the conversation — and the title, the banners, the history and
+   the list all begin where the text does, because they are all
+   simply the measure's width. It is also why walking into a document
+   and back out no longer moves the page.
+
+   Comparing and tracing are two columns of their own with nothing
+   docked beside them, and keep the wide one. */
+.page-measure:has(.kb-shell-with-tree):not(:has(.kb-doc-comparing)):not(
+    :has(.kb-doc-tracing)
+  ) {
+  /* Whatever the two columns leave, up to a comfortable measure.
+     A fixed 756px was right for one pair of column widths and wrong
+     for every other, so dragging either handle used to move a column
+     and leave the text where it was — centred in a gap it no longer
+     matched. */
+  width: min(756px, 100%);
+  max-width: 100%;
+}
+
+.page-measure:has(.kb-shell-with-tree):has(.kb-doc-comparing),
+.page-measure:has(.kb-shell-with-tree):has(.kb-doc-tracing) {
+  width: min(1600px, 100%);
 }
 
 .drawer {
@@ -4432,6 +4760,189 @@ button {
     opacity: 1;
     transform: translate(-50%, -50%) scale(1);
   }
+}
+
+/* ── Notifications, down the right ──────────────────────────────
+   Over the app rather than instead of it: the question "is anybody
+   waiting on me" gets asked between other pieces of work, and the
+   work should still be there afterwards. */
+.notify-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 44;
+  /* Lighter than a modal's. What is underneath is still the thing
+     being worked on — often the very document a comment is about. */
+  background: rgba(0, 0, 0, 0.28);
+  animation: fade-in 0.16s ease;
+}
+
+.notify-panel {
+  position: fixed;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 45;
+  width: min(460px, 94vw);
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-surface);
+  border-left: 1px solid var(--border);
+  box-shadow: var(--shadow-pop);
+  animation: notify-in 0.18s ease;
+}
+
+@keyframes notify-in {
+  from {
+    transform: translateX(16px);
+    opacity: 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .notify-panel {
+    animation: none;
+  }
+}
+
+.notify-head {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  padding: 14px 12px 12px 16px;
+  border-bottom: 1px solid var(--border);
+}
+
+.notify-title {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+/* The count in words beside the title, not a number in a pill: the
+   pill is on the bell, and this is the sentence the bell was short
+   for. */
+.notify-count {
+  flex: 1;
+  font-size: 11px;
+  color: var(--fg-faint);
+}
+
+.notify-empty {
+  margin: 20px 4px;
+  font-size: 12.5px;
+  color: var(--fg-faint);
+}
+
+.notify-rows {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.notify-row {
+  border-bottom: 1px solid var(--border-faint, var(--border));
+}
+
+.notify-row:last-child {
+  border-bottom: none;
+}
+
+/* A row somebody has already looked at. Dimmed rather than removed:
+   "what did I see yesterday" is a question, and a queue that empties
+   itself cannot answer it. */
+.notify-row.is-read .notify-line,
+.notify-row.is-read .notify-excerpt {
+  color: var(--fg-muted);
+}
+
+.notify-open {
+  display: flex;
+  gap: 10px;
+  width: 100%;
+  padding: 11px 8px;
+  text-align: left;
+  background: none;
+  border: none;
+  border-radius: var(--radius-sm);
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+
+.notify-open:hover:not(:disabled) {
+  background: var(--bg-raised);
+}
+
+.notify-open:disabled {
+  cursor: default;
+  opacity: 0.6;
+}
+
+/* The monogram with the verb's glyph on its corner: who, and what
+   they did, in one object — so a queue of eight is read by shape
+   before any of it is read as words. */
+.notify-face {
+  position: relative;
+  flex: none;
+  width: 22px;
+  height: 22px;
+}
+
+.notify-verb-icon {
+  position: absolute;
+  right: -4px;
+  bottom: -4px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--bg-surface);
+  color: var(--fg-muted);
+}
+
+.notify-verb-icon svg {
+  width: 9px;
+  height: 9px;
+}
+
+.notify-said {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.notify-line {
+  font-size: 12.5px;
+  line-height: 1.45;
+}
+
+/* What they wrote, when there is any. One line: the rest is in the
+   document, which is where it is worth reading.
+
+   Not ``.notify-body`` — that is the panel's scrolling container,
+   and two rules of that name would have given the excerpt ``flex:
+   1`` and the container ``white-space: nowrap``. */
+.notify-excerpt {
+  font-size: 11.5px;
+  color: var(--fg-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.notify-when {
+  font-size: 10.5px;
+  color: var(--fg-faint);
+}
+
+.notify-body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 0 12px 16px;
 }
 
 .drawer-backdrop {
@@ -7597,6 +8108,154 @@ button {
   margin-left: auto;
 }
 
+/* ── How to look at this document ─────────────────────────────────
+   The ways of *viewing* it, beside the menu of things you can do to
+   it. Quiet until one is on: these sit next to the document's name,
+   and two filled buttons up there would read as the heading rather
+   than as controls under it. The lit state is the point — it is the
+   page's standing answer to "why am I looking at a diff?", which is
+   the thing a menu entry could never give. */
+.doc-views {
+  display: flex;
+  gap: 2px;
+  align-items: center;
+}
+
+/* ── The two verbs, said out loud ──────────────────────────────────
+   Edit and Share, out of the menu and into the header. They are the
+   two things anybody came to a document to do, and behind three dots
+   they were the same size as Export and one slip of the wrist above
+   Remove.
+
+   Bordered, where the view toggles beside them are not: those are
+   states you turn on and read off, these are actions you press. A
+   header where everything looked alike gave a reader no way to tell
+   the difference without trying one. */
+
+.doc-acts {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.doc-act {
+  display: inline-flex;
+  height: 25px;
+  align-items: center;
+  gap: 5px;
+  padding: 0 10px;
+  font: inherit;
+  font-size: 12px;
+  line-height: 1;
+  white-space: nowrap;
+  color: var(--fg);
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm, 5px);
+  cursor: pointer;
+}
+
+.doc-act svg {
+  width: 13px;
+  height: 13px;
+}
+
+.doc-act:hover:not(:disabled) {
+  background: var(--bg-raised);
+}
+
+.doc-act:disabled {
+  color: var(--fg-faint);
+  cursor: default;
+}
+
+/* One control, two intentions: choose who can see this, and send it
+   to somebody. Joined so they read as one subject, divided so the
+   second is reachable without being asked the first again. */
+.doc-act-split {
+  display: inline-flex;
+}
+
+.doc-act-split > .doc-act:first-child {
+  border-top-right-radius: 0;
+  border-bottom-right-radius: 0;
+}
+
+.doc-act-split > .doc-act:last-child {
+  margin-left: -1px;
+  padding: 0 8px;
+  border-top-left-radius: 0;
+  border-bottom-left-radius: 0;
+}
+
+/* The pressed half sits above its neighbour, so the shared border
+   does not cut across its focus ring. */
+.doc-act-split > .doc-act:hover:not(:disabled),
+.doc-act-split > .doc-act:focus-visible {
+  position: relative;
+  z-index: 1;
+}
+
+/* Editing. Publish is the one button on this page that makes
+   something everybody else will read, so it is the only one drawn
+   as a decision; Done is an ordinary way out and looks like one. */
+.doc-acts-edit {
+  gap: 8px;
+}
+
+.doc-edit-state {
+  font-size: 11px;
+  color: var(--fg-faint);
+  white-space: nowrap;
+  /* Long enough for a refusal to be readable, short enough that it
+     cannot push the two buttons off the end of the header. */
+  max-width: 34ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.doc-act-go {
+  color: #fff;
+  background: var(--ember-gradient);
+  border-color: transparent;
+}
+
+.doc-act-go:hover:not(:disabled) {
+  background: var(--ember-gradient);
+  box-shadow: 0 4px 12px rgba(249, 115, 22, 0.28);
+}
+
+.doc-act-go:disabled {
+  opacity: 0.6;
+  color: rgba(255, 255, 255, 0.85);
+  background: var(--ember-gradient);
+}
+
+.doc-view {
+  height: 23px;
+  padding: 0 9px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm, 5px);
+  background: none;
+  color: var(--fg-muted);
+  font: inherit;
+  font-size: 12px;
+  line-height: 1;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.doc-view:hover {
+  background: var(--bg-raised);
+  color: var(--fg);
+}
+
+.doc-view.is-on {
+  border-color: var(--border-soft);
+  background: var(--bg-inset);
+  color: var(--fg);
+}
+
 .kb-head-actions .btn-sm {
   height: 23px;
   display: inline-flex;
@@ -7941,19 +8600,15 @@ button {
   color: var(--fg-muted);
 }
 
-.kb-empty-cta {
+/* Two ways in, side by side: writing a document, and bringing one in
+   from somewhere else. They wrap rather than squeeze, because this
+   panel is a column somebody can drag narrow. */
+.kb-empty-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 8px;
   margin-top: 18px;
-}
-
-.kb-empty-foot {
-  margin-top: 16px;
-  font-size: 11px;
-  color: var(--fg-faint);
-}
-
-.kb-empty-foot code {
-  font-family: var(--font-mono);
-  color: var(--fg-muted);
 }
 
 /* ── Knowledge: add-source page ────────────────────────────────── */
@@ -8085,6 +8740,187 @@ button {
 
 .kb-detail-content > :first-child { margin-top: 0; }
 .kb-detail-content > :last-child { margin-bottom: 0; }
+
+/* ── Artifact lineage ──────────────────────────────────────────────
+   The version switcher and the derivation lists. Rows are a flex
+   line rather than a table so a long artifact name truncates instead
+   of pushing the version number off the panel — the version number
+   is the part the reader came for. */
+
+
+.kb-stale-banner ul {
+  margin: 6px 0 0;
+  padding-left: 16px;
+}
+
+.kb-lineage {
+  margin-top: 22px;
+}
+
+.kb-lineage-heading {
+  margin: 0 0 6px;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--fg-muted);
+}
+
+.kb-lineage-rows {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.kb-row {
+  display: flex;
+  gap: 10px;
+  align-items: baseline;
+  padding: 5px 0;
+  border-bottom: 1px solid var(--border-soft);
+  font-size: 12px;
+}
+
+.kb-row-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.kb-row-n {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px;
+}
+
+.kb-row-when,
+.kb-row-note {
+  color: var(--fg-muted);
+  font-size: 11px;
+}
+
+/* Somebody else's cursor, in the text.
+   The line is theirs for as long as they are in that sentence; the
+   label is what turns "the paragraph changed" into "Sam is
+   rewriting this". Both take their colour from the person, set
+   inline by the extension — one person, one colour, everywhere. */
+.collaboration-carets__caret {
+  position: relative;
+  margin-left: -1px;
+  margin-right: -1px;
+  border-left: 1px solid;
+  border-right: 1px solid;
+  pointer-events: none;
+  word-break: normal;
+}
+
+/* Always shown, and quiet enough to live there.
+
+   It used to fade a couple of seconds after appearing, on the theory
+   that a name over the text is clutter. It is — but the decoration
+   is not rebuilt on every keystroke, so the fade ran once and the
+   label never came back: somebody could type a paragraph under a
+   caret nobody could put a name to, which is the one question this
+   exists to answer. */
+/* Always shown, and quiet enough to live there.
+
+   It faded a couple of seconds after appearing, on the theory that a
+   name over the text is clutter. It is — but the decoration is not
+   rebuilt on every keystroke, so the fade ran once and the label
+   never came back: somebody could type a paragraph under a caret
+   nobody could put a name to, which is the one question this exists
+   to answer. */
+.collaboration-carets__label {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  position: absolute;
+  top: -1.4em;
+  left: -1px;
+  padding: 1px 6px;
+  border-radius: 4px 4px 4px 0;
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 1.4;
+  white-space: nowrap;
+  color: #fff;
+  user-select: none;
+  /* Above the text it sits over, which is the line before theirs. */
+  z-index: 3;
+  /* Enough to read, little enough to read through. */
+  opacity: 0.82;
+  transition: opacity 120ms ease;
+}
+
+.collaboration-carets__caret:hover > .collaboration-carets__label {
+  opacity: 1;
+}
+
+/* Their initials, in the label. The same two letters the header and
+   the avatars row use, so one person reads as one person wherever
+   they turn up. */
+.collaboration-carets__face {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  font-size: 7px;
+  letter-spacing: 0.02em;
+  background: rgba(255, 255, 255, 0.28);
+}
+
+/* The draft, above the versions. Dashed because it is the only row
+   in this list that is not yet a fact about the document — every
+   other one was published and cannot change.
+
+   The dashes go round the word, not round the button: the button
+   stretches so the times on every row line up, and a border on it
+   drew a box the width of the column. */
+.kb-draft-chip {
+  display: inline-block;
+  padding: 0 5px;
+  color: var(--accent-orange-text);
+  border: 1px dashed var(--accent-orange-text);
+  border-radius: 4px;
+  background: transparent;
+}
+
+.kb-row-draft .kb-row-when,
+.kb-row-draft .kb-row-note {
+  font-style: italic;
+}
+
+.kb-row-current {
+  font-weight: 600;
+}
+
+.kb-row-stale .kb-row-note {
+  color: var(--warning);
+  font-weight: 600;
+}
+
+.kb-version-btn {
+  flex: 1;
+  text-align: left;
+  background: none;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+  color: var(--fg);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px;
+}
+
+.kb-version-btn:hover {
+  text-decoration: underline;
+}
+
+.kb-version-btn[aria-current="true"] {
+  font-weight: 600;
+}
 
 .kb-detail-content h1,
 .kb-detail-content h2,
@@ -9260,4 +10096,6051 @@ button {
   border-radius: 999px;
   background: var(--bg-raised);
   color: var(--fg-muted);
+}
+
+/* ── Ask the artifact graph ────────────────────────────────────────
+   A question box, the query it produced (editable), the shape of the
+   answer, and the answer. The query sits between the question and the
+   result on purpose: it is the thing to correct when the answer is
+   wrong, and burying it below the table makes it look like debug
+   output rather than the control it is. */
+
+.ag-search {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding-top: 4px;
+}
+
+.ag-ask {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+}
+
+.ag-question {
+  flex: 1;
+  resize: vertical;
+  min-height: 46px;
+  padding: 8px 10px;
+  font: inherit;
+  font-size: 13px;
+  line-height: 1.45;
+  color: var(--fg);
+  background: var(--bg-inset);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+
+.ag-question:focus {
+  outline: none;
+  border-color: var(--accent-blue);
+}
+
+.ag-btn {
+  padding: 7px 12px;
+  font-size: 12px;
+  font-weight: 500;
+  white-space: nowrap;
+  color: var(--fg);
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.ag-btn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.ag-btn-quiet {
+  padding: 3px 9px;
+  font-size: 11px;
+}
+
+.ag-examples {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.ag-example {
+  padding: 4px 9px;
+  font-size: 11.5px;
+  color: var(--fg-muted);
+  background: none;
+  border: 1px dashed var(--border);
+  border-radius: 999px;
+  cursor: pointer;
+}
+
+.ag-example:hover {
+  color: var(--fg);
+  border-style: solid;
+}
+
+.ag-cypher-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 5px;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--fg-muted);
+}
+
+.ag-cypher-head .ag-btn-quiet {
+  margin-left: auto;
+  text-transform: none;
+  letter-spacing: 0;
+}
+
+.ag-note {
+  font-weight: 400;
+  text-transform: none;
+  letter-spacing: 0;
+  color: var(--fg-faint);
+}
+
+.ag-cypher-box {
+  width: 100%;
+  resize: vertical;
+  padding: 8px 10px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11.5px;
+  line-height: 1.5;
+  color: var(--fg);
+  background: var(--bg-inset);
+  border: 1px solid var(--border-soft);
+  border-radius: 6px;
+}
+
+.ag-cypher-box:focus {
+  outline: none;
+  border-color: var(--accent-blue);
+}
+
+.ag-error .ag-note {
+  margin-top: 4px;
+  font-size: 11px;
+}
+
+.ag-heading {
+  margin: 0 0 6px;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--fg-muted);
+}
+
+/* ── Lineage graph (React Flow) ────────────────────────────────────
+   Nodes are components rather than circles, so a node carries its
+   name, its version and a stale badge. The canvas keeps the panel's
+   own surface colours — React Flow's defaults are built for a white
+   editor and read as a foreign window inside a dark panel. */
+
+.lin-canvas {
+  width: 100%;
+  background: var(--bg-surface);
+  border: 1px solid var(--border-soft);
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+.lin-canvas .react-flow__background {
+  background: var(--bg-surface);
+}
+
+.lin-canvas .react-flow__background-pattern {
+  color: var(--border-soft);
+}
+
+.lin-node {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+  box-sizing: border-box;
+  width: 188px;
+  height: 46px;
+  padding: 0 12px;
+  align-content: center;
+  flex-wrap: wrap;
+  font-size: 12px;
+  color: var(--fg);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  cursor: pointer;
+}
+
+.lin-node:hover {
+  border-color: var(--accent-blue);
+}
+
+.lin-node:focus-visible {
+  outline: 2px solid var(--accent-blue);
+  outline-offset: 1px;
+}
+
+/* A source is the thing being depended on. Quieter, because the
+   dependents are what the reader came to count. */
+.lin-node-source {
+  background: var(--bg-surface);
+  border-style: dashed;
+}
+
+/* Something pinned to an old version of this. The stripe rather than
+   a colour wash: the node still has to be readable. */
+.lin-node-stale {
+  border-left: 3px solid var(--warning);
+}
+
+.lin-node-label {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.lin-node-version {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 10.5px;
+  color: var(--fg-muted);
+}
+
+/* React Flow draws handles as visible dots by default. Connections
+   are disabled here, so a dot would advertise an affordance that is
+   not there. */
+.lin-canvas .react-flow__handle {
+  opacity: 0;
+  pointer-events: none;
+}
+
+.lin-canvas .react-flow__edge-path {
+  stroke: var(--border);
+  stroke-width: 1.4;
+}
+
+.lin-canvas .lin-edge-stale .react-flow__edge-path {
+  stroke: var(--warning);
+  stroke-width: 2;
+}
+
+.lin-canvas .react-flow__arrowhead polyline,
+.lin-canvas .react-flow__arrowhead path {
+  fill: var(--border);
+  stroke: var(--border);
+}
+
+.lin-canvas .lin-edge-stale .react-flow__arrowhead polyline,
+.lin-canvas .lin-edge-stale .react-flow__arrowhead path {
+  fill: var(--warning);
+  stroke: var(--warning);
+}
+
+.lin-canvas .react-flow__edge-text {
+  font-size: 9.5px;
+  fill: var(--fg-muted);
+}
+
+.lin-canvas .react-flow__edge-textbg {
+  fill: var(--bg-surface);
+}
+
+.lin-canvas .lin-edge-stale .react-flow__edge-text {
+  fill: var(--warning);
+}
+
+.lin-canvas .react-flow__controls {
+  box-shadow: none;
+  border: 1px solid var(--border-soft);
+  border-radius: 5px;
+  overflow: hidden;
+}
+
+.lin-canvas .react-flow__controls-button {
+  background: var(--bg);
+  border-bottom: 1px solid var(--border-soft);
+  fill: var(--fg-muted);
+}
+
+.lin-canvas .react-flow__controls-button:hover {
+  background: var(--bg-surface);
+}
+
+.lin-canvas .react-flow__attribution {
+  background: transparent;
+  font-size: 9px;
+}
+
+.lin-canvas .react-flow__attribution a {
+  color: var(--fg-faint);
+}
+
+.ag-table-wrap {
+  overflow-x: auto;
+  border: 1px solid var(--border-soft);
+  border-radius: 6px;
+}
+
+.ag-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 11.5px;
+}
+
+.ag-table th {
+  padding: 6px 9px;
+  text-align: left;
+  font-weight: 600;
+  color: var(--fg-muted);
+  background: var(--bg-surface);
+  border-bottom: 1px solid var(--border-soft);
+  white-space: nowrap;
+}
+
+.ag-table td {
+  padding: 6px 9px;
+  border-bottom: 1px solid var(--border-soft);
+  vertical-align: top;
+  max-width: 340px;
+}
+
+.ag-table tr:last-child td {
+  border-bottom: none;
+}
+
+.ag-row-open {
+  cursor: pointer;
+}
+
+.ag-row-open:hover td {
+  background: var(--bg-surface);
+}
+
+.ag-empty {
+  padding: 14px;
+  font-size: 12px;
+  color: var(--fg-muted);
+  text-align: center;
+  border: 1px dashed var(--border);
+  border-radius: 6px;
+}
+
+/* ── Artifact panel controls ───────────────────────────────────────
+   Share, the stale review, and the confirm/dismiss verdict on a
+   captured source. These are the controls that used to exist only as
+   tool calls — the share dialog in particular, which is where the
+   widest two audiences in the product get chosen. */
+
+.kb-notice {
+  margin-bottom: 12px;
+  padding: 7px 10px;
+  font-size: 11.5px;
+  color: var(--fg);
+  background: var(--bg-surface);
+  border: 1px solid var(--border-soft);
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.btn-warn {
+  color: var(--warning);
+  border-color: var(--warning);
+}
+
+.btn-xs {
+  padding: 2px 7px;
+  font-size: 10.5px;
+  line-height: 1.5;
+  color: var(--fg);
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  cursor: pointer;
+}
+
+.btn-xs:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.btn-quiet {
+  color: var(--fg-muted);
+  border-color: var(--border-soft);
+}
+
+.kb-row-candidate {
+  gap: 8px;
+}
+
+/* ── Share dialog ── */
+
+/* The share panel: a popover now, not a page. Same surface, border
+   and shadow as the overflow menu it often opens from, because they
+   are the same kind of thing — something that hangs off a control and
+   goes away — and two popups in one header that look unrelated read
+   as two different products. */
+.kb-share-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 39;
+}
+
+.kb-share {
+  position: fixed;
+  z-index: 40;
+  display: flex;
+  width: 340px;
+  max-width: calc(100vw - 24px);
+  flex-direction: column;
+  gap: 12px;
+  padding: 14px;
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-pop);
+  animation: menu-pop 0.14s cubic-bezier(0.2, 0.9, 0.3, 1.1);
+}
+
+.kb-share-title {
+  margin: 0;
+  font-size: 15px;
+}
+
+.kb-share-sub {
+  margin: 0;
+  font-size: 11.5px;
+  line-height: 1.5;
+  color: var(--fg-muted);
+}
+
+.kb-share-options {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.kb-share-opt {
+  display: flex;
+  gap: 9px;
+  align-items: flex-start;
+  padding: 8px 10px;
+  border: 1px solid var(--border-soft);
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.kb-share-opt-on {
+  border-color: var(--accent-blue);
+  background: var(--bg-surface);
+}
+
+.kb-share-opt input {
+  margin-top: 2px;
+}
+
+.kb-share-opt-body {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.kb-share-opt-label {
+  font-size: 12.5px;
+}
+
+.kb-share-opt-reach {
+  font-size: 11px;
+  color: var(--fg-muted);
+}
+
+.kb-share-audience {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 11.5px;
+}
+
+.kb-share-audience textarea {
+  padding: 7px 9px;
+  font: inherit;
+  font-size: 12px;
+  color: var(--fg);
+  background: var(--bg-inset);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  resize: vertical;
+}
+
+.kb-share-link {
+  padding: 9px 10px;
+  background: var(--bg-surface);
+  border: 1px solid var(--border-soft);
+  border-radius: 6px;
+}
+
+.kb-share-link-label {
+  margin-bottom: 5px;
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--fg-muted);
+}
+
+.kb-share-link-row {
+  display: flex;
+  gap: 6px;
+}
+
+.kb-share-link-row input {
+  flex: 1;
+  min-width: 0;
+  padding: 5px 8px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px;
+  color: var(--fg);
+  background: var(--bg-inset);
+  border: 1px solid var(--border-soft);
+  border-radius: 5px;
+}
+
+.kb-share-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+/* ── Stale review ── */
+
+.kb-stale-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.kb-stale-row {
+  border: 1px solid var(--border-soft);
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+.kb-stale-head {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  padding: 8px 10px;
+  font-size: 12px;
+}
+
+.kb-stale-name {
+  padding: 0;
+  font: inherit;
+  font-weight: 600;
+  color: var(--fg);
+  background: none;
+  border: 0;
+  cursor: pointer;
+  text-align: left;
+}
+
+.kb-stale-name:hover {
+  text-decoration: underline;
+}
+
+.kb-stale-detail {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--fg-muted);
+  font-size: 11.5px;
+}
+
+.kb-stale-behind {
+  color: var(--warning);
+  font-size: 11px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+/* ── Drift, on the document itself ───────────────────────────────────
+   Where we branched, what landed there, and what it means here. All
+   of it used to live in a separate queue, so the page with the
+   problem did not have the answer. */
+
+.kb-drift-banner {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 20px;
+  padding: 12px 14px;
+  border: 1px solid var(--warning);
+  border-left-width: 3px;
+  border-radius: var(--radius);
+  background: color-mix(in srgb, var(--warning) 7%, transparent);
+}
+
+.kb-drift-banner-text {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+  flex: 1;
+  font-size: 12.5px;
+}
+
+.kb-drift-banner-detail {
+  color: var(--fg-muted);
+  font-size: 11.5px;
+}
+
+.kb-drift-banner-actions {
+  display: flex;
+  gap: 8px;
+  flex: 0 0 auto;
+}
+
+.kb-drift-comparison {
+  margin-bottom: 20px;
+}
+
+/* The rail column holds the drift panel above the comment threads. */
+/* Docked to the page frame, mirroring the hierarchy on the other
+   side. Against the frame rather than the scrolling area: that is
+   what keeps it still while the document moves, and what puts its
+   scrollbar against the window instead of a third of the way in.
+
+   Flush to the right edge with the inset taken as padding, so the
+   bar it grows sits where a scrollbar belongs. */
+.kb-doc-aside {
+  position: absolute;
+  right: 0;
+  top: var(--dock-top);
+  bottom: 0;
+  width: var(--rail-width);
+  padding: 0 0 0 28px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  min-width: 0;
+  /* The same rule as the one between the hierarchy and the document,
+     on the other side of the text. Both say "a different kind of
+     thing starts here": that one divides where you are from what you
+     are reading, this one divides what you are reading from what is
+     said about it. */
+  border-left: 1px solid var(--border-soft);
+}
+
+/* What pins: the history and the conversation as one unit. The
+   column around it stays stretched, so the rule dividing it from the
+   document still runs the document's full height. */
+.kb-doc-aside-pin {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  min-height: 0;
+  /* Everything here is inset from the window's edge… */
+  padding-right: 18px;
+  /* The column is its own scroller now, so this fills it rather than
+     sticking inside a page that scrolls underneath. */
+  height: 100%;
+  /* Nothing leaves the column. Without this a fifty-version history
+     simply ran off the bottom of the window and took the
+     conversation with it — the comments were still in the document,
+     below the fold of a box that had no scrollbar. */
+  overflow: hidden;
+}
+
+/* Five rows and a link. It sizes to them and does not give ground:
+   left shrinkable, the conversation underneath squeezed it to
+   nothing, and what was left was a heading and a link sitting on top
+   of the rule below them. */
+.kb-doc-aside .kb-lineage {
+  display: flex;
+  flex-direction: column;
+  flex: none;
+}
+
+/* Showing the whole history is the other case. There it takes the
+   column and scrolls inside itself — a fifty-version list is a thing
+   you look something up in, not a thing you read to the end. */
+.kb-doc-aside .kb-lineage-full {
+  flex: 1;
+  min-height: 0;
+}
+
+.kb-doc-aside .kb-lineage-full .kb-lineage-rows {
+  min-height: 0;
+  overflow-y: auto;
+}
+
+/* The conversation takes what the history leaves, and scrolls. */
+.kb-doc-aside .doc-rail {
+  flex: 1;
+  min-height: 0;
+}
+
+/* Too narrow to dock anything: the conversation rejoins the flow
+   under the document, which keeps the pairing and loses only the
+   glance across. */
+@media (max-width: 64rem) {
+  .kb-doc-aside {
+    position: static;
+    width: auto;
+    padding: 0;
+    margin-top: 24px;
+    border-left: 0;
+    border-top: 1px solid var(--border-soft);
+    padding-top: 20px;
+  }
+
+  .kb-doc-aside-pin {
+    height: auto;
+    padding-right: 0;
+  }
+
+  .doc-rail {
+    margin-right: 0;
+  }
+
+  .doc-rail-body,
+  .doc-rail-head,
+  .doc-comment-bar {
+    padding-right: 0;
+  }
+}
+
+/* The switch at the top of the column. Segmented rather than three
+   loose buttons: they are exclusive, and a joined control says that
+   where three separate ones only imply it. */
+.kb-aside-switch {
+  flex: none;
+  display: flex;
+  align-self: flex-start;
+  padding: 2px;
+  background: var(--bg-inset);
+  border: 1px solid var(--border-soft);
+  border-radius: 7px;
+}
+
+.kb-aside-tab {
+  padding: 3px 10px;
+  font: inherit;
+  font-size: 11.5px;
+  color: var(--fg-muted);
+  background: none;
+  border: 0;
+  border-radius: 5px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.kb-aside-tab:hover {
+  color: var(--fg);
+}
+
+.kb-aside-tab.is-on {
+  color: var(--fg);
+  background: var(--bg);
+  box-shadow: 0 1px 2px hsl(0 0% 0% / 0.08);
+}
+
+/* The way from the truncated history to all of it. */
+.kb-lineage-more {
+  align-self: flex-start;
+  margin-top: 8px;
+  padding: 0;
+  font: inherit;
+  font-size: 11.5px;
+  color: var(--accent-blue-text);
+  background: none;
+  border: 0;
+  cursor: pointer;
+}
+
+.kb-lineage-more:hover {
+  text-decoration: underline;
+}
+
+/* Narrowing the rail. Folded away behind a button because most of
+   the time nothing is filtered, and a row of empty checkboxes takes
+   the space the conversation wants. */
+.doc-filter {
+  position: relative;
+  margin-left: auto;
+}
+
+.doc-filter-open {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 2px 7px;
+  font: inherit;
+  font-size: 11px;
+  color: var(--fg-muted);
+  background: none;
+  border: 1px solid transparent;
+  border-radius: 5px;
+  cursor: pointer;
+}
+
+.doc-filter-open:hover {
+  color: var(--fg);
+  background: var(--bg-inset);
+}
+
+/* Something is hidden. The button says so wherever the reader is in
+   the rail, including scrolled past the note. */
+.doc-filter-open.is-on {
+  color: var(--accent-blue-text);
+  border-color: var(--border-soft);
+}
+
+.doc-filter-count {
+  padding: 0 5px;
+  font-size: 10px;
+  color: var(--bg);
+  background: var(--accent-blue, #4a7dff);
+  border-radius: 999px;
+}
+
+.doc-filter-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 39;
+}
+
+/* Against the viewport, not the rail. The rail clips what scrolls
+   inside it, and on a document with no comments it is two lines
+   tall — the chooser came out sawn off below its first section. */
+.doc-filter-pop {
+  position: fixed;
+  z-index: 40;
+  max-height: calc(100vh - 140px);
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 210px;
+  /* Bounded, or the version pills lay themselves out on one line and
+     a document with fifty of them opens a chooser the width of the
+     window. */
+  max-width: 260px;
+  padding: 10px;
+  text-align: left;
+  background: var(--bg-raised, var(--bg));
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius);
+  box-shadow: 0 8px 24px hsl(0 0% 0% / 0.22);
+}
+
+.doc-filter-row {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 12px;
+  color: var(--fg);
+  cursor: pointer;
+}
+
+/* One question per section, with its alternatives under it. A flat
+   list of eight checkboxes gives no clue which of them compete. */
+.doc-filter-section {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.doc-filter-section + .doc-filter-section {
+  margin-top: 4px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border-soft);
+}
+
+.doc-filter-heading {
+  margin: 0 0 2px;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--fg-muted);
+}
+
+/* What is being filtered on, each removable on its own. */
+.doc-filter-chips {
+  flex: none;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 5px;
+}
+
+.doc-filter-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 2px 6px 2px 8px;
+  font: inherit;
+  font-size: 11px;
+  color: var(--accent-blue-text);
+  background: color-mix(in srgb, var(--accent-blue, #4a7dff) 12%, transparent);
+  border: 1px solid color-mix(in srgb, var(--accent-blue, #4a7dff) 30%, transparent);
+  border-radius: 999px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.doc-filter-chip:hover {
+  background: color-mix(in srgb, var(--accent-blue, #4a7dff) 20%, transparent);
+}
+
+.doc-filter-chip-x {
+  font-size: 13px;
+  line-height: 1;
+  opacity: 0.7;
+}
+
+.doc-filter-versions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.doc-filter-version {
+  padding: 2px 7px;
+  font: inherit;
+  font-size: 11px;
+  color: var(--fg-muted);
+  background: var(--bg-inset);
+  border: 1px solid transparent;
+  border-radius: 999px;
+  cursor: pointer;
+}
+
+.doc-filter-version.is-on {
+  color: var(--bg);
+  background: var(--accent-blue, #4a7dff);
+}
+
+.doc-filter-rule {
+  height: 1px;
+  background: var(--border-soft);
+}
+
+/* How many were hidden, and the way back. A filter that hides
+   silently is indistinguishable from a document with fewer comments
+   than the reader thought. */
+.doc-filter-note {
+  flex: none;
+  margin: 0;
+  font-size: 11px;
+  color: var(--fg-muted);
+}
+
+.doc-filter-clear {
+  padding: 0;
+  font: inherit;
+  font-size: inherit;
+  color: var(--accent-blue-text);
+  background: none;
+  border: 0;
+  cursor: pointer;
+}
+
+.doc-filter-clear:hover {
+  text-decoration: underline;
+}
+
+/* One passage, with every conversation about it under it. The box
+   belongs to the passage now; the conversations inside are divided
+   from each other rather than each carrying its own frame. */
+.doc-conv-group {
+  display: flex;
+  flex-direction: column;
+  padding: 10px 12px;
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius);
+  background: var(--bg);
+}
+
+.doc-conv-group > .doc-conv-item + .doc-conv-item {
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid var(--border-soft);
+}
+
+/* The whole card is the way back to the passage, so the whole card
+   says so. */
+.doc-conv-item {
+  cursor: pointer;
+}
+
+/* …except the parts that do something else. */
+.doc-conv-item textarea,
+.doc-conv-item input {
+  cursor: auto;
+}
+
+/* Who said it, for threads read back out of the store. */
+.doc-conv-by {
+  margin-right: 6px;
+  font-weight: 600;
+  color: var(--fg-muted);
+}
+
+/* When it was said. Quiet and after the words rather than before
+   them: the remark is what the reader came for, and a date at the
+   start of every line makes a thread read like a log file. */
+.doc-conv-when {
+  margin-left: 7px;
+  font-size: 10px;
+  color: var(--fg-faint);
+  white-space: nowrap;
+}
+
+/* The agent's turn opens with a name and its body is a block below,
+   so the stamp belongs beside the name rather than after several
+   paragraphs of answer. */
+.doc-conv-reply > .doc-conv-when {
+  margin-left: 6px;
+}
+
+/* Which version, and where the thread got to. */
+.doc-conv-meta {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 4px;
+  font-size: 10.5px;
+  color: var(--fg-muted);
+}
+
+.doc-conv-status {
+  padding: 0 5px;
+  border-radius: 999px;
+  background: var(--bg-inset);
+  text-transform: lowercase;
+}
+
+.doc-conv-status.is-accepted {
+  color: var(--accent-green-text, var(--fg));
+}
+
+.doc-conv-status.is-rejected {
+  color: var(--fg-muted);
+}
+
+/* Mounted, not drawn. A reply in flight keeps running and a
+   right-click on a passage still opens a thread. */
+.doc-rail-away {
+  display: contents;
+}
+
+/* Between the conversation and the history, which are two kinds of
+   thing in one column. */
+.kb-aside-rule {
+  flex: none;
+  height: 1px;
+  background: var(--border-soft);
+}
+
+.kb-drift-panel {
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--warning);
+  border-radius: var(--radius);
+  background: var(--bg-inset);
+  overflow: hidden;
+}
+
+.kb-drift-panel-body {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px;
+}
+
+.kb-drift-lead {
+  margin: 0;
+  color: var(--fg-muted);
+  font-size: 11.5px;
+}
+
+/* Each row leads back to the sentence it names. */
+.kb-drift-affected li > button {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  width: 100%;
+  padding: 6px 8px;
+  border: 0;
+  border-left: 2px solid var(--warning);
+  border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+  background: none;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.kb-drift-affected li > button:hover,
+.kb-drift-affected li > button:focus-visible {
+  background: color-mix(in srgb, var(--warning) 9%, transparent);
+  outline: none;
+}
+
+/* Sentences that lean on what moved, marked in the document. Amber,
+   and under its own highlight name so the comment marks survive
+   alongside them. */
+::highlight(doc-drift-mark) {
+  text-decoration: underline;
+  text-decoration-color: var(--warning);
+  text-decoration-style: wavy;
+  text-underline-offset: 3px;
+}
+
+/* The one whose row is hovered. */
+::highlight(doc-drift-lit) {
+  background: color-mix(in srgb, var(--warning) 26%, transparent);
+}
+
+/* ── The upstream-change review, on its own page ─────────────────────
+   Reached by a crumb from the document. Everything needed to check
+   the answer, in the order somebody checks it: where we branched,
+   what landed, which of our sentences lean on it, and only then what
+   the agent makes of it. */
+
+.drift-page {
+  display: flex;
+  flex-direction: column;
+  gap: 26px;
+}
+
+.drift-page-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+  padding-bottom: 14px;
+  border-bottom: 1px solid var(--border-soft);
+}
+
+.drift-page-where {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--fg);
+}
+
+.drift-page-source {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--accent-blue-text);
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.drift-page-source:hover {
+  text-decoration: underline;
+}
+
+.drift-section {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.drift-section-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.drift-section-title {
+  margin: 0;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--fg-muted);
+}
+
+.drift-page-affected {
+  list-style: none;
+  margin: 0;
+  padding: 0 0 0 12px;
+  border-left: 2px solid var(--warning);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  font-size: 12.5px;
+}
+
+.drift-page-affected li {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+}
+
+/* What the update did. Stated rather than left to the version list:
+   the two halves — a new version, and the link moved — are one
+   action, and reporting only the first leaves the reader to check
+   whether the warning will come back. */
+.drift-applied {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 12px 14px;
+  border: 1px solid var(--accent-green, var(--success));
+  border-left-width: 3px;
+  border-radius: var(--radius);
+  background: color-mix(in srgb, var(--success) 8%, transparent);
+  font-size: 12.5px;
+  line-height: 1.55;
+}
+
+.drift-applied span {
+  color: var(--fg-muted);
+}
+
+/* ── Drift, told the way branches work ───────────────────────────────
+   Which of our sentences lean on the parts that moved upstream, and
+   what the agent makes of it. */
+
+.kb-drift-affected {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 12px;
+}
+
+.kb-drift-affected li {
+  display: flex;
+  min-width: 0;
+}
+
+.kb-drift-where {
+  flex: 0 0 auto;
+  color: var(--fg-faint);
+  font-variant-numeric: tabular-nums;
+  font-size: 11px;
+}
+
+.kb-drift-text {
+  flex: 1;
+  min-width: 0;
+  color: var(--fg);
+  overflow-wrap: break-word;
+}
+
+/* How sure the match is, said in words. These are leads, not
+   findings, and a row that looks equally confident about all of them
+   is the view overstating what it knows. */
+.kb-drift-strength {
+  flex: 0 0 auto;
+  color: var(--fg-faint);
+  font-size: 11px;
+}
+
+.kb-drift-verdict {
+  margin-top: 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--border-soft);
+  border-left: 3px solid var(--accent-blue, var(--border));
+  border-radius: var(--radius-sm);
+  background: var(--bg-inset);
+  font-size: 12.5px;
+  line-height: 1.6;
+}
+
+.kb-drift-waiting {
+  margin: 0;
+  color: var(--fg-muted);
+  font-size: 11.5px;
+  font-style: italic;
+}
+
+/* Holds the same comparison the version picker renders, so it brings
+   no type of its own — it used to be a ``<pre>`` of unified-diff
+   output, which is the terminal paste the comparison view exists to
+   replace. */
+.kb-stale-diff {
+  margin: 0;
+  padding: 10px;
+  background: var(--bg-inset);
+  border-top: 1px solid var(--border-soft);
+}
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* ── Artifacts demo sandbox (?demo=artifacts) ──────────────────────
+   Scoped under .demo-page like the other sandboxes, so nothing here
+   reaches the real app. */
+
+.demo-title {
+  margin: 0 0 4px;
+  font-size: 20px;
+}
+
+.demo-sub {
+  margin: 0 0 28px;
+  font-size: 12.5px;
+  color: var(--fg-muted);
+}
+
+.demo-block {
+  margin-bottom: 34px;
+}
+
+.demo-h2 {
+  margin: 0 0 4px;
+  font-size: 13px;
+  letter-spacing: 0.02em;
+}
+
+.demo-note {
+  margin: 0 0 12px;
+  max-width: 46rem;
+  font-size: 11.5px;
+  line-height: 1.55;
+  color: var(--fg-muted);
+}
+
+.demo-frame {
+  padding: 18px;
+  background: var(--bg);
+  border: 1px solid var(--border-soft);
+  border-radius: 8px;
+}
+
+.demo-log {
+  margin: 0;
+  padding: 12px;
+  max-height: 200px;
+  overflow: auto;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px;
+  line-height: 1.6;
+  color: var(--fg-muted);
+  background: var(--bg-inset);
+  border: 1px solid var(--border-soft);
+  border-radius: 8px;
+}
+
+/* ── Artifact document view ────────────────────────────────────────
+   Measured against Claude's artifact viewer rather than invented.
+   Three things carry that look and none of them is decoration:
+
+   • A reading column, not the panel's full width. Long measure is
+     what makes a document feel like a form.
+   • Muted section headings. A black H2 competes with the prose it is
+     introducing; a grey one steps back and lets the body lead.
+   • Air instead of boxes. Code is the only filled surface — every
+     bordered card was a divider doing a job whitespace does better.
+
+   The lineage rows keep their hairlines: those are a table of
+   relationships, not prose, and the rules line the columns up. */
+
+.kb-doc {
+  max-width: 45rem;
+  margin: 0 auto;
+  padding: calc(var(--doc-air) / 2) 0 48px;
+}
+
+/* A refetch in flight over a document that is still readable. Dimmed
+   rather than replaced: the reader keeps their place, and the text
+   changing under them is announced rather than sprung. */
+.kb-doc-reloading .kb-doc-body,
+.kb-doc-reloading .kb-doc-head {
+  opacity: 0.55;
+  transition: opacity 0.15s ease;
+}
+
+/* Prose has a measure; a comparison has two side by side, and so do
+   a traced document and one being discussed. In each the article
+   takes the whole column the page gives it, and the measure is set
+   on the prose column inside instead. */
+.kb-doc-comparing,
+.kb-doc-tracing,
+.kb-doc-reading {
+  max-width: none;
+}
+
+/* The measure moves here — the article is now a two-column frame, so
+   capping *it* would cap the pair rather than the prose. */
+.kb-doc-split > .kb-doc-body {
+  max-width: 45rem;
+  /* The citation overlay is positioned against this box. */
+  position: relative;
+}
+
+/* ── Reading: the page scrolls, the columns beside it do not ────────
+   One scrollbar, against the window, carrying the document and its
+   title together. The hierarchy and the conversation are docked to
+   the frame *around* the scrolling area, so neither moves with the
+   text and each keeps its own scrollbar at the window's edge rather
+   than a third of the way into the page. */
+.kb-doc-scroll {
+  min-width: 0;
+}
+
+.kb-doc-head {
+  margin-bottom: 28px;
+}
+
+/* The document's header stays where it starts.
+   Sticky rather than docked: the page keeps its own scrollbar at the
+   window's edge, and the header simply never reaches the top. The
+   offset is the measure's padding plus the article's — the same two
+   terms that put it at 117 in the first place — so it does not move
+   at all rather than jumping to the top on the first scroll.
+
+   Its box is pulled up over that gap and pads the space back, so the
+   text passing underneath is covered instead of showing through in
+   the band above the title. */
+.kb-doc-reading > .kb-doc-head {
+  position: sticky;
+  top: 0;
+  z-index: 3;
+  /* 20px of margin and 12px of padding used to sit between the header
+     and the first line, which was already generous and became a hole
+     once the row of faces was added under the byline — the document
+     started a third of the way down its own column. Eight and four,
+     so the first sentence is where the eye already is. */
+  margin: calc(-1 * var(--doc-air)) -18px 6px;
+  padding: var(--doc-air) 18px 4px;
+  background: var(--bg);
+}
+
+/* The document's name and the things you can do to it, on one line.
+   The actions used to live in the page header, which meant the page
+   said the name once at the top and the article said it again four
+   lines below — and the actions sat against the window rather than
+   against what they act on. */
+.kb-doc-head-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  /* Wraps rather than squeezing: the remove confirmation swaps the
+     menu for a question and two buttons, which will not share a line
+     with a long title. */
+  flex-wrap: wrap;
+}
+
+/* The title takes whatever room is left over; the actions keep their
+   size. The basis is the title's own width rather than a fraction of
+   the row — at 60% the remove confirmation ("Remove this document?"
+   and two buttons) overshot by two pixels and wrapped onto a line of
+   its own, for a title fifteen characters long. */
+.kb-doc-head-row .kb-doc-title {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow-wrap: break-word;
+}
+
+.kb-doc-head-row .kb-head-actions {
+  flex: 0 0 auto;
+  /* Nudged onto the title's cap-height. Aligning the boxes puts a
+     23px button against a 25px line and reads as half a pixel high. */
+  margin-top: 2px;
+}
+
+.kb-doc-title {
+  margin: 0 0 6px;
+  font-size: 19px;
+  font-weight: 600;
+  line-height: 1.3;
+  text-wrap: balance;
+  color: var(--fg);
+}
+
+.kb-doc-attribution {
+  margin: 0;
+  font-size: 11.5px;
+  color: var(--fg-muted);
+}
+
+/* ── Who is on this document ───────────────────────────────────────
+   A row of faces under the byline, where "who" already lives on this
+   page. Presence is a ring on a face rather than a second row: being
+   shared with somebody and being in the room with them are different
+   facts about the same person, and two rows make the reader match
+   names across them to work that out. */
+
+/* The byline, the faces, and — at the far end — the other ways of
+   looking at this document. "maya@acme.test · v7 · 2h ago", who it is
+   with, and then Compare versions.
+
+   Wraps rather than squeezing, because a long author address, eight
+   faces and two toggles will not share a line on a narrow window and
+   a row of faces cut in half says nothing. */
+.kb-doc-meta {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px 12px;
+}
+
+/* Against the opposite margin. The facts about the document read
+   from the left; these are not more of that sentence, and setting
+   them at the other end says so without needing a rule or a
+   heading. */
+.kb-doc-meta-views {
+  margin-left: auto;
+}
+
+.doc-people {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 0;
+}
+
+.doc-faces {
+  display: flex;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+/* Overlapped, the way a row of faces reads as a group rather than a
+   list. The stacking is reversed so each face laps the one after it —
+   left-to-right, which is the direction they are read in. */
+.doc-faces > li {
+  margin-right: -6px;
+}
+
+.doc-faces > li:last-child {
+  margin-right: 0;
+}
+
+.doc-face {
+  display: flex;
+  width: 24px;
+  height: 24px;
+  align-items: center;
+  justify-content: center;
+  font-size: 9.5px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: var(--fg-muted);
+  background: var(--bg-inset);
+  /* The ring is always drawn, in the page's own background when
+     nobody is here. Adding the ring only on arrival would make every
+     face jump 4px sideways as a colleague opened the document. */
+  border: 2px solid var(--bg);
+  border-radius: 50%;
+  user-select: none;
+}
+
+.doc-face.is-owner {
+  color: var(--fg);
+}
+
+/* Here now. The colour is the one the server gave them, which is also
+   the colour their cursor carries — a face and a caret in the text
+   have to be recognisably one person. */
+.doc-face.is-here {
+  color: var(--fg);
+  background: var(--bg-raised);
+  border-color: var(--face-ring, var(--accent-blue));
+}
+
+/* Typing. A slow pulse rather than a badge: the point is peripheral
+   — "do not be surprised when this moves" — and a badge in a row of
+   faces is read as a notification to be dealt with. */
+.doc-face.is-editing {
+  animation: doc-face-pulse 1.8s ease-in-out infinite;
+}
+
+@keyframes doc-face-pulse {
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 transparent;
+  }
+  50% {
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--face-ring, currentColor) 30%, transparent);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  /* Still distinguishable, still not moving. */
+  .doc-face.is-editing {
+    animation: none;
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--face-ring, currentColor) 30%, transparent);
+  }
+}
+
+.doc-people-note {
+  padding: 0;
+  font: inherit;
+  font-size: 11.5px;
+  color: var(--fg-faint);
+  background: none;
+  border: 0;
+}
+
+/* Underlined only on hover. A dotted or solid rule under it at rest
+   would make a line of metadata look like a link in the middle of a
+   byline, which is a thing to read rather than a thing to press. */
+.doc-people-note.is-pressable {
+  cursor: pointer;
+}
+
+.doc-people-note.is-pressable:hover {
+  color: var(--fg-muted);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.doc-people-manage {
+  padding: 0;
+  font: inherit;
+  font-size: 11.5px;
+  color: var(--accent-blue-text);
+  background: none;
+  border: 0;
+  cursor: pointer;
+}
+
+.kb-doc-origin {
+  margin: 4px 0 0;
+  font-size: 11.5px;
+  color: var(--fg-muted);
+}
+
+.kb-doc-origin code {
+  font-size: 11px;
+}
+
+/* ── Inline citations ─────────────────────────────────────────────
+   Markers live in a layer over the text, not in it. The layer takes
+   no space and catches no clicks; each marker turns pointer events
+   back on for itself. Nothing is spliced into the markdown React
+   rendered — text React owns and something else mutates is a
+   reconciliation bug waiting for a re-render. */
+.doc-cites {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+/* In the margin, aligned to the line the passage ends on — not at
+   the character it ends at. A chunk is cut to a character budget, so
+   a passage routinely ends mid-sentence, and a marker placed exactly
+   there sits on top of the next letter. */
+.doc-cite {
+  position: absolute;
+  left: 100%;
+  margin-left: 8px;
+  min-width: 15px;
+  height: 15px;
+  padding: 0 3px;
+  pointer-events: auto;
+  border: 1px solid hsl(var(--cite-hue) 45% 45% / 0.5);
+  border-radius: 4px;
+  background: hsl(var(--cite-hue) 45% 45% / 0.14);
+  color: hsl(var(--cite-hue) 55% 62%);
+  font-size: 9.5px;
+  line-height: 13px;
+  font-variant-numeric: tabular-nums;
+  font-family: inherit;
+  cursor: pointer;
+}
+
+.doc-cite:hover,
+.doc-cite-open {
+  background: hsl(var(--cite-hue) 45% 45% / 0.28);
+  color: hsl(var(--cite-hue) 60% 72%);
+}
+
+/* Catches the click that dismisses the card. Under the card, over
+   everything else — including the markers, so the next click closes
+   rather than opening a second one. */
+.doc-cite-backdrop {
+  position: fixed;
+  inset: 0;
+  pointer-events: auto;
+  z-index: 40;
+}
+
+.doc-cite-card {
+  position: absolute;
+  right: 0;
+  z-index: 41;
+  width: min(23rem, 100%);
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  padding: 11px 13px;
+  pointer-events: auto;
+  border: 1px solid var(--border-soft);
+  border-left: 3px solid hsl(var(--cite-hue) 45% 45%);
+  border-radius: var(--radius);
+  background: var(--bg-raised);
+  box-shadow: 0 8px 28px rgb(0 0 0 / 0.28);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.doc-cite-head {
+  display: flex;
+  align-items: baseline;
+  gap: 7px;
+}
+
+.doc-cite-number {
+  flex: none;
+  color: hsl(var(--cite-hue) 55% 62%);
+  font-size: 10.5px;
+  font-variant-numeric: tabular-nums;
+}
+
+.doc-cite-source {
+  padding: 0;
+  font: inherit;
+  font-weight: 600;
+  color: var(--accent-blue-text);
+  background: none;
+  border: 0;
+  cursor: pointer;
+}
+
+.doc-cite-source:hover {
+  text-decoration: underline;
+}
+
+.doc-cite-where {
+  margin-left: auto;
+  color: var(--fg-muted);
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.doc-cite-quote {
+  margin: 0;
+  padding-left: 9px;
+  max-height: 10rem;
+  overflow-y: auto;
+  overflow-wrap: break-word;
+  border-left: 2px solid var(--border);
+  color: var(--fg);
+}
+
+/* On every card. These are resemblances between passages, not a
+   record of what the author read. */
+.doc-cite-foot {
+  margin: 0;
+  font-size: 11px;
+  color: var(--fg-muted);
+}
+
+/* No margin to put them in: back inside the column, at the right
+   edge, where a full line may pass under them. The narrow layout is
+   already a compromise. */
+@media (max-width: 64rem) {
+  .doc-cite {
+    left: auto;
+    right: 0;
+    margin-left: 0;
+  }
+}
+
+::highlight(doc-cite-lit) {
+  background: hsl(210 45% 50% / 0.16);
+}
+
+/* The document's own typography — and the editing surface answers
+   to the same rules. Written once and applied to both, so a table
+   looks like a table and a fence looks like a fence while you are
+   typing in them. The alternative was a second copy of all of this
+   that drifts the first time one of them changes. */
+.kb-doc-body, .doc-editor-body .ProseMirror {
+  font-size: 14.5px;
+  line-height: 1.65;
+  color: var(--fg);
+}
+
+.kb-doc-body > :first-child , .doc-editor-body .ProseMirror > :first-child {
+  margin-top: 0;
+}
+
+.kb-doc-body > :last-child , .doc-editor-body .ProseMirror > :last-child {
+  margin-bottom: 0;
+}
+
+/* Headings, code, tables and quotes are shared with the trace view:
+   it shows the same document, so a table that has rules there must
+   have them here. Rendering the markdown but leaving it to browser
+   defaults was the other half of "it does not render" — borderless
+   tables and code with no box read as unrendered even though the
+   parse was right. */
+.kb-doc-body h1, .doc-editor-body .ProseMirror h1,
+.kb-doc-body h2, .doc-editor-body .ProseMirror h2,
+.kb-doc-body h3, .doc-editor-body .ProseMirror h3,
+.kb-doc-body h4, .doc-editor-body .ProseMirror h4,
+.prov-passage h1,
+.prov-passage h2,
+.prov-passage h3,
+.prov-passage h4 {
+  margin: 1.9em 0 0.5em;
+  font-weight: 600;
+  line-height: 1.35;
+  text-wrap: balance;
+  /* Muted, not black. The heading announces the prose; it should not
+     outweigh it. */
+  color: var(--fg-muted);
+}
+
+.kb-doc-body h1, .doc-editor-body .ProseMirror h1,
+.prov-passage h1 { font-size: 1.12em; }
+.kb-doc-body h2, .doc-editor-body .ProseMirror h2,
+.prov-passage h2 { font-size: 1.06em; }
+.kb-doc-body h3, .doc-editor-body .ProseMirror h3,
+.kb-doc-body h4, .doc-editor-body .ProseMirror h4,
+.prov-passage h3,
+.prov-passage h4 { font-size: 1em; }
+
+.kb-doc-body p, .doc-editor-body .ProseMirror p,
+.kb-doc-body ul, .doc-editor-body .ProseMirror ul,
+.kb-doc-body ol , .doc-editor-body .ProseMirror ol {
+  margin: 0 0 1em;
+}
+
+.kb-doc-body li, .doc-editor-body .ProseMirror li,
+.prov-passage li {
+  margin-bottom: 0.3em;
+}
+
+.kb-doc-body pre, .doc-editor-body .ProseMirror pre,
+.prov-passage pre,
+.prov-card-quote pre {
+  margin: 0 0 1.2em;
+  padding: 12px 14px;
+  overflow-x: auto;
+  font-size: 12px;
+  line-height: 1.55;
+  background: var(--bg-inset);
+  border: 1px solid var(--border-soft);
+  border-radius: 6px;
+}
+
+.kb-doc-body :not(pre) > code, .doc-editor-body .ProseMirror :not(pre) > code,
+.prov-passage :not(pre) > code,
+.prov-card-quote :not(pre) > code {
+  padding: 0.1em 0.32em;
+  font-size: 0.87em;
+  background: var(--bg-inset);
+  border-radius: 4px;
+}
+
+.kb-doc-body blockquote, .doc-editor-body .ProseMirror blockquote,
+.prov-passage blockquote {
+  margin: 0 0 1em;
+  padding-left: 0.9em;
+  border-left: 2px solid var(--border);
+  color: var(--fg-muted);
+}
+
+.kb-doc-body table, .doc-editor-body .ProseMirror table,
+.prov-passage table,
+.prov-card-quote table {
+  width: 100%;
+  margin: 0 0 1.2em;
+  border-collapse: collapse;
+  font-size: 0.92em;
+}
+
+.kb-doc-body th, .doc-editor-body .ProseMirror th,
+.kb-doc-body td, .doc-editor-body .ProseMirror td,
+.prov-passage th,
+.prov-passage td,
+.prov-card-quote th,
+.prov-card-quote td {
+  padding: 5px 9px;
+  text-align: left;
+  border-bottom: 1px solid var(--border-soft);
+}
+
+.kb-doc-body th, .doc-editor-body .ProseMirror th,
+.prov-passage th {
+  font-weight: 600;
+  color: var(--fg-muted);
+}
+
+/* ── A captured read, under review ────────────────────────────────
+   The row opens rather than linking away: the decision is about this
+   document, and a reviewer sent to another page to judge it comes
+   back having lost the row they were judging. */
+.kb-row-candidate,
+.kb-row-source {
+  display: block;
+}
+
+/* The agent's pick, named. A highlighted button with no word next to
+   it reads as the default rather than as somebody's suggestion, and a
+   default is a decision nobody made. */
+.kb-cand-proposed {
+  flex: none;
+  font-size: 10.5px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--fg-muted);
+  white-space: nowrap;
+}
+
+.kb-cand-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.kb-cand-toggle {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0;
+  font: inherit;
+  text-align: left;
+  color: inherit;
+  background: none;
+  border: 0;
+  cursor: pointer;
+}
+
+.kb-cand-caret {
+  flex: none;
+  color: var(--fg-muted);
+  transition: transform 120ms ease;
+}
+
+.kb-cand-caret-open {
+  transform: rotate(90deg);
+}
+
+.kb-cand-body {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: 10px;
+  padding: 12px 14px;
+  border-radius: var(--radius);
+  background: var(--bg-inset);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+/* The agent's call, at the top of the panel it opened. Bordered on
+   the left in the colour of the answer, so the shape of the
+   recommendation reads before the sentence does. */
+.kb-cand-verdict {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  margin: 0;
+  padding: 9px 12px;
+  border-left: 3px solid var(--border);
+  border-radius: 0 6px 6px 0;
+  background: var(--bg);
+}
+
+.kb-cand-verdict-source {
+  border-left-color: var(--accent-green-text, var(--fg));
+}
+
+.kb-cand-verdict-not-a-source {
+  border-left-color: var(--fg-muted);
+}
+
+.kb-cand-verdict-unclear {
+  border-left-color: var(--accent-orange-text, var(--fg-muted));
+}
+
+.kb-cand-verdict > span {
+  color: var(--fg-muted);
+}
+
+/* Said every time. An opinion rendered like a result is how a
+   recommendation quietly becomes a decision nobody made. */
+.kb-cand-advisory {
+  font-size: 11px;
+  font-style: italic;
+  opacity: 0.8;
+}
+
+.kb-cand-what,
+.kb-cand-count,
+.kb-cand-none,
+.kb-cand-stakes {
+  margin: 0;
+  color: var(--fg-muted);
+}
+
+/* Said plainly, because it is the answer that decides the row. */
+.kb-cand-none {
+  color: var(--fg);
+}
+
+/* The consequence of the button, beside the button. Confirm switches
+   on a warning that recurs for as long as both documents exist. */
+.kb-cand-stakes {
+  padding-top: 8px;
+  border-top: 1px solid var(--border-soft);
+  font-size: 11.5px;
+}
+
+.kb-cand-overlaps {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.kb-cand-overlaps > li {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 9px 11px;
+  border-radius: 6px;
+  background: var(--bg);
+  border: 1px solid var(--border-soft);
+}
+
+/* Side by side, because the claim is that these two say the same
+   thing and the reader has to be able to see whether they do. */
+.kb-cand-pair {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+
+@media (max-width: 52rem) {
+  .kb-cand-pair {
+    grid-template-columns: 1fr;
+  }
+}
+
+.kb-cand-side {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+
+.kb-cand-where {
+  font-size: 10.5px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--fg-muted);
+}
+
+.kb-cand-text {
+  overflow-wrap: break-word;
+  /* Four lines: enough to judge a resemblance, not so many that six
+     overlaps become a second copy of both documents. */
+  display: -webkit-box;
+  -webkit-line-clamp: 4;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.kb-cand-strength {
+  align-self: flex-start;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  color: var(--fg-muted);
+}
+
+/* The line that stands in for the drift banner on an older version.
+   A hint, not a banner: there is nothing to decide here, only a
+   pointer to the version where the decision lives. */
+.kb-doc-drift-elsewhere {
+  margin: 0 0 24px;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--fg-muted);
+}
+
+.kb-doc-drift-goto {
+  padding: 0;
+  font: inherit;
+  color: var(--accent-blue-text);
+  background: none;
+  border: 0;
+  cursor: pointer;
+}
+
+.kb-doc-drift-goto:hover {
+  text-decoration: underline;
+}
+
+/* The stale banner is the one thing allowed to interrupt the column:
+   it reports that the ground moved under what you are reading. */
+.kb-doc .kb-stale-banner {
+  margin: 0 0 24px;
+}
+
+/* ── Artifact search ───────────────────────────────────────────────
+   One box, two ways to look. Filtering runs per keystroke against the
+   loaded list; searching runs on Enter against the vector index. The
+   UI says which one produced the results on screen, because a person
+   who cannot tell which ran cannot tell why a document is missing. */
+
+/* The same half of the air the article takes, so the list's first row
+   and a document's title sit the same distance down and one
+   ``--dock-top`` can place the hierarchy beside either. */
+/* The bell, beside the account. Square, because it holds a glyph
+   rather than a word — the chips next to it are as wide as their
+   text and this one would read as an empty one. */
+.chip-bell {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0;
+  position: relative;
+  width: 30px;
+  padding: 0;
+}
+
+.chip-bell svg {
+  width: 15px;
+  height: 15px;
+}
+
+/* Lit only when something is actually waiting. A bell that is always
+   coloured is a bell nobody looks at. */
+.chip-bell.has-waiting {
+  color: var(--accent-orange-text);
+}
+
+.chip-bell-count {
+  position: absolute;
+  top: -4px;
+  right: -4px;
+  min-width: 15px;
+  height: 15px;
+  padding: 0 3px;
+  border-radius: 999px;
+  background: var(--ember-gradient);
+  color: #fff;
+  font-size: 9px;
+  font-weight: 700;
+  line-height: 15px;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+
+.afs {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  /* Level with a document's title, by its *text* rather than by its
+     box. The field is a 37px bordered rectangle and a title is 25px
+     of letters; started at the same pixel, the rectangle's edge sits
+     well above the first letter on the other page and the search
+     reads as too high. This is the difference between the two, so
+     what the eye lands on is in the same place either way. */
+  padding-top: calc(var(--doc-air) / 2 + 8px);
+}
+
+.afs-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+/* The collection's own actions, at the end of the bar. Separated
+   from Search by a wider gap than the one holding Search to the
+   field: Search acts on what has been typed, these do not, and
+   evenly spaced they read as four buttons that all might. */
+.afs-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: 10px;
+}
+
+/* The field and the button it belongs to are one control split in
+   two, so they are sized together rather than each from its own
+   scale. Search was a ``btn-sm`` — 24px against the field's 37 — and
+   read as a label that had drifted onto the same line. */
+.afs-input,
+.afs-go {
+  padding: 7px 10px;
+  font: inherit;
+  font-size: 12.5px;
+  line-height: 1.65;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+
+.afs-input {
+  flex: 1;
+  min-width: 0;
+  color: var(--fg);
+  background: var(--bg-inset);
+}
+
+/* Wider than the field's padding: a word is read at its edges, and
+   the same 10px that frames a caret crowds one. */
+.afs-go {
+  flex: none;
+  padding-left: 16px;
+  padding-right: 16px;
+  color: var(--fg);
+  background: var(--bg-surface);
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.afs-go:hover:not(:disabled) {
+  background: var(--bg-raised);
+}
+
+.afs-go:disabled {
+  color: var(--fg-faint);
+  cursor: default;
+}
+
+.afs-input:focus {
+  outline: none;
+  border-color: var(--accent-blue);
+}
+
+.afs-kinds {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+
+.afs-kind {
+  padding: 3px 9px;
+  font-size: 11px;
+  color: var(--fg-muted);
+  background: none;
+  border: 1px solid var(--border-soft);
+  border-radius: 999px;
+  cursor: pointer;
+}
+
+.afs-kind-on {
+  color: var(--fg);
+  border-color: var(--accent-blue);
+}
+
+.afs-mode {
+  display: flex;
+  gap: 10px;
+  align-items: baseline;
+  font-size: 11.5px;
+  color: var(--fg-muted);
+}
+
+.afs-link {
+  margin-left: auto;
+  padding: 0;
+  font: inherit;
+  font-size: 11.5px;
+  color: var(--accent-blue-text);
+  background: none;
+  border: 0;
+  cursor: pointer;
+}
+
+.afs-link:hover {
+  text-decoration: underline;
+}
+
+.afs-results {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+/* A row is a button, not a div with a click handler: keyboard users
+   get it for free, and a result you cannot reach by tab is a result
+   half the people cannot open. */
+.afs-row {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  width: 100%;
+  padding: 9px 10px;
+  text-align: left;
+  font: inherit;
+  color: var(--fg);
+  background: none;
+  border: 0;
+  border-bottom: 1px solid var(--border-soft);
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.afs-row:hover {
+  background: var(--bg-surface);
+}
+
+.afs-row:focus-visible {
+  outline: 2px solid var(--accent-blue);
+  outline-offset: -2px;
+}
+
+.afs-row-head {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+}
+
+.afs-row-name {
+  font-size: 12.5px;
+  font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.afs-row-kind {
+  padding: 1px 6px;
+  font-size: 10px;
+  color: var(--fg-muted);
+  border: 1px solid var(--border-soft);
+  border-radius: 999px;
+}
+
+.afs-row-version {
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  color: var(--fg-muted);
+}
+
+.afs-row-stale {
+  margin-left: auto;
+  font-size: 10.5px;
+  font-weight: 600;
+  color: var(--warning);
+}
+
+.afs-row-snippet {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  font-size: 11.5px;
+  line-height: 1.5;
+  color: var(--fg-muted);
+}
+
+/* ── Inline markdown ─────────────────────────────────────────────────
+   Rendered markdown flattened to one run of text, for previews.
+
+   Every rule here exists to keep the content *inline*: the row that
+   holds it clamps to two lines with ``-webkit-box``, and a single
+   block-level child inside that breaks the clamp — the preview grows
+   to the document's full height and the list stops being a list. */
+
+.mdi {
+  display: inline;
+}
+
+/* React Markdown wraps its output; the wrapper has to disappear too. */
+.mdi > * {
+  display: inline;
+}
+
+/* Blocks become inline runs with a space after, so two paragraphs
+   read as two sentences rather than as one run-on word. */
+.mdi-block {
+  display: inline;
+}
+
+.mdi-block::after {
+  content: " ";
+}
+
+/* A heading keeps its emphasis and loses its size. At preview scale a
+   heading rendered as a heading is just large text in a small row. */
+.mdi-heading {
+  font-weight: 600;
+  color: var(--fg);
+}
+
+.mdi-heading::after {
+  content: " · ";
+  font-weight: 400;
+  color: var(--fg-faint);
+}
+
+/* List items separated rather than laid out: four bullets would be
+   four lines where the row has room for two. */
+.mdi-item {
+  display: inline;
+}
+
+.mdi-item + .mdi-item::before,
+.mdi-cell + .mdi-cell::before {
+  content: " · ";
+  color: var(--fg-faint);
+}
+
+.mdi-cell {
+  display: inline;
+}
+
+/* Code keeps its face, because the point of code in a preview is that
+   it is code — but not its block, which would break the clamp. */
+.mdi-code {
+  display: inline;
+  padding: 0 3px;
+  border-radius: 3px;
+  background: var(--bg-raised);
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 0.92em;
+  white-space: pre-wrap;
+}
+
+.afs-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 22px 14px;
+  border: 1px dashed var(--border);
+  border-radius: 8px;
+}
+
+.afs-empty-title {
+  margin: 0;
+  font-size: 12.5px;
+}
+
+.afs-empty-hint {
+  margin: 0;
+  font-size: 11.5px;
+  color: var(--fg-muted);
+}
+
+/* ── Comment review ──────────────────────────────────────────────────
+   Comments waiting on you, across every document you published.
+
+   Grouped by document because the rows come back cross-document: a
+   flat list of bodies is a list nobody can triage. Within a group the
+   order is oldest-first, so whoever has been waiting longest is at the
+   top of it. */
+
+.comment-review {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+
+.comment-review-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+/* ── The navigation tree ──────────────────────────────────────────
+   Where documents live, as against what they refer to. Indentation
+   comes from a depth the server computed, so what is shown and what
+   was reasoned about are the same ordering. */
+/* The hierarchy belongs to the panel rather than to the list: a
+   reader who opens a document has not stopped needing to know where
+   they are. */
+.kb-shell {
+  min-width: 0;
+}
+
+.kb-shell-body {
+  min-width: 0;
+}
+
+:root {
+  --tree-width: 15.5rem;
+  /* The conversation's width, and a variable for the same reason
+     ``--tree-width`` is: three rules depend on it — the column, the
+     room the page leaves it, and how wide the text between them
+     ends up — and a number typed into each is three numbers that
+     have to be changed together and never are. Set on the element
+     by the handle between them. */
+  --rail-width: calc(24rem + 46px);
+  /* The air above the first line of a panel, and the one number the
+     three columns are placed from. The measure and whatever it holds
+     each take half of it, so changing it here moves the title, the
+     hierarchy and the conversation together — which is the only way
+     they stay level. */
+  --doc-air: 2px;
+}
+
+/* The gutter the hierarchy lives in: against the left edge of the
+   content, out of the flow, and as tall as everything beside it.
+
+   Out of the flow because in a column it pushed the artifact
+   off-centre and the page had to be widened to compensate; docked
+   like this the artifact is centred in the window and the search
+   above it lines up with the artifact rather than with whatever was
+   left over after the tree.
+
+   As tall as the content because that is what lets the tree inside it
+   stay stuck all the way down. ``pointer-events`` are off so the
+   empty part of the dock does not swallow clicks meant for the page
+   underneath; the tree turns them back on for itself. */
+.kb-tree-dock {
+  position: absolute;
+  left: 18px;
+  top: var(--tree-dock-top);
+  bottom: 0;
+  width: var(--tree-width);
+  /* Off, so the empty part of a full-height dock does not swallow
+     clicks meant for the page underneath. The tree turns them back
+     on for itself. */
+  pointer-events: none;
+}
+
+/* The glyph beside a menu item.
+   ``currentColor`` and no fill, so it dims with a disabled label and
+   turns red with a destructive one rather than sitting there at full
+   strength beside greyed-out text. Strokes rounded at the same
+   weight across the set: one filled glyph among stroked ones is the
+   most obvious way to make a menu look assembled from parts. */
+.menu-icon {
+  flex: none;
+  width: 14px;
+  height: 14px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.3;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  /* Quieter than the word it labels. The label says what the item
+     does; the icon is how it is found again. */
+  opacity: 0.72;
+}
+
+/* The items are a flex row already for the chevron's sake; this is
+   what puts a gap between the glyph and the word. */
+.overflow-item,
+.popup-item {
+  gap: 9px;
+}
+
+.overflow-item:hover .menu-icon,
+.overflow-item:focus-visible .menu-icon,
+.popup-item:hover .menu-icon {
+  opacity: 1;
+}
+
+.overflow-item:disabled .menu-icon {
+  opacity: 0.4;
+}
+
+/* What just happened, over the page rather than inside a column.
+   Bottom centre: out of the way of both docked columns and of the
+   document between them, and nowhere near the tree it is usually
+   about — a notice that covers the thing it refers to is a notice
+   you have to move to read past. */
+.tree-notice {
+  position: fixed;
+  left: 50%;
+  bottom: 22px;
+  transform: translateX(-50%);
+  z-index: 60;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  max-width: min(34rem, calc(100vw - 48px));
+  padding: 9px 10px 9px 14px;
+  font-size: 12.5px;
+  line-height: 1.5;
+  border-radius: 8px;
+  border: 1px solid var(--border-soft);
+  background: var(--bg-raised);
+  box-shadow: 0 8px 24px rgb(0 0 0 / 28%);
+}
+
+.tree-notice-refused {
+  border-color: color-mix(in srgb, var(--accent-red-text, #f09393) 45%, transparent);
+}
+
+.tree-notice-text {
+  min-width: 0;
+}
+
+.tree-notice-close {
+  flex: none;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  font-size: 15px;
+  line-height: 1;
+  color: var(--fg-muted);
+  background: none;
+  border: 0;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.tree-notice-close:hover {
+  color: var(--fg);
+  background: var(--bg-inset);
+}
+
+/* The grip on a column's edge.
+   Wider than the line it sits on — a 1px target is a target nobody
+   hits — but invisible until the pointer is on it, so the page is
+   still two rules and a document rather than a window full of
+   furniture. It re-enables pointer events, which the dock turns off
+   for everything that is not the tree. */
+.col-handle {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 11px;
+  z-index: 4;
+  cursor: col-resize;
+  pointer-events: auto;
+  /* Nothing drawn at rest: the rule beside it is the visible edge,
+     and a second line next to it would read as a scrollbar. */
+  background: transparent;
+  border: 0;
+  padding: 0;
+}
+
+.col-handle-left {
+  /* Straddling the rule, which sits 16px right of the tree. */
+  right: -21px;
+}
+
+.col-handle-right {
+  left: -5px;
+}
+
+/* On approach, and while dragging. The line thickens rather than
+   changing colour: it is the same edge, being moved. */
+.col-handle:hover::after,
+.col-handle:focus-visible::after,
+.is-resizing-column .col-handle:active::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 5px;
+  width: 2px;
+  border-radius: 2px;
+  background: var(--accent-blue, #4a7dff);
+}
+
+.col-handle:focus-visible {
+  outline: none;
+}
+
+/* While a column is being dragged, the pointer is often not over the
+   strip any more, and text either side would otherwise select as it
+   sweeps past. */
+.is-resizing-column {
+  cursor: col-resize;
+  user-select: none;
+}
+
+/* The rule between the hierarchy and what you are reading.
+   On the dock rather than on the tree: the tree is only as tall as
+   its rows, and a border that stopped halfway down the window would
+   read as an unfinished box rather than as the edge of a column. It
+   starts at the page head's own border so the two meet. */
+.kb-tree-dock::after {
+  content: "";
+  position: absolute;
+  right: -16px;
+  top: -16px;
+  bottom: 0;
+  width: 1px;
+  background: var(--border-soft);
+}
+
+.kb-tree {
+  pointer-events: auto;
+  width: 100%;
+  /* Tall enough for the tree it holds, never taller than the window.
+     Stretched to the bottom, the top-level drop zone ended up pinned
+     to the foot of the screen with a field of nothing above it, which
+     reads as an unrelated control rather than as the end of the
+     list. */
+  max-height: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+/* Narrower, never elsewhere.
+
+   It used to rejoin the flow above the content below this width, on
+   the grounds that a pinned tree would sit on top of the text. It
+   cannot: the page reserves the left column from ``--tree-width``,
+   so the measure starts where the tree ends however narrow the
+   window is. What the fallback actually did was move the hierarchy
+   somewhere it is not — above a document is not where you look for
+   the list of documents — and make the page's shape depend on how
+   wide the window happened to be.
+
+   So it stays where it is and takes less room. The document gets a
+   shorter measure, which is what a narrow window means. */
+@media (max-width: 78rem) {
+  :root {
+    --tree-width: 11.5rem;
+  }
+}
+
+@media (max-width: 56rem) {
+  :root {
+    --tree-width: 9.5rem;
+  }
+}
+
+/* The rows scroll; the New-folder bar and the top-level drop zone do
+   not, or a deep tree would put both out of reach. */
+.kb-tree-rows {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+/* What can be started from here, above the tree. No filter: the
+   centre column already searches the documents, and a second box
+   over the same names is two places to look for one answer. */
+.kb-tree-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  flex: none;
+}
+
+/* Editing the document in place.
+   The same measure and the same type as the reading view: what you
+   see while typing has to be what the document looks like, or the
+   editor is a different document that happens to save over this one. */
+.doc-editor {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+/* A rendered view inside a document, from a ``json-render`` fence.
+   Framed like the code block it is written as, so the page reads as
+   one document rather than a document with a widget dropped in. */
+.doc-spec {
+  margin: 14px 0;
+  padding: 10px;
+  border: 1px solid var(--border-soft);
+  border-radius: 8px;
+  background: var(--bg-inset);
+  overflow-x: auto;
+}
+
+/* While the renderer is on its way. The source, not a spinner: a
+   spec is readable, and a box that says nothing for a moment reads
+   as a box that failed. */
+.doc-spec-loading {
+  opacity: 0.55;
+}
+
+/* Everything the editor can do, at the top, while editing.
+   Sticky, because a document is longer than a screen and a toolbar
+   you have to scroll back to is a toolbar you stop using. It wraps
+   rather than scrolls: a hidden row of a toolbar is the same as not
+   having those tools. */
+.doc-editor-bar {
+  position: sticky;
+  top: 0;
+  z-index: 3;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 2px;
+  padding: 4px 6px;
+  border: 1px solid var(--border-soft);
+  border-radius: 8px;
+  background: var(--bg-raised);
+}
+
+/* Kept together when the bar wraps. A group split across two lines
+   puts "Heading 3" under the undo arrow, which reads as a different
+   toolbar. */
+.doc-tool-group {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.doc-bar-gap {
+  width: 1px;
+  height: 17px;
+  margin: 0 5px;
+  background: var(--border-soft);
+}
+
+/* A letterform that looks like what it does. The point of showing
+   a B rather than an icon of a B is lost if the B is not bold. */
+.doc-tool-letter {
+  font-size: 13px;
+  line-height: 1;
+}
+
+.doc-tool-letter.is-bold {
+  font-weight: 700;
+}
+
+.doc-tool-letter.is-italic {
+  font-family: Georgia, "Times New Roman", serif;
+  font-style: italic;
+  font-size: 14px;
+}
+
+.doc-tool-letter.is-strike {
+  text-decoration: line-through;
+}
+
+/* The heading levels read as one word, not a letter and a digit. */
+.doc-tool-letter.is-h1,
+.doc-tool-letter.is-h2,
+.doc-tool-letter.is-h3 {
+  font-size: 11.5px;
+  font-weight: 650;
+  letter-spacing: -0.2px;
+}
+
+/* Square, so a row of them is a row rather than a ragged line. */
+.doc-tool {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 26px;
+  height: 26px;
+}
+
+.doc-tool .menu-icon {
+  width: 15px;
+  height: 15px;
+  opacity: 0.85;
+}
+
+.doc-tool.is-on .menu-icon,
+.doc-tool:hover .menu-icon {
+  opacity: 1;
+}
+
+.doc-tool:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
+.doc-tool:disabled:hover {
+  color: var(--fg-muted);
+  background: none;
+}
+
+/* The toolbar, over the selection rather than above the document.
+   A permanent bar costs vertical room in a column already squeezed
+   between two docked panels, and it is furniture for the ninety per
+   cent of editing that is typing rather than formatting. */
+.doc-bubble {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 3px;
+  border: 1px solid var(--border-soft);
+  border-radius: 8px;
+  background: var(--bg-raised);
+  box-shadow: 0 6px 20px rgb(0 0 0 / 32%);
+}
+
+.doc-bubble-gap {
+  width: 1px;
+  height: 17px;
+  margin: 0 5px;
+  background: var(--border-soft);
+}
+
+/* The grip for moving a block. Left of the text, in the gutter, and
+   only on the block under the pointer — a document at rest should
+   look like a document, not a list of handles. */
+.doc-drag-grip {
+  width: 18px;
+  height: 22px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-right: 4px;
+  font-size: 13px;
+  line-height: 1;
+  color: var(--fg-faint);
+  border-radius: 4px;
+  cursor: grab;
+}
+
+.doc-drag-grip:hover {
+  color: var(--fg);
+  background: var(--bg-inset);
+}
+
+.doc-drag-grip:active {
+  cursor: grabbing;
+}
+
+/* The list that opens on ``/``. */
+.slash-menu {
+  position: fixed;
+  z-index: 70;
+  margin: 0;
+  padding: 4px;
+  min-width: 13rem;
+  max-height: 15rem;
+  overflow-y: auto;
+  list-style: none;
+  border: 1px solid var(--border-soft);
+  border-radius: 8px;
+  background: var(--bg-raised);
+  box-shadow: 0 8px 26px rgb(0 0 0 / 34%);
+}
+
+.slash-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  width: 100%;
+  padding: 5px 8px;
+  font: inherit;
+  font-size: 12.5px;
+  color: var(--fg);
+  text-align: left;
+  background: none;
+  border: 0;
+  border-radius: 5px;
+  cursor: pointer;
+}
+
+/* One highlight, driven by the keyboard. Hover does not also
+   highlight: two rows looking chosen while the keyboard means one of
+   them is how Enter inserts the wrong block. */
+.slash-item.is-active {
+  background: var(--bg-inset);
+}
+
+.slash-detail {
+  font-size: 10.5px;
+  color: var(--fg-faint);
+}
+
+.slash-empty {
+  padding: 6px 8px;
+  font-size: 12px;
+  color: var(--fg-muted);
+}
+
+/* ── Choosing who can open a document ──────────────────────────────
+   It was a textarea: addresses typed from memory, separated by
+   commas, and you found out whether you had spelled them right by
+   sharing the document and waiting. The people who could be picked
+   were already known and the control did not say so.
+
+   A list of people and a tick beside each is what an audience
+   actually is. */
+
+.kb-pick {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.kb-pick-search {
+  width: 100%;
+  padding: 6px 9px;
+  font: inherit;
+  font-size: 12.5px;
+  color: var(--fg);
+  background: var(--bg-inset);
+  border: 1px solid var(--border-soft);
+  border-radius: 6px;
+}
+
+/* Scrollable, with a height that shows about four people. Enough to
+   read as a list rather than a dropdown, short enough that the
+   popover it sits in stays a popover. */
+.kb-pick-list {
+  max-height: 11.5rem;
+  margin: 0;
+  padding: 0;
+  overflow-y: auto;
+  list-style: none;
+  border: 1px solid var(--border-soft);
+  border-radius: 6px;
+}
+
+.kb-pick-row {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 8px;
+  font: inherit;
+  text-align: left;
+  color: var(--fg);
+  background: none;
+  border: 0;
+  cursor: pointer;
+}
+
+.kb-pick-row:hover {
+  background: var(--bg-inset);
+}
+
+.kb-pick-face {
+  display: flex;
+  width: 22px;
+  height: 22px;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  font-size: 9px;
+  font-weight: 600;
+  color: var(--fg-muted);
+  background: var(--bg-inset);
+  border-radius: 50%;
+}
+
+.kb-pick-row:hover .kb-pick-face {
+  background: var(--bg-raised);
+}
+
+.kb-pick-who {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.kb-pick-name {
+  overflow: hidden;
+  font-size: 12.5px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.kb-pick-email {
+  overflow: hidden;
+  font-size: 10.5px;
+  color: var(--fg-faint);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Drawn only when the answer is yes. An empty box beside everybody
+   else would make the ordinary state the loud one. */
+.kb-pick-tick {
+  display: flex;
+  flex: none;
+  color: var(--accent-green-text, var(--fg));
+}
+
+.kb-pick-tick svg {
+  width: 15px;
+  height: 15px;
+}
+
+.kb-pick-row.is-on .kb-pick-name {
+  color: var(--fg);
+}
+
+.kb-pick-new .kb-pick-face {
+  font-size: 13px;
+}
+
+.kb-pick-empty {
+  padding: 10px 9px;
+  font-size: 11.5px;
+  line-height: 1.5;
+  color: var(--fg-muted);
+}
+
+.kb-pick-count {
+  margin: 0;
+  font-size: 11px;
+  color: var(--fg-faint);
+}
+
+/* ── Naming somebody in a comment ──────────────────────────────────
+   Built from the slash menu's box so the two popups in this panel are
+   recognisably the same object. What differs is the row: a person is
+   two lines, because a name alone is ambiguous in any company with
+   two Sams and an address alone is a string nobody reads as a person. */
+
+.mention-menu {
+  position: fixed;
+  z-index: 70;
+  margin: 0;
+  padding: 4px;
+  min-width: 15rem;
+  max-width: 22rem;
+  max-height: 14rem;
+  overflow-y: auto;
+  list-style: none;
+  border: 1px solid var(--border-soft);
+  border-radius: 8px;
+  background: var(--bg-raised);
+  box-shadow: 0 8px 26px rgb(0 0 0 / 34%);
+}
+
+.mention-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  width: 100%;
+  padding: 5px 8px;
+  font: inherit;
+  color: var(--fg);
+  text-align: left;
+  background: none;
+  border: 0;
+  border-radius: 5px;
+  cursor: pointer;
+}
+
+.mention-item.is-active {
+  background: var(--bg-inset);
+}
+
+.mention-who {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.mention-line {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.mention-name {
+  font-size: 12.5px;
+}
+
+/* The padlock sits on the name's line, at the name's size. */
+.mention-line svg {
+  width: 11px;
+  height: 11px;
+  color: var(--fg-muted);
+}
+
+/* igni reads differently from a colleague, because addressing it is
+   what turns a note into an instruction. The same orange the reply
+   picker already gives it, so it is recognisably the same name in
+   both places. */
+.mention-name.is-agent {
+  font-weight: 600;
+  color: var(--accent-orange-text, var(--fg));
+}
+
+.mention-email {
+  overflow: hidden;
+  font-size: 10.5px;
+  color: var(--fg-faint);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* The one thing in the row that is not the person's name, so it gets
+   the only colour. Muted rather than red: being outside an audience
+   is a state of the document, not a fault of theirs. */
+.mention-locked {
+  flex: none;
+  font-size: 10.5px;
+  color: var(--fg-muted);
+}
+
+.mention-empty {
+  padding: 6px 8px;
+  font-size: 12px;
+  color: var(--fg-muted);
+}
+
+/* Between the box and the buttons: it is about what is in the box and
+   has to be read before Comment is pressed. */
+.doc-mention-access {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 6px 0 0;
+}
+
+.doc-mention-locked {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+  font-size: 11.5px;
+  line-height: 1.45;
+  color: var(--fg-muted);
+}
+
+.doc-mention-locked svg {
+  flex: none;
+  width: 12px;
+  height: 12px;
+}
+
+.doc-mention-said {
+  min-width: 0;
+}
+
+.doc-mention-grant {
+  flex: none;
+  padding: 0;
+  font: inherit;
+  font-size: 11.5px;
+  color: var(--accent-blue-text);
+  background: none;
+  border: 0;
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.doc-mention-grant:disabled {
+  color: var(--fg-faint);
+  cursor: default;
+  text-decoration: none;
+}
+
+/* The padlock beside a name in the mention menu, which is a control
+   when there is something to press and a state when there is not. */
+.mention-lock {
+  display: inline-flex;
+  padding: 2px;
+  color: var(--fg-muted);
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.mention-lock:hover {
+  color: var(--fg);
+  background: var(--bg-raised);
+}
+
+/* Already asked. Still drawn — the state it reports has not changed
+   — but not offered, because a control that looks pressable and does
+   nothing is worse than one that does not. */
+.mention-lock.is-asked,
+.mention-lock.is-busy {
+  cursor: default;
+  opacity: 0.6;
+}
+
+.mention-lock.is-asked:hover,
+.mention-lock.is-busy:hover {
+  color: var(--fg-muted);
+  background: none;
+}
+
+/* ── A document you cannot open ────────────────────────────────────
+   Not an error page. Nothing has gone wrong; something has to be
+   asked for, and the page is the asking. */
+
+.doc-locked-body {
+  margin-top: 20px;
+  padding: 20px;
+  background: var(--bg-inset);
+  border: 1px solid var(--border-soft);
+  border-radius: 10px;
+}
+
+.doc-locked-said {
+  margin: 0 0 14px;
+  font-size: 13px;
+  color: var(--fg);
+}
+
+.doc-locked-waiting {
+  margin: 0;
+  font-size: 12px;
+  color: var(--fg-muted);
+}
+
+.doc-locked-ask {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.doc-locked-label {
+  font-size: 11.5px;
+  color: var(--fg-faint);
+}
+
+.doc-locked-actions {
+  display: flex;
+  margin-top: 2px;
+}
+
+/* The padlock on the byline, at the byline's size. */
+.kb-doc-locked .kb-doc-attribution {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.kb-doc-locked .kb-doc-attribution svg {
+  width: 12px;
+  height: 12px;
+}
+
+.doc-mention-error {
+  margin: 0;
+  font-size: 11.5px;
+  color: var(--danger-text);
+}
+
+.doc-tool {
+  min-width: 26px;
+  height: 24px;
+  padding: 0 6px;
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--fg-muted);
+  background: none;
+  border: 0;
+  border-radius: 5px;
+  cursor: pointer;
+}
+
+.doc-tool:hover {
+  color: var(--fg);
+  background: var(--bg-raised);
+}
+
+.doc-tool.is-on {
+  color: var(--accent-blue-text, #8eb9f9);
+  background: color-mix(in srgb, var(--accent-blue, #4a7dff) 16%, transparent);
+}
+
+/* The editing surface. Borderless: a box around the text would make
+   this look like a form field rather than the document it is. */
+/* No focus ring on the document itself: the caret says where you
+   are, and a box round the whole page says "form field". */
+.doc-editor-body .ProseMirror {
+  outline: none;
+  min-height: 12rem;
+  /* Room for a caret label on the first line. It is drawn above the
+     text it points at, and without this the one place somebody is
+     most likely to be typing — the top — put their name behind the
+     toolbar. */
+  padding-top: 14px;
+}
+
+.doc-editor-error {
+  margin: 0;
+}
+
+.doc-editor-foot {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding-top: 4px;
+  border-top: 1px solid var(--border-soft);
+}
+
+/* The word an icon stands for, on hover and on focus.
+   ``display: contents`` — the wrapper must not become a box in a
+   flex row, or every toolbar it is used in silently gains a layer of
+   spacing nobody designed. */
+.tip-anchor {
+  display: contents;
+}
+
+.tip {
+  position: fixed;
+  z-index: 80;
+  max-width: 17rem;
+  padding: 5px 8px;
+  font-size: 11.5px;
+  line-height: 1.45;
+  color: var(--fg);
+  background: var(--bg-raised);
+  border: 1px solid var(--border-soft);
+  border-radius: 6px;
+  box-shadow: 0 6px 18px rgb(0 0 0 / 30%);
+  /* It explains the thing under the pointer; it must never be the
+     thing under the pointer. */
+  pointer-events: none;
+}
+
+/* The verbs a file tree has, as glyphs. Sized like a control rather
+   than like text: they sit in a row above the tree and the row has
+   to read as a toolbar, not as three words somebody left there. */
+.kb-tree-act {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  color: var(--fg-muted);
+  background: none;
+  border: 0;
+  border-radius: 5px;
+  cursor: pointer;
+}
+
+.kb-tree-act:hover {
+  color: var(--fg);
+  background: var(--bg-inset);
+}
+
+/* Pressed, and saying so in the colour as well as in aria-pressed —
+   "archived are showing" is a state somebody needs to see at a
+   glance, because it explains why the tree is longer than they left
+   it. */
+.kb-tree-act.is-on {
+  color: var(--accent-blue-text, #8eb9f9);
+  background: color-mix(in srgb, var(--accent-blue, #4a7dff) 14%, transparent);
+}
+
+.kb-tree-act .menu-icon {
+  width: 15px;
+  height: 15px;
+  opacity: 1;
+}
+
+/* Pushes the archive toggle to the far end: making and hiding are
+   different kinds of act, and a row of three identical buttons
+   invites pressing the third by accident. */
+.kb-tree-bar-gap {
+  flex: 1;
+  min-width: 8px;
+}
+
+/* The bar stands as tall as the document's title line, so the two
+   centre on each other. Icons have no baseline to share — what the
+   eye compares across a row of a glyph and a heading is the middle
+   of each, and equal top edges put a 20px toolbar two pixels above
+   the centre of a 25px line. The text buttons this replaced were
+   nudged onto the title's *baseline*, which was the right answer for
+   text and is the wrong one now. */
+.kb-tree-bar {
+  min-height: 25px;
+}
+
+.kb-tree-note {
+  margin: 0;
+}
+
+/* No box and no rules between rows. Confluence's page tree is a list
+   of text, and the indentation carries the structure on its own —
+   a border per row turns a hierarchy into a table, where every entry
+   reads as a record rather than as a place. */
+.kb-tree-rows {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.kb-tree-row {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  /* The indent is the structure, and it has to be big enough to read
+     at a glance — 22px, near Confluence's own. */
+  padding: 4px 6px 4px calc(6px + var(--tree-depth, 0) * 20px);
+  font-size: 12.5px;
+  line-height: 1.6;
+  border-radius: 5px;
+}
+
+.kb-tree-row:hover {
+  background: var(--bg-inset);
+}
+
+/* The current page is filled, not merely coloured. At a glance the
+   fill is what finds it; the colour alone was too quiet in a long
+   tree. The drop target stays distinguishable because it is outlined
+   rather than filled. */
+.kb-tree-row.is-current {
+  background: var(--accent-blue-soft, hsl(210 80% 55% / 0.12));
+}
+
+.kb-tree-row.is-current > .kb-tree-name,
+.kb-tree-row.is-current > .kb-tree-icon,
+.kb-tree-row.is-current > .kb-tree-twist {
+  color: var(--accent-blue-text);
+  font-weight: 600;
+}
+
+.kb-tree-row.is-dragging {
+  opacity: 0.45;
+}
+
+/* The destination, drawn on the row itself rather than as a line
+   between rows: this drop means "inside", and a line would say
+   "between". */
+.kb-tree-row.is-target,
+.kb-tree-root.is-target {
+  background: hsl(210 45% 50% / 0.16);
+  outline: 1px solid var(--accent-blue);
+  outline-offset: -1px;
+}
+
+/* A parent that is missing or cannot be opened. It holds a place;
+   there is nothing behind it. */
+.kb-tree-row.is-placeholder .kb-tree-name {
+  color: var(--fg-muted);
+  font-style: italic;
+  cursor: default;
+}
+
+/* Present only where there is something to open, and reserving its
+   width regardless so the titles of siblings line up. */
+.kb-tree-twist {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 20px;
+  padding: 0;
+  color: var(--fg-muted);
+  background: none;
+  border: 0;
+  cursor: pointer;
+}
+
+.kb-tree-twist:disabled {
+  cursor: default;
+}
+
+/* Both kinds are marked. The difference decides what a drop does, and
+   an outline is quicker to tell apart at a glance than a word. */
+.kb-tree-icon {
+  flex: none;
+  display: flex;
+  align-items: center;
+  color: var(--fg-muted);
+}
+
+.kb-tree-glyph {
+  display: block;
+}
+
+/* Where a chevron would be, on a row with nothing under it. Empty
+   space says nothing; a dot says "nothing below here". */
+.kb-tree-leaf {
+  display: block;
+  width: 3px;
+  height: 3px;
+  margin: 0 auto;
+  border-radius: 50%;
+  background: var(--fg-muted);
+  opacity: 0.55;
+}
+
+/* One line, truncated. A wrapped title costs two rows of vertical
+   space in the one place where seeing many entries at once is the
+   whole point, and the full name is on the row's tooltip. */
+.kb-tree-name {
+  flex: 1;
+  min-width: 0;
+  padding: 0;
+  font: inherit;
+  text-align: left;
+  color: var(--fg);
+  background: none;
+  border: 0;
+  cursor: pointer;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.kb-tree-row.is-folder .kb-tree-name {
+  font-weight: 600;
+}
+
+.kb-tree-rename {
+  flex: 1;
+  min-width: 0;
+  padding: 1px 5px;
+  font: inherit;
+  color: var(--fg);
+  background: var(--bg);
+  border: 1px solid var(--accent-blue);
+  border-radius: 4px;
+}
+
+/* The version number is gone from the tree. It is metadata about a
+   document, not a way of telling one document from another, and a
+   column of "v3 v6 v2" beside the titles is what made this read as a
+   table. "Out of date" stays: it is the one thing that changes what
+   somebody does next. */
+.kb-tree-stale {
+  flex: none;
+  align-self: center;
+  font-size: 10px;
+  color: var(--accent-orange-text, var(--fg-muted));
+  white-space: nowrap;
+}
+
+/* Create and manage, on the row they act on.
+   Hidden until the row is pointed at: two controls on every row of a
+   long tree is more furniture than tree. They still take their space
+   when hidden, so titles do not shift sideways under the pointer —
+   which is what makes a moving target of the thing you are reaching
+   for. */
+.kb-tree-actions {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 1px;
+  margin-left: auto;
+  visibility: hidden;
+}
+
+.kb-tree-row:hover .kb-tree-actions,
+.kb-tree-actions:focus-within {
+  visibility: visible;
+}
+
+/* An open menu keeps its button visible after the pointer has left
+   the row, or the menu appears to belong to nothing. */
+.kb-tree-actions:has(.is-open) {
+  visibility: visible;
+}
+
+.kb-tree-act {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  font: inherit;
+  font-size: 13px;
+  line-height: 1;
+  color: var(--fg-muted);
+  background: none;
+  border: 0;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.kb-tree-act:hover,
+.kb-tree-act.is-open {
+  color: var(--fg);
+  background: var(--bg-raised, var(--bg));
+}
+
+/* Against the viewport, not the row.
+   The rows scroll, and anything positioned inside a scrolling box is
+   clipped by it — the first version came out with its right edge and
+   its shadow sheared off along the scroller's boundary. The anchor is
+   the button's rect, read when it was pressed. */
+.kb-tree-menu {
+  position: fixed;
+  z-index: 40;
+  min-width: 168px;
+  margin: 0;
+  padding: 4px;
+  list-style: none;
+  background: var(--bg-raised, var(--bg));
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius);
+  box-shadow: 0 8px 24px hsl(0 0% 0% / 0.22);
+}
+
+/* Catches the click that closes the menu. Behind the menu and in
+   front of everything else, so the next click anywhere dismisses it
+   instead of also hitting whatever is underneath. */
+.kb-tree-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 39;
+}
+
+/* A rule above the row that ends a document rather than arranging
+   it. Archive and Delete are a different kind of act from Open and
+   Move, and the gap is what stops a hurried pointer landing on one
+   while reaching for the other. */
+.kb-tree-menu-sep {
+  margin-top: 4px;
+  padding-top: 4px;
+  border-top: 1px solid var(--border-soft);
+}
+
+.kb-tree-menu .overflow-item.is-destructive {
+  color: var(--accent-red-text, var(--fg));
+}
+
+/* Kept, and plainly not current. Dimmed rather than struck through:
+   the text is still there to be read, it is just no longer part of
+   what is being worked on. */
+.kb-tree-row.is-archived .kb-tree-name,
+.kb-tree-row.is-archived .kb-tree-icon {
+  opacity: 0.5;
+}
+
+.kb-tree-badge {
+  flex: none;
+  align-self: center;
+  font-size: 10px;
+  color: var(--fg-muted);
+  white-space: nowrap;
+}
+
+/* Outdented by its own padding for the same reason the crumbs are:
+   what the eye lines up is the word "Show", not the invisible box
+   around it. Puts it on 18 with the crumb above it and the New
+   document button's border beside it. */
+.kb-tree-archived {
+  padding: 2px 6px;
+  margin-left: -6px;
+  font: inherit;
+  font-size: 11px;
+  color: var(--fg-muted);
+  background: none;
+  border: 0;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.kb-tree-archived:hover,
+.kb-tree-archived.is-on {
+  color: var(--fg);
+  background: var(--bg-inset);
+}
+
+/* Why a delete did not happen, and what to do instead. Placed above
+   the tree rather than in a dialog: the documents it names are rows
+   in that tree, and the reader's next move is to go and look at one. */
+.kb-tree-blocked {
+  flex: none;
+  padding: 8px 10px;
+  font-size: 12px;
+  background: var(--bg-inset);
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius);
+}
+
+.kb-tree-blocked p {
+  margin: 0 0 6px;
+}
+
+.kb-tree-blocked ul {
+  margin: 0 0 6px;
+  padding-left: 16px;
+}
+
+/* Frozen, said on the document itself.
+   Quiet rather than alarming: nothing is wrong, and an archived
+   document is a normal thing to be reading. What it has to do is stop
+   a reader from planning an edit. */
+.kb-doc-frozen {
+  margin: 0 0 20px;
+  padding: 10px 14px;
+  font-size: 13px;
+  color: var(--fg-muted);
+  background: var(--bg-inset);
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius);
+}
+
+.kb-doc-frozen strong {
+  color: var(--fg);
+}
+
+/* And again beside the thread, because the thread is where somebody
+   would otherwise ask igni to change something. */
+.doc-rail-frozen {
+  flex: none;
+  margin: 0 0 8px;
+  font-size: 11.5px;
+  line-height: 1.5;
+  color: var(--fg-muted);
+}
+
+/* Which way each link runs. "Related" leaves the reader guessing
+   whether to go and edit that document or this one. */
+.kb-tree-blocked-way {
+  color: var(--fg-muted);
+}
+
+/* The named document reads as somewhere to go, not as a control.
+   The reader's next move is to open it and look. */
+.kb-tree-blocked-link {
+  padding: 0;
+  font: inherit;
+  color: var(--accent-blue-text);
+  background: none;
+  border: 0;
+  cursor: pointer;
+  text-align: left;
+}
+
+.kb-tree-blocked-link:hover {
+  text-decoration: underline;
+}
+
+.kb-tree-blocked-do {
+  display: flex;
+  gap: 6px;
+}
+
+/* The way back to the top level. Without it, a document dragged into
+   a folder could only ever be moved to another folder. */
+.kb-tree-root {
+  padding: 7px 10px;
+  border: 1px dashed var(--border-soft);
+  border-radius: var(--radius);
+  color: var(--fg-muted);
+  font-size: 11.5px;
+  text-align: center;
+}
+
+/* ── Replying ─────────────────────────────────────────────────────
+   Above the verdict buttons, because answering is the ordinary case
+   and closing is the exception. */
+.comment-reply {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 10px 0 12px;
+}
+
+.comment-reply-field {
+  position: relative;
+}
+
+.comment-reply-input {
+  width: 100%;
+  padding: 7px 9px;
+  font: inherit;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--fg);
+  background: var(--bg-inset);
+  border: 1px solid var(--border-soft);
+  border-radius: 6px;
+  resize: vertical;
+}
+
+.comment-reply-input:focus {
+  outline: none;
+  border-color: var(--accent-blue);
+}
+
+/* Over the text, not pushing it down: a picker that reflowed the card
+   would move the buttons under the pointer mid-type. */
+.comment-reply-picker {
+  position: absolute;
+  z-index: 30;
+  top: calc(100% + 4px);
+  left: 0;
+  min-width: 14rem;
+  max-width: 100%;
+  margin: 0;
+  padding: 4px;
+  list-style: none;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg-raised);
+  box-shadow: 0 8px 24px rgb(0 0 0 / 0.26);
+}
+
+.comment-reply-pick {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  width: 100%;
+  padding: 5px 7px;
+  font: inherit;
+  font-size: 12px;
+  text-align: left;
+  color: var(--fg);
+  background: none;
+  border: 0;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.comment-reply-pick:hover {
+  background: var(--bg-inset);
+}
+
+/* The agent reads differently from a colleague, because addressing it
+   is what turns a note into an instruction. */
+.comment-reply-pick.is-agent .comment-reply-handle {
+  color: var(--accent-orange-text, var(--fg));
+}
+
+.comment-reply-handle {
+  font-weight: 600;
+}
+
+.comment-reply-who {
+  margin-left: auto;
+  color: var(--fg-muted);
+  font-size: 11px;
+}
+
+.comment-reply-foot {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.comment-reply-hint,
+.comment-reply-note {
+  margin: 0;
+  font-size: 11px;
+  color: var(--fg-muted);
+}
+
+/* ── The document a comment is about ──────────────────────────────
+   Opened by hovering a row in the queue, beside it rather than over
+   it: the point is to read the passage *and* the comment, and a
+   panel covering the comment trades one missing half for the other. */
+.comment-peek {
+  position: fixed;
+  z-index: 60;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-raised);
+  box-shadow: 0 12px 36px rgb(0 0 0 / 0.32);
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+.comment-peek-head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  flex: none;
+}
+
+.comment-peek-name {
+  font-size: 12.5px;
+}
+
+.comment-peek-where {
+  margin-left: auto;
+  color: var(--fg-muted);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+.comment-peek-note {
+  flex: none;
+  margin: 0;
+}
+
+/* Said in the panel's own voice, because every row in the queue
+   already says "the document has moved on since" and that sentence
+   cannot tell a passage that survived from one that is gone. */
+.comment-peek-gone {
+  padding: 6px 9px;
+  border-left: 3px solid var(--accent-orange-text, var(--fg-muted));
+  border-radius: 0 5px 5px 0;
+  background: var(--bg-inset);
+  color: var(--fg);
+  font-size: 11.5px;
+}
+
+.comment-peek-body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding-right: 4px;
+}
+
+.comment-peek-body :is(h1, h2, h3, h4) {
+  margin: 1em 0 0.4em;
+  font-size: 1em;
+  font-weight: 600;
+}
+
+.comment-peek-body > :first-child {
+  margin-top: 0;
+}
+
+.comment-peek-body p,
+.comment-peek-body ul,
+.comment-peek-body ol,
+.comment-peek-body pre,
+.comment-peek-body table,
+.comment-peek-body blockquote {
+  margin: 0 0 0.8em;
+}
+
+/* The passage the comment is about, lit where it sits. */
+::highlight(comment-peek) {
+  background: hsl(38 70% 50% / 0.26);
+}
+
+/* The row being previewed, so the panel and its comment read as a
+   pair rather than as two things that happen to be on screen. */
+.comment-review-item:hover {
+  border-color: var(--border);
+}
+
+.comment-review-doc {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.comment-review-doc-name {
+  margin: 0;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--fg-muted);
+}
+
+.comment-review-link {
+  padding: 0;
+  border: 0;
+  background: none;
+  font: inherit;
+  letter-spacing: inherit;
+  text-transform: inherit;
+  color: var(--accent-blue-text);
+  cursor: pointer;
+}
+
+.comment-review-item {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px;
+  border: 1px solid var(--border-soft);
+  border-radius: 6px;
+  background: var(--bg-surface);
+}
+
+/* The passage being talked about. The rule down the left is what
+   says "not my words" before anything is read. */
+.comment-review-quote {
+  margin: 0;
+  padding: 6px 10px;
+  border-left: 3px solid var(--accent-blue);
+  background: var(--bg-inset);
+  font-size: 12px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  overflow-wrap: break-word;
+  /* A quoted chapter must not push the buttons off the panel. */
+  max-height: 9rem;
+  overflow-y: auto;
+}
+
+.comment-review-body {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.55;
+  overflow-wrap: break-word;
+}
+
+.comment-review-meta {
+  margin: 0;
+  font-size: 11px;
+  color: var(--fg-muted);
+}
+
+.comment-review-warn {
+  color: var(--accent-orange-text);
+}
+
+/* Editable before accepting: the suggestion is a proposal, and the
+   owner deciding it is nearly right is the common case. What lands in
+   the version is whatever is in this box. */
+.comment-review-suggestion {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 8px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--bg-inset);
+  color: var(--fg);
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 12px;
+  line-height: 1.5;
+  resize: vertical;
+}
+
+.comment-review-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+/* ── Overflow menu ───────────────────────────────────────────────────
+   A row of secondary actions behind one button. Opens downward and
+   aligns to its right edge, because it hangs off the end of a header
+   row — aligning left would push it out past the window. */
+
+.overflow-menu {
+  position: relative;
+  display: inline-flex;
+}
+
+/* Catches the click that dismisses the menu. Fixed rather than
+   absolute so it covers the window and not just the header. Below the
+   list, above everything else. */
+.overflow-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 39;
+}
+
+.overflow-list {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  z-index: 40;
+  min-width: 180px;
+  display: flex;
+  flex-direction: column;
+  padding: 5px;
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-pop);
+  animation: menu-pop 0.14s cubic-bezier(0.2, 0.9, 0.3, 1.1);
+  transform-origin: top right;
+}
+
+/* A ``button`` wearing ``.popup-item``, which was written for divs:
+   these three undo what the user agent gives buttons and nothing
+   else, so the items match every other menu in the app. */
+.overflow-item {
+  appearance: none;
+  border: 0;
+  background: none;
+  width: 100%;
+  text-align: left;
+  font: inherit;
+  font-size: 13.5px;
+  color: var(--fg);
+  white-space: nowrap;
+}
+
+.overflow-item:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.overflow-item:disabled:hover {
+  background: none;
+}
+
+/* Focus is how this menu is operated from the keyboard, so it is
+   drawn, not left to the browser's default outline on a transparent
+   button. */
+.overflow-item:focus-visible {
+  outline: 2px solid var(--accent-blue, var(--border));
+  outline-offset: -2px;
+}
+
+/* The toggle that is currently on. ``.popup-item.active`` already
+   tints the row; the tick is what says *which* state without relying
+   on the tint being noticed. */
+.overflow-item.active::after {
+  content: "✓";
+  margin-left: auto;
+  padding-left: 12px;
+  color: var(--fg-muted);
+}
+
+.overflow-item-danger {
+  color: var(--danger-text, var(--accent-red-text));
+}
+
+.overflow-sep {
+  height: 1px;
+  margin: 4px 6px;
+  background: var(--border-soft);
+}
+
+/* A submenu inside the overflow menu. Three export formats behind one
+   Export item, so the menu stays a list of things you can do rather
+   than a list of every combination of them. */
+.overflow-sub-wrap {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+}
+
+/* The chevron sits at the far edge, away from the label, so the row
+   reads as "Export … onwards" rather than as a two-word label. */
+.overflow-item-parent .overflow-chevron {
+  margin-left: auto;
+  padding-left: 12px;
+  color: var(--fg-faint);
+}
+
+/* Opens leftward. The parent list is already pinned to the right edge
+   of whatever it hangs off, so a submenu flying out to the right —
+   the desktop default — would open past the window. */
+.overflow-sub {
+  top: -5px;
+  right: calc(100% + 4px);
+  left: auto;
+  transform-origin: top right;
+}
+
+/* Keep the parent row lit while its submenu is open: without it the
+   submenu looks unattached to anything. */
+.overflow-sub-wrap:hover > .overflow-item-parent,
+.overflow-item-parent[aria-expanded='true'] {
+  background: var(--bg-raised);
+}
+
+/* ── Where a passage came from ───────────────────────────────────────
+   An aligned sidebar: the document on the left, the source each
+   passage draws on in a column to its right, on the same grid row.
+
+   Not a taste call. Compared against a footer list and a hover card
+   showing the same citations, the aligned sidebar was the only one
+   that was both noticed and used — a footer is visible but nobody
+   goes to it, a hover card is reachable but nobody knows it is there
+   (arXiv 2512.12207). One CSS grid row per passage gets the vertical
+   alignment for free, whatever the two sides' heights. */
+
+.prov {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+
+/* ── Legend ────────────────────────────────────────────────────── */
+
+.prov-legend {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding-bottom: 14px;
+  border-bottom: 1px solid var(--border-soft);
+}
+
+.prov-legend-sources {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.prov-legend-empty {
+  color: var(--fg-muted);
+  font-size: 12.5px;
+}
+
+/* A source, with how much of the document it accounts for. Naming
+   the sources without the counts leaves "which one carries this
+   document" unanswered, which is usually the first question. */
+.prov-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 4px 10px 4px 8px;
+  border: 1px solid var(--border-soft);
+  border-radius: 999px;
+  background: var(--bg-surface);
+  font-size: 11.5px;
+}
+
+.prov-chip-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: hsl(var(--prov-hue, 210) 58% 52%);
+}
+
+.prov-chip-name {
+  font-weight: 600;
+  color: var(--fg);
+}
+
+.prov-chip-count {
+  color: var(--fg-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.prov-chip-affected {
+  padding-left: 7px;
+  border-left: 1px solid var(--border-soft);
+  color: var(--warning);
+  font-weight: 600;
+}
+
+.prov-caveat {
+  margin: 0;
+  color: var(--fg-faint);
+  font-size: 11.5px;
+}
+
+.prov-pending {
+  margin: 0;
+  color: var(--fg-muted);
+  font-size: 11.5px;
+}
+
+/* ── The aligned grid ──────────────────────────────────────────── */
+
+.prov-grid {
+  display: grid;
+  /* One column for the text, one for its sources. The row is the
+     unit: a passage and its card share it and therefore line up,
+     whichever of the two is taller. */
+  grid-template-columns: minmax(0, 1fr) minmax(16rem, 22rem);
+  column-gap: 28px;
+  align-items: start;
+}
+
+/* ``display: contents`` so each row's two children become direct
+   grid items of ``.prov-grid`` — that is what makes them share a row.
+   A wrapper with its own layout would put both in one cell and the
+   alignment would be gone. */
+.prov-row {
+  display: contents;
+}
+
+.prov-passage {
+  position: relative;
+  padding: 10px 14px 10px 12px;
+  border-left: 3px solid transparent;
+  border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+  font-size: 13.5px;
+  line-height: 1.65;
+  transition: background 0.12s, border-color 0.12s;
+}
+
+.prov-traced > .prov-passage {
+  border-left-color: hsl(var(--prov-hue, 210) 58% 52% / 0.5);
+}
+
+/* Hovering either half lights both, so the line between a passage and
+   its source never has to be drawn. */
+.prov-lit > .prov-passage {
+  background: hsl(var(--prov-hue, 210) 58% 52% / 0.07);
+  border-left-color: hsl(var(--prov-hue, 210) 58% 48%);
+}
+
+.prov-untraced > .prov-passage {
+  color: var(--fg-muted);
+}
+
+/* Amber carries "the source moved", but never alone — the card says
+   "changed since pinned" in words, because roughly one reader in
+   twelve cannot separate this hue from the traced one, and which
+   passages went stale is the whole question. */
+.prov-affected > .prov-passage {
+  border-left-color: var(--warning);
+}
+
+.prov-affected.prov-lit > .prov-passage {
+  background: color-mix(in srgb, var(--warning) 9%, transparent);
+}
+
+/* The citation number, the way every reader already expects to meet
+   one: superscript, at the end of the claim.
+ 
+   The marker is a sibling of the rendered markdown, not inside it, so
+   it starts life on a line of its own. Making the block it follows
+   inline pulls it up to the end of the last sentence — done in CSS
+   rather than by injecting HTML into the document's own text, which
+   would mean turning on raw-HTML rendering for every document to
+   place a number. Only paragraphs: after a list or a table the marker
+   belongs on its own line anyway. */
+.prov-passage > p:has(+ .prov-marker) {
+  display: inline;
+}
+
+.prov-marker {
+  margin-left: 4px;
+  padding: 0 5px;
+  border-radius: 999px;
+  background: hsl(var(--prov-hue, 210) 58% 52% / 0.16);
+  color: hsl(var(--prov-hue, 210) 45% 38%);
+  font-size: 10px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  vertical-align: super;
+  line-height: 1;
+}
+
+.prov-affected .prov-marker {
+  background: color-mix(in srgb, var(--warning) 20%, transparent);
+  color: var(--warning);
+}
+
+/* Markdown inside a passage keeps the document's own rhythm rather
+   than the raw text it used to show — but tightened, because a
+   passage is a fragment and should not open with a full heading's
+   worth of space above it. */
+.prov-passage > .prov-md-first,
+.prov-passage :is(h1, h2, h3, h4):first-child {
+  margin-top: 0;
+}
+
+.prov-passage :is(p, ul, ol, pre, table, blockquote):last-child {
+  margin-bottom: 0;
+}
+
+.prov-passage :is(h1, h2, h3, h4) {
+  font-size: 14px;
+  margin: 12px 0 6px;
+}
+
+.prov-passage pre {
+  overflow-x: auto;
+}
+
+/* ── The source column ─────────────────────────────────────────── */
+
+.prov-aside {
+  padding: 10px 0;
+  min-width: 0;
+}
+
+.prov-card {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 12px;
+  border: 1px solid var(--border-soft);
+  border-left: 3px solid hsl(var(--prov-hue, 210) 58% 52% / 0.6);
+  border-radius: var(--radius-sm);
+  background: var(--bg-inset);
+}
+
+.prov-lit .prov-card {
+  border-color: hsl(var(--prov-hue, 210) 58% 48%);
+  border-left-color: hsl(var(--prov-hue, 210) 58% 48%);
+}
+
+.prov-affected .prov-card {
+  border-left-color: var(--warning);
+}
+
+.prov-affected.prov-lit .prov-card {
+  border-color: var(--warning);
+}
+
+.prov-card-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 7px;
+  font-size: 11.5px;
+}
+
+/* The same number as the marker in the text. That pairing is the
+   whole mechanism: it is how a reader knows which card belongs to
+   which sentence without a drawn line. */
+.prov-card-number {
+  min-width: 17px;
+  padding: 1px 5px;
+  border-radius: 999px;
+  background: hsl(var(--prov-hue, 210) 58% 52% / 0.16);
+  color: hsl(var(--prov-hue, 210) 45% 38%);
+  font-size: 10px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+}
+
+.prov-affected .prov-card-number {
+  background: color-mix(in srgb, var(--warning) 20%, transparent);
+  color: var(--warning);
+}
+
+.prov-card-source {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--accent-blue-text);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  text-align: left;
+  cursor: pointer;
+}
+
+.prov-card-source:hover {
+  text-decoration: underline;
+}
+
+.prov-card-where {
+  margin-left: auto;
+  color: var(--fg-faint);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+/* The passage itself, which is the evidence. Clamped: a card taller
+   than its passage breaks the alignment the layout exists for. */
+.prov-card-quote {
+  margin: 0;
+  padding-left: 9px;
+  border-left: 2px solid var(--border);
+  color: var(--fg);
+  font-size: 12px;
+  line-height: 1.5;
+  /* No ``pre-wrap``: it was holding the shape of raw text, and now
+     that the quote is rendered markdown it would double every gap
+     between blocks. Whitespace inside a code block is kept by the
+     ``pre`` itself. */
+  overflow-wrap: break-word;
+  max-height: 11rem;
+  overflow-y: auto;
+}
+
+/* The blocks inside a quote. Tighter than the document's, because the
+   card is an aside — and flush at both ends, so the quote starts
+   against its own rule rather than a line below it. */
+.prov-card-quote > :first-child {
+  margin-top: 0;
+}
+
+.prov-card-quote > :last-child {
+  margin-bottom: 0;
+}
+
+.prov-card-quote p,
+.prov-card-quote ul,
+.prov-card-quote ol,
+.prov-card-quote pre,
+.prov-card-quote table,
+.prov-card-quote blockquote {
+  margin: 0 0 0.7em;
+}
+
+.prov-card-quote :is(h1, h2, h3, h4, h5, h6) {
+  margin: 0 0 0.4em;
+  font-size: 1em;
+  font-weight: 600;
+}
+
+.prov-card-quote pre {
+  padding: 8px 10px;
+  font-size: 11px;
+}
+
+.prov-card-quote blockquote {
+  padding-left: 0.7em;
+  border-left: 2px solid var(--border-soft);
+  color: var(--fg-muted);
+}
+
+.prov-card-foot {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  font-size: 11px;
+}
+
+.prov-strength {
+  color: var(--fg-muted);
+}
+
+.prov-card-changed {
+  margin-left: auto;
+  padding: 1px 7px;
+  border: 1px solid var(--warning);
+  border-radius: 999px;
+  color: var(--warning);
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+/* Alternatives, named rather than hidden. Showing only the top match
+   makes a guess look like a finding. */
+.prov-card-others {
+  font-size: 11px;
+}
+
+.prov-card-others > summary {
+  color: var(--fg-muted);
+  cursor: pointer;
+}
+
+.prov-other {
+  margin-top: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+/* A gap left blank reads as "nothing to see". Named, it reads as a
+   limit of the method. */
+.prov-none {
+  margin: 0;
+  padding: 10px 0 0;
+  color: var(--fg-faint);
+  font-size: 11px;
+  font-style: italic;
+}
+
+/* Below the breakpoint the sidebar cannot be aligned to anything —
+   two 9rem columns is two unreadable ones. The card goes under its
+   passage, which keeps the pairing even though it loses the scan. */
+@media (max-width: 62rem) {
+  .prov-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .prov-aside {
+    padding: 0 0 14px 12px;
+  }
+}
+
+/* ── Commenting on a local document ──────────────────────────────────
+   Talking to the agent about what you are reading. Sits under the
+   document rather than in a rail beside it: there is no thread here
+   to put in a rail — the answer is a new version. */
+
+/* ── The conversation rail ───────────────────────────────────────────
+   Document left, its comments right, on the artifact's own page.
+
+   Two columns rather than one under the other: a comment is about a
+   *passage*, and a reader who scrolls past the whole document to read
+   the answer — then scrolls back to find the sentence it was about —
+   is doing the join by hand. Beside it, both are in view. */
+
+/* One column. What used to be the second is docked to the frame
+   instead, so it does not move with the text and its scrollbar lands
+   at the window's edge. */
+.kb-doc-split {
+  display: block;
+}
+
+
+
+/* No box. The rule down the left of this column already says where
+   it starts, and a bordered, filled card inside it is a second frame
+   around one thing — it also made the conversation and the version
+   history, which sit in the same column, look like two different
+   kinds of object.
+
+   Bounded in height so a long thread scrolls inside itself rather
+   than pushing the history off the bottom of the column. */
+/* Not sticky itself any more — the pin moved up to hold the history
+   and the conversation together. On its own, scrolling a long
+   document slid the version list out of the top of the window while
+   the thread stayed put, which read as the history having closed. */
+.doc-rail {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+  /* …except the part that scrolls, which reaches it and takes the
+     inset back as padding. A scrollbar belongs against the edge of
+     the window; eighteen pixels short of it, it reads as a bar
+     floating in the middle of the page. */
+  margin-right: -18px;
+}
+
+/* A label, not a title bar. The border under it belonged to the card
+   and now reads as a third rule in a column that already has two. */
+.doc-rail-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 18px 8px 0;
+}
+
+.doc-rail-title {
+  margin: 0;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--fg-muted);
+}
+
+/* Pushed to the far end of the header, away from the title it is not
+   part of. */
+.doc-rail-hide {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-sm, 5px);
+  background: none;
+  color: var(--fg-muted);
+  cursor: pointer;
+}
+
+.doc-rail-hide:hover {
+  background: var(--bg-raised);
+  color: var(--fg);
+}
+
+.doc-rail-chevron-back {
+  transform: rotate(180deg);
+}
+
+/* ── Put away ──────────────────────────────────────────────────────
+   One button, the size of its icon. It keeps the rail's own frame —
+   this *is* the rail, collapsed, and a control that shed its border
+   on the way down would read as a different thing in a similar
+   place. Not stretched: a 30px column of nothing running the height
+   of the document would be a bigger scar than the rail was. */
+.doc-rail-stowed {
+  width: auto;
+  align-self: start;
+  justify-self: end;
+  overflow: visible;
+}
+
+.doc-rail-restore {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  border: 0;
+  border-radius: inherit;
+  background: none;
+  color: var(--fg-muted);
+  cursor: pointer;
+}
+
+.doc-rail-restore:hover {
+  background: var(--bg-raised);
+  color: var(--fg);
+}
+
+.doc-rail-stowed-icon {
+  display: block;
+}
+
+/* On the corner, the way a count sits on an icon everywhere else.
+   Beside it the button stops being square and starts nudging the
+   prose, which is the width this state exists to give back. */
+.doc-rail-stowed-count {
+  position: absolute;
+  top: -5px;
+  right: -5px;
+  min-width: 15px;
+  padding: 0 4px;
+  border-radius: 999px;
+  /* Solid, not the raised-on-inset the open rail's count uses: at
+     15px overlapping a border, that pairing has too little of either
+     to read. ``--accent`` would have been the obvious choice and does
+     not exist in this theme — it fell back silently to exactly this
+     colour, so it is named outright. The ring is the page behind it,
+     lifting the badge off the button's edge. */
+  background: var(--fg-muted);
+  color: var(--bg);
+  box-shadow: 0 0 0 2px var(--bg);
+  font-size: 10px;
+  line-height: 15px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+}
+
+/* Under the breakpoint the rail returns below the document rather
+   than beside it, so the button goes where the rail would start
+   rather than off to the right. */
+@media (max-width: 64rem) {
+  .doc-rail-stowed {
+    align-self: start;
+    justify-self: start;
+  }
+}
+
+.doc-rail-count {
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: var(--bg-raised);
+  color: var(--fg-muted);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+/* The scrolling part. The header stays put so "Comments" does not
+   scroll away from the thread it labels. */
+.doc-rail-body {
+  flex: 1;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  /* The rail reaches past the window edge so its scrollbar sits
+     against it; the content takes that inset back here, so a card's
+     right border stops short of the edge instead of being sliced off
+     by it.
+
+     Written as one declaration on purpose. This was a padding-right
+     followed by a shorthand ``padding: 0``, which silently won —
+     leaving the cards running under the window edge with their
+     borders cut. */
+  padding: 0 18px 0 0;
+}
+
+.doc-rail-empty {
+  margin: 0;
+  color: var(--fg-muted);
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+.doc-conv-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+/* No box of its own. The passage it belongs to has one, and a frame
+   inside a frame around every conversation was the repetition the
+   grouping exists to remove. */
+.doc-conv-item {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 8px 0 0;
+  border-radius: var(--radius-sm);
+}
+
+/* The conversation the reader is on — lit here and in the document
+   at the same time, so the pair is obviously one thing. Inset rather
+   than bordered, so a selected conversation inside a group does not
+   draw a second box around part of one. */
+.doc-conv-focused {
+  padding: 8px 8px 8px 8px;
+  margin: 0 -8px;
+  background: color-mix(in srgb, var(--accent-blue, #4a7dff) 8%, transparent);
+}
+
+.doc-conv-group > .doc-conv-item:first-of-type {
+  padding-top: 10px;
+}
+
+/* The whole header is the way back to the passage: a link on the
+   quote alone is a small target beside a large inert one. */
+.doc-conv-anchor {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  width: 100%;
+  padding: 0 0 0 10px;
+  border: 0;
+  border-left: 3px solid var(--accent-blue, var(--border));
+  background: none;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.doc-conv-anchor:focus-visible {
+  outline: 2px solid var(--accent-blue, var(--border));
+  outline-offset: 2px;
+}
+
+.doc-conv-scope {
+  color: var(--fg-faint);
+  font-size: 11px;
+}
+
+.doc-conv-quote {
+  display: block;
+  margin: 0;
+  color: var(--fg-muted);
+  font-size: 11.5px;
+  font-style: italic;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  overflow-wrap: break-word;
+  max-height: 6rem;
+  overflow-y: auto;
+}
+
+/* A quote whose passage has since been rewritten — which is the
+   usual outcome, since answering a comment changes the text it was
+   about. Without saying so, the highlight simply stops working and
+   looks broken. */
+.doc-conv-moved {
+  margin: 0;
+  color: var(--warning);
+  font-size: 10.5px;
+  font-weight: 600;
+}
+
+.doc-conv-body {
+  margin: 0;
+  font-size: 12.5px;
+  line-height: 1.55;
+  color: var(--fg);
+}
+
+.doc-conv-reply {
+  position: relative;
+  /* Room for the elbow, which lives in this gutter rather than
+     displacing the text it points at. */
+  padding-left: 24px;
+  font-size: 12.5px;
+  line-height: 1.6;
+  overflow-wrap: break-word;
+}
+
+/* Joins the answer to the turn above it. Same colour as the name it
+   leads to, at the weight of a rule rather than a stroke — it is
+   punctuation, and a line as loud as the text would turn a thread
+   into a diagram. */
+.doc-conv-hook {
+  position: absolute;
+  left: 4px;
+  /* top and height are set per turn, in the component: they
+     depend on how tall the comment being answered is, which is a
+     paragraph somebody typed. */
+  overflow: visible;
+  fill: none;
+  stroke: var(--accent-orange-text);
+  stroke-width: 1.25;
+  stroke-linecap: round;
+  opacity: 0.45;
+}
+
+/* igni's name, in igni's colour.
+   Coloured rather than merely present because the other bylines in a
+   thread are people and this one is not: the difference between "a
+   colleague answered" and "the agent answered" decides whether the
+   next thing to do is reply or check. It is the accent the rest of
+   the app already uses for the agent, so the rail is not inventing a
+   fourth meaning for a colour. */
+.doc-conv-by-agent {
+  color: var(--accent-orange-text);
+}
+
+/* The agent's answer is a block of prose, several paragraphs of it,
+   and its first line starts after a name. Inlined, the name sits on
+   its own line above a paragraph that begins at the left margin and
+   the two read as unrelated. */
+.doc-conv-reply > .doc-conv-by-agent + .markdown-body > :first-child,
+.doc-conv-reply > .doc-conv-by-agent + .doc-conv-waiting {
+  display: inline;
+}
+
+.doc-conv-reply pre {
+  overflow-x: auto;
+}
+
+/* Something rather than a blank space: a comment that appears to do
+   nothing for twenty seconds reads as a comment that was dropped. */
+.doc-conv-waiting {
+  margin: 0;
+  color: var(--fg-muted);
+  font-size: 11.5px;
+  font-style: italic;
+}
+
+/* The caret that says the answer is still arriving — the one thing
+   distinguishing a reply mid-stream from one that stopped short. */
+.doc-conv-cursor {
+  display: inline-block;
+  width: 6px;
+  height: 12px;
+  margin-left: 2px;
+  background: var(--fg-muted);
+  vertical-align: text-bottom;
+  animation: doc-conv-blink 1s steps(2, start) infinite;
+}
+
+@keyframes doc-conv-blink {
+  to {
+    visibility: hidden;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .doc-conv-cursor {
+    animation: none;
+  }
+}
+
+/* The composer at the foot of a thread. Part of it, not a button
+   that opens one elsewhere: continuing is the default, and starting
+   a new conversation is the deliberate act. */
+/* The box, then what happens to it. Side by side, the button had to
+   align to one edge of a textarea that grows as you type — it sat
+   below the middle of a two-row box and moved as the box did — and
+   there was nowhere to put the sentence saying where the message
+   goes. */
+.doc-thread-compose {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-left: 10px;
+}
+
+.doc-thread-compose .doc-comment-input {
+  width: 100%;
+  min-width: 0;
+  padding: 6px 9px;
+  font-size: 12px;
+  resize: vertical;
+}
+
+.doc-thread-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.doc-thread-send {
+  flex: 0 0 auto;
+}
+
+/* Cancel is the way back, not a second thing to do. Quiet, and to
+   the left of the send button so the eye lands on the send. */
+.doc-thread-cancel {
+  flex: 0 0 auto;
+  background: none;
+  border-color: transparent;
+  color: var(--fg-muted);
+}
+
+.doc-thread-cancel:hover {
+  color: var(--fg);
+  background: var(--bg-inset);
+}
+
+/* The resting state of a thread's foot: the word Reply, and no box.
+   Sized like the text it sits under rather than like a button, so a
+   rail of conversations reads as conversations. */
+.doc-thread-foot {
+  display: flex;
+  align-items: center;
+  margin-left: 10px;
+}
+
+.doc-thread-reply {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  /* Outdented by its own padding, so the word starts on the same
+     left edge as the comment above it and the hover fill still
+     surrounds it. */
+  margin-left: -6px;
+  padding: 3px 6px;
+  font: inherit;
+  font-size: 11.5px;
+  color: var(--fg-muted);
+  background: none;
+  border: 0;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+/* Settling a thread, beside answering it. Quieter than Reply:
+   continuing a conversation is the common act and ending one is
+   the occasional, so the weights say which is which. */
+.doc-thread-settle {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  margin-left: 10px;
+  padding: 3px 6px;
+  font: inherit;
+  font-size: 11.5px;
+  color: var(--fg-faint);
+  background: none;
+  border: 0;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.doc-thread-settle:hover:not(:disabled) {
+  color: var(--fg);
+  background: var(--bg-inset);
+}
+
+.doc-thread-settle:disabled {
+  cursor: default;
+  opacity: 0.6;
+}
+
+.doc-thread-settle .menu-icon {
+  width: 13px;
+  height: 13px;
+}
+
+.doc-thread-reply:hover {
+  color: var(--fg);
+  background: var(--bg-inset);
+}
+
+.doc-thread-reply-icon {
+  width: 13px;
+  height: 13px;
+  flex: none;
+}
+
+/* Where this message goes, before it goes. */
+.doc-thread-hint {
+  flex: 1;
+  min-width: 0;
+  font-size: 10.5px;
+  line-height: 1.45;
+  color: var(--fg-muted);
+}
+
+/* The line from a passage to the card about it.
+   Over the page and through nothing: fixed to the viewport so it can
+   cross from one scrolling box to another, and transparent to the
+   pointer so it never takes a click meant for the text underneath. */
+.doc-thread-line {
+  position: fixed;
+  inset: 0;
+  width: 100vw;
+  height: 100vh;
+  pointer-events: none;
+  z-index: 30;
+  overflow: visible;
+}
+
+/* The curve is a pointer, not a part of the document; at full
+   strength it reads as a rule dividing the page. The wash on the
+   passage says which one; this only says which card it belongs to,
+   and needs no outline of its own to do that. */
+.doc-thread-curve {
+  fill: none;
+  stroke: var(--accent-blue, #4a7dff);
+  stroke-width: 1.5;
+  stroke-linecap: round;
+  opacity: 0.5;
+}
+
+/* Every commented passage, marked for as long as the comment exists.
+   An underline rather than a fill: prose is read in lines, and a
+   block of colour at reading size breaks the line into chunks.
+   Painted through the Custom Highlight API, so the document's markup
+   is never rewritten to show it. */
+/* A commented passage, while nothing in particular is selected.
+   Filled rather than underlined: an underline is a line under a line
+   of prose and competes with every other rule on the page, and the
+   citation marks already underline. A wash reads as "there is
+   something here" without pretending to be punctuation. Faint,
+   because at this point the reader is reading past it. */
+::highlight(doc-comment-mark) {
+  background: color-mix(in srgb, var(--accent-blue, #4a7dff) 13%, transparent);
+}
+
+/* The selected one. The only one lit while anything is selected, so
+   the wash means "this is the passage" rather than "one of these
+   nine". Stronger, because now the reader is looking for it. */
+::highlight(doc-comment-quote) {
+  background: color-mix(in srgb, var(--accent-blue, #4a7dff) 30%, transparent);
+}
+
+/* The rail's footer, under the scrolling threads rather than after
+   them. It holds the floor: the list runs out above the rule, and
+   the way to start a comment stays where it was whatever the reader
+   scrolled past to get there.
+
+   Opaque, because the threads pass beneath it, and with room under
+   the button so it is not sitting on the bottom of the window. */
+.doc-comment-bar {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 18px 16px 0;
+  border-top: 1px solid var(--border-soft);
+  background: var(--bg);
+}
+
+.doc-comment-hint {
+  color: var(--fg-muted);
+  font-size: 11.5px;
+}
+
+.doc-comment-compose {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: 28px;
+  padding: 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-inset);
+}
+
+/* The passage being asked about. Same treatment the shared app gives
+   a quote, so the two read as the same gesture even though one ends
+   in a reply and the other in a revision. */
+.doc-comment-quote {
+  position: relative;
+  margin: 0;
+  padding: 8px 12px;
+  border-left: 3px solid var(--accent-blue, var(--border));
+  border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+  background: var(--bg-surface);
+  color: var(--fg-muted);
+  font-size: 12px;
+  font-style: italic;
+  white-space: pre-wrap;
+  overflow-wrap: break-word;
+  max-height: 9rem;
+  overflow-y: auto;
+}
+
+/* Says what this comment is attached to when nothing is quoted. An
+   empty composer and a quoting one otherwise look identical, and the
+   difference between them is the whole point. */
+.doc-comment-scope {
+  margin: 0;
+  color: var(--fg-faint);
+  font-size: 11.5px;
+}
+
+/* ── Right-click a selection ─────────────────────────────────────────
+   Suppressed only over a selection inside the document — everywhere
+   else the browser's own menu is left alone, because an app that
+   swallows right-click wholesale takes away copy, search and inspect
+   to offer one item of its own. */
+
+.doc-selection-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 49;
+}
+
+.doc-selection-pop {
+  position: fixed;
+  z-index: 50;
+  min-width: 190px;
+  max-width: min(420px, calc(100vw - 24px));
+  padding: 5px;
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-pop);
+  animation: menu-pop 0.14s cubic-bezier(0.2, 0.9, 0.3, 1.1);
+  transform-origin: top left;
+}
+
+/* The composer inside the popover brings no frame of its own — the
+   popover is already the frame. */
+.doc-selection-pop .doc-comment-compose {
+  margin: 0;
+  padding: 7px;
+  border: 0;
+  background: none;
+}
+
+.doc-comment-input {
+  width: 100%;
+  padding: 9px 11px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-surface);
+  color: var(--fg);
+  font: inherit;
+  font-size: 13px;
+  line-height: 1.55;
+  resize: vertical;
+}
+
+.doc-comment-input::placeholder {
+  color: var(--fg-faint);
+}
+
+.doc-comment-input:focus-visible {
+  outline: 2px solid var(--accent-blue, var(--border));
+  outline-offset: 1px;
+  border-color: transparent;
+}
+
+.doc-comment-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+/* Pushed to the end of the row: it is a statement about where this
+   goes, not a third button. */
+.doc-comment-actions .doc-comment-hint {
+  margin-left: auto;
+}
+
+/* ── Export banner ───────────────────────────────────────────────────
+   The result of an export, over the page rather than in it.
+
+   Pinned to the bottom-right: the top of the page is where the
+   document's own title and actions are, and a notice that lands there
+   pushes the thing you were reading down by a row every time you
+   export. Down here nothing reflows. */
+
+.export-banner {
+  position: fixed;
+  right: 18px;
+  bottom: 18px;
+  z-index: 45;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  max-width: min(420px, calc(100vw - 36px));
+  padding: 12px 14px;
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--accent-green, var(--success));
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-pop);
+  animation: menu-pop 0.16s cubic-bezier(0.2, 0.9, 0.3, 1.1);
+  transform-origin: bottom right;
+}
+
+/* Failure is carried by the edge, not by a red wash over the text —
+   the message is the part that has to stay readable. */
+.export-banner-failed {
+  border-left-color: var(--danger-text, var(--accent-red-text));
+}
+
+.export-banner-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  font-size: 12px;
+}
+
+.export-banner-text strong {
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--fg);
+}
+
+/* The filename, which is what identifies the file to a person. */
+.export-banner-file {
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 11.5px;
+  color: var(--fg);
+  overflow-wrap: anywhere;
+}
+
+/* The folder, and the failure message. Truncated to one line with the
+   full text on hover: an absolute path is three wrapped lines at this
+   width and reads as a stack trace. */
+.export-banner-detail {
+  color: var(--fg-muted);
+  font-size: 11px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* The message, unlike the path, is a sentence and has to wrap. */
+.export-banner-failed .export-banner-detail {
+  white-space: normal;
+  overflow: visible;
+}
+
+.export-banner .btn {
+  flex: 0 0 auto;
+  margin-left: auto;
+}
+
+.export-banner-close {
+  flex: 0 0 auto;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: 0;
+  border-radius: 5px;
+  background: none;
+  color: var(--fg-faint);
+  font-size: 15px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.export-banner-close:hover {
+  background: var(--bg-raised);
+  color: var(--fg);
+}
+
+.export-banner-close:focus-visible {
+  outline: 2px solid var(--accent-blue, var(--border));
+  outline-offset: -2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .export-banner {
+    animation: none;
+  }
+}
+
+/* How much moved, said once above the comparison. There was briefly
+   a stepper here — arrows and an index — on the reasoning that
+   showing the whole document makes the changes hard to find. It does
+   not: they are highlighted, and a document is a few screens. */
+
+.diff-count {
+  margin: 0 0 8px;
+  font-size: 11.5px;
+  color: var(--fg-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ── Version comparison ──────────────────────────────────────────────
+   Two versions in columns, GitHub-style.
+
+   Colour carries the change, but it is not the only thing carrying it:
+   a left cell and a right cell that differ are already visibly a pair.
+   That matters because roughly one reader in twelve cannot separate
+   the red from the green, and a diff whose entire meaning is hue is a
+   diff they cannot read. The line numbers on each side do the rest. */
+
+.artifact-compare {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.artifact-compare-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.artifact-compare-head label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.artifact-compare-head select {
+  padding: 3px 8px;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  background: var(--bg-surface);
+  color: var(--fg);
+  font: inherit;
+  font-size: 12px;
+}
+
+.artifact-compare-tally {
+  display: inline-flex;
+  gap: 8px;
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+.tally-added {
+  color: var(--accent-green-text);
+}
+
+.tally-removed {
+  color: var(--accent-red-text);
+}
+
+.artifact-compare-close {
+  margin-left: auto;
+  padding: 3px 10px;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  background: var(--bg-surface);
+  color: var(--fg);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.artifact-diff {
+  width: 100%;
+  border-collapse: collapse;
+  border: 1px solid var(--border-soft);
+  border-radius: 6px;
+  overflow: hidden;
+  /* Proportional, not monospace.
+   *
+   * This compares *documents*. A monospace grid is right for code —
+   * alignment carries meaning there — and wrong for prose, where it
+   * makes a paragraph read like terminal output and fits a third
+   * fewer words on a line. The first cut of this panel looked like
+   * `git diff` in a window, which is exactly the wrong reference. */
+  font-family: inherit;
+  font-size: 13px;
+  line-height: 1.65;
+  /* Long prose lines wrap inside their cell rather than scrolling the
+     whole table sideways — a horizontal scrollbar under a paragraph is
+     unreadable. */
+  table-layout: fixed;
+}
+
+.artifact-diff th {
+  padding: 6px 10px;
+  background: var(--bg-inset);
+  color: var(--fg-muted);
+  font-size: 11px;
+  font-weight: 600;
+  text-align: left;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+}
+
+.artifact-diff th:nth-child(2) {
+  border-left: 1px solid var(--border-soft);
+}
+
+/* The gutter. Narrow, right-aligned, and not selectable, so copying a
+   passage out of the diff does not carry line numbers with it. */
+.diff-num {
+  width: 3.2em;
+  padding: 1px 8px;
+  vertical-align: top;
+  text-align: right;
+  color: var(--fg-faint);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  user-select: none;
+  background: var(--bg-inset);
+}
+
+.diff-cell {
+  /* Room to breathe. A one-pixel row is dense enough to scan as a
+     block of output; a document wants to be read. */
+  padding: 4px 14px;
+  vertical-align: top;
+  white-space: pre-wrap;
+  overflow-wrap: break-word;
+  color: var(--fg);
+}
+
+.diff-right {
+  border-left: 1px solid var(--border-soft);
+}
+
+/* A whole line that arrived or left keeps its full tint. */
+.artifact-diff tr[data-kind="removed"] .diff-left {
+  background: color-mix(in srgb, var(--danger) 15%, transparent);
+}
+
+.artifact-diff tr[data-kind="added"] .diff-right {
+  background: color-mix(in srgb, var(--success) 15%, transparent);
+}
+
+/* A *rewritten* line is tinted faintly, because the words inside it
+   carry the change now. Tinting it as strongly as a wholly new line
+   would say the whole sentence moved when three words did. */
+.artifact-diff tr[data-kind="changed"] .diff-left {
+  background: color-mix(in srgb, var(--danger) 6%, transparent);
+}
+
+.artifact-diff tr[data-kind="changed"] .diff-right {
+  background: color-mix(in srgb, var(--success) 6%, transparent);
+}
+
+/* The words that actually differ. This is the part a reader is
+   looking for, and before it existed they had to find it themselves
+   by comparing two highlighted paragraphs word by word. */
+.diff-left .diff-word {
+  background: color-mix(in srgb, var(--danger) 30%, transparent);
+  border-radius: 3px;
+  padding: 0 1px;
+  /* Not only colour: roughly one reader in twelve cannot separate the
+     red from the green, and a strikethrough says "gone" on its own. */
+  text-decoration: line-through;
+  text-decoration-color: color-mix(in srgb, var(--danger) 70%, transparent);
+}
+
+.diff-right .diff-word {
+  background: color-mix(in srgb, var(--success) 30%, transparent);
+  border-radius: 3px;
+  padding: 0 1px;
+  font-weight: 600;
+}
+
+/* A folded stretch of untouched text. Nothing is hidden — the button
+   says how much and opens it — but a document is mostly unchanged,
+   and showing all of it buries the edit. */
+.diff-fold td {
+  padding: 0;
+  background: var(--bg-inset);
+  border-top: 1px solid var(--border-soft);
+  border-bottom: 1px solid var(--border-soft);
+}
+
+.diff-fold button {
+  width: 100%;
+  padding: 5px 14px;
+  border: 0;
+  background: none;
+  color: var(--fg-muted);
+  font: inherit;
+  font-size: 11px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.diff-fold button:hover {
+  background: var(--bg-raised);
+  color: var(--fg);
+}
+
+/* The empty half of an unpaired change. Hatched rather than left
+   blank: an empty cell reads as "this line is unchanged and blank",
+   which is the opposite of what it means. */
+.artifact-diff tr[data-kind="removed"] .diff-right,
+.artifact-diff tr[data-kind="added"] .diff-left {
+  background: repeating-linear-gradient(
+    45deg,
+    transparent,
+    transparent 5px,
+    var(--bg-inset) 5px,
+    var(--bg-inset) 10px
+  );
+}
+
+/* "Compare" sits in the Versions heading, not on a row: comparing
+   takes two versions, and a per-row button has to invent the other. */
+.kb-compare-btn {
+  margin-left: 10px;
+  padding: 1px 8px;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  background: var(--bg-surface);
+  color: var(--accent-blue-text);
+  font: inherit;
+  font-size: 11px;
+  font-weight: 400;
+  text-transform: none;
+  letter-spacing: normal;
+  cursor: pointer;
+}
+
+/* Two letters standing in for a face. See Monogram.tsx for why this
+   is not an avatar. */
+.monogram {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  border-radius: 50%;
+  color: #fff;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  line-height: 1;
+  user-select: none;
+}
+
+/* The line-number gutters. Declared on a <col> because
+   `table-layout: fixed` reads its widths from the first row, and that
+   row is a header spanning two cells per side — so a `width` on the
+   cell itself is never consulted. */
+.artifact-diff .diff-col-num {
+  width: 3rem;
+}
+
+/* The header control that is currently on. Used by Compare, which is
+   a mode rather than an action — it stays pressed while the page is
+   in its comparison state. */
+.btn.btn-active {
+  border-color: var(--accent-blue);
+  color: var(--accent-blue-text);
+}
+
+/* A diff cell rendered as the document rather than as its markup.
+   The markdown body brings its own margins, which would double the
+   row height inside a table cell. */
+.diff-md > :first-child {
+  margin-top: 0;
+}
+
+.diff-md > :last-child {
+  margin-bottom: 0;
+}
+
+.diff-md h1,
+.diff-md h2,
+.diff-md h3,
+.diff-md h4 {
+  margin: 0;
+  font-size: 14px;
+  line-height: 1.4;
+}
+
+.diff-md p,
+.diff-md ul,
+.diff-md ol {
+  margin: 0;
+}
+
+.diff-md ul,
+.diff-md ol {
+  padding-left: 18px;
+}
+
+.diff-md table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+
+.diff-md th,
+.diff-md td {
+  padding: 2px 6px;
+  border: 1px solid var(--border-soft);
+  text-align: left;
+}
+
+.diff-md blockquote {
+  margin: 0;
+  padding-left: 10px;
+  border-left: 3px solid var(--border);
+  color: var(--fg-muted);
+}
+
+/* A fenced line, kept verbatim: indentation is the content there, and
+   markdown would try to interpret it. */
+.diff-code {
+  margin: 0;
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 12px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  overflow-wrap: break-word;
+}
+
+/* `<mark>` carries a UA background that would fight the diff colour. */
+.diff-md mark.diff-word {
+  color: inherit;
+}
+
+/* A single table row, drawn as one. The diff compares rows
+   individually — which is what makes "one cell changed" land on that
+   cell — so a row never arrives with the header and separator that
+   markdown needs to recognise a table. */
+.diff-row-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+
+.diff-row-table td {
+  padding: 2px 8px;
+  border: 1px solid var(--border-soft);
+  vertical-align: top;
+}
+
+/* ── The sign-in wall ─────────────────────────────────────────────
+   A session with no account sees this and nothing else: igni is
+   self-hosted, so a session with nowhere to write has nothing to
+   show. Centred and narrow — there is one question on screen and
+   the layout should not imply there is more. */
+.wall {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: var(--bg);
+  overflow-y: auto;
+}
+
+.wall-card {
+  width: 100%;
+  max-width: 420px;
+  text-align: center;
+}
+
+/* The mark carries its own colours — it is the product's, not a
+   glyph to be tinted by whatever is around it. */
+.wall-mark {
+  display: flex;
+  justify-content: center;
+  margin-bottom: 18px;
+}
+
+.wall-title {
+  font-size: 20px;
+  font-weight: 700;
+  color: var(--fg);
+  margin: 0 0 8px;
+}
+
+.wall-lead {
+  font-size: 13.5px;
+  line-height: 1.55;
+  color: var(--fg-muted);
+  margin: 0 0 20px;
+  /* Wraps to two lines and stays balanced rather than leaving one
+     word alone on the second. */
+  text-wrap: balance;
+}
+
+.wall-form {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.wall-input {
+  width: 100%;
+  padding: 10px 12px;
+  font-size: 14px;
+  font-family: inherit;
+  color: var(--fg);
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md, 8px);
+}
+
+.wall-input:focus {
+  outline: none;
+  border-color: var(--accent, #e8613c);
+}
+
+.wall-go {
+  width: 100%;
+  padding: 10px 12px;
+  font-size: 14px;
+}
+
+/* Quieter than the action above it, and still a real control: this
+   is the way back out of a wrong guess. */
+.wall-back {
+  margin-top: 14px;
+  padding: 4px 8px;
+  font-size: 12.5px;
+  color: var(--fg-faint);
+  background: none;
+  border: none;
+  cursor: pointer;
+  text-decoration: underline;
+}
+
+.wall-back:hover {
+  color: var(--fg-muted);
+}
+
+.wall-error {
+  margin: 16px 0 0;
+  padding: 9px 12px;
+  font-size: 12.5px;
+  line-height: 1.5;
+  text-align: left;
+  color: var(--danger, #e05c5c);
+  border: 1px solid color-mix(in srgb, var(--danger, #e05c5c) 40%, transparent);
+  background: color-mix(in srgb, var(--danger, #e05c5c) 10%, transparent);
+  border-radius: var(--radius-md, 8px);
+}
+
+.wall-foot {
+  margin: 26px 0 0;
+  font-size: 11.5px;
+  line-height: 1.5;
+  color: var(--fg-faint);
+}
+
+/* ── A public document, read without an account ───────────────────
+   The app's shell with almost nothing in it: somebody arriving on a
+   link has no workspace behind this page, so the chrome that would
+   navigate one is absent rather than disabled. */
+.pubdoc {
+  position: fixed;
+  inset: 0;
+  z-index: 55;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg);
+}
+
+.pubdoc-bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 16px;
+  border-bottom: 1px solid var(--border-soft);
+  background: var(--bg-surface);
+}
+
+.pubdoc-mark {
+  display: flex;
+}
+
+.pubdoc-note {
+  font-size: 12.5px;
+  color: var(--fg-faint);
+  /* Pushes the sign-in button to the right edge. */
+  margin-right: auto;
+}
+
+.pubdoc-page {
+  flex: 1;
+  overflow-y: auto;
+  padding: 36px 24px 64px;
+}
+
+.pubdoc-wait {
+  text-align: center;
+  font-size: 13px;
+  color: var(--fg-faint);
+}
+
+/* Reading width, not window width: a document at 1600px is a wall of
+   text nobody finishes a paragraph of. */
+.pubdoc-body {
+  max-width: 68ch;
+  margin: 0 auto;
+  font-size: 14.5px;
+  line-height: 1.65;
+  color: var(--fg);
+}
+
+.pubdoc-body h1,
+.pubdoc-body h2,
+.pubdoc-body h3 {
+  line-height: 1.3;
+  margin: 1.6em 0 0.5em;
+  text-wrap: balance;
+}
+
+.pubdoc-body h1 {
+  margin-top: 0;
+}
+
+.pubdoc-body p,
+.pubdoc-body ul,
+.pubdoc-body ol {
+  margin: 0 0 1em;
+}
+
+.pubdoc-body pre {
+  padding: 12px 14px;
+  overflow-x: auto;
+  background: var(--bg-surface);
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-md, 8px);
+}
+
+/* A quote is an aside, and without a mark it reads as a paragraph
+   somebody indented by accident. */
+.pubdoc-body blockquote {
+  margin: 0 0 1em;
+  padding: 2px 0 2px 14px;
+  border-left: 2px solid var(--border);
+  color: var(--fg-muted);
+}
+
+.pubdoc-body blockquote p:last-child {
+  margin-bottom: 0;
+}
+
+.pubdoc-body :not(pre) > code {
+  padding: 1px 5px;
+  font-family: var(--font-mono);
+  font-size: 0.9em;
+  background: var(--bg-surface);
+  border: 1px solid var(--border-soft);
+  border-radius: 4px;
+}
+
+.pubdoc-body a {
+  color: var(--accent, #e8613c);
+}
+
+.pubdoc-body table {
+  display: block;
+  overflow-x: auto;
+  border-collapse: collapse;
+}
+
+.pubdoc-body th,
+.pubdoc-body td {
+  padding: 6px 10px;
+  border: 1px solid var(--border-soft);
+}
+
+.pubdoc-shut {
+  max-width: 420px;
+  margin: 10vh auto 0;
+  text-align: center;
+}
+
+.pubdoc-shut-title {
+  font-size: 17px;
+  font-weight: 700;
+  color: var(--fg);
+  margin: 0 0 8px;
+}
+
+.pubdoc-shut-why {
+  font-size: 13px;
+  line-height: 1.55;
+  color: var(--fg-muted);
+  margin: 0 0 20px;
 }

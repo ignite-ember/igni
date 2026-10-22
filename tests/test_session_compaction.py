@@ -61,13 +61,15 @@ class TestCompactIfNeeded:
     async def test_at_80_percent_triggers_compact(self):
         # Right at threshold — the ``usage < 0.8`` guard should
         # let 80% through as a trigger.
-        s = _bare_session(agno_session=None)
+        s = _bare_session(agno_session=SimpleNamespace(runs=[SimpleNamespace()], summary=None))
         coord = CompactionCoordinator(s)
+        # A summary has to land for the pass to complete: since the
+        # conversation is only dropped when something replaces it,
+        # ``compact_if_needed`` reports True on the cleared history,
+        # not on the trigger alone.
+        coord._fallback.summarise = AsyncMock(return_value="a recap")
         # 80% of 10_000 = 8000
         result = await coord.compact_if_needed(input_tokens=8000, context_window=10_000)
-        # ``compact()`` returned early ("Session not found") but
-        # ``compact_if_needed`` still returns True since the
-        # trigger fired.
         assert result is True
 
     @pytest.mark.asyncio
@@ -92,8 +94,12 @@ class TestCompactIfNeeded:
     async def test_fires_post_compact_hook_on_success(self):
         # PostCompact fires so plugins can react even when the
         # compaction is auto-triggered.
-        s = _bare_session(agno_session=SimpleNamespace(runs=[], summary=None))
+        s = _bare_session(agno_session=SimpleNamespace(runs=[SimpleNamespace()], summary=None))
         coord = CompactionCoordinator(s)
+        # PostCompact is the "history was cleared" signal, so it only
+        # fires on a pass that actually cleared it — give the pass a
+        # summary to trade the runs for.
+        coord._fallback.summarise = AsyncMock(return_value="a recap")
         await coord.compact_if_needed(input_tokens=9000, context_window=10_000)
         events = [c.kwargs.get("event") for c in s.hook_executor.execute.call_args_list]
         assert "PreCompact" in events

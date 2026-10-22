@@ -22,7 +22,6 @@ import {
   shouldSkipTruncateRpc,
   shellItem,
   userItem,
-  visualizationItem,
   workflowItem,
   type ChatItem,
   type OrchestrateEvent,
@@ -41,6 +40,7 @@ import {
   type PageRoute,
 } from "./chat/pageStack";
 import { PageContext } from "./components/PageShell";
+import { Monogram } from "./components/Monogram";
 import { WorkflowsPage } from "./components/pages/WorkflowsPage";
 import { HelpPage } from "./components/pages/HelpPage";
 import { ContextPage } from "./components/pages/ContextPage";
@@ -71,19 +71,24 @@ import { FPSCounterOverlay } from "./components/FPSCounter";
 import { HitlDialog, type HitlDecision } from "./components/HitlDialog";
 import {
   ChevronIcon,
-  CloudIcon,
   FlameIcon,
   FolderIcon,
   MenuIcon,
 } from "./components/Icons";
+// Aliased: ``Icons`` exports a ``MenuIcon`` too, and that one is the
+// hamburger. This is the glyph set the panels draw from.
+import { MenuIcon as Glyph } from "./components/MenuIcon";
+import { NotificationsPanel } from "./components/NotificationsPanel";
 import { ScrollIndicator } from "./components/ScrollIndicator";
+import { PublicDocument } from "./components/PublicDocument";
+import { SignInWall } from "./components/SignInWall";
 import { Sidebar, type SessionEntry } from "./components/Sidebar";
 import { AgentsPanel } from "./components/panels/AgentsPanel";
 import { CodeIndexPanel } from "./components/panels/CodeIndexPanel";
 import { FilePreview } from "./components/FilePreview";
 import { FirstRunSetup } from "./components/FirstRunSetup";
 import { HooksPanel } from "./components/panels/HooksPanel";
-import { KnowledgePanel } from "./components/panels/KnowledgePanel";
+import { ArtifactPanel } from "./components/panels/ArtifactPanel";
 import { Toasts, type Toast } from "./components/Toasts";
 import { UpdatePrompt } from "./components/UpdatePrompt";
 import { RetryBanner } from "./components/RetryBanner";
@@ -99,6 +104,7 @@ import { WatcherPanel } from "./components/panels/WatcherPanel";
 import { SchedulePanel } from "./components/panels/SchedulePanel";
 import { IgniClient, pickNativeDirectory, type ConnectionState } from "./protocol/client";
 import type { HITLRequest, ServerMessage, StatusUpdate } from "./protocol/messages";
+import { withDetails } from "./chat/hitlDetails";
 import { countOf } from "./lib/plural";
 
 /**
@@ -115,7 +121,11 @@ import { countOf } from "./lib/plural";
  * ``hitlSlot`` inside the Composer, anchored to the run it is asking
  * about.
  */
-type PanelState = { kind: "none" } | { kind: "login" } | { kind: "dir-picker" };
+type PanelState =
+  | { kind: "none" }
+  | { kind: "login" }
+  | { kind: "dir-picker" }
+  | { kind: "notifications" };
 
 interface UpdateInfo {
   available: boolean;
@@ -133,7 +143,7 @@ interface UpdateInfo {
 const SIDEBAR_LINKS: { kind: PageKind; label: string }[] = [
   { kind: "plugins", label: "Plugins" },
   { kind: "mcp", label: "MCPs" },
-  { kind: "knowledge", label: "Knowledge" },
+  { kind: "artifacts", label: "Artifacts" },
 ];
 
 /** Entries for the header tools menu — each opens its feature's UI
@@ -144,7 +154,7 @@ const TOOLS_MENU: { label: string; command: string; desc: string }[] = [
   { label: "Agents", command: "/agents", desc: "agent pool" },
   { label: "Skills", command: "/skills", desc: "slash-command workflows" },
   { label: "Plugins", command: "/plugins", desc: "marketplaces & installs" },
-  { label: "Knowledge", command: "/knowledge", desc: "project knowledge base" },
+  { label: "Artifacts", command: "/artifacts", desc: "project artifacts" },
   { label: "Hooks", command: "/hooks", desc: "pre/post tool hooks" },
   { label: "Loop", command: "/loop", desc: "recurring prompt status" },
   {
@@ -191,25 +201,6 @@ function findAssistantTextForStats(
     if (it.kind === "assistant") return it.text;
   }
   return undefined;
-}
-
-/** Pretty label for ``Tier`` values from ember-server
- *  (lite / pro / max / codeindex). The DB stores lowercase, the UI
- *  wants title-case; ``codeindex`` is the special-purpose CodeIndex-
- *  only tier so we spell it out for clarity. */
-function formatPlanName(tier: string): string {
-  switch (tier.toLowerCase()) {
-    case "lite":
-      return "Lite";
-    case "pro":
-      return "Pro";
-    case "max":
-      return "Max";
-    case "codeindex":
-      return "CodeIndex";
-    default:
-      return tier;
-  }
 }
 
 export default function App() {
@@ -545,6 +536,42 @@ export default function App() {
     () => new URLSearchParams(window.location.search).get("dir") ?? "",
     [],
   );
+  // A shared document to open, from the link that opened this window.
+  // Read once: following a link is an arrival, and re-reading the URL
+  // later would reopen the document every time the app re-rendered.
+  const sharedSlug = useMemo(
+    () => new URLSearchParams(window.location.search).get("doc") ?? "",
+    [],
+  );
+
+  // And taken out of the address bar once it has been read.
+  //
+  // A link is an arrival, not a place. Left in the URL it went on
+  // being true for ever: every reload read it again and put the
+  // window back on that document, so navigating anywhere else and
+  // refreshing undid the navigation — the app appeared to have one
+  // page it always returned to. Reading it once was not enough while
+  // the thing being read was still there.
+  //
+  // ``replaceState`` rather than a push: the URL with the parameter
+  // is not a step in this window's history, it is how the window
+  // opened, and a Back that returned to it would reopen the
+  // document.
+  //
+  // Only ``doc``. ``dir`` says which folder this window belongs to,
+  // which stays true for as long as the window does.
+  //
+  // Kept while signed out, because then the link is not an arrival —
+  // it is the whole page. A recipient reading a public document has
+  // no workspace behind it to be returned to, and taking the slug
+  // out of the address bar meant a reload landed them on the sign-in
+  // wall having lost the document they were sent.
+  useEffect(() => {
+    if (!sharedSlug || !status?.cloud_email) return;
+    const url = new URL(window.location.href);
+    url.searchParams.delete("doc");
+    window.history.replaceState(null, "", `${url.pathname}${url.search}${url.hash}`);
+  }, [sharedSlug, status?.cloud_email]);
   const [sidebarOpen, setSidebarOpenState] = useState(window.innerWidth > 700);
   const setSidebarOpen = useCallback(
     (next: boolean | ((prev: boolean) => boolean)) => {
@@ -570,12 +597,88 @@ export default function App() {
     null,
   );
   const [accountMenu, setAccountMenu] = useState(false);
-  // Plan tier (``lite`` / ``pro`` / ``max`` / ``codeindex``) fetched
-  // on demand whenever the account popover opens — the BE calls
-  // ``/portal/me`` on the cloud and returns the tier from the user's
-  // active org membership. Refreshing on each open ensures the UI
-  // reflects seat-tier reassignments without an app restart.
-  const [cloudPlan, setCloudPlan] = useState<string | null>(null);
+  // The signed-in person's display name, fetched when the account
+  // popover opens (the BE proxies ``/portal/me``). Billing tiers are
+  // retired, so nothing else from that call is shown.
+  const [cloudName, setCloudName] = useState<string>("");
+  // Best thing we can currently say about who is signed in, in
+  // descending order of how much it sounds like a person. The org is
+  // last because it is not a person at all — it was the only thing
+  // this header ever showed, which is the bug.
+  const accountName =
+    cloudName || status?.cloud_email || status?.cloud_org || "Account";
+
+  // ── Signed in, or nothing ───────────────────────────────────────
+  //
+  // igni is self-hosted: every document, version and comment lives on
+  // the server an organisation runs, so a session with no account has
+  // nowhere to put any of it. The app does not open behind a prompt
+  // that can be dismissed — there is nothing behind it to use.
+  //
+  // Waited on rather than assumed. ``status`` is null until the first
+  // push arrives, and treating that as signed-out would flash the
+  // wall at somebody who is signed in, on every launch.
+  const signedIn = Boolean(status?.cloud_email);
+  const knowYet = status !== null;
+
+  // ── What is waiting on you ──────────────────────────────────────
+  //
+  // Comments colleagues left on documents this account published,
+  // counted here so the answer is on screen before anybody goes
+  // looking for it. A queue you have to open to discover is empty is
+  // a queue you stop opening.
+  //
+  // Pushed, not polled. The backend follows the server's comment
+  // channel for as long as it runs and says so when something
+  // lands; this asks once, to start that and to learn where the
+  // count stands, and after that the news arrives on its own.
+  //
+  // A timer was the first version and it was wrong in both
+  // directions at once: two minutes is far too long to learn that
+  // somebody is waiting on you, and far too often to ask when
+  // nobody is.
+  const [waiting, setWaiting] = useState(0);
+  const [notifyNonce, setNotifyNonce] = useState(0);
+  /** Bumped whenever a page is asked for from outside it — the
+   *  sidebar, a link. A panel showing one of its own sub-views takes
+   *  it as "back to your top level". */
+  const [pageHome, setPageHome] = useState(0);
+  /** A document a notification asked to open, named by its slug —
+   *  the same door a shared link comes through. */
+  const [arrivingSlug, setArrivingSlug] = useState("");
+
+  useEffect(() => {
+    if (!status?.cloud_connected) {
+      setWaiting(0);
+      return;
+    }
+    let dropped = false;
+    void client
+      .rpc<{ waiting?: number }>("artifact_watch_comments")
+      .then((answer) => {
+        if (!dropped) setWaiting(answer?.waiting ?? 0);
+      })
+      .catch(() => {
+        // Offline, or no artifacts. Neither is news worth a badge:
+        // the count stays where it was rather than dropping to zero
+        // and reading as "nothing is waiting".
+      });
+    return () => {
+      dropped = true;
+    };
+  }, [client, status?.cloud_connected, notifyNonce]);
+
+  // And the news itself, whenever the server has some.
+  useEffect(() => {
+    return client.onEvent((message) => {
+      const push = message as unknown as {
+        channel?: string;
+        payload?: { waiting?: number };
+      };
+      if (push.channel !== "artifact_waiting") return;
+      setWaiting(push.payload?.waiting ?? 0);
+    });
+  }, [client]);
   // Live draft from another attached view (mirroring).
   // The directory this session is locked to (tools + shell cwd).
   const [projectDir, setProjectDir] = useState("");
@@ -750,6 +853,12 @@ export default function App() {
       }
       if (m.type === "run_paused") {
         setHitl(m.requirements);
+        return;
+      }
+      if (m.type === "requirement_details") {
+        // Arrives on the run stream, where the safety check's question
+        // was raised — not as a broadcast.
+        setHitl((prev) => withDetails(prev, m));
         return;
       }
       if (m.type === "status_update") {
@@ -982,7 +1091,16 @@ export default function App() {
             // yields an empty stack for anything it cannot read, so a
             // value written by an older release opens the chat rather
             // than failing the whole hydrate.
-            setPages(restorePages(clientState.get(PAGE_KEY)));
+            // A link wins over wherever this window was last. Somebody
+            // following one asked for a document; putting them back on
+            // the chat they had open a week ago answers a question
+            // nobody asked, and the document they came for is then two
+            // clicks away with no sign it is there.
+            setPages(
+              sharedSlug
+                ? [{ kind: "artifacts", label: "Artifacts" }]
+                : restorePages(clientState.get(PAGE_KEY)),
+            );
             // Adopt a session for this view. An already-bound
             // sessionId wins outright (reconnect mid-session — don't
             // churn it); otherwise the plan comes from the window's
@@ -1131,6 +1249,11 @@ export default function App() {
           );
           return left.length ? left : null;
         });
+        return;
+      }
+
+      if (m.type === "requirement_details") {
+        setHitl((prev) => withDetails(prev, m));
         return;
       }
 
@@ -1456,59 +1579,6 @@ export default function App() {
                 : it,
             ),
           );
-        } else if (m.channel === "visualization") {
-          // Visualizer sub-agent emitted a json-render spec via
-          // ``VisualizeTools.visualize``. Payload shape:
-          // ``{ spec: {...}, spec_id: str, title?: string, source_agent?: string }``.
-          //
-          // Dedup by ``spec_id``: the visualizer's toolkit generates a
-          // stable id per sub-agent run, so repeated calls within a
-          // single run UPDATE the same card instead of appending a
-          // new one. That's the on-ramp for streaming — one card per
-          // stream, updated in place as data arrives.
-          const p = m.payload as {
-            spec?: unknown;
-            spec_id?: unknown;
-            title?: unknown;
-            source_agent?: unknown;
-          };
-          const spec = p.spec;
-          if (
-            spec &&
-            typeof spec === "object" &&
-            "root" in (spec as Record<string, unknown>) &&
-            "elements" in (spec as Record<string, unknown>)
-          ) {
-            const specId =
-              typeof p.spec_id === "string" && p.spec_id ? p.spec_id : "";
-            const title = typeof p.title === "string" ? p.title : "";
-            const sourceAgent =
-              typeof p.source_agent === "string"
-                ? p.source_agent
-                : "visualizer";
-            setItems((prev) => {
-              // Find an existing visualization card with the same
-              // spec_id; if present, replace its spec/title in place.
-              const idx = specId
-                ? prev.findIndex(
-                    (it) => it.kind === "visualization" && it.specId === specId,
-                  )
-                : -1;
-              if (idx >= 0) {
-                const next = prev.slice();
-                const existing = next[idx] as Extract<
-                  ChatItem,
-                  { kind: "visualization" }
-                >;
-                next[idx] = { ...existing, spec, title, sourceAgent };
-                return next;
-              }
-              return [
-                ...prev,
-                visualizationItem(spec, title, sourceAgent, specId),
-              ];
-            });
-          }
         }
       } else {
         // Cross-view busy-indicator update. The state machine —
@@ -1563,7 +1633,16 @@ export default function App() {
   );
 
   const goPage = useCallback(
-    (route: PageRoute) => navigate(openRoot(route)),
+    (route: PageRoute) => {
+      navigate(openRoot(route));
+      // "Take me to X" means the top of X, even when X is already on
+      // screen showing one of its own sub-views. Without this the
+      // sidebar link for the page you are on is a control that does
+      // nothing: the route has not changed, so nothing re-renders,
+      // and Add source or a document you were reading stays exactly
+      // where it was.
+      setPageHome((n) => n + 1);
+    },
     [navigate],
   );
   const goBack = useCallback(() => navigate(popPage(pages)), [navigate, pages]);
@@ -2417,8 +2496,8 @@ export default function App() {
           case "plugins":
             goPage({ kind: "plugins", label: "Plugins" });
             return;
-          case "knowledge":
-            goPage({ kind: "knowledge", label: "Knowledge" });
+          case "artifacts":
+            goPage({ kind: "artifacts", label: "Artifacts" });
             return;
           case "hooks":
             goPage({ kind: "hooks", label: "Hooks" });
@@ -2654,6 +2733,61 @@ export default function App() {
       )
     : 0;
 
+  // A link is not the same as opening igni with nothing to open. A
+  // public document was published to be read, and demanding an
+  // account on the *sender's* server before a recipient may read it
+  // makes the link not a link — so an arrival with a slug lands on
+  // the document, inside the app, rather than on the wall.
+  if (knowYet && !signedIn && sharedSlug) {
+    return (
+      <>
+        <PublicDocument
+          client={client}
+          slug={sharedSlug}
+          onSignIn={() => setPanel({ kind: "login" })}
+        />
+        {panel.kind === "login" && (
+          <LoginPanel
+            client={client}
+            onDone={(ok, detail) => {
+              setPanel({ kind: "none" });
+              if (ok) void refreshStatus();
+              else append(errorItem(`Login failed: ${detail}`));
+            }}
+          />
+        )}
+      </>
+    );
+  }
+
+  if (knowYet && !signedIn) {
+    return (
+      <>
+        <SignInWall client={client} onSignIn={() => setPanel({ kind: "login" })} />
+        {/* The login dialog belongs to this branch too. It is rendered
+            at the foot of the app below, which this return skips —
+            without it the Sign in button would set a state nothing
+            draws. */}
+        {panel.kind === "login" && (
+          <LoginPanel
+            client={client}
+            onDone={(ok, detail) => {
+              setPanel({ kind: "none" });
+              if (ok) {
+                // The wall is gated on ``status.cloud_email``, which
+                // arrives with the next push. Asked for rather than
+                // waited on, so the app opens as soon as it can.
+                void refreshStatus();
+              } else {
+                append(errorItem(`Login failed: ${detail}`));
+              }
+            }}
+          />
+        )}
+      </>
+    );
+  }
+
   return (
     <div className="shell">
       {/* Live FPS overlay — hidden by default. Toggle with
@@ -2822,6 +2956,34 @@ export default function App() {
               </span>
             </button>
           )}
+          {status?.cloud_connected && (
+            <button
+              className={waiting ? "chip chip-bell has-waiting" : "chip chip-bell"}
+              title={
+                waiting
+                  ? `${waiting} ${waiting === 1 ? "comment is" : "comments are"} waiting on you`
+                  : "Nothing is waiting on you"
+              }
+              aria-label="Notifications"
+              onClick={() =>
+                setPanel((open) =>
+                  open.kind === "notifications"
+                    ? { kind: "none" }
+                    : { kind: "notifications" },
+                )
+              }
+            >
+              <Glyph name="bell" />
+              {/* The count, not a dot. "Three people are waiting" and
+                  "somebody is waiting" are different amounts of
+                  urgency and the difference costs one character. */}
+              {!!waiting && (
+                <span className="chip-bell-count">
+                  {waiting > 99 ? "99+" : waiting}
+                </span>
+              )}
+            </button>
+          )}
           {status?.cloud_connected ? (
             <button
               className="chip"
@@ -2834,14 +2996,31 @@ export default function App() {
                   // tier changes show up without an app restart. The
                   // BE proxies to ``/portal/me`` on the cloud.
                   void client
-                    .rpc<{ tier?: string | null } | null>("get_cloud_plan")
-                    .then((info) => setCloudPlan(info?.tier ?? null))
-                    .catch(() => setCloudPlan(null));
+                    .rpc<{
+                      tier?: string | null;
+                      full_name?: string | null;
+                      email?: string | null;
+                    } | null>("get_cloud_plan")
+                    .then((info) => {
+                      // The display name only exists on the cloud, so
+                      // it arrives here. Until it does the chip shows
+                      // the address, which is on disk and correct —
+                      // rather than nothing while a request is out.
+                      if (info?.full_name) setCloudName(info.full_name);
+                    })
+                    .catch(() => {
+                      // Offline: the chip keeps showing the address.
+                    });
                 }
               }}
             >
-              <CloudIcon />{" "}
-              <span className="chip-label">{status.cloud_org}</span>{" "}
+              {/* A monogram, not an avatar: nothing in the product
+                  stores an uploaded picture, and inventing a silhouette
+                  for everybody says less than two letters of their own
+                  name. The portal draws the same thing from the same
+                  source. */}
+              <Monogram name={accountName} />{" "}
+              <span className="chip-label">{accountName}</span>{" "}
               <ChevronIcon size={9} down />
             </button>
           ) : (
@@ -2876,18 +3055,17 @@ export default function App() {
               />
               <div className="dropdown" style={{ width: 220 }}>
                 <div className="popup-item" style={{ cursor: "default" }}>
-                  <span className="desc">Signed in to {status?.cloud_org}</span>
-                </div>
-                {cloudPlan && (
-                  <div className="popup-item" style={{ cursor: "default" }}>
-                    <span className="desc">
-                      Plan:{" "}
-                      <span style={{ color: "var(--fg)", fontWeight: 500 }}>
-                        {formatPlanName(cloudPlan)}
-                      </span>
+                  <span className="desc">
+                    Signed in as{" "}
+                    <span style={{ color: "var(--fg)", fontWeight: 500 }}>
+                      {accountName}
                     </span>
-                  </div>
-                )}
+                    {/* The organisation is still worth saying — it
+                        decides which seat and which models — but it is
+                        not the answer to "who am I signed in as". */}
+                    {status?.cloud_org ? ` · ${status.cloud_org}` : ""}
+                  </span>
+                </div>
                 <div
                   className="popup-item"
                   onClick={() => {
@@ -2974,7 +3152,7 @@ export default function App() {
                         ["/loop", "Repeat a prompt across a batch until done"],
                         ["/mcp", "Plug in external tools and data sources"],
                         ["/plugins", "Install skills, agents and hooks"],
-                        ["/knowledge", "A knowledge base carried in git"],
+                        ["/artifacts", "A artifacts carried in git"],
                       ] as const
                     ).map(([cmd, desc]) => (
                       <div
@@ -3113,8 +3291,25 @@ export default function App() {
             {page.kind === "plugins" && (
               <PluginsPanel client={client} onClose={goChat} />
             )}
-            {page.kind === "knowledge" && (
-              <KnowledgePanel client={client} onClose={goChat} />
+            {/* No ``onAsk`` here: commenting on a document runs the
+                turn on the document's own page, so the reply lands
+                under the comment instead of taking the reader off the
+                thing they were reading. The run still reaches this
+                chat — it is one session. */}
+            {page.kind === "artifacts" && (
+              <ArtifactPanel
+                client={client}
+                onClose={goChat}
+                goHome={pageHome}
+                /* A link that opened this window, or a notification
+                   pressed in it. Both name a document the same way —
+                   by the server's slug — so they come in one door. */
+                openSlug={arrivingSlug || sharedSlug}
+                /* Whose caret to draw in a shared draft. The same
+                   name and colour the header shows, so the person
+                   typing is recognisable as themselves. */
+                account={accountName}
+              />
             )}
             {page.kind === "codeindex" && (
               <CodeIndexPanel client={client} onClose={goChat} />
@@ -3362,6 +3557,31 @@ export default function App() {
           initialPath={projectDir}
           onSelect={(dir) => void attachInFolder(dir)}
           onCancel={() => setPanel({ kind: "none" })}
+        />
+      )}
+      {panel.kind === "notifications" && (
+        <NotificationsPanel
+          client={client}
+          // The bell is fed by the server's pushes, and the server
+          // pushes nothing when you deal with something yourself —
+          // it has nothing to tell you that you did not just do. So
+          // the panel reports what it read, and marking everything
+          // seen empties the bell as well as the list.
+          onWaitingChanged={setWaiting}
+          onOpenSlug={(slug) => {
+            // By slug, which is what the server names a document in a
+            // notification — the local id is this machine's word for
+            // it and the server has never heard of it.
+            goPage({ kind: "artifacts", label: "Artifacts" });
+            setArrivingSlug(slug);
+          }}
+          onClose={() => {
+            setPanel({ kind: "none" });
+            // Whatever was resolved while it was open should leave
+            // the count. Asked once on the way out rather than on a
+            // timer, because this is the moment it can have changed.
+            setNotifyNonce((n) => n + 1);
+          }}
         />
       )}
       {panel.kind === "login" && (

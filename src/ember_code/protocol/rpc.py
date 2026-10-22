@@ -165,9 +165,6 @@ class RpcMethod(StrEnum):
     # FE uses this to render a picker / status chip.
     GET_OUTPUT_STYLES = "get_output_styles"
 
-    # ── Knowledge ─────────────────────────────────────────────────
-    AUTO_SYNC_KNOWLEDGE = "auto_sync_knowledge"
-
     # ── Attachments (drag/drop, paste, OS picker) ────────────────
     UPLOAD_ATTACHMENT = "upload_attachment"
 
@@ -184,6 +181,11 @@ class RpcMethod(StrEnum):
 
     # ── Auth / models / config ───────────────────────────────────
     LOGIN = "login"
+    # Where this address's organisation runs igni, read from a record
+    # the organisation publishes on its own domain.
+    DISCOVER_SERVER = "discover_server"
+    # Write that server down, so the next launch knows it.
+    SET_SERVER = "set_server"
     RELOAD_CLOUD_CREDENTIALS = "reload_cloud_credentials"
     CLEAR_CLOUD_CREDENTIALS = "clear_cloud_credentials"
     SWITCH_MODEL = "switch_model"
@@ -231,13 +233,80 @@ class RpcMethod(StrEnum):
     # ── Skills ────────────────────────────────────────────────────
     GET_SKILL_DETAILS = "get_skill_details"
 
-    # ── Knowledge ─────────────────────────────────────────────────
-    GET_KNOWLEDGE_STATUS = "get_knowledge_status"
-    KNOWLEDGE_SEARCH = "knowledge_search"
-    KNOWLEDGE_ADD = "knowledge_add"
-    KNOWLEDGE_LIST = "knowledge_list"
-    KNOWLEDGE_GET = "knowledge_get"
-    KNOWLEDGE_REMOVE = "knowledge_remove"
+    # ── Artifacts ─────────────────────────────────────────────────
+    GET_ARTIFACT_STATUS = "get_artifact_status"
+    ARTIFACT_SEARCH = "artifact_search"
+    ARTIFACT_ADD = "artifact_add"
+    # A document somebody was sent a link to, read without an account.
+    PUBLIC_DOCUMENT = "public_document"
+    ARTIFACT_LIST = "artifact_list"
+    ARTIFACT_GET = "artifact_get"
+    ARTIFACT_REMOVE = "artifact_remove"
+    # Editing a document by hand. Separate from ``artifact_add``,
+    # which takes a *source* to read from: this one carries the text
+    # itself, because the text came from somebody typing it.
+    ARTIFACT_REVISE = "artifact_revise"
+    # Versioning + lineage. Separate RPCs rather than fields on
+    # ``artifact_get`` because the panel fetches them on different
+    # interactions — opening a document, opening its history — and
+    # folding them together would make every document open pay for a
+    # lineage walk nobody asked for.
+    ARTIFACT_VERSIONS = "artifact_versions"
+    ARTIFACT_LINEAGE = "artifact_lineage"
+    ARTIFACT_STALE = "artifact_stale"
+    ARTIFACT_CONFIRM_SOURCE = "artifact_confirm_source"
+    ARTIFACT_DISMISS_SOURCE = "artifact_dismiss_source"
+    ARTIFACT_RECONCILE_DIFF = "artifact_reconcile_diff"
+    ARTIFACT_OPEN_EXPORT = "artifact_open_export"
+    ARTIFACT_PREVIEW = "artifact_preview"
+    ARTIFACT_EXPORT = "artifact_export"
+    ARTIFACT_SHARE = "artifact_share"
+    # Plain-English question -> Cypher -> rows + graph. Two methods
+    # rather than one with an optional flag: the panel calls the first
+    # when somebody types a question and the second when they edit the
+    # query it produced, and those are different enough actions that
+    # one endpoint would branch on a mode argument.
+    ARTIFACT_COMPARE = "artifact_compare"
+    ARTIFACT_COMMENTS = "artifact_comments"
+    ARTIFACT_COMMENT = "artifact_comment"
+    ARTIFACT_PROVENANCE = "artifact_provenance"
+    ARTIFACT_DRIFT = "artifact_drift"
+    ARTIFACT_DRIFT_APPLY = "artifact_drift_apply"
+    ARTIFACT_CANDIDATE_EVIDENCE = "artifact_candidate_evidence"
+    ARTIFACT_CANDIDATE_VERDICT = "artifact_candidate_verdict"
+    ARTIFACT_COMMENT_ANCHOR = "artifact_comment_anchor"
+    ARTIFACT_COMMENT_RELEVANCE = "artifact_comment_relevance"
+    ARTIFACT_REPLY_COMMENT = "artifact_reply_comment"
+    ARTIFACT_TREE = "artifact_tree"
+    ARTIFACT_CREATE_FOLDER = "artifact_create_folder"
+    ARTIFACT_RENAME_FOLDER = "artifact_rename_folder"
+    ARTIFACT_DELETE_FOLDER = "artifact_delete_folder"
+    ARTIFACT_MOVE_NODE = "artifact_move_node"
+    ARTIFACT_ARCHIVE_NODE = "artifact_archive_node"
+    ARTIFACT_DELETE_NODE = "artifact_delete_node"
+    ARTIFACT_RESOLVE_COMMENT = "artifact_resolve_comment"
+    ARTIFACT_MENTIONS = "artifact_mentions"
+    ARTIFACT_PEOPLE = "artifact_people"
+    ARTIFACT_COLLEAGUES = "artifact_colleagues"
+    ARTIFACT_DRAFT = "artifact_draft"
+    ARTIFACT_ROOM_SEND = "artifact_room_send"
+    ARTIFACT_ROOM_STATE = "artifact_room_state"
+    ARTIFACT_SAVE_DRAFT = "artifact_save_draft"
+    ARTIFACT_PUBLISH_DRAFT = "artifact_publish_draft"
+    ARTIFACT_LOCKED = "artifact_locked"
+    ARTIFACT_OPEN_SHARED = "artifact_open_shared"
+    ARTIFACT_ASK_ACCESS = "artifact_ask_access"
+    ARTIFACT_ACCESS_ASKS = "artifact_access_asks"
+    ARTIFACT_SETTLE_ACCESS_ASK = "artifact_settle_access_ask"
+    ARTIFACT_WATCH_ROOM = "artifact_watch_room"
+    ARTIFACT_LEAVE_ROOM = "artifact_leave_room"
+    ARTIFACT_GRANT_VIEW = "artifact_grant_view"
+    ARTIFACT_SYNC_COMMENTS = "artifact_sync_comments"
+    ARTIFACT_WATCH_COMMENTS = "artifact_watch_comments"
+    ARTIFACT_NOTIFICATIONS = "artifact_notifications"
+    ARTIFACT_MARK_SEEN = "artifact_mark_seen"
+    ARTIFACT_ASK = "artifact_ask"
+    ARTIFACT_RUN_CYPHER = "artifact_run_cypher"
 
     # ── File access (sandboxed to project/.igni) ────────────────
     READ_FILE = "read_file"

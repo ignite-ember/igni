@@ -177,7 +177,7 @@ class HomeModelRegistryEntry(BaseModel):
 
     def is_bundled_cloud(self) -> bool:
         """True for entries that match the old bundled cloud-model
-        shape (Ember Cloud URL + ``cloud_token`` api_key).
+        shape (igni server URL + ``cloud_token`` api_key).
 
         Both signals anchor on conventions only the package ever
         wrote; a user pointing their own ``cloud_token`` sentinel at

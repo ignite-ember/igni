@@ -52,6 +52,19 @@ def main() -> int:
         return 2
 
     print(f"prefetch: {DEFAULT_MODEL} ready", flush=True)
+
+    # Bypass mode's last check (core/hooks/bypass_guard.py). Fetched here
+    # so the first Bypass call does not stall on a ~1.7 GB download; a
+    # failure is reported but not fatal — the guard loads it on first use
+    # instead, and asks rather than allows if it cannot.
+    print("prefetch: loading Bypass safety model (~1.7 GB on first run)", flush=True)
+    try:
+        from ember_code.core.hooks.bypass_guard import HarmJudge  # noqa: PLC0415
+
+        HarmJudge.shared()._load()
+        print("prefetch: Bypass safety model ready", flush=True)
+    except Exception as exc:  # pragma: no cover — surfaced to caller
+        print(f"prefetch: Bypass safety model not fetched: {exc!r}", file=sys.stderr, flush=True)
     return 0
 
 

@@ -39,7 +39,7 @@ def _session_patches(**overrides):
         "MCPClientManager": None,
         "SessionPersistence": None,
         "SessionMemoryManager": None,
-        "SessionKnowledgeManager": None,
+        "SessionArtifactManager": None,
         "CloudCredentials": None,
         "CodeIndex": None,
         "CodeIndexSyncManager": None,
@@ -252,6 +252,11 @@ class TestSessionCompaction:
         mock_hook_result = MagicMock()
         mock_hook_result.should_continue = True
         session.hook_executor.execute = AsyncMock(return_value=mock_hook_result)
+        # The conversation is only dropped when a summary exists to take
+        # its place, so the pass needs one to reach the clearing branch
+        # at all. (Pinned in
+        # tests/test_compaction_keeps_history_without_summary.py.)
+        session.compaction._fallback.summarise = AsyncMock(return_value="a recap")
         result = await session.compact_if_needed(8500, 10000)  # 85%
         assert result is True
         # Runs should have been cleared
@@ -372,7 +377,7 @@ def _patches_with_real_context_loader():
         "MCPClientManager": None,
         "SessionPersistence": None,
         "SessionMemoryManager": None,
-        "SessionKnowledgeManager": None,
+        "SessionArtifactManager": None,
         "CloudCredentials": None,
         "CodeIndex": None,
         "CodeIndexSyncManager": None,

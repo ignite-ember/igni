@@ -152,14 +152,14 @@ guardrails:
   # prompt_injection: false       # Warn on prompt injection patterns
 
 knowledge:
-  enabled: true                   # Weaviate-backed knowledge base
-  collection_name: ember_knowledge
+  enabled: true                   # Weaviate-backed artifact store
+  collection_name: igni_artifacts
 
 learning:
   enabled: true                   # Learn user preferences, project context, entities across sessions
 
 # orchestration:
-#   max_nesting_depth: 5          # Reserved — sub-teams cannot spawn today, so this never binds
+#   max_nesting_depth: 5          # How far delegation may chain (agents marked can_orchestrate)
 #   max_total_agents: 20          # Max agents per request
 #   sub_team_timeout: 600         # Sub-team kill timeout (seconds)
 """

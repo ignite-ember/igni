@@ -70,7 +70,7 @@ const LANDS: Record<string, Lands> = {
   "/workflows": "transcript",
   // Opens the panel when the index is up, explains itself when it is
   // not. Both are correct answers; silence is not.
-  "/knowledge": "either",
+  "/artifacts": "either",
 };
 
 /** The header tools menu, in `App.tsx`'s `TOOLS_MENU` order. */
@@ -80,7 +80,7 @@ const TOOLS = [
   "Agents",
   "Skills",
   "Plugins",
-  "Knowledge",
+  "Artifacts",
   "Hooks",
   "Loop",
   "Scheduled tasks",
@@ -97,7 +97,7 @@ const TOOL_COMMAND: Record<string, string> = {
   Agents: "/agents",
   Skills: "/skills",
   Plugins: "/plugins",
-  Knowledge: "/knowledge",
+  Artifacts: "/artifacts",
   Hooks: "/hooks",
   Loop: "/loop",
   "Scheduled tasks": "/schedule",
@@ -118,7 +118,7 @@ const CARDS = [
   "/loop",
   "/mcp",
   "/plugins",
-  "/knowledge",
+  "/artifacts",
 ];
 
 async function connected(page: Page) {

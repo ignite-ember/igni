@@ -10,7 +10,7 @@ description: |
      (preferences, role, project conventions). NOT for tasks,
      greetings, or one-off Q&A.
 
-  2. ``knowledge_search`` / ``knowledge_add`` — Ember's KnowledgeTools.
+  2. ``artifact_search`` / ``artifact_add`` — Ember's ArtifactTools.
      The knowledge base is project-scoped (Chroma-backed). The agent
      uses it for project-specific lore the codebase itself doesn't
      reveal: design decisions, deployment runbooks, architecture
@@ -41,11 +41,11 @@ cases:
     Please remember that.
   expected_tool_calls:
     - update_user_memory
-    - knowledge_add
+    - artifact_add
   judge_guidelines: |
     Pass if the agent persists the "tabs not spaces" rule via
     EITHER ``update_user_memory`` (treating it as a user
-    preference) OR ``knowledge_add`` (treating it as a project
+    preference) OR ``artifact_add`` (treating it as a project
     convention). Both interpretations are defensible —
     "in this codebase" leans project, "remember that" leans
     user — what matters is that the rule actually gets persisted
@@ -120,51 +120,51 @@ cases:
     response. Fail if the answer recommends pip / poetry / etc.,
     ignoring the saved preference.
 
-# ── knowledge_search: positive — project-specific question ───────
-- name: knowledge_search_for_project_decision
+# ── artifact_search: positive — project-specific question ───────
+- name: artifact_search_for_project_decision
   input: |
     What's our retry convention for outbound HTTP calls in this
     project? Check the knowledge base.
   expected_tool_calls:
-    - knowledge_search
-    - knowledge_status
+    - artifact_search
+    - artifact_status
     - Bash
   judge_guidelines: |
-    Pass if the agent calls ``knowledge_search`` with a query
+    Pass if the agent calls ``artifact_search`` with a query
     about retry conventions FIRST. Falling back to grep (Bash)
     after an empty knowledge-base result is fine — and a quick
-    ``knowledge_status`` check to confirm "is the KB empty or
+    ``artifact_status`` check to confirm "is the KB empty or
     just unmatched?" is also defensible. Fail if it skips
-    ``knowledge_search`` entirely and goes straight to grep —
+    ``artifact_search`` entirely and goes straight to grep —
     the user explicitly pointed at the knowledge base.
 
-- name: knowledge_search_for_internal_pattern
+- name: artifact_search_for_internal_pattern
   input: |
     Look up our standard pattern for auth middleware in the
     knowledge base.
   expected_tool_calls:
-    - knowledge_search
-    - knowledge_status
+    - artifact_search
+    - artifact_status
     - Bash
   judge_guidelines: |
-    Pass if the agent calls ``knowledge_search`` first. Falling
+    Pass if the agent calls ``artifact_search`` first. Falling
     back to grep / ls after an empty KB result is acceptable —
     the agent is trying to be helpful by checking the codebase
     when the KB has nothing. Fail if it fabricates a pattern out
-    of thin air, or skips ``knowledge_search`` entirely and goes
+    of thin air, or skips ``artifact_search`` entirely and goes
     straight to grep (the user asked for the knowledge base
     specifically — start there).
 
-# ── knowledge_add: positive — durable design decision ────────────
-- name: knowledge_add_for_decision
+# ── artifact_add: positive — durable design decision ────────────
+- name: artifact_add_for_decision
   input: |
     Save this for the next time anyone touches deployment: we run
     database migrations only via ``alembic upgrade head``, never
     ``--autogenerate`` directly. Add it to the knowledge base.
   expected_tool_calls:
-    - knowledge_add
+    - artifact_add
   judge_guidelines: |
-    Pass if the agent calls ``knowledge_add`` with the migration
+    Pass if the agent calls ``artifact_add`` with the migration
     convention. Fail if it merely confirms or saves to user_memory
     (this is a project pattern, not a personal preference).
 
@@ -174,10 +174,10 @@ cases:
     What's the difference between TCP and UDP at the transport
     layer?
   unexpected_tool_calls:
-    - knowledge_search
+    - artifact_search
   judge_guidelines: |
     Pass if the agent answers from training knowledge with no
-    knowledge_search. TCP vs UDP is canonical CS material, not a
+    artifact_search. TCP vs UDP is canonical CS material, not a
     project-specific pattern worth searching the knowledge base
     for.
 
@@ -185,7 +185,7 @@ cases:
   input: |
     I just realized Python's GIL only releases on I/O. Interesting!
   unexpected_tool_calls:
-    - knowledge_add
+    - artifact_add
   judge_guidelines: |
     Pass if the agent engages conversationally without saving the
     GIL note to the knowledge base. The user is musing, not
@@ -196,8 +196,8 @@ cases:
   input: |
     Print "hello world" via Python.
   unexpected_tool_calls:
-    - knowledge_search
-    - knowledge_add
+    - artifact_search
+    - artifact_add
   judge_guidelines: |
     Pass if the agent runs the command (or shows the one-liner)
     without consulting the knowledge base. There's nothing to

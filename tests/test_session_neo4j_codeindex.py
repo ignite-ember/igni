@@ -49,7 +49,7 @@ async def driver():
 
 class _StubRuntime:
     """Minimal ``Neo4jRuntime`` stand-in: every CodeIndex
-    attach needs ``driver_for_commit`` + ``driver_for_knowledge``;
+    attach needs ``driver_for_commit`` + ``driver_for_artifacts``;
     the swap also constructs a new :class:`CodeIndexSyncManager`
     which calls ``current_sha()`` on the sync. We only need
     ``driver_for_commit`` (the index's runtime field is set

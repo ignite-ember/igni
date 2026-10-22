@@ -3,13 +3,13 @@ default session's knowledge backend to neo4j.
 
 Verifies the BE-level seam: when knowledge is enabled, the
 orchestrator's ``attach_neo4j`` constructs a :class:`Neo4jRuntime`
-and calls the session's :meth:`Session.attach_knowledge_neo4j`;
+and calls the session's :meth:`Session.attach_artifacts_neo4j`;
 when it is disabled, the call is a no-op.
 
 The switch is ``knowledge.enabled`` in config. ``IGNI_NEO4J_RUNTIME``
 remains a process-level override (both directions), which is why the
 tests below still set it to pin the answer — see
-:mod:`ember_code.backend.knowledge_gate`.
+:mod:`ember_code.backend.artifact_gate`.
 
 Live integration — requires ``NEO4J_TEST_URI``. Skipped otherwise.
 """
@@ -63,11 +63,11 @@ def _make_orchestrator(tmp_path: Path) -> SessionOrchestrator:
     """
     # Real Session is heavy to construct (it spins up the
     # workspace, db, plugins, etc.). Use a minimal stub whose
-    # ``knowledge`` field is a real ``None`` (we test the
+    # ``artifacts`` field is a real ``None`` (we test the
     # swap-to-neo4j path; the chroma default is exercised by
     # the existing session tests).
     session = MagicMock()
-    session.knowledge = None  # the swap target
+    session.artifacts = None  # the swap target
 
     backend = MagicMock()
     backend._session = session
@@ -100,7 +100,7 @@ async def test_orchestrator_attach_neo4j_no_op_when_knowledge_disabled(tmp_path,
     """
     monkeypatch.delenv("IGNI_NEO4J_RUNTIME", raising=False)
     orch = _make_orchestrator(tmp_path)
-    orch._settings.knowledge.enabled = False
+    orch._settings.artifacts.enabled = False
     # Neo4j backs CodeIndex as well, and it defaults on — so "knowledge is off"
     # alone no longer means "no sidecar". Both have to be off for the attach to
     # be the no-op this test is about. Gating the sidecar on knowledge alone
@@ -113,15 +113,18 @@ async def test_orchestrator_attach_neo4j_no_op_when_knowledge_disabled(tmp_path,
     result = await orch.attach_neo4j()
     assert result is None
     assert orch._neo4j_runtime is None
-    # The session's knowledge is still ``None`` (the stub value).
-    assert orch._backend._session.knowledge is None
+    # The session's artifact store is still ``None`` (the stub value).
+    # Watched under its real name: the field was renamed from
+    # ``knowledge`` and this assertion was not, so it stood for a
+    # while checking an attribute nothing writes.
+    assert orch._backend._session.artifacts is None
 
 
 async def test_orchestrator_attach_neo4j_swaps_knowledge_when_enabled(
     tmp_path, monkeypatch, driver
 ):
     """With knowledge enabled, ``attach_neo4j`` builds a runtime and
-    calls ``Session.attach_knowledge_neo4j``."""
+    calls ``Session.attach_artifacts_neo4j``."""
     monkeypatch.setenv("IGNI_NEO4J_RUNTIME", "1")
 
     # A real Session for the swap target (the stub's MagicMock
@@ -138,14 +141,14 @@ async def test_orchestrator_attach_neo4j_swaps_knowledge_when_enabled(
             # the test green while no session could ever get knowledge.
             # ``code_index`` is still built eagerly by the constructor,
             # so it starts non-None here for the same reason.
-            self.knowledge = None
+            self.artifacts = None
             self.code_index = object()
             self.attached_runtimes: list[Any] = []
             self.codeindex_attach_calls = 0
 
-        async def attach_knowledge_neo4j(self, runtime: Any) -> None:
+        async def attach_artifacts_neo4j(self, runtime: Any) -> None:
             self.attached_runtimes.append(runtime)
-            self.knowledge = f"neo4j-{runtime is not None}"
+            self.artifacts = f"neo4j-{runtime is not None}"
 
         async def attach_codeindex_neo4j(self, runtime: Any) -> None:
             self.codeindex_attach_calls += 1
@@ -175,12 +178,12 @@ async def test_orchestrator_attach_neo4j_swaps_knowledge_when_enabled(
     assert runtime is not None
     # The runtime was cached on the orchestrator.
     assert orch._neo4j_runtime is runtime
-    # The session received the runtime for BOTH the knowledge and
+    # The session received the runtime for BOTH the artifact and
     # the code_index attach calls.
     assert session.attached_runtimes == [runtime]
     assert session.codeindex_attach_calls == 1
-    # The session's knowledge + code_index were updated.
-    assert session.knowledge == "neo4j-True"
+    # The session's artifact store + code_index were updated.
+    assert session.artifacts == "neo4j-True"
     assert session.code_index == "neo4j-codeindex-True"
 
 
@@ -192,12 +195,12 @@ async def test_orchestrator_attach_neo4j_idempotent(tmp_path, monkeypatch, drive
     class _Session:
         def __init__(self):
             # ``None``, as the real constructor leaves it.
-            self.knowledge = None
+            self.artifacts = None
             self.attach_calls = 0
 
-        async def attach_knowledge_neo4j(self, runtime):
+        async def attach_artifacts_neo4j(self, runtime):
             self.attach_calls += 1
-            self.knowledge = runtime
+            self.artifacts = runtime
 
     session = _Session()
     backend = MagicMock()

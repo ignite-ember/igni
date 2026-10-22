@@ -74,14 +74,18 @@ class CompactionCoordinator:
         2. If that returns empty, fall back to the free-text
            summariser (MiniMax workaround — see
            :class:`FallbackSummariser`).
-        3. Delete all runs from the session (summary preserved).
-        4. Rebuild the main agent so its in-memory message cache
+        3. If neither produced a *new* summary, stop here and keep
+           the conversation — see the abort branch below.
+        4. Delete all runs from the session (summary preserved).
+        5. Rebuild the main agent so its in-memory message cache
            is empty and the next turn sees the summary as system
            context.
 
         Returns a :class:`CompactResult` — ``ok`` is ``True`` when
         a non-empty summary landed; ``error`` carries the
-        summariser exception when the pass failed.
+        summariser exception when the pass failed;
+        ``history_cleared`` says whether the runs actually left the
+        DB, which is what callers must mirror.
         """
         session = self._session
         agno_session = await session.main_team.aget_session(
@@ -96,6 +100,12 @@ class CompactionCoordinator:
                 error="Session not found in DB",
             )
 
+        # What the session already carried before this pass. A summariser
+        # that fails leaves the PREVIOUS summary sitting on the object, and
+        # that text says nothing about the runs this pass is about to drop —
+        # so an unchanged summary counts as "no summary", not as a success.
+        previous_summary = getattr(getattr(agno_session, "summary", None), "summary", None)
+
         summariser_error: str | None = None
         try:
             ssm = SessionSummaryManager(model=session.main_team.model)
@@ -109,7 +119,7 @@ class CompactionCoordinator:
 
         summary_obj = getattr(agno_session, "summary", None)
         summary_text = getattr(summary_obj, "summary", None) if summary_obj else None
-        if not summary_text:
+        if not summary_text or summary_text == previous_summary:
             try:
                 summary_text = await self._fallback.summarise(agno_session)
             except Exception as e:
@@ -127,11 +137,37 @@ class CompactionCoordinator:
                     except Exception as e:
                         logger.warning("Could not attach fallback summary to session: %s", e)
 
+        if not summary_text or summary_text == previous_summary:
+            # Both summarisers came back empty. Clearing the runs here
+            # deletes the entire conversation and puts NOTHING in its
+            # place — and the trigger is a transient the user cannot
+            # influence (provider 5xx, an unparseable response), firing
+            # automatically at 80% context on every path that calls
+            # ``compact_if_needed``. Keeping the history costs one more
+            # over-threshold turn; dropping it costs the session.
+            logger.warning(
+                "Compaction aborted — no summary was produced, conversation kept (%s)",
+                summariser_error or "summariser returned no text",
+            )
+            return CompactResult(
+                ok=False,
+                status=summariser_error or "",
+                summary="",
+                error=summariser_error,
+                history_cleared=False,
+            )
+
         agno_session.runs = []
+        history_cleared = True
         try:
             await session.main_team.asave_session(agno_session)
             logger.info("Session runs cleared from DB")
         except Exception as e:
+            # The DB still holds the runs, and the rebuilt agent reloads
+            # them from there — so nothing was cleared, whatever the
+            # in-memory object now says. Report that, or the FE clears a
+            # transcript the next turn brings straight back.
+            history_cleared = False
             logger.warning("Failed to save session: %s", e)
 
         # Rebuild main agent through the public seam.
@@ -143,6 +179,7 @@ class CompactionCoordinator:
             status=summariser_error or "",
             summary=summary_text or "",
             error=summariser_error,
+            history_cleared=history_cleared,
         )
 
     async def compact_if_needed(self, input_tokens: int, context_window: int) -> bool:
@@ -177,7 +214,18 @@ class CompactionCoordinator:
             logger.info("Auto-compact cancelled by PreCompact hook: %s", pre.message)
             return False
 
-        await self.compact()
+        result = await self.compact()
+        if not result.history_cleared:
+            # Nothing was dropped, so nothing downstream should act as if
+            # it was: PostCompact observers would export an unchanged
+            # transcript and the caller would push ``SessionCleared`` to a
+            # FE whose history is still there.
+            logger.info(
+                "Auto-compact at %.0f%% made no change: %s",
+                usage * 100,
+                result.status or "no summary produced",
+            )
+            return False
         logger.info("Auto-compacted at %.0f%% context usage", usage * 100)
         # PostCompact hook — observation only; can't undo at this point.
         post_payload = PostCompactHookPayload(
@@ -238,6 +286,30 @@ class CompactionCoordinator:
         inner = await self.compact()
         error = inner.error
 
+        if not inner.history_cleared:
+            # The summariser produced nothing, so ``compact`` kept the
+            # conversation. Say that plainly — the old wording ("Context
+            # cleared, but …") described a deletion, and re-reading the
+            # summary from the DB here would find the STALE one and
+            # report a success. PostCompact does not fire: there is no
+            # history-cleared event to observe.
+            status = (
+                f"Compaction aborted — your conversation is untouched. Summariser failed: {error}"
+                if error
+                else (
+                    "Compaction aborted — the summariser returned no text "
+                    "(the model may have returned an unparseable response). "
+                    "Your conversation is untouched; try again."
+                )
+            )
+            return CompactResult(
+                ok=False,
+                status=status,
+                summary="",
+                error=error,
+                history_cleared=False,
+            )
+
         # Retrieve the generated summary from DB.
         summary = ""
         try:
@@ -263,7 +335,8 @@ class CompactionCoordinator:
             status = "Context compacted. Conversation summarized, history cleared."
             ok = True
         # PostCompact fires whether the summariser succeeded or not —
-        # observers still need the history-cleared signal.
+        # observers still need the history-cleared signal. (The pass that
+        # cleared nothing returned above, before this point.)
         post_payload = PostCompactHookPayload(
             session_id=session.session_id,
             scope="manual",
@@ -274,7 +347,9 @@ class CompactionCoordinator:
             event=HookEvent.POST_COMPACT.value,
             payload=post_payload.model_dump(),
         )
-        return CompactResult(ok=ok, status=status, summary=summary, error=error)
+        return CompactResult(
+            ok=ok, status=status, summary=summary, error=error, history_cleared=True
+        )
 
     async def context_breakdown(self) -> ContextBreakdown:
         """Delegate to :meth:`ContextBreakdownReporter.report`."""

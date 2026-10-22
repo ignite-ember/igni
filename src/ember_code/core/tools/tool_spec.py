@@ -471,10 +471,18 @@ class ToolSpecCatalog:
 
     # Registry names the resolver skips silently — they're pseudo-tools
     # handled elsewhere in the agent builder (Orchestrate ->
-    # ``OrchestrateTools``, Knowledge -> ``KnowledgeTools``) rather than
+    # ``OrchestrateTools``, Artifacts -> ``ArtifactTools``) rather than
     # by the built-in registry. Kept on the catalog so ``resolve``
     # doesn't need a magic-string check.
-    RESERVED_NON_TOOL_NAMES: ClassVar[frozenset[str]] = frozenset({"Orchestrate", "Knowledge"})
+    #
+    # ``Knowledge`` is retained alongside ``Artifacts`` for the same
+    # reason the config keeps its alias: a user-authored agent ``.md``
+    # written before the rename still names it, and dropping it here
+    # would turn that line into an unknown-tool warning for a toolkit
+    # the agent gets anyway.
+    RESERVED_NON_TOOL_NAMES: ClassVar[frozenset[str]] = frozenset(
+        {"Orchestrate", "Artifacts", "Knowledge"}
+    )
 
     def __init__(self, specs: list[ToolSpec]) -> None:
         self._specs: list[ToolSpec] = list(specs)
@@ -555,9 +563,20 @@ class ToolSpecCatalog:
 
     @property
     def registry_names_with_aliases(self) -> list[str]:
-        """Sorted registry names including every alias — matches the
-        old ``sorted(_factories.keys())`` behaviour."""
-        return sorted(self.by_name.keys())
+        """Every name an agent definition may legitimately declare.
+
+        Specs, their aliases, and the pseudo-tool names in
+        :data:`RESERVED_NON_TOOL_NAMES`. The pseudo-tools are attached
+        by the agent builder rather than resolved here, but declaring
+        one is still correct and worth doing: a definition's ``tools:``
+        list is the manifest its traces are attributed by, and a grant
+        the manifest does not mention is exactly the drift that had to
+        be repaired across 1,370 captured specialist traces.
+
+        Declaring does not grant. The builder decides what an agent
+        gets; this list decides what it may honestly claim.
+        """
+        return sorted(set(self.by_name) | self.RESERVED_NON_TOOL_NAMES)
 
     def register(self, spec: ToolSpec) -> None:
         """Add a spec at runtime. Invalidates derived caches."""

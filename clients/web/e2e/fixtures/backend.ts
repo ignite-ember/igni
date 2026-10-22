@@ -65,6 +65,33 @@ export interface StartOptions {
  * (see ``App.tsx`` around line 257-475 and the typing-effects).
  * Tests can override any of these via ``onRpc``.
  */
+/**
+ * A status the app will actually render behind.
+ *
+ * ``App.tsx`` reads ``signedIn`` straight off ``cloud_email``, and an
+ * empty one puts ``SignInWall`` in front of the whole app — artifacts
+ * are a cloud service and there is no standalone mode, so that is
+ * correct behaviour. A test that builds its own status literal and
+ * leaves the field out therefore replaces the surface it is testing
+ * with a sign-in form, which is how twelve of these tests ended up
+ * waiting twenty seconds for a composer that was never going to be
+ * there. Spread this instead of writing the shape out.
+ */
+export function signedInStatus(
+  overrides: Record<string, unknown> = {},
+): Record<string, unknown> {
+  return {
+    type: "status_update",
+    model: "test-model",
+    context_tokens: 0,
+    max_context: 200_000,
+    cloud_connected: true,
+    cloud_org: "Fixture Org",
+    cloud_email: "fixture@example.com",
+    ...overrides,
+  };
+}
+
 function defaultHandlers(): Record<string, RpcHandler> {
   return {
     get_session_id: () => "test-session-001",
@@ -73,14 +100,7 @@ function defaultHandlers(): Record<string, RpcHandler> {
       project_dir: "/tmp/test-project",
     }),
     count_context_tokens: () => 0,
-    get_status: () => ({
-      type: "status_update",
-      model: "test-model",
-      context_tokens: 0,
-      max_context: 200_000,
-      cloud_connected: false,
-      cloud_org: "",
-    }),
+    get_status: () => signedInStatus(),
     list_sessions: () => ({ sessions: [] }),
     list_chat_history: () => [],
     get_skill_definitions: () => [],

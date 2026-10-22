@@ -84,7 +84,7 @@ class ContextWindowResolver:
     The optional ``cloud_token`` constructor argument is passed
     through to :meth:`ModelRegistryEntry.resolve_api_key` on every
     fetch so the resolver reuses the caller's already-derived
-    Ember Cloud token rather than re-reading credentials from disk
+    igni server token rather than re-reading credentials from disk
     or the environment.
     """
 

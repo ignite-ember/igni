@@ -294,7 +294,13 @@ class EmberShellTools(Toolkit):
         rc = mp.returncode()
         elapsed = mp.elapsed()
         output = mp.read(tail=100)
-        self._supervisor.registry.remove(pid)
+        # Arm the TTL rather than ``registry.remove(pid)``: remove pops
+        # the entry outright, so the very next ``read_process_output(pid)``
+        # answered "No tracked process with PID …" — which contradicts
+        # that tool's documented "both before and after the process has
+        # finished" contract. Armed, the finished entry survives its
+        # 10-minute TTL and each further read refreshes it.
+        self._supervisor.registry.arm_eviction(mp)
         verdict = "succeeded" if rc == 0 else "failed"
         return f"[Exited with code {rc} after {elapsed:.0f}s — {verdict}]\nOutput:\n{output}"
 
@@ -336,7 +342,11 @@ class EmberShellTools(Toolkit):
                 f"[Running for {elapsed:.0f}s — PID {pid}]\nNo new output in the last {seconds}s."
             )
         rc = mp.returncode()
-        self._supervisor.registry.remove(pid)
+        # Same reason as ``await_process``: hand the finished entry to
+        # the eviction TTL instead of deleting it, so a follow-up
+        # ``read_process_output(pid)`` can still reach the output the
+        # watch window reported on.
+        self._supervisor.registry.arm_eviction(mp)
         if new_output:
             return f"[Exited with code {rc} after {elapsed:.0f}s]\nOutput:\n{new_output}"
         return f"[Exited with code {rc} after {elapsed:.0f}s]\nNo new output before exit."

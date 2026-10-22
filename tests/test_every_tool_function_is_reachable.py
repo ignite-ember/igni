@@ -5,7 +5,7 @@ backend; the *tool functions* are what the agent does to your
 repository — edit files, run shell, spawn sub-agents, delete knowledge.
 An inventory found sixty-six statically-named functions and thirteen
 of igni's own with no direct test at all, including ``stop_process``,
-which kills a process, and the whole of ``KnowledgeTools``, which can
+which kills a process, and the whole of ``ArtifactTools``, which can
 delete the knowledge base.
 
 **A rule, not a list.** The registered functions are read out of the

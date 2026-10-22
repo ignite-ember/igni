@@ -28,7 +28,7 @@ export function Sidebar({
   open: boolean;
   sessions: SessionEntry[];
   currentId: string;
-  /** Destinations that sit above the chats — plugins, knowledge,
+  /** Destinations that sit above the chats — plugins, artifacts,
    *  agents. Above the list because that is what they are: places,
    *  not conversations. */
   links: SidebarLink[];

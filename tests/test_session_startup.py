@@ -37,8 +37,8 @@ def _bare_session(*, codeindex_enabled: bool = True):
 
     session.settings = Settings()
     object.__setattr__(session.settings.code_index, "enabled", codeindex_enabled)
-    session.knowledge = SimpleNamespace()
-    session.knowledge.start = AsyncMock()
+    session.artifacts = SimpleNamespace()
+    session.artifacts.start = AsyncMock()
     session.code_index = SimpleNamespace()
     session.code_index.sweep_stale_dirs = MagicMock(return_value=[])
     session.code_index.clean = AsyncMock(return_value=[])
@@ -73,10 +73,10 @@ def _bare_session(*, codeindex_enabled: bool = True):
     return session
 
 
-class TestStartKnowledgeBackground:
+class TestStartArtifactsBackground:
     def test_no_knowledge_is_noop(self):
         s = _bare_session()
-        s.knowledge = None
+        s.artifacts = None
         # Must not raise, must not need a loop.
         SessionStartupCoordinator(s).start_knowledge_background()
 
@@ -95,21 +95,21 @@ class TestStartKnowledgeBackground:
         import asyncio
 
         await asyncio.sleep(0)
-        s.knowledge.start.assert_called_once()
+        s.artifacts.start.assert_called_once()
 
 
-class TestEnsureKnowledgeStarted:
+class TestEnsureArtifactsStarted:
     @pytest.mark.asyncio
     async def test_no_knowledge_is_noop(self):
         s = _bare_session()
-        s.knowledge = None
+        s.artifacts = None
         await SessionStartupCoordinator(s).ensure_knowledge_started()  # should not raise
 
     @pytest.mark.asyncio
     async def test_calls_start(self):
         s = _bare_session()
         await SessionStartupCoordinator(s).ensure_knowledge_started()
-        s.knowledge.start.assert_called_once()
+        s.artifacts.start.assert_called_once()
 
 
 class TestStartCodeindexBackground:

@@ -30,7 +30,7 @@ from ember_code.backend.schemas_rpc import BackendReadyLine
 from ember_code.backend.server import BackendServer
 from ember_code.backend.session_orchestrator import SessionOrchestrator
 from ember_code.backend.supervisor import BackendSupervisor
-from ember_code.core.config.settings import load_settings
+from ember_code.core.config.settings import Settings, load_settings
 
 logger = logging.getLogger(__name__)
 
@@ -149,12 +149,45 @@ class BackendApp:
         detector.start()
         self._wake_detector = detector
 
+    def _load_settings_with_group_policy(self) -> Settings:
+        """Build this process's ``Settings`` with the org's policy applied.
+
+        This is the backend's half of SWP-23. ``GroupPolicyTier`` has always
+        known how to merge a group's ``settings`` entries between the CLI and
+        the sysadmin file, and nothing ever handed it a pack — so an admin
+        publishing ``{"code_index": {"enabled": false}}`` was ignored, silently,
+        everywhere. Here is where that is turned on: the backend is the process
+        that owns the session, holds the cloud token, and starts exactly once,
+        which is all three things the tier needs.
+
+        Loaded twice, on purpose, and the second load is the one that counts.
+        The cache the policy lives in sits under ``storage.data_dir``, and
+        ``storage.data_dir`` is itself a setting — so the first pass exists
+        only to answer "which directory", using local configuration. A group
+        that relocates ``data_dir`` therefore does not move its own cache,
+        which is the only sane reading: the machine decides where igni keeps
+        its files, the org decides what is in them. Both passes are file reads
+        of a handful of small YAML/JSON files; neither touches the network.
+
+        The fetcher reads the pack ``AuthController`` last wrote to disk — the
+        live portal call cannot happen here, because the token this process
+        authenticates with is read out of the ``Settings`` being built. See
+        :class:`~ember_code.core.config.group_policy.CachedSettingsFetcher`.
+        """
+        from ember_code.core.config.group_policy import CachedSettingsFetcher
+
+        local_only = load_settings(project_dir=self._project_dir)
+        return load_settings(
+            project_dir=self._project_dir,
+            group_policy_fetcher=CachedSettingsFetcher(local_only.storage.data_dir),
+        )
+
     async def run(self) -> None:
         """Boot, serve, and tear down. Exceptions in the boot or
         serve phases are logged; teardown always runs."""
         self._transport = await self._transport_builder.build()
 
-        settings = load_settings(project_dir=self._project_dir)
+        settings = self._load_settings_with_group_policy()
         self._backend = BackendServer(
             settings,
             project_dir=self._project_dir,
@@ -229,6 +262,12 @@ class BackendApp:
         )
         pool = self._orchestrator.setup_pool()
         self._supervisor.set_pool(pool)
+        # The push bridge subscribes to the process-wide shell bus and
+        # narrates background-process completions into ITS session's
+        # conversation. Once the pool holds more than the boot
+        # runtime that narration is addressed to the wrong window, so
+        # the bridge needs to know how many sessions are live.
+        self._push_bridge.set_live_session_count(lambda: len(pool.runtimes))
         # Idempotent chroma → neo4j cutover for the active project:
         # wipes the per-commit ``<sha>.chroma/`` dirs, the
         # ``knowledge.chroma`` dir, the legacy ``manifest.json``,
@@ -247,8 +286,8 @@ class BackendApp:
         except Exception:
             logger.exception("neo4j cutover failed; will retry on next boot")
         # Build the :class:`Neo4jRuntime` and switch the default
-        # session's knowledge index to it, when ``knowledge.enabled``
-        # says so (see :mod:`ember_code.backend.knowledge_gate`).
+        # session's artifact store to it, when ``knowledge.enabled``
+        # says so (see :mod:`ember_code.backend.artifact_gate`).
         #
         # Deliberately not awaited. On a cold machine the attach
         # downloads Neo4j and a JDK — ~500 MB — and waits for the bolt
@@ -256,7 +295,7 @@ class BackendApp:
         # download between the user and a usable backend: the loading
         # screen would sit there for minutes on a first launch, and on
         # a blocked network it would sit there and then fail, with the
-        # knowledge base taking the whole app down with it.
+        # artifact store taking the whole app down with it.
         #
         # This was survivable before only because the env gate meant
         # the call almost never did anything.
@@ -307,7 +346,7 @@ class BackendApp:
             ready.ws_port = ws_transport.port
             ready.ws_url = f"ws://127.0.0.1:{ws_transport.port}"
             # Publish the port + version at
-            # ``<project>/.ember/backend.lock`` so a second client
+            # ``<project>/.igni/backend.lock`` so a second client
             # opening the same project can discover this BE.
             assert self._supervisor is not None
             self._supervisor.write_discovery_lockfile(ws_transport.port)

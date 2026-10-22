@@ -43,6 +43,8 @@ export interface ToolCompleted extends BaseMessage {
   has_markup: boolean;
   diff_rows: DiffRow[] | null;
   is_error: boolean;
+  /** Never ran: rejected in the approval dialog, or nobody could be asked. */
+  is_rejected?: boolean;
 }
 
 export interface ToolError extends BaseMessage {
@@ -102,7 +104,13 @@ export interface HITLRequest extends BaseMessage {
   friendly_name: string;
   tool_args: Record<string, unknown>;
   details: string;
-  agent_path: string;
+  /** ``details`` is still being written (the safety check asks the
+   *  model to describe the call); a ``requirement_details`` follows. */
+  details_pending?: boolean;
+  /** Parent → leaf, e.g. ["igni", "safety check"]. The BE sends a list
+   *  (``HITLRequest.agent_path: list[str]``); typed ``string`` before,
+   *  which let React concatenate it into "ignisafety check". */
+  agent_path: string[] | string;
 }
 
 export interface RunPaused extends BaseMessage {
@@ -129,7 +137,7 @@ export type CommandAction =
   | "plugins"
   | "agents"
   | "skills"
-  | "knowledge"
+  | "artifacts"
   | "codeindex"
   | "hooks"
   | "loop"
@@ -163,6 +171,11 @@ export interface StatusUpdate extends BaseMessage {
   model_configured?: boolean;
   cloud_connected: boolean;
   cloud_org: string;
+  /** The signed-in account's address. On disk, so it is present
+   *  on the first status push rather than after a round trip. */
+  cloud_email?: string;
+  /** Display name, once `/portal/me` has been asked. */
+  cloud_name?: string;
   /** Active permission mode (row 50 — plan-mode badge). One of
    *  ``default`` / ``plan`` / ``acceptEdits`` / ``bypassPermissions`` /
    *  ``dontAsk``. ``plan`` triggers the PlanBadge in the header.
@@ -245,6 +258,14 @@ export interface RequirementResolved extends BaseMessage {
   requirement_id: string;
 }
 
+/** The reason for an open approval, arriving after its dialog — the
+ *  safety check's description of the call. Replaces the spinner. */
+export interface RequirementDetails extends BaseMessage {
+  type: "requirement_details";
+  requirement_id: string;
+  details: string;
+}
+
 export type ServerMessage =
   | ContentDelta
   | ToolStarted
@@ -268,7 +289,8 @@ export type ServerMessage =
   | Welcome
   | Typing
   | UserMessageReceived
-  | RequirementResolved;
+  | RequirementResolved
+  | RequirementDetails;
 
 // ── FE → BE messages ────────────────────────────────────────────────
 

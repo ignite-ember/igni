@@ -86,7 +86,7 @@ class OpenAILikeBuilder(ProviderClientBuilder):
         Models with explicit credentials use them directly.
         Otherwise, authenticated users route through the Ember
         Cloud gateway. URL and API key resolve independently:
-        - URL: from the entry, or the Ember Cloud gateway fallback
+        - URL: from the entry, or the igni server gateway fallback
         - Key: from the entry, or the injected cloud token
         """
         kwargs: dict[str, Any] = {"id": entry.model_id}

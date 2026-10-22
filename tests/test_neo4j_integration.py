@@ -408,7 +408,14 @@ async def test_cutover_is_idempotent(neo4j_driver, project_id, tmp_path) -> None
     first = await maybe_cutover(project=project, data_dir=data_dir)
     assert first is True
     assert not chroma.exists()
-    assert not manifest.exists()
+    # manifest.json survives, deliberately. A ``_drop_manifest_json``
+    # step used to delete it here as "no longer authoritative", and it is
+    # in fact the live head pointer — ``maybe_cutover`` runs on every BE
+    # boot, so that step deleted the current HEAD of any project whose
+    # sentinel was missing. This assertion was written against the
+    # deletion and outlived it; see the module docstring of
+    # ``core/code_index/cutover.py``.
+    assert manifest.exists()
 
     second = await maybe_cutover(project=project, data_dir=data_dir)
     assert second is False

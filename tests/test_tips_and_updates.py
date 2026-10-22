@@ -7,8 +7,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from ember_code.core.config.settings import (
+    ArtifactsConfig,
     GuardrailsConfig,
-    KnowledgeConfig,
     PermissionsConfig,
     Settings,
 )
@@ -51,7 +51,7 @@ class TestTips:
 
     def test_get_tip_contextual_knowledge_disabled(self, tmp_path):
         """When knowledge is disabled, suggests enabling it."""
-        settings = Settings(knowledge=KnowledgeConfig(enabled=False))
+        settings = Settings(knowledge=ArtifactsConfig(enabled=False))
         # Create the project context file so that tip doesn't fire instead
         (tmp_path / PROJECT_CONTEXT_FILE).write_text("# test")
         tip = get_tip(settings, tmp_path)
@@ -97,7 +97,7 @@ class TestTips:
         (tmp_path / CONFIG_DIR / "agents").mkdir(parents=True)
         (tmp_path / CONFIG_DIR / "agents" / "custom.md").write_text("---\nname: custom\n---")
         settings = Settings(
-            knowledge=KnowledgeConfig(enabled=True, share=True),
+            knowledge=ArtifactsConfig(enabled=True, share=True),
             guardrails=GuardrailsConfig(pii_detection=True, prompt_injection=True, moderation=True),
             reasoning=Settings().reasoning.model_copy(update={"enabled": True}),
             learning=Settings().learning.model_copy(update={"enabled": True}),

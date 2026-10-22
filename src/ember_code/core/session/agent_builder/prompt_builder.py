@@ -1,7 +1,8 @@
 """System-prompt assembly stage.
 
 Owns the base system prompt loaded from ``core/prompts/``: picks
-the CodeIndex variant when available, substitutes the ``{{AGENT_
+the CodeIndex variant when available, resolves the capability-
+conditional spans in the markdown, substitutes the ``{{AGENT_
 CATALOG}}`` placeholder from the agent pool's catalog, appends the
 per-commit Project Map (best-effort — missing map is non-fatal),
 and tacks on the skill-descriptions block when skills are
@@ -15,9 +16,10 @@ The output is a single string handed to
 from __future__ import annotations
 
 import logging
+import re
 from collections.abc import Callable
 from pathlib import Path
-from typing import Any
+from typing import Any, ClassVar
 
 from ember_code.core.code_index.manifest import Manifest
 from ember_code.core.code_index.project_map import ProjectMap
@@ -34,6 +36,18 @@ class PromptBuilder:
     named phases.
     """
 
+    #: Capability-conditional spans in the prompt markdown. ``only``
+    #: survives when the capability is present, ``absent`` when it is
+    #: not; the markers themselves never reach the model. Add a name
+    #: here and a matching entry in :meth:`_capabilities` to make a new
+    #: capability switchable.
+    _CONDITIONALS: ClassVar[tuple[str, ...]] = (
+        "artifacts",
+        "codeindex",
+        "user-memory",
+        "can-persist",
+    )
+
     def __init__(
         self,
         *,
@@ -43,10 +57,14 @@ class PromptBuilder:
         agent_catalog: str,
         skill_descriptions: str,
         prompt_loader: Callable[[str], str],
+        artifacts_available: bool = False,
+        user_memory_available: bool = True,
     ) -> None:
         self._project_dir = project_dir
         self._settings = settings
         self._codeindex_available = codeindex_available
+        self._artifacts_available = artifacts_available
+        self._user_memory_available = user_memory_available
         self._agent_catalog = agent_catalog
         self._skill_descriptions = skill_descriptions
         self._prompt_loader = prompt_loader
@@ -66,11 +84,106 @@ class PromptBuilder:
         return self._prompt_loader(name)
 
     def substitute_placeholders(self, prompt: str) -> str:
-        """Substitute ``{{AGENT_CATALOG}}`` + ``{{CODEINDEX_TOOLS}}``."""
+        """Substitute ``{{AGENT_CATALOG}}``, ``{{CODEINDEX_TOOLS}}``,
+        ``{{PERSISTING}}``."""
         catalog = self._agent_catalog or "(no agents loaded)"
         prompt = prompt.replace("{{AGENT_CATALOG}}", catalog)
         prompt = prompt.replace("{{CODEINDEX_TOOLS}}", "")
+        prompt = prompt.replace("{{PERSISTING}}", self._load_section("persisting"))
         return prompt
+
+    def _load_section(self, stem: str) -> str:
+        """A prose section kept beside the prompt rather than inside it.
+
+        Used where a block is long enough that inlining it buries the
+        document's structure. The spans inside it are resolved by
+        :meth:`resolve_conditionals` along with everything else, so a
+        section file is a formatting choice and never a second
+        mechanism.
+        """
+        try:
+            return self._prompt_loader(stem).strip()
+        except (FileNotFoundError, OSError):
+            logger.warning("prompt section %r missing; omitting", stem)
+            return ""
+
+    def resolve_conditionals(self, prompt: str) -> str:
+        """Keep the spans that match this session and drop the rest.
+
+        A capability that can be absent needs both branches written and
+        exactly one of them shown. ``<!-- artifacts:only -->`` survives
+        when the store is up, ``<!-- artifacts:absent -->`` when it is
+        not, and the markers themselves never reach the model.
+
+        Spans live in the markdown rather than in separate per-state
+        files because the guidance is interleaved with guidance that
+        stays either way. Splitting by state duplicates everything
+        shared: the two halves of this section were briefly separate
+        files and measured 49% identical, with the common paragraphs
+        already drifting apart in wording after a single edit.
+
+        The failure being prevented is specific and has shipped twice.
+        ``knowledge_add`` / ``knowledge_search`` were taught across ~30
+        unconditional lines while the toolkit was attached only when an
+        index existed: 7,459 system prompts taught them, 0 manifests
+        carried them, 0 calls were ever made. When the versioned store
+        replaced the knowledge base the section was rewritten to
+        ``artifact_add`` — the same mistake under the name the new
+        subsystem introduced.
+
+        A missing capability is not only a deletion. The ``absent``
+        branch says what to do with a project convention when there is
+        nowhere to file one, which is what keeps the prompt coherent
+        rather than merely shorter.
+
+        Unbalanced markers raise. A prompt that silently loses a
+        section is the failure this method exists to prevent.
+        """
+        available = self._capabilities()
+        for name in self._CONDITIONALS:
+            keep, drop = ("only", "absent") if available[name] else ("absent", "only")
+            for branch in (keep, drop):
+                open_tag = f"<!-- {name}:{branch} -->"
+                close_tag = f"<!-- /{name}:{branch} -->"
+                opened, closed = prompt.count(open_tag), prompt.count(close_tag)
+                if opened != closed:
+                    raise ValueError(
+                        f"unbalanced {name}:{branch} markers in the prompt "
+                        f"({opened} open, {closed} close)"
+                    )
+                if branch == keep:
+                    prompt = prompt.replace(open_tag, "").replace(close_tag, "")
+                else:
+                    prompt = re.sub(
+                        re.escape(open_tag) + ".*?" + re.escape(close_tag),
+                        "",
+                        prompt,
+                        flags=re.DOTALL,
+                    )
+        # Dropping a block span leaves the blank lines that surrounded it.
+        return re.sub(r"\n{3,}", "\n\n", prompt).strip()
+
+    def _capabilities(self) -> dict[str, bool]:
+        """What this session has, keyed by conditional name.
+
+        One entry per name in :attr:`_CONDITIONALS`; adding a capability
+        is a line here and a pair of markers in the markdown.
+        """
+        return {
+            "artifacts": self._artifacts_available,
+            "codeindex": self._codeindex_available,
+            # agno attaches ``update_user_memory`` only when the session
+            # has a LearningMachine *and* ``learning.user_memory`` is on,
+            # so ``learning.enabled=false``, ``user_memory=false`` and any
+            # session built without a db were all told to call a tool that
+            # was not in their manifest.
+            "user-memory": self._user_memory_available,
+            # Derived: somewhere to persist *to*. The "when (not) to
+            # persist" rules only mean anything next to a surface that
+            # could take the fact; with neither they are a list of
+            # things not to do with a tool nobody has.
+            "can-persist": self._artifacts_available or self._user_memory_available,
+        }
 
     def append_project_map(self, prompt: str) -> str:
         """Append the per-commit Project Map (best-effort).
@@ -141,9 +254,17 @@ class PromptBuilder:
         )
 
     def render(self) -> str:
-        """Compose the full prompt through the four phases."""
+        """Compose the full prompt through the five phases.
+
+        Conditionals resolve *after* substitution, so a section pulled
+        in from its own file has its spans resolved too — otherwise a
+        block would behave differently depending on whether it happened
+        to be inlined or kept beside the prompt.
+        """
         prompt = self.load_base()
+        prompt = self.resolve_conditionals(prompt)
         prompt = self.substitute_placeholders(prompt)
+        prompt = self.resolve_conditionals(prompt)
         prompt = self.append_project_map(prompt)
         prompt = self.append_skills(prompt)
         return prompt

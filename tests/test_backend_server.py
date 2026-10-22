@@ -53,6 +53,9 @@ class TestBackendServerCommands:
             server._session = MagicMock()
             server._session.cloud_connected = True
             server._session.cloud_org_name = "Test Org"
+            # The header names the account, not just the org, so the
+            # status push carries the address too.
+            server._session.cloud_email = "maya@acme.test"
             server._session.last_input_tokens = 1234
             # ``Session.permission_mode_value`` is the wire-safe string
             # StatusUpdate needs — MagicMock returns another MagicMock
@@ -66,6 +69,7 @@ class TestBackendServerCommands:
         assert isinstance(status, msg.StatusUpdate)
         assert status.model == "test-model"
         assert status.cloud_connected is True
+        assert status.cloud_email == "maya@acme.test"
         assert status.cloud_org == "Test Org"
         assert status.max_context == 128_000
         assert status.context_tokens == 1234
@@ -246,7 +250,7 @@ class TestBackendServerRealConstruction:
         # off settings flags.
         settings = settings.model_copy(
             update={
-                "knowledge": settings.knowledge.model_copy(update={"enabled": False}),
+                "artifacts": settings.artifacts.model_copy(update={"enabled": False}),
             }
         )
 
@@ -284,7 +288,7 @@ class TestBackendServerRealConstruction:
         settings = load_settings(project_dir=tmp_path)
         settings = settings.model_copy(
             update={
-                "knowledge": settings.knowledge.model_copy(update={"enabled": False}),
+                "artifacts": settings.artifacts.model_copy(update={"enabled": False}),
             }
         )
         backend = BackendServer(settings, project_dir=tmp_path)
@@ -309,8 +313,8 @@ class TestBackendServerRealConstruction:
         assert not session.broadcast_bus.has_callbacks
         assert session.broadcast_bus.pending_count == 0
 
-        # _init_knowledge — KB disabled path yields None + ready flag set.
-        assert session.knowledge is None
+        # _init_artifacts — disabled path yields None + ready flag set.
+        assert session.artifacts is None
         assert session._knowledge_ready.is_set()
 
         # _init_codeindex — CodeIndex + sync manager + availability flag.

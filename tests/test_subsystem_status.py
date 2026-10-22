@@ -9,8 +9,8 @@ from __future__ import annotations
 import pytest
 
 from ember_code.backend.subsystem_status import (
+    ARTIFACTS,
     CODE_INDEX,
-    KNOWLEDGE,
     SubsystemRegistry,
     SubsystemState,
 )
@@ -24,16 +24,16 @@ def test_a_failure_without_a_reason_is_refused():
     registry = SubsystemRegistry()
 
     with pytest.raises(ValueError, match="must say why"):
-        registry.set(KNOWLEDGE, SubsystemState.FAILED)
+        registry.set(ARTIFACTS, SubsystemState.FAILED)
 
 
 def test_the_other_states_need_no_reason():
     """ "Ready" explains itself."""
     registry = SubsystemRegistry()
 
-    registry.set(KNOWLEDGE, SubsystemState.READY)
+    registry.set(ARTIFACTS, SubsystemState.READY)
 
-    assert registry.get(KNOWLEDGE).working is True
+    assert registry.get(ARTIFACTS).working is True
 
 
 def test_preparing_is_not_failed():
@@ -42,8 +42,8 @@ def test_preparing_is_not_failed():
     a working system."""
     registry = SubsystemRegistry()
 
-    registry.set(KNOWLEDGE, SubsystemState.PREPARING, reason="downloading the local database")
-    entry = registry.get(KNOWLEDGE)
+    registry.set(ARTIFACTS, SubsystemState.PREPARING, reason="downloading the local database")
+    entry = registry.get(ARTIFACTS)
 
     assert entry.state is SubsystemState.PREPARING
     assert entry.working is False
@@ -56,12 +56,12 @@ def test_a_reason_and_a_remedy_are_separate_fields():
     registry = SubsystemRegistry()
 
     registry.set(
-        KNOWLEDGE,
+        ARTIFACTS,
         SubsystemState.FAILED,
         reason="neo4j killed by SIGKILL (signal 9)",
         fix="Delete ~/.ember/neo4j and reopen the app.",
     )
-    entry = registry.get(KNOWLEDGE)
+    entry = registry.get(ARTIFACTS)
 
     assert entry.reason.startswith("neo4j killed")
     assert entry.fix.startswith("Delete")
@@ -70,32 +70,34 @@ def test_a_reason_and_a_remedy_are_separate_fields():
 def test_a_later_state_replaces_an_earlier_one():
     registry = SubsystemRegistry()
 
-    registry.set(KNOWLEDGE, SubsystemState.PREPARING)
-    registry.set(KNOWLEDGE, SubsystemState.READY)
+    registry.set(ARTIFACTS, SubsystemState.PREPARING)
+    registry.set(ARTIFACTS, SubsystemState.READY)
 
-    assert registry.get(KNOWLEDGE).state is SubsystemState.READY
+    assert registry.get(ARTIFACTS).state is SubsystemState.READY
 
 
 def test_an_unknown_subsystem_reads_as_none_not_as_an_error():
     """A panel asking about something never recorded should fall back,
     not raise — sessions built outside the backend's attach path have
     nothing in here."""
-    assert SubsystemRegistry().get(KNOWLEDGE) is None
+    assert SubsystemRegistry().get(ARTIFACTS) is None
 
 
 def test_listing_is_stable():
     """A diagnostics view wants the same order every render."""
     registry = SubsystemRegistry()
-    registry.set(KNOWLEDGE, SubsystemState.READY)
+    registry.set(ARTIFACTS, SubsystemState.READY)
     registry.set(CODE_INDEX, SubsystemState.DISABLED, reason="not indexed yet")
 
-    assert [s.name for s in registry.all()] == [CODE_INDEX, KNOWLEDGE]
+    # Alphabetical, not insertion order — the registry sorts so the
+    # view is stable no matter which subsystem reports first.
+    assert [s.name for s in registry.all()] == [ARTIFACTS, CODE_INDEX]
 
 
 def test_the_wire_shape_carries_all_four_fields():
     registry = SubsystemRegistry()
-    registry.set(KNOWLEDGE, SubsystemState.FAILED, reason="boom", fix="try this")
+    registry.set(ARTIFACTS, SubsystemState.FAILED, reason="boom", fix="try this")
 
     assert registry.to_wire() == [
-        {"name": KNOWLEDGE, "state": "failed", "reason": "boom", "fix": "try this"}
+        {"name": ARTIFACTS, "state": "failed", "reason": "boom", "fix": "try this"}
     ]

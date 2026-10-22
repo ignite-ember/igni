@@ -374,6 +374,10 @@ export function mergePlanTasks(existing: PlanTask[], todos: unknown): PlanTask[]
  */
 export type AssistantInterrupted = "cancelled" | "errored" | "abandoned";
 
+/** ``rejected``: never ran — refused in the approval dialog, or nobody
+ *  could be asked. Neither a success nor a failure. */
+export type ToolStatus = "running" | "done" | "error" | "rejected";
+
 export const ASSISTANT_INTERRUPTED_LABELS: Record<AssistantInterrupted, string> = {
   cancelled: "Run cancelled",
   errored: "Run stopped",
@@ -438,7 +442,7 @@ export type ChatItem =
       runId: string;
       name: string;
       args: string;
-      status: "running" | "done" | "error";
+      status: ToolStatus;
       result: string;
       isError: boolean;
       diffRows: DiffRow[] | null;
@@ -1090,6 +1094,7 @@ export function restoredItem(turn: Record<string, unknown>): ChatItem | null {
     const args = String(turn.args ?? "");
     const result = content;
     const isError = Boolean(turn.is_error);
+    const isRejected = Boolean(turn.is_rejected);
     const runId = String(turn.run_id ?? "");
     return {
       kind: "tool",
@@ -1097,7 +1102,7 @@ export function restoredItem(turn: Record<string, unknown>): ChatItem | null {
       runId,
       name: friendlyName,
       args,
-      status: isError ? "error" : "done",
+      status: isRejected ? "rejected" : isError ? "error" : "done",
       result,
       isError,
       // No diff rows in restored tool cards — the BE only computes
@@ -1197,7 +1202,7 @@ export function applyEvent(items: ChatItem[], msg: ServerMessage): ChatItem[] {
         if (it.kind === "tool" && it.status === "running") {
           const updated: ChatItem = {
             ...it,
-            status: msg.is_error ? "error" : "done",
+            status: msg.is_rejected ? "rejected" : msg.is_error ? "error" : "done",
             result: msg.full_result || msg.summary,
             isError: msg.is_error,
             diffRows: msg.diff_rows ?? null,

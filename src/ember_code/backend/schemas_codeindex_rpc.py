@@ -116,17 +116,24 @@ class CodeIndexInstallResult(BaseModel):
     install_url: str
 
     @classmethod
-    def from_api_url(cls, api_url: str) -> CodeIndexInstallResult:
-        """Rewrite the api hostname into the portal hostname and
-        return the ``/repositories`` page URL.
+    def from_api_url(cls, api_url: str, portal_url: str = "") -> CodeIndexInstallResult:
+        """The ``/repositories`` page on the portal.
 
-        The host rules live in
-        :func:`~ember_code.core.config.endpoint.portal_url_for` — they
-        were duplicated here and in nothing else until DEC-14 needed the
-        same rewrite to build the sign-in URL, at which point two copies
-        of a hostname-guessing rule was one too many.
+        ``portal_url`` is the configured one, and it wins. Otherwise
+        the hostname rules in
+        :func:`~ember_code.core.config.endpoint.portal_url_for` guess
+        at it — they were duplicated here and in nothing else until
+        DEC-14 needed the same rewrite to build the sign-in URL, at
+        which point two copies of a hostname-guessing rule was one too
+        many.
+
+        Taking the setting here as well as in ``PortalClient`` is the
+        same point: a deployment that had to say where its portal is
+        should not have to say it twice and watch one link go to the
+        right place and the other to a 404.
         """
-        return cls(install_url=f"{portal_url_for(api_url)}/repositories")
+        base = portal_url.rstrip("/") if portal_url else portal_url_for(api_url)
+        return cls(install_url=f"{base}/repositories")
 
 
 class LastSyncStats(BaseModel):

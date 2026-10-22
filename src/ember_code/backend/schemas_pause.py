@@ -141,6 +141,17 @@ class SubagentPause(BaseModel):
     entries: list[Any] = Field(default_factory=list)
 
 
+class SubagentDetails(BaseModel):
+    """Better explanations for questions already on screen.
+
+    ``(requirement_id, details)`` pairs from the coordinator, sent to
+    the views as ``RequirementDetails``.
+    """
+
+    kind: Literal["subagent_details"] = "subagent_details"
+    updates: list[tuple[str, str]] = Field(default_factory=list)
+
+
 class MuxDone(BaseModel):
     """The team-drain hit end-of-stream. Multiplexer returns cleanly."""
 
@@ -157,7 +168,7 @@ class MuxError(BaseModel):
     exc: Any
 
 
-# Union of the four variants above — the typed queue element for the
+# Union of the variants above — the typed queue element for the
 # multiplexer. Kept as a top-level alias so type hints stay short at
 # the consumer.
-MuxEvent = TeamStreamEvent | SubagentPause | MuxDone | MuxError
+MuxEvent = TeamStreamEvent | SubagentPause | SubagentDetails | MuxDone | MuxError

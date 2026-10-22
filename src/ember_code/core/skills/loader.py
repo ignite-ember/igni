@@ -211,6 +211,12 @@ class SkillPool:
             return None
 
         parts = text[1:].split(None, 1)
+        if not parts:
+            # A bare "/" (the user hit enter mid-typing) splits to []
+            # and used to IndexError straight out of the RPC handler.
+            # Returning None hands it to the next tier, which answers
+            # with the ordinary "Unknown command" error.
+            return None
         name = parts[0]
         args = parts[1] if len(parts) > 1 else ""
 

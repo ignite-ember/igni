@@ -16,8 +16,20 @@
     "coverage": "vitest run --coverage"
   },
   "dependencies": {
+    "@dagrejs/dagre": "^3.1.1",
     "@json-render/core": "^0.19.0",
     "@json-render/react": "^0.19.0",
+    "@tiptap/extension-collaboration": "^3.31.3",
+    "@tiptap/extension-collaboration-caret": "^3.31.3",
+    "@tiptap/extension-drag-handle-react": "^3.31.3",
+    "@tiptap/extension-image": "^3.31.3",
+    "@tiptap/extension-list": "^3.31.3",
+    "@tiptap/extension-table": "^3.31.3",
+    "@tiptap/pm": "^3.31.3",
+    "@tiptap/react": "^3.31.3",
+    "@tiptap/starter-kit": "^3.31.3",
+    "@tiptap/suggestion": "^3.31.3",
+    "@xyflow/react": "^12.12.0",
     "highlight.js": "^11.11.1",
     "mermaid": "^11.15.0",
     "partial-json": "^0.1.7",
@@ -29,7 +41,10 @@
     "rehype-raw": "^7.0.0",
     "rehype-sanitize": "^6.0.0",
     "remark-gfm": "^4.0.1",
+    "tiptap-markdown": "^0.9.0",
     "tsx": "^4.23.0",
+    "y-protocols": "^1.0.7",
+    "yjs": "^13.6.33",
     "zod": "^4.4.3"
   },
   "devDependencies": {

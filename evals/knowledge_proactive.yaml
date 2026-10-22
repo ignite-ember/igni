@@ -2,15 +2,15 @@ agent: main
 description: |
   Proactive knowledge / memory persistence.
 
-  ``memory_knowledge.yaml`` covers the explicit case — user says
+  ``memory_artifacts.yaml`` covers the explicit case — user says
   "save this", agent calls ``update_user_memory`` /
-  ``knowledge_add``. This suite covers the *implicit* case: the
+  ``artifact_add``. This suite covers the *implicit* case: the
   agent has done real investigation work (read docs, traced a
   pattern, debugged a root cause) and should decide on its own
   that something durable was learned and persist it.
 
   The bar is subtle: we don't want save-everything noise (every
-  ``ls`` output triggering a knowledge_add). We want save-when-it-
+  ``ls`` output triggering a artifact_add). We want save-when-it-
   matters discipline. Heuristic:
 
   - High signal (should save): root-cause analyses, project-wide
@@ -32,19 +32,19 @@ fixtures:
 
 cases:
 
-# ── Proactive knowledge_add: investigation → persistence ─────────
+# ── Proactive artifact_add: investigation → persistence ─────────
 - name: knowledge_saves_codebase_convention_after_grep
   input: |
     Look at the codebase: how do existing modules handle errors?
     I want a one-paragraph summary of the convention.
   expected_tool_calls:
     - Bash
-    - knowledge_search
-    - knowledge_add
+    - artifact_search
+    - artifact_add
   judge_guidelines: |
     Pass if the agent investigates (Bash grep / Read, optionally
-    consulting ``knowledge_search`` first), reports the
-    one-paragraph summary, AND calls ``knowledge_add`` to
+    consulting ``artifact_search`` first), reports the
+    one-paragraph summary, AND calls ``artifact_add`` to
     persist the convention. The user didn't say "save this" —
     but discovering a project-wide convention through
     investigation is exactly the kind of durable insight worth
@@ -60,11 +60,11 @@ cases:
   expected_tool_calls:
     - Read
     - Bash
-    - knowledge_add
+    - artifact_add
   judge_guidelines: |
     Pass if the agent reads ``pyproject.toml`` (Read or Bash both
     fine for opening a small file), quotes the requested lines,
-    AND calls ``knowledge_add`` to persist the project metadata
+    AND calls ``artifact_add`` to persist the project metadata
     (name, version pin, python requirement) — exactly the kind
     of project-fact that's worth knowing across sessions. Fail
     if it never reads, OR reads but doesn't persist the
@@ -82,9 +82,9 @@ cases:
     `AgentPool` so every specialist persists its runs to the same
     SQLite store the main team uses.
   expected_tool_calls:
-    - knowledge_add
+    - artifact_add
   judge_guidelines: |
-    Pass if the agent calls ``knowledge_add`` with content that
+    Pass if the agent calls ``artifact_add`` with content that
     captures both the symptom ("No runs found for run ID" on
     Agno's acontinue_run) and the fix (thread session db into
     pool specialists). The user has handed over the full
@@ -126,20 +126,20 @@ cases:
   input: |
     Find every file that imports ``contextlib`` in this project.
   unexpected_tool_calls:
-    - knowledge_add
+    - artifact_add
     - update_user_memory
   judge_guidelines: |
     Pass if the agent runs grep / rg, reports the file list, and
     stops. The list of files importing a stdlib module is not a
     durable pattern — it'll change with the next refactor. Fail
-    if the agent dumps the file list into ``knowledge_add`` —
+    if the agent dumps the file list into ``artifact_add`` —
     that's persistence noise.
 
 - name: knowledge_no_save_after_one_shot_read
   input: |
     What's the project version listed in pyproject.toml?
   unexpected_tool_calls:
-    - knowledge_add
+    - artifact_add
     - update_user_memory
   judge_guidelines: |
     Pass if the agent reads the file, reports the version, and
@@ -151,7 +151,7 @@ cases:
   input: |
     What's 14 * 23?
   unexpected_tool_calls:
-    - knowledge_add
+    - artifact_add
     - update_user_memory
   judge_guidelines: |
     Pass if the agent answers 322 with no persistence calls.
@@ -165,7 +165,7 @@ cases:
     Run the test suite (``pytest -q``) and tell me how many tests
     passed. Just the count.
   unexpected_tool_calls:
-    - knowledge_add
+    - artifact_add
   judge_guidelines: |
     Pass if the agent runs the tests, reports the count, and
     stops. The pass count is per-run state; storing "1361 tests

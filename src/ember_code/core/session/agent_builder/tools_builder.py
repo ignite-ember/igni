@@ -21,18 +21,17 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from ember_code.core.agents import AgentPool
+from ember_code.core.artifacts.index import ArtifactIndex
 from ember_code.core.config.settings import Settings
 from ember_code.core.config.tool_permissions import ToolPermissions
 from ember_code.core.hooks.executor import HookExecutor
-from ember_code.core.knowledge.index import KnowledgeIndex
 from ember_code.core.lsp import LspServerManager
 from ember_code.core.mcp.client import MCPClientManager
 from ember_code.core.monitors import MonitorManager
 from ember_code.core.plugins import PluginLoader
-from ember_code.core.session.knowledge_ops import SessionKnowledgeManager
+from ember_code.core.session.artifact_ops import SessionArtifactManager
 from ember_code.core.skills.loader import SkillPool
 from ember_code.core.sub_agent_hitl import SubAgentHITLCoordinator
-from ember_code.core.tools.knowledge import KnowledgeTools
 from ember_code.core.tools.loop import LoopTools
 from ember_code.core.tools.loop_progress import LoopProgressTool
 from ember_code.core.tools.lsp import LspTools
@@ -74,8 +73,8 @@ class ToolsBuilder:
         mcp_manager: MCPClientManager,
         lsp_manager: LspServerManager | None,
         monitor_manager: MonitorManager | None,
-        knowledge: KnowledgeIndex | None,
-        knowledge_mgr: SessionKnowledgeManager,
+        artifacts: ArtifactIndex | None,
+        artifact_mgr: SessionArtifactManager,
         skill_pool: SkillPool,
         pool: AgentPool,
         hook_executor: HookExecutor,
@@ -97,8 +96,8 @@ class ToolsBuilder:
         self._mcp_manager = mcp_manager
         self._lsp_manager = lsp_manager
         self._monitor_manager = monitor_manager
-        self._knowledge = knowledge
-        self._knowledge_mgr = knowledge_mgr
+        self._artifacts = artifacts
+        self._artifact_mgr = artifact_mgr
         self._skill_pool = skill_pool
         self._pool = pool
         self._hook_executor = hook_executor
@@ -161,12 +160,6 @@ class ToolsBuilder:
         """Optional Agno ReasoningTools — enabled by settings."""
         rt = self._reasoning_factory(self._settings)
         return [rt] if rt else []
-
-    def knowledge(self) -> list[Any]:
-        """Chroma-backed knowledge query tools when configured."""
-        if self._knowledge is None:
-            return []
-        return [KnowledgeTools(self._knowledge_mgr)]
 
     def loop(self) -> list[Any]:
         """/loop-driven iteration control + per-iter scratchpad."""
@@ -238,7 +231,6 @@ class ToolsBuilder:
         tools.extend(self.core_tools())
         tools.extend(self.orchestrate())
         tools.extend(self.reasoning())
-        tools.extend(self.knowledge())
         tools.extend(self.loop())
         tools.extend(self.todo())
         tools.extend(self.plan())

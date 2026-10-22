@@ -69,6 +69,9 @@ class ToolCompleted(RunScopedMessage):
     # a green checkmark, the user assumed success, and only the LLM
     # saw the failure — and tried to retry silently.
     is_error: bool = False
+    # The call never ran: the person rejected it in the approval dialog,
+    # or nobody could be asked. The card shows "rejected", not ✓ or ✗.
+    is_rejected: bool = False
 
 
 class ToolError(RunScopedMessage):
@@ -157,6 +160,10 @@ class HITLRequest(Message):
     # and depends on a closed Agno tool-arg surface — deferred).
     tool_args: dict[str, Any] = Field(default_factory=dict)
     details: str = ""
+    # ``details`` is still being written — the Bypass safety check asks
+    # the model to describe the call — and arrives as a
+    # ``RequirementDetails``. The dialog shows a spinner until then.
+    details_pending: bool = False
     # Chain of agents that produced this request, parent → leaf.
     # Empty / single-entry means it's from the main agent. For sub-agent
     # HITL it's the dispatch path, e.g. ["architect"] when the main agent
@@ -326,6 +333,14 @@ class StatusUpdate(Message):
     model_configured: bool = True
     cloud_connected: bool = False
     cloud_org: str = ""
+    #: The signed-in account, for the header. Read from the
+    #: credentials file, so it is present on the first status push
+    #: rather than after a call to the cloud.
+    cloud_email: str = ""
+    #: Display name, once ``/portal/me`` has been asked. Empty
+    #: until then — the address is the fallback, and it is better
+    #: than showing nothing while waiting.
+    cloud_name: str = ""
     # Active ``PermissionEvaluator`` mode (``default`` / ``plan`` /
     # ``acceptEdits`` / ``bypassPermissions`` / ``dontAsk``). The
     # FE renders a badge when this is ``plan`` (row 50 — plan-mode

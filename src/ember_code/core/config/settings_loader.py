@@ -211,7 +211,7 @@ class SettingsLoader:
         return self
 
     def migrate_cloud_models(self) -> SettingsLoader:
-        """Override Ember Cloud models in user config with latest
+        """Override igni server models in user config with latest
         defaults.
 
         Delegates to :class:`CloudModelMigrator` which operates on

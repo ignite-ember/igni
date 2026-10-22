@@ -22,3 +22,11 @@ class AuthRpcHandler(RpcHandler):
     @rpc(RpcMethod.CLEAR_CLOUD_CREDENTIALS)
     def clear_creds(self, args: dict) -> Any:
         return self._ctx.backend.clear_cloud_credentials()
+
+    @rpc(RpcMethod.DISCOVER_SERVER)
+    async def discover_server(self, args: dict) -> Any:
+        return await self._ctx.backend.discover_server(args.get("email", ""))
+
+    @rpc(RpcMethod.SET_SERVER)
+    def set_server(self, args: dict) -> Any:
+        return self._ctx.backend.set_server(args.get("api_url", ""), args.get("portal_url", ""))

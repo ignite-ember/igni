@@ -31,6 +31,7 @@ zero mutable state at import time.
 from __future__ import annotations
 
 import fnmatch
+import logging
 import re
 from enum import Enum, StrEnum
 from typing import TYPE_CHECKING, Any, ClassVar, Literal
@@ -97,10 +98,21 @@ class PermissionOutcome(BaseModel):
 
 
 # Matches ``ToolName`` or ``ToolName(pattern)`` rule strings. The
-# tool name is ``[A-Za-z_][A-Za-z0-9_]*``; the pattern (when
-# present) is everything between the parens, kept verbatim so
-# globs / paths / quoted strings survive intact.
-_RULE_RE = re.compile(r"^(?P<tool>[A-Za-z_][A-Za-z0-9_]*)(?:\((?P<pattern>.*)\))?$")
+# pattern (when present) is everything between the parens, kept
+# verbatim so globs / paths / quoted strings survive intact.
+#
+# The tool-name class admits ``-`` and ``:`` after the first character,
+# because MCP tools are named for their server and servers are named
+# with hyphens: ``mcp__chrome-devtools__take_screenshot`` is the
+# function name the model calls, and ``MCP:chrome-devtools`` is the
+# grant. Under the previous ``[A-Za-z0-9_]*`` both parsed to ``None``,
+# so no MCP tool could be named in a permission rule at all — and
+# ``parse_many`` dropped them without a word, leaving an
+# administrator with a deny list that silently governed nothing.
+
+logger = logging.getLogger(__name__)
+
+_RULE_RE = re.compile(r"^(?P<tool>[A-Za-z_][A-Za-z0-9_:-]*)(?:\((?P<pattern>.*)\))?$")
 
 
 class PermissionRule(BaseModel):
@@ -157,16 +169,27 @@ class PermissionRule(BaseModel):
 
     @classmethod
     def parse_many(cls, raws: list[str]) -> list[PermissionRule]:
-        """Parse every raw entry, silently dropping malformed ones.
+        """Parse every raw entry, logging any that do not parse.
 
-        Replaces the old free ``_parse_rules`` helper. Callers can
-        cross-check ``len(input) vs len(output)`` if they care.
+        The dropping used to be silent, with a docstring inviting callers to
+        "cross-check ``len(input) vs len(output)`` if they care" — no caller
+        did. So a rule the parser could not read (every MCP tool name, until
+        the pattern above admitted ``-`` and ``:``) vanished between the config
+        file and the evaluator, and the administrator who wrote it had a deny
+        list that governed nothing and said nothing. A dropped rule is now a
+        warning naming the entry.
         """
         parsed: list[PermissionRule] = []
         for raw in raws:
             rule = cls.parse(raw)
-            if rule is not None:
-                parsed.append(rule)
+            if rule is None:
+                logger.warning(
+                    "permission rule %r could not be parsed and is being ignored; "
+                    "expected 'ToolName' or 'ToolName(pattern)'",
+                    raw,
+                )
+                continue
+            parsed.append(rule)
         return parsed
 
     def matches(

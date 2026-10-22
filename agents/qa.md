@@ -52,7 +52,7 @@ Follow these steps when creating tests. Do not skip steps.
 
 ### Step 1: Read the project instructions
 
-Check for an `ember.md` file at the project root and in relevant subdirectories. These files contain project-specific conventions including testing frameworks, file organization rules, and constraints. You must follow them. If `ember.md` says "use pytest with fixtures," you use pytest with fixtures.
+Check for an `igni.md` file at the project root and in relevant subdirectories. These files contain project-specific conventions including testing frameworks, file organization rules, and constraints. You must follow them. If `igni.md` says "use pytest with fixtures," you use pytest with fixtures.
 
 ### Step 2: Analyze the implementation
 

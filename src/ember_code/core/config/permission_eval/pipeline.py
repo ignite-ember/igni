@@ -38,6 +38,7 @@ from ember_code.core.config.permission_eval.schemas import (
     PermissionDecision,
     PermissionMode,
     PermissionOutcome,
+    PermissionOutcomeSource,
     PermissionRule,
 )
 from ember_code.core.config.permission_eval.strategies import PermissionModeStrategy
@@ -58,7 +59,8 @@ class PermissionEvaluator:
          ``bypassPermissions`` allows everything not already
          denied, ``dontAsk`` denies anything not allowed.
       4. ``ask`` — any matching ask rule → ``ASK`` (caller asks
-         the user / canUseTool).
+         the user / canUseTool), or ``DENY`` in a mode that never
+         prompts, since there nobody would answer.
       5. ``allow`` — any matching allow rule → ``ALLOW``.
       6. ``defer`` — return ``DEFER`` so the caller routes to its
          interactive/UI/canUseTool fallback.
@@ -202,8 +204,8 @@ class PermissionEvaluator:
                 source="mode",
             )
         if mode_decision is PermissionDecision.ASK:
-            return PermissionOutcome(
-                decision=PermissionDecision.ASK,
+            return self._ask_or_deny(
+                strategy,
                 reason=f"{self.mode.value} mode asks about {tool_name}",
                 source="mode",
             )
@@ -211,8 +213,8 @@ class PermissionEvaluator:
         # Step 4: ask
         ask_rule = self._first_match(self.ask, tool_name, tool_args)
         if ask_rule is not None:
-            return PermissionOutcome(
-                decision=PermissionDecision.ASK,
+            return self._ask_or_deny(
+                strategy,
                 reason=f"ask rule '{ask_rule.display()}' matched",
                 source="ask",
             )
@@ -243,6 +245,32 @@ class PermissionEvaluator:
             decision=PermissionDecision.DEFER,
             reason=f"{tool_name} deferred to caller",
             source="defer",
+        )
+
+    def _ask_or_deny(
+        self,
+        strategy: PermissionModeStrategy,
+        reason: str,
+        source: PermissionOutcomeSource,
+    ) -> PermissionOutcome:
+        """ASK, unless nothing in this mode will ever answer it.
+
+        ``dontAsk`` is the mode ``--strict`` selects, and its contract is
+        deny-by-default with no prompts. An ASK escaping into it is a
+        silent upgrade, not a pause: the only consumer that can act on
+        ASK is the HITL pause dialog, which lives behind a client RPC
+        that a headless run never reaches, and
+        :class:`PermissionEvaluatorStage` treats ASK as "continue". So
+        ``ask: ["Bash(git push --force *)"]`` — the intuitive way to
+        write "be careful with this" — made ``--strict`` *less* strict
+        than leaving the rule out, where step 6 would have denied.
+        """
+        if strategy.prompts_user():
+            return PermissionOutcome(decision=PermissionDecision.ASK, reason=reason, source=source)
+        return PermissionOutcome(
+            decision=PermissionDecision.DENY,
+            reason=f"{reason}, and this mode never prompts — denied rather than auto-run",
+            source=source,
         )
 
     def explain_deny(self, tool_name: str, tool_args: dict[str, Any]) -> str:

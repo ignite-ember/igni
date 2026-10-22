@@ -133,11 +133,51 @@ async function writeProjectFiles(projectDir: string): Promise<void> {
   }
 }
 
+/**
+ * A credentials file the backend will read as "signed in".
+ *
+ * ``App.tsx`` derives ``signedIn`` from ``status.cloud_email``, and
+ * without one it renders ``SignInWall`` over the entire app. That is
+ * correct — artifacts are a cloud service and there is no standalone
+ * mode — but it means a spawned backend with no credentials serves
+ * every live spec a sign-in form instead of the surface under test.
+ * Ten of them timed out waiting for a composer behind it.
+ *
+ * The file is written inside the fixture's own project directory and
+ * named by ``auth.credentials_file`` below, so nothing reads or
+ * writes the developer's real ``~/.igni/credentials.json``. The token
+ * is not a real one: ``cloud_email`` is read straight off the stored
+ * ``email`` field, and no spec here talks to a server.
+ */
+async function writeFixtureCredentials(projectDir: string): Promise<string> {
+  const file = path.join(projectDir, ".igni", "credentials.json");
+  const year = 1000 * 60 * 60 * 24 * 365;
+  await fsp.writeFile(
+    file,
+    JSON.stringify(
+      {
+        access_token: "e2e-fixture-token",
+        token_type: "bearer",
+        email: "fixture@example.com",
+        created_at: new Date().toISOString(),
+        expires_at: new Date(Date.now() + year).toISOString(),
+      },
+      null,
+      2,
+    ),
+    "utf8",
+  );
+  return file;
+}
+
 async function writeStubConfig(projectDir: string): Promise<void> {
   await fsp.mkdir(path.join(projectDir, ".igni"), { recursive: true });
+  const credentials = await writeFixtureCredentials(projectDir);
   await fsp.writeFile(
     path.join(projectDir, ".igni", "config.local.yaml"),
     [
+      "auth:",
+      `  credentials_file: ${credentials}`,
       "models:",
       `  default: ${STUB_MODEL}`,
       "  registry:",

@@ -13,6 +13,7 @@
  */
 
 import { test, expect } from "./fixtures/embed";
+import { signedInStatus } from "./fixtures/backend";
 
 test.describe("connection lifecycle", () => {
   test("client opens, exchanges welcome, populates session id", async ({
@@ -64,7 +65,10 @@ test.describe("user message round-trip", () => {
   }) => {
     await page.goto(appUrl);
     const editor = page.locator(".composer-editable");
-    await expect(editor).toHaveAttribute("data-placeholder", /Message (Ember|igni)/);
+    await expect(editor).toHaveAttribute(
+      "data-placeholder",
+      /Message (Ember|igni)/,
+    );
 
     await editor.click();
     await editor.type("hello fixture");
@@ -74,14 +78,19 @@ test.describe("user message round-trip", () => {
     // ``user_message`` is the FE-side type per protocol/messages.ts.
     await expect
       .poll(() =>
-        backend.received().some(
-          (m) => m.type === "user_message" && String(m.text) === "hello fixture",
-        ),
+        backend
+          .received()
+          .some(
+            (m) =>
+              m.type === "user_message" && String(m.text) === "hello fixture",
+          ),
       )
       .toBe(true);
 
     // FE renders an optimistic user bubble immediately.
-    await expect(page.locator(".msg-user").last()).toContainText("hello fixture");
+    await expect(page.locator(".msg-user").last()).toContainText(
+      "hello fixture",
+    );
   });
 
   test("BE streams content_delta → assistant bubble renders the text", async ({
@@ -130,14 +139,15 @@ test.describe("push notifications", () => {
     appUrl,
   }) => {
     // Start with a known status the FE consumes on first poll.
-    backend.onRpc("get_status", () => ({
-      type: "status_update",
-      model: "test-model-v1",
-      context_tokens: 0,
-      max_context: 100_000,
-      cloud_connected: false,
-      cloud_org: "",
-    }));
+    backend.onRpc("get_status", () =>
+      signedInStatus({
+        model: "test-model-v1",
+        context_tokens: 0,
+        max_context: 100_000,
+        cloud_connected: false,
+        cloud_org: "",
+      }),
+    );
 
     await page.goto(appUrl);
     // Composer's model chip displays the current model. Wait for it
@@ -148,14 +158,15 @@ test.describe("push notifications", () => {
     );
 
     // Push an update — chip text should change without a refresh.
-    backend.pushEvent({
-      type: "status_update",
-      model: "test-model-v2",
-      context_tokens: 0,
-      max_context: 100_000,
-      cloud_connected: false,
-      cloud_org: "",
-    });
+    backend.pushEvent(
+      signedInStatus({
+        model: "test-model-v2",
+        context_tokens: 0,
+        max_context: 100_000,
+        cloud_connected: false,
+        cloud_org: "",
+      }),
+    );
     await expect(page.locator(".composer-model").first()).toContainText(
       "test-model-v2",
     );
@@ -187,14 +198,15 @@ test.describe("push notifications", () => {
     // Initial composer-model text differs per page only because the
     // session-stamped pushes below land. The fixture's default
     // ``get_status`` answer is shared.
-    backend.onRpc("get_status", () => ({
-      type: "status_update",
-      model: "initial-model",
-      context_tokens: 0,
-      max_context: 200_000,
-      cloud_connected: false,
-      cloud_org: "",
-    }));
+    backend.onRpc("get_status", () =>
+      signedInStatus({
+        model: "initial-model",
+        context_tokens: 0,
+        max_context: 200_000,
+        cloud_connected: false,
+        cloud_org: "",
+      }),
+    );
 
     // Each page in its own browser context → independent
     // localStorage / IndexedDB → independent ``client_id``, so they
@@ -226,15 +238,16 @@ test.describe("push notifications", () => {
       // Push a status_update stamped for "sess-alpha" — only pageA
       // (bound to that session) should render it. pageB must keep the
       // initial model since the FE's session filter drops the event.
-      backend.pushEvent({
-        type: "status_update",
-        session_id: "sess-alpha",
-        model: "model-alpha",
-        context_tokens: 0,
-        max_context: 200_000,
-        cloud_connected: false,
-        cloud_org: "",
-      });
+      backend.pushEvent(
+        signedInStatus({
+          session_id: "sess-alpha",
+          model: "model-alpha",
+          context_tokens: 0,
+          max_context: 200_000,
+          cloud_connected: false,
+          cloud_org: "",
+        }),
+      );
       await expect(pageA.locator(".composer-model").first()).toContainText(
         "model-alpha",
       );
@@ -246,15 +259,16 @@ test.describe("push notifications", () => {
 
       // Now the mirror: stamp for "sess-beta" — only pageB should pick
       // it up; pageA stays on model-alpha.
-      backend.pushEvent({
-        type: "status_update",
-        session_id: "sess-beta",
-        model: "model-beta",
-        context_tokens: 0,
-        max_context: 200_000,
-        cloud_connected: false,
-        cloud_org: "",
-      });
+      backend.pushEvent(
+        signedInStatus({
+          session_id: "sess-beta",
+          model: "model-beta",
+          context_tokens: 0,
+          max_context: 200_000,
+          cloud_connected: false,
+          cloud_org: "",
+        }),
+      );
       await expect(pageB.locator(".composer-model").first()).toContainText(
         "model-beta",
       );
@@ -277,14 +291,15 @@ test.describe("push notifications", () => {
     // opposite-of-isolation regression — a stamping rule that
     // accidentally drops valid same-session events.
     backend.onRpc("get_session_id", () => "shared-session");
-    backend.onRpc("get_status", () => ({
-      type: "status_update",
-      model: "initial-shared",
-      context_tokens: 0,
-      max_context: 200_000,
-      cloud_connected: false,
-      cloud_org: "",
-    }));
+    backend.onRpc("get_status", () =>
+      signedInStatus({
+        model: "initial-shared",
+        context_tokens: 0,
+        max_context: 200_000,
+        cloud_connected: false,
+        cloud_org: "",
+      }),
+    );
 
     // Fresh contexts get no inherited ``baseURL``; pass it explicitly
     // so the ``?ws=…`` relative path resolves to the dev server.
@@ -305,15 +320,16 @@ test.describe("push notifications", () => {
         { timeout: 10_000 },
       );
 
-      backend.pushEvent({
-        type: "status_update",
-        session_id: "shared-session",
-        model: "shared-updated",
-        context_tokens: 0,
-        max_context: 200_000,
-        cloud_connected: false,
-        cloud_org: "",
-      });
+      backend.pushEvent(
+        signedInStatus({
+          session_id: "shared-session",
+          model: "shared-updated",
+          context_tokens: 0,
+          max_context: 200_000,
+          cloud_connected: false,
+          cloud_org: "",
+        }),
+      );
       // Both tabs reflect the push.
       await expect(pageA.locator(".composer-model").first()).toContainText(
         "shared-updated",

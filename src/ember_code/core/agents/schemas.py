@@ -23,12 +23,12 @@ Splits five concerns off of the old ``core/pool.py``:
 * :class:`LoadReport` + :class:`LoadError` — typed Result over the
   old "print to stderr and swallow" pattern.
 * :class:`AgentBuildContext` — the six shared-state params
-  (settings, base_dir, mcp_clients, knowledge_mgr, db, broadcast)
+  (settings, base_dir, mcp_clients, artifact_mgr, db, broadcast)
   bundled once so :class:`AgentBuilder` takes one construction
   param instead of six.
 * Typed :class:`typing.Protocol` s — replaces ``Any`` on the public
   API surface (audit AP5). Keeps runtime imports cheap (the real
-  Agno / KnowledgeManager / etc types stay behind
+  Agno / ArtifactManager / etc types stay behind
   ``TYPE_CHECKING``).
 """
 
@@ -284,9 +284,9 @@ class Broadcast(Protocol):
 
 
 @runtime_checkable
-class KnowledgeManager(Protocol):
+class ArtifactManager(Protocol):
     """The session-level knowledge manager wrapper. Only used to
-    dispatch through to :class:`KnowledgeTools`; we don't call its
+    dispatch through to :class:`ArtifactTools`; we don't call its
     methods directly here."""
 
     ...
@@ -382,7 +382,7 @@ class AgentBuildContext(BaseModel):
     settings: Any
     base_dir: str | None = None
     mcp_clients: dict[str, Any] | None = None
-    knowledge_mgr: Any | None = None
+    artifact_mgr: Any | None = None
     db: Any | None = None
     broadcast: Any | None = None
     #: Resolves the session's ``CodeIndex`` when a specialist first queries it.
@@ -401,7 +401,7 @@ __all__ = [
     "AgentPriority",
     "Broadcast",
     "DbHandle",
-    "KnowledgeManager",
+    "ArtifactManager",
     "LoadError",
     "LoadReport",
     "McpClient",

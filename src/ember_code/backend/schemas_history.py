@@ -101,6 +101,8 @@ class ToolTurn(_TimedTurn):
     args: str = ""
     content: str = ""
     is_error: bool = False
+    #: Kept from running — see ``ToolCompleted.is_rejected``.
+    is_rejected: bool = False
 
 
 class PlanTurn(_TimedTurn):

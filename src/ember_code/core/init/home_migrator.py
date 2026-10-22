@@ -61,7 +61,7 @@ class HomeConfigMigrator(BaseModel):
     def migrate(self) -> MigrationResult:
         """Strip legacy bundled cloud entries from ``config.yaml``.
 
-        The signal for a bundled entry is Ember Cloud URL +
+        The signal for a bundled entry is an igni server URL +
         ``cloud_token`` api_key — see
         :meth:`HomeModelRegistryEntry.is_bundled_cloud`. User-edited
         entries (different URL, custom api_key, custom model_id) are

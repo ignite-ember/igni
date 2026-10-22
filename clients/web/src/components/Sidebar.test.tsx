@@ -108,7 +108,7 @@ function defaultProps(overrides: Partial<React.ComponentProps<typeof Sidebar>> =
     currentId: "abcd1234ef",
     links: [
       { kind: "plugins", label: "Plugins" },
-      { kind: "knowledge", label: "Knowledge" },
+      { kind: "artifacts", label: "Artifacts" },
     ],
     onLink: vi.fn(),
     onNewChat: vi.fn(),

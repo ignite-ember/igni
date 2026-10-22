@@ -82,6 +82,7 @@ class ContextController:
             model_configured=self._has_usable_model(),
             cloud_connected=self._session.cloud_connected,
             cloud_org=self._session.cloud_org_name or "",
+            cloud_email=self._session.cloud_email or "",
             context_tokens=self._session.last_input_tokens,
             max_context=self._settings.models.max_context_window,
             permission_mode=self._session.permission_mode_value,

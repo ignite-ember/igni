@@ -63,11 +63,25 @@ class PermissionModeStrategy:
         deny didn't come from this mode."""
         return None
 
+    def prompts_user(self) -> bool:
+        """Can a decision this mode leaves open still reach a human?
+
+        ``False`` only for :class:`DontAskMode`. The pipeline reads this
+        in two places, and both were the same hole: an ASK that nobody
+        will ever answer is not a pause, it is an unsupervised run. Step
+        4 used to hand back ASK from a matching ``ask`` rule even under
+        ``dontAsk``, and :class:`PermissionEvaluatorStage` turns ASK into
+        "continue" — so marking a dangerous tool ``ask``, the intuitive
+        way to say "be careful with this", converted it from denied
+        (step 6) to auto-executed under ``--strict``.
+        """
+        return True
+
     def dont_ask_fallback(self) -> bool:
         """Does this mode treat the final step-6 fall-through as a
-        DENY (rather than DEFER)? Only :class:`DontAskMode` returns
-        ``True`` — headless mode has no user to prompt."""
-        return False
+        DENY (rather than DEFER)? True exactly when the mode cannot
+        prompt — headless mode has no user to ask."""
+        return not self.prompts_user()
 
     @classmethod
     def for_mode(cls, mode: PermissionMode) -> PermissionModeStrategy:
@@ -92,8 +106,8 @@ class DontAskMode(PermissionModeStrategy):
 
     mode = PermissionMode.DONT_ASK
 
-    def dont_ask_fallback(self) -> bool:
-        return True
+    def prompts_user(self) -> bool:
+        return False
 
     def deny_reason(
         self,

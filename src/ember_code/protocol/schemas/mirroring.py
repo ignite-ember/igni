@@ -59,9 +59,23 @@ class RequirementResolved(Message):
     requirement_id: str = ""
 
 
+class RequirementDetails(Message):
+    """The reason for an open HITL requirement, sent after its dialog.
+
+    The Bypass safety check raises its dialog with ``details_pending``
+    and no text, then sends this once the model has described the call
+    (or with the plain reason when it could not). Views swap the
+    spinner for ``details`` in place."""
+
+    type: Literal["requirement_details"] = "requirement_details"
+    requirement_id: str = ""
+    details: str = ""
+
+
 __all__ = [
     "Welcome",
     "Typing",
     "UserMessageReceived",
     "RequirementResolved",
+    "RequirementDetails",
 ]

@@ -29,7 +29,25 @@ from ember_code.core.prompts import (
 )
 
 REPO = Path(__file__).resolve().parents[1]
-CODEINDEX_PROMPTS = sorted((REPO / "agents").glob("*.codeindex.md"))
+
+# The directory that ships. ``ProjectInitializer._update_built_in_files`` copies
+# ``src/ember_code/bundled_agents/*.md`` into every project's ``.igni/agents``;
+# the repo-root ``agents/`` copies are development-tree only and are in no wheel.
+#
+# This file used to glob only the root copy, and the same failure it was written
+# about happened one directory up: the placeholder reached 8 of 8 dev copies and
+# 0 of 8 shipped ones, the tests passed, and the product kept serving the
+# hand-written schema. Both directories are checked, and the shipped one is
+# asserted non-empty on its own.
+SHIPPED_AGENT_DIR = REPO / "src" / "ember_code" / "bundled_agents"
+DEV_AGENT_DIR = REPO / "agents"
+SHIPPED_PROMPTS = sorted(SHIPPED_AGENT_DIR.glob("*.codeindex.md"))
+CODEINDEX_PROMPTS = SHIPPED_PROMPTS + sorted(DEV_AGENT_DIR.glob("*.codeindex.md"))
+
+
+def _prompt_id(path: Path) -> str:
+    return f"{path.parent.name}/{path.name}"
+
 
 # Facts the index gained after the shipped prompts were written. Each one is the
 # whole answer to a question the evaluation measured, so a prompt that does not
@@ -47,29 +65,41 @@ COUNTED_FACTS = [
 ]
 
 
-def test_there_are_codeindex_prompts_to_check():
-    assert CODEINDEX_PROMPTS, "no *.codeindex.md found — the glob or the layout moved"
+def test_there_are_shipped_codeindex_prompts_to_check():
+    """The packaged directory specifically — an empty glob here passes every
+    parametrised test below without checking anything that ships."""
+    assert SHIPPED_PROMPTS, (
+        f"no *.codeindex.md under {SHIPPED_AGENT_DIR} — the packaged agents moved, "
+        "and every assertion in this file just became a no-op for the product"
+    )
 
 
-@pytest.mark.parametrize("path", CODEINDEX_PROMPTS, ids=lambda p: p.name)
+def test_every_dev_copy_has_a_shipped_counterpart():
+    """A prompt that exists only in the dev tree is a prompt nobody runs."""
+    shipped = {p.name for p in SHIPPED_PROMPTS}
+    missing = sorted(p.name for p in DEV_AGENT_DIR.glob("*.codeindex.md") if p.name not in shipped)
+    assert not missing, f"{missing} exist in agents/ but are not packaged"
+
+
+@pytest.mark.parametrize("path", CODEINDEX_PROMPTS, ids=_prompt_id)
 def test_every_codeindex_prompt_carries_the_placeholder(path: Path):
     assert CODEINDEX_SCHEMA_PLACEHOLDER in path.read_text(), (
-        f"{path.name} teaches an agent to query the index but never receives the "
+        f"{_prompt_id(path)} teaches an agent to query the index but never receives the "
         "schema. That is how the shipped prompts came to know about none of the "
         "counted facts."
     )
 
 
-@pytest.mark.parametrize("path", CODEINDEX_PROMPTS, ids=lambda p: p.name)
+@pytest.mark.parametrize("path", CODEINDEX_PROMPTS, ids=_prompt_id)
 def test_the_loaded_prompt_knows_the_counted_facts(path: Path):
     """The substitution has to happen where agents are actually built."""
     body = AgentMarkdownFile(path).parse().system_prompt
     assert CODEINDEX_SCHEMA_PLACEHOLDER not in body, "placeholder survived into the prompt"
     missing = [fact for fact in COUNTED_FACTS if fact not in body]
-    assert not missing, f"{path.name} does not mention {missing}"
+    assert not missing, f"{_prompt_id(path)} does not mention {missing}"
 
 
-@pytest.mark.parametrize("path", CODEINDEX_PROMPTS, ids=lambda p: p.name)
+@pytest.mark.parametrize("path", CODEINDEX_PROMPTS, ids=_prompt_id)
 def test_no_prompt_hand_writes_the_schema_again(path: Path):
     """A second copy is what drifted the first time.
 
@@ -78,7 +108,7 @@ def test_no_prompt_hand_writes_the_schema_again(path: Path):
     """
     text = path.read_text()
     assert "### :Item" not in text, (
-        f"{path.name} has grown its own :Item property list again — delete it and "
+        f"{_prompt_id(path)} has grown its own :Item property list again — delete it and "
         "rely on the placeholder"
     )
 

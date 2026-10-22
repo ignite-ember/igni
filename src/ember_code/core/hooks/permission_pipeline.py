@@ -131,11 +131,8 @@ class PreToolUseHookStage(PermissionStage):
     :class:`HookResult`.
 
     Emits :class:`AllowSkip` on ``allow`` (evaluator gate is
-    later skipped), :class:`Block` on ``deny`` / legacy
-    ``should_continue=False`` (with the deny event fired), and
-    :class:`Continue` otherwise. On ``ask`` we fire the
-    ``PermissionRequest`` event for observability then fall
-    through — Agno's HITL dialog has already resolved.
+    later skipped), :class:`Block` on ``deny`` / ``ask`` / legacy
+    ``should_continue=False``, and :class:`Continue` otherwise.
     """
 
     def __init__(self, firer: HookFirer) -> None:
@@ -156,18 +153,42 @@ class PreToolUseHookStage(PermissionStage):
             )
             return Block(pre_result.message or f"Blocked: '{ctx.name}' denied by PreToolUse hook")
         if pre_decision == "ask":
+            # A hook's ``ask`` cannot reach a human from here, and the
+            # two ways it used to end were chosen by whether the hook
+            # happened to also set ``systemMessage``: set → block,
+            # unset → run the tool. So the same plugin, written to CC's
+            # semantics ("ask" = prompt me), was a guard or a rubber
+            # stamp depending on a field that says nothing about intent.
+            #
+            # Fails closed now. This is NOT the v0.8.3 case: that
+            # regression was the *evaluator*'s ASK re-firing after
+            # Agno's HITL dialog had already resolved a pause (see
+            # :class:`PermissionEvaluatorStage`). Agno's pause is driven
+            # by ``requires_confirmation``, which no hook can set, so a
+            # hook returning ``ask`` is a fresh request nobody answered.
             await self._firer.fire(
                 HookEvent.PERMISSION_REQUEST,
                 ctx.name,
                 PermissionRequestPayload.from_call(ctx.name, ctx.args),
             )
-            if pre_result.message:
-                return Block(pre_result.message)
+            await self._firer.fire(
+                HookEvent.PERMISSION_DENIED,
+                ctx.name,
+                PermissionDeniedPayload.from_call(ctx.name, ctx.args, "pre_tool_use_hook"),
+            )
             logger.info(
-                "PreToolUse hook returned ASK for %s — falling through to HITL",
+                "PreToolUse hook returned ASK for %s — no prompt surface at this "
+                "stage, so it is denied rather than auto-approved",
                 ctx.name,
             )
-            return Continue()
+            return Block(
+                pre_result.message
+                or (
+                    f"Blocked: a PreToolUse hook asked for confirmation of '{ctx.name}', "
+                    "and hooks have no way to prompt the user. Ask the user directly, or "
+                    "have the hook return allow/deny."
+                )
+            )
         if pre_decision == "allow":
             return AllowSkip()
         # Legacy ``should_continue=False`` block (no permission_decision).
@@ -218,12 +239,20 @@ class ProtectedPathStage(PermissionStage):
 
     #: Function names that mutate the filesystem via the file-toolkit
     #: family. The protected-paths check gates writes to any of these.
+    #
+    # The ``notebook_*`` writers were missing, and they take the same
+    # ``file_path`` argument ``_target_path`` already reads — so a
+    # ``.ipynb`` under a protected pattern was the one write this
+    # defense-in-depth list did not see.
     WRITE_TOOL_FUNCTIONS: frozenset[str] = frozenset(
         {
             "save_file",
             "edit_file",
             "edit_file_replace_all",
             "create_file",
+            "notebook_edit_cell",
+            "notebook_add_cell",
+            "notebook_remove_cell",
         }
     )
 
@@ -392,6 +421,12 @@ class PermissionEvaluatorStage(PermissionStage):
     ``PermissionDenied``. ASK fires ``PermissionRequest`` for
     observability then falls through — Agno's HITL dialog has
     already resolved. ALLOW / DEFER pass through cleanly.
+
+    That fall-through is only sound because ASK reaching here means a
+    pause happened and a human answered it. In a mode that never pauses
+    it would be a silent approval, so the evaluator no longer produces
+    ASK there — ``dontAsk`` resolves it to DENY before this stage sees
+    it (:meth:`PermissionEvaluator._ask_or_deny`).
     """
 
     def __init__(
@@ -405,16 +440,29 @@ class PermissionEvaluatorStage(PermissionStage):
     async def evaluate(self, ctx: ToolCallContext) -> StageOutcome:
         if self._evaluator is None:
             return Continue()
-        decision = self._evaluator.evaluate(ctx.name, ctx.args)
-        if decision is PermissionDecision.DENY:
+        # ``evaluate_outcome``, not ``evaluate``: the reason is produced in
+        # the same pass as the decision and is the only place the model is
+        # told what would unblock it. Discarding it left a plan-mode edit
+        # denial reading "Blocked: permission policy denied 'edit_file'."
+        # with no mention of ``exit_plan_mode(plan)`` — the one call that
+        # lifts the block — in the TUI and in headless ``-p``, where no
+        # pause dialog exists to carry the reason instead.
+        outcome = self._evaluator.evaluate_outcome(ctx.name, ctx.args)
+        if outcome.decision is PermissionDecision.DENY:
             await self._firer.fire(
                 HookEvent.PERMISSION_DENIED,
                 ctx.name,
                 PermissionDeniedPayload.from_call(ctx.name, ctx.args, "permission_evaluator"),
             )
-            logger.info("Permission DENY for %s", ctx.name)
-            return Block(_denial_message(ctx.name))
-        if decision is PermissionDecision.ASK:
+            logger.info("Permission DENY for %s: %s", ctx.name, outcome.reason)
+            return Block(
+                _denial_message(
+                    ctx.name,
+                    reason=outcome.reason,
+                    tool_is_off_entirely=self._tool_is_off_entirely(ctx.name),
+                )
+            )
+        if outcome.decision is PermissionDecision.ASK:
             await self._firer.fire(
                 HookEvent.PERMISSION_REQUEST,
                 ctx.name,
@@ -425,6 +473,29 @@ class PermissionEvaluatorStage(PermissionStage):
                 ctx.name,
             )
         return Continue()
+
+    def _tool_is_off_entirely(self, tool_name: str) -> bool:
+        """Is this tool denied for *every* argument list, or just this one?
+
+        Asked by re-evaluating the tool with no arguments, which is the
+        question itself rather than a guess at it: a bare ``deny`` rule
+        and ``dontAsk``'s step-6 fall-through both still deny, while a
+        scoped ``Bash(rm *)`` no longer matches and plan mode answers
+        ALLOW because an argument-free shell call does not mutate.
+
+        The distinction decides whether :data:`_DENIAL_ALTERNATIVES` is
+        attached, and it was not being made: every ``run_shell_command``
+        denial told the model "Shell access is off in this session",
+        including the plan-mode one whose own reason says read-only
+        shell calls are fine. Two sentences apart, contradicting each
+        other, on the path whose job is to stop a retry.
+
+        Cold path — one extra evaluate() per denial, and only for the
+        tools that carry an alternatives paragraph at all.
+        """
+        if self._evaluator is None or tool_name not in _DENIAL_ALTERNATIVES:
+            return False
+        return self._evaluator.evaluate(tool_name, {}) is PermissionDecision.DENY
 
 
 #: What to suggest when a denial would otherwise leave the model with no move.
@@ -438,6 +509,11 @@ class PermissionEvaluatorStage(PermissionStage):
 #: Phrased as "if this session has it" on purpose: the same denial arrives under
 #: ``--strict``, where the alternatives are denied too, and promising a tool that
 #: is also blocked would just move the dead end one step later.
+#:
+#: Only attached when the tool is denied for every argument list — see
+#: :meth:`PermissionEvaluatorStage._tool_is_off_entirely`. In plan mode and under
+#: a scoped deny rule the shell still works for the calls that were not denied,
+#: and telling the model otherwise costs it the moves it actually had.
 _DENIAL_ALTERNATIVES: dict[str, str] = {
     "run_shell_command": (
         " Shell access is off in this session, which also rules out reading "
@@ -448,14 +524,48 @@ _DENIAL_ALTERNATIVES: dict[str, str] = {
 }
 
 
-def _denial_message(tool_name: str) -> str:
-    """The block text the model receives, plus a way forward where one exists."""
-    return f"Blocked: permission policy denied '{tool_name}'." + _DENIAL_ALTERNATIVES.get(
-        tool_name, ""
-    )
+def _denial_message(
+    tool_name: str,
+    reason: str = "",
+    tool_is_off_entirely: bool = True,
+) -> str:
+    """The block text the model receives, plus a way forward where one exists.
+
+    ``reason`` is the evaluator's own explanation for this decision — it
+    carries the mode-specific escape hatch (``exit_plan_mode(plan)``,
+    "read-only shell calls are fine") that the model otherwise never sees.
+
+    ``tool_is_off_entirely`` defaults to ``True`` so a caller that has not
+    measured it gets the old blanket phrasing; the pipeline always measures.
+    """
+    text = f"Blocked: permission policy denied '{tool_name}'."
+    if reason:
+        text += f" {reason}"
+    if tool_is_off_entirely:
+        text += _DENIAL_ALTERNATIVES.get(tool_name, "")
+    return text
 
 
 # ── PermissionPipeline coordinator ─────────────────────────────────
+
+
+class BypassGuardStage(PermissionStage):
+    """Bypass mode's last check — see :mod:`~ember_code.core.hooks.bypass_guard`.
+
+    Runs only after every other stage let the call through, so an
+    explicit deny, a protected path or a blocked command still wins
+    first, and only in Bypass does it do anything.
+    """
+
+    def __init__(self, guard: Any | None) -> None:
+        self._guard = guard
+
+    async def evaluate(self, ctx: ToolCallContext) -> StageOutcome:
+        if self._guard is None:
+            return Continue()
+        agent = getattr(ctx.agent, "name", None)
+        message = await self._guard.check(ctx.name, ctx.args, [agent] if agent else [])
+        return Block(message) if message else Continue()
 
 
 class PermissionPipeline:
@@ -468,6 +578,8 @@ class PermissionPipeline:
     3. :class:`BlockedCommandStage` — defense-in-depth, always runs.
     4. :class:`PermissionEvaluatorStage` — 6-mode rules; skipped
        when stage 1 returned :class:`AllowSkip`.
+    5. :class:`BypassGuardStage` — in Bypass only, puts a possibly
+       harmful call to the person before it runs.
 
     :meth:`evaluate` returns the block message on the first
     :class:`Block`, or ``None`` if every stage says continue /
@@ -480,11 +592,13 @@ class PermissionPipeline:
         protected_paths: list[str],
         blocked_commands: list[str],
         permission_evaluator: PermissionEvaluator | None,
+        bypass_guard: Any | None = None,
     ) -> None:
         self._pre = PreToolUseHookStage(firer)
         self._protected = ProtectedPathStage(protected_paths)
         self._blocked = BlockedCommandStage(blocked_commands)
         self._evaluator_stage = PermissionEvaluatorStage(permission_evaluator, firer)
+        self._bypass_guard = BypassGuardStage(bypass_guard)
 
     async def evaluate(self, ctx: ToolCallContext) -> str | None:
         """Run every stage in order. Return the first
@@ -512,4 +626,8 @@ class PermissionPipeline:
         evaluator_outcome = await self._evaluator_stage.evaluate(ctx)
         if isinstance(evaluator_outcome, Block):
             return evaluator_outcome.message
+
+        guard_outcome = await self._bypass_guard.evaluate(ctx)
+        if isinstance(guard_outcome, Block):
+            return guard_outcome.message
         return None
