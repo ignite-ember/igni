@@ -605,9 +605,17 @@ class ToolSpecCatalog:
         )
 
     @classmethod
-    def default(cls) -> ToolSpecCatalog:
-        """Build the built-in catalog (order matches the old
-        ``_factories`` dict insertion order for stability)."""
+    def base(cls) -> ToolSpecCatalog:
+        """The tools a base install has, and only those.
+
+        No capability's tools are here. A capability arrives as an
+        extension, and an extension's tools reach the agent over MCP
+        rather than through this catalog — so the base cannot name
+        them, and this list is what remains when it stops trying.
+
+        Order is the old ``_factories`` dict insertion order, which
+        several tests and the resolver's output depend on.
+        """
         return cls(
             [
                 WriteFileSpec(),
@@ -617,6 +625,26 @@ class ToolSpecCatalog:
                 WebFetchSpec(),
                 ScheduleSpec(),
                 NotebookSpec(),
+                VisualizeSpec(),
+            ]
+        )
+
+    @classmethod
+    def default(cls) -> ToolSpecCatalog:
+        """The base catalog plus the capabilities still compiled in.
+
+        One entry: :class:`CodeIndexSpec`. It is here rather than in
+        :meth:`base` because CodeIndex is not yet an extension — its
+        server half already is (``igni__code-index``), its client half
+        is still these symbols and about twenty other modules that ask
+        ``codeindex_available`` directly.
+
+        This method is the list that shrinks as that work lands. When
+        it is empty it goes, and ``base`` is the only catalog.
+        """
+        return cls(
+            [
+                *(s for s in cls.base().specs if not isinstance(s, VisualizeSpec)),
                 CodeIndexSpec(),
                 VisualizeSpec(),
             ]

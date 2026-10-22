@@ -19,6 +19,7 @@ FE broadcast, etc.).
 from __future__ import annotations
 
 import logging
+from collections.abc import Collection
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -57,12 +58,38 @@ class AgentDefinitionLoader:
         codeindex_available: bool,
         restriction_policy: PluginRestrictionPolicy | None = None,
         group_dir: Path | None = None,
+        known_variants: Collection[str] | None = None,
+        active_variants: Collection[str] | None = None,
     ) -> None:
+        """
+        Args:
+            codeindex_available: Whether the CodeIndex is up. Kept
+                because twenty other modules still ask that question
+                directly; here it only computes the variant sets when
+                nobody passes them.
+            known_variants: Every variant name that could appear as a
+                ``<agent>.<variant>.md`` sibling, live or not. Needed
+                separately from the live set so that a sibling naming
+                a variant that is *installed but down* is recognised
+                and skipped, rather than loaded as an agent whose name
+                happens to contain a dot.
+            active_variants: The subset that is live now. An extension
+                reporting ``READY`` puts its name here and the agents
+                written for it take over.
+        """
         self._settings = settings
         self._project_dir = project_dir
         self._codeindex_available = codeindex_available
         self._policy = restriction_policy
         self._group_dir = group_dir
+        self._known_variants = frozenset(
+            known_variants if known_variants is not None else {"codeindex"}
+        )
+        self._active_variants = frozenset(
+            active_variants
+            if active_variants is not None
+            else ({"codeindex"} if codeindex_available else ())
+        )
 
     def load(self) -> LoadReport:
         """Scan the five standard roots and return an aggregated
@@ -149,38 +176,80 @@ class AgentDefinitionLoader:
         return report
 
     def _pick_variants(self, files: list[Path]) -> list[Path]:
-        """Filter out the wrong CodeIndex variant per
-        ``self._codeindex_available``.
+        """Keep one file per agent: the live variant, or the plain one.
 
-        Convention: every CodeIndex-aware agent ships as a
-        variant pair — ``<name>.md`` (plain, no-CodeIndex) +
-        sibling ``<name>.codeindex.md`` (with CodeIndex). The
-        loader picks the right one based on
-        ``_codeindex_available``:
+        Convention: an agent written for a capability ships as a pair
+        — ``<name>.md``, which assumes nothing, and a sibling
+        ``<name>.<variant>.md`` for when that capability is live.
 
-        * If CodeIndex is available, prefer the ``.codeindex.md``
-          variant. The plain ``<name>.md`` is skipped when the
-          sibling exists.
-        * If CodeIndex is unavailable, prefer the plain
-          ``<name>.md`` and skip the ``.codeindex.md`` variant.
+        * A variant file whose variant is not live is skipped.
+        * The plain file is skipped when a live variant of it exists.
+        * An agent with only one of the pair is loaded whichever it is:
+          a half-written pair should behave like what is there.
 
-        If only one of the pair exists (older draft state), it
-        is always loaded — whichever variant is present, with
-        the agent's own no-CodeIndex fallback as a follow-up.
+        This read ``.codeindex.md`` in three places. It reads two sets
+        now, because "is the capability this agent was written for
+        available?" has as many answers as there are extensions and
+        the base cannot know their names at compile time. With the
+        defaults — known ``{"codeindex"}``, live iff the index is up —
+        it does exactly what it did.
+
+        Two live variants of one agent is a conflict its author made:
+        both describe the same agent and only one can load. The choice
+        is alphabetical so an install behaves the same way twice, and
+        logged so it is findable.
         """
-        use_codeindex = self._codeindex_available
-        codeindex_stems = {
-            f.name[: -len(".codeindex.md")] for f in files if f.name.endswith(".codeindex.md")
-        }
+        live_by_stem: dict[str, list[Path]] = {}
+        for md_file in files:
+            variant = self._variant_of(md_file)
+            if variant and variant in self._active_variants:
+                live_by_stem.setdefault(self._stem_without(md_file, variant), []).append(md_file)
+
+        for stem, candidates in live_by_stem.items():
+            if len(candidates) > 1:
+                chosen = min(candidates, key=lambda f: f.name)
+                logger.warning(
+                    "agent %s has %d live variants (%s); loading %s",
+                    stem,
+                    len(candidates),
+                    ", ".join(sorted(f.name for f in candidates)),
+                    chosen.name,
+                )
+                live_by_stem[stem] = [chosen]
+
+        live = {f for group in live_by_stem.values() for f in group}
+
         picked: list[Path] = []
         for md_file in files:
-            is_codeindex_variant = md_file.name.endswith(".codeindex.md")
-            if is_codeindex_variant and not use_codeindex:
+            variant = self._variant_of(md_file)
+            if variant:
+                # A variant file: in only if it is the live one.
+                if md_file in live:
+                    picked.append(md_file)
                 continue
-            if not is_codeindex_variant and use_codeindex and md_file.stem in codeindex_stems:
+            # A plain file: out if a live variant of it was picked.
+            if md_file.stem in live_by_stem:
                 continue
             picked.append(md_file)
         return picked
+
+    @staticmethod
+    def _stem_without(md_file: Path, variant: str) -> str:
+        """``foo`` for ``foo.codeindex.md`` — the plain sibling's name."""
+        return md_file.name[: -len(f".{variant}.md")]
+
+    def _variant_of(self, md_file: Path) -> str:
+        """The variant this file is written for, or ``""`` for none.
+
+        Only names in ``known_variants`` count. ``my.agent.md`` is a
+        plain agent called ``my.agent`` until something named ``agent``
+        is installed — which is the ambiguity in the convention, and
+        the reason variant names should be namespaced.
+        """
+        for variant in self._known_variants:
+            if md_file.name.endswith(f".{variant}.md"):
+                return variant
+        return ""
 
 
 __all__ = ["AgentDefinitionLoader"]

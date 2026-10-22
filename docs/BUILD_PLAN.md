@@ -119,13 +119,17 @@ Two things found on the way. `pageStack.ts` claimed unknown kinds were "dropped 
 
 The static `ArtifactPanel` import at `App.tsx:3300` goes the same way as A3's panel, with A5.
 
-### A5 — prompt and agent contributions (≈3 days)
+### A5 — prompt and agent contributions
 
-Generalise the two hardcoded CodeIndex hooks into named contributions:
-- `CODEINDEX_SCHEMA_PLACEHOLDER` (`core/prompts/__init__.py:20`) → a placeholder registry an extension fills.
-- The `.codeindex.md` variant suffix (`core/agents/loader.py:151`) → `promptVariants` keyed by extension id.
+**Seams cut; the bulk remains.** Three mechanisms are general now, and each still has CodeIndex as its only user.
 
-*Done when:* `CodeIndexSpec()` is no longer hardcoded in the `default()` catalog (`core/tools/tool_spec.py:620`) and the base install has no CodeIndex symbols in it.
+- **`PromptFragments`.** `{{CODEINDEX_GRAPH_SCHEMA}}` is one anchor in a table with an owner, not a substitution that imports the schema module — which is the coupling the split has to remove, since the base cannot import from a capability that may not be installed. `PromptFragments.default()` registers it while CodeIndex is in-tree and registers nothing once it is not.
+- **Variant selection reads two sets**, `known_variants` and `active_variants`, rather than the literal `.codeindex.md` suffix in three places. Both are needed: without knowing a variant is *declared*, the loader cannot tell `auditor.acme-scan.md` from an agent legitimately named that. Defaults reproduce today's behaviour exactly.
+- **`ToolSpecCatalog.base()` vs `.default()`.** `base()` is a base install's tools; `default()` is that plus the capabilities still compiled in, which is exactly `CodeIndexSpec`. That method is the list that shrinks as the rest lands, and when it is empty it goes.
+
+*Done when:* the base install has no CodeIndex symbols in it — **not met**. `codeindex_available` appears 141 times across 20 modules, and that is the real work: several sessions, not one. The seams above are what it needs to land against.
+
+One bug found by the suite rather than by review: the first `expand()` dropped every anchor it had no supplier for, and `{{PERSISTING}}`, `{{AGENT_CATALOG}}` and `{{CODEINDEX_TOOLS}}` are filled by the prompt builder *after* `load_prompt`. It was deleting three sections of the system prompt. Unknown anchors are left untouched now; only an anchor whose registered supplier raises is removed.
 
 ### A6 — manifest, validation, signature (≈4 days)
 

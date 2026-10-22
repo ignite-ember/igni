@@ -2,6 +2,17 @@
 
 from pathlib import Path
 
+from ember_code.core.prompts.fragments import PromptFragments, fragments
+
+__all__ = [
+    "CODEINDEX_SCHEMA_PLACEHOLDER",
+    "PROMPTS_DIR",
+    "PromptFragments",
+    "fragments",
+    "inject_codeindex_schema",
+    "load_prompt",
+]
+
 PROMPTS_DIR = Path(__file__).parent
 
 # Prompts that teach an agent to query the CodeIndex write this token where the
@@ -17,22 +28,26 @@ PROMPTS_DIR = Path(__file__).parent
 # ``is_callable``, no ``sink_hits``, no term search — and still advertised two
 # properties that are empty on all 86,332 indexed items. One source, substituted
 # in, cannot drift like that.
+#
+# It is now one anchor among however many the installed extensions supply —
+# see ``prompts.fragments``. The name is unchanged, which is the point: a
+# prompt written against this token keeps working when the thing filling it
+# stops being compiled in and starts being installed.
 CODEINDEX_SCHEMA_PLACEHOLDER = "{{CODEINDEX_GRAPH_SCHEMA}}"
 
 
 def inject_codeindex_schema(text: str) -> str:
-    """Replace the schema placeholder with the live graph description.
+    """Fill every prompt anchor in ``text``.
 
-    A no-op for text without the placeholder, so it is safe to call on every
-    prompt and every agent body. Imported lazily because the schema module pulls
-    in the code_index package, and the prompt loader is used in contexts that
-    have no index.
+    Named for the one anchor that existed when it was written. Kept
+    under that name because the call sites read well and the behaviour
+    for that anchor is unchanged; what it does now is ask the fragment
+    table, which may hold anchors from any installed extension.
+
+    A no-op for text with no anchors, so it is safe to call on every
+    prompt and every agent body.
     """
-    if CODEINDEX_SCHEMA_PLACEHOLDER not in text:
-        return text
-    from ember_code.core.code_index.neo4j_schema import GRAPH_SCHEMA_DESCRIPTION
-
-    return text.replace(CODEINDEX_SCHEMA_PLACEHOLDER, GRAPH_SCHEMA_DESCRIPTION)
+    return fragments.expand(text)
 
 
 def load_prompt(name: str) -> str:
