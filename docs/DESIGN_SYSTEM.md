@@ -17,18 +17,20 @@ The 231 classes named `-row`, `-card`, `-actions` looked like duplication and we
 | **Shape** | `--radius-pill` and `--radius-circle` added. `9999px` and `999px` unified. |
 | **Primitives** | 9: `ui-row`, `ui-actions`, `ui-list`, `ui-toolbar`, `ui-card`, `ui-item`, `ui-badge`, `ui-empty`, `ui-table`. Decided, not extracted. |
 | **Empty-state colour** | Was split 8/8 between `--fg-faint` and `--fg-muted`. Both clear WCAG AA, so decided on meaning: an empty state is content. All 17 agree. |
-| **Migration** | 86 feature classes joined a primitive. 137 declarations deduplicated. **Nothing lost a property** — verified by expanding the primitive into each joiner and comparing resolved declarations. |
+| **Migration** | 105 feature classes joined a primitive; 203 declarations deduplicated. **Zero properties overridden or lost**, verified by expanding every primitive into every joiner and comparing resolved declaration sets against the pre-migration file. |
+| **Cascade order** | The primitives sit above every feature rule, so a feature always wins. They did not at first, and five declarations were silently overridden — see below. |
 | **Published** | All scales and primitives are in `clients/ui/` for extensions, held to the app's by three tests. |
 
 Coverage: **1437 of 1789** spacing, type and shape declarations name a scale, from zero.
 
 ## Needs a human eye
 
-42 classes **gained** a property they were missing — that is the point of the primitive, and it is also the only place pixels moved. Nothing regressed mechanically; whether each looks right is a judgement.
+86 classes **gained** a property they were missing. That is what a primitive is for, and it is the only place pixels moved — verified: zero properties were overridden or lost.
 
-The 34 Playwright visual baselines are Linux-only and cannot run on this machine, so this list is what a CI round-trip should be checked against. Expect some baselines to need regenerating with `--update-snapshots` — a deliberate approval, not a rubber stamp.
+The 34 Playwright visual baselines are Linux-only and cannot run on this machine, so this is the list a CI round-trip should be checked against. Expect some baselines to need regenerating with `--update-snapshots` — an approval, not a rubber stamp.
 
-### `align-items` — 29 classes
+### `align-items` — 31 classes
+
 - [ ] `.afs-row`
 - [ ] `.chat-row`
 - [ ] `.codeindex-actions`
@@ -47,6 +49,7 @@ The 34 Playwright visual baselines are Linux-only and cannot run on this machine
 - [ ] `.kb-share-link-row`
 - [ ] `.kb-stale-row`
 - [ ] `.mcp-head-actions`
+- [ ] `.mode-badge`
 - [ ] `.msg-assistant-interrupted-actions`
 - [ ] `.msg-user-actions`
 - [ ] `.notify-row`
@@ -55,12 +58,15 @@ The 34 Playwright visual baselines are Linux-only and cannot run on this machine
 - [ ] `.plugins-actions`
 - [ ] `.plugins-toolbar`
 - [ ] `.prov-row`
+- [ ] `.tool-agent-badge`
 - [ ] `.update-prompt-actions`
 - [ ] `.watcher-row`
 - [ ] `.welcome-setup-actions`
 
-### `gap` — 15 classes
+### `gap` — 21 classes
+
 - [ ] `.chat-row`
+- [ ] `.compact-card-badge`
 - [ ] `.demo-page-composer-actions`
 - [ ] `.dir-list`
 - [ ] `.doc-locked-actions`
@@ -70,22 +76,44 @@ The 34 Playwright visual baselines are Linux-only and cannot run on this machine
 - [ ] `.kb-pick-list`
 - [ ] `.kb-stale-row`
 - [ ] `.mcp-head-actions`
+- [ ] `.mode-badge`
 - [ ] `.notify-row`
 - [ ] `.overflow-list`
 - [ ] `.page-toolbar`
+- [ ] `.plan-card-badge`
+- [ ] `.plugins-card`
 - [ ] `.prov-row`
 - [ ] `.sidebar-list`
+- [ ] `.tool-agent-badge`
+- [ ] `.tool-card`
 
-### `display` — 7 classes
+### `display` — 11 classes
+
 - [ ] `.dir-list`
 - [ ] `.file-ref-list`
 - [ ] `.kb-pick-list`
 - [ ] `.kb-stale-row`
+- [ ] `.mode-badge`
 - [ ] `.notify-row`
 - [ ] `.page-toolbar`
+- [ ] `.plugins-card`
 - [ ] `.sidebar-list`
+- [ ] `.tool-agent-badge`
+- [ ] `.tool-card`
+
+### `flex-direction` — 8 classes
+
+- [ ] `.attach-card`
+- [ ] `.dir-list`
+- [ ] `.file-ref-list`
+- [ ] `.kb-pick-list`
+- [ ] `.plugins-card`
+- [ ] `.sidebar-list`
+- [ ] `.tool-card`
+- [ ] `.workflow-phase-list`
 
 ### `font-size` — 6 classes
+
 - [ ] `.afs-empty`
 - [ ] `.codeindex-empty`
 - [ ] `.ctx-empty`
@@ -93,23 +121,51 @@ The 34 Playwright visual baselines are Linux-only and cannot run on this machine
 - [ ] `.plugins-empty`
 - [ ] `.watcher-log-empty`
 
-### `flex-direction` — 5 classes
-- [ ] `.dir-list`
-- [ ] `.file-ref-list`
-- [ ] `.kb-pick-list`
-- [ ] `.sidebar-list`
-- [ ] `.workflow-phase-list`
+### `color` — 3 classes
 
-### `color` — 2 classes
 - [ ] `.afs-empty`
 - [ ] `.codeindex-empty`
+- [ ] `.comment-review-item`
+
+### `padding` — 3 classes
+
+- [ ] `.compact-card-badge`
+- [ ] `.plan-card-badge`
+- [ ] `.tool-card`
+
+### `text-align` — 2 classes
+
+- [ ] `.comment-review-item`
+- [ ] `.file-ref-item`
+
+### `cursor` — 1 classes
+
+- [ ] `.comment-review-item`
 
 ## Not done
 
 **Padding is 62% on a scale and the rest is probably correct.** What stayed literal is overwhelmingly odd — 1, 3, 5, 7, 9, 11, 13px — which is optical correction against a 1px border, not drift. Forcing it onto even steps would move things a pixel for nothing.
 
-**145 feature classes have not joined a primitive.** Mostly `-card`, `-item`, `-badge` and `-title`, where the existing uses disagree too much for a single value to be obviously right. `-title` will never join: its variation is a heading level, not drift.
+**Four classes are named like a primitive and are not one**, so they were left alone rather than forced to look like one:
+
+| | |
+|---|---|
+| `.hitl-card`, `.wall-card` | no `background`, no `border` — layout wrappers with a misleading name |
+| `.mdi-item` | no `padding` |
+| `.kb-tree-badge` | no `border-radius`, no `font-weight` |
+
+Joining them would make a transparent wrapper grow a surface. The rule used throughout: a class may only join a primitive if it already declares that primitive's **defining** properties.
+
+**`-title` will never join.** Its variation spans four type steps, which is a heading level rather than drift.
 
 **The app does not use the primitives in markup.** Feature classes are grouped into the primitive's selector in CSS, which deduplicates without touching 64 `.tsx` files. Moving markup to `class="ui-card"` is the tidier end state and is not required for extensions, which is what this was for.
 
 **No component library for the iframe path.** Extensions get CSS classes and tokens, not React or web components. Worth revisiting once two real extensions exist and we know what they reimplemented.
+
+## A bug this refactor introduced and fixed
+
+The first migration put the primitives block where the old `.btn` rule was — mid-file. CSS resolves equal specificity by order, so every feature rule *above* that point lost to the primitive instead of winning.
+
+Five declarations were silently overridden: `.msg-user-actions` and `.msg-assistant-interrupted-actions` lost their own gaps, `.msg-assistant-interrupted-actions` went from `inline-flex` to `flex`, and `.plan-card-actions` and `.welcome-setup-actions` had theirs widened.
+
+It was caught by comparing resolved declaration sets against the pre-migration file rather than by reading the diff, which is the only way a cascade bug shows up. The block now sits above every feature rule, and the check is part of the migration.
