@@ -92,11 +92,17 @@ One host CSP needs `frame-src` for the loopback origins: `clients/tauri/src-taur
 
 The second half, the backend refusing the same call independently, is **split out as A2b** rather than quietly dropped. It cannot be built yet: the backend has no way to tell that an RPC came from an extension, because everything arrives on one connection as the user. Doing it properly means the host stamping `origin_extension` on calls it forwards — the host is trusted, the frame is not — and the backend checking that against the grant. That needs the manifest (A6) for the grant and a protocol field for the stamp. Until A2b lands, the host-side check is the only one, and a frame that got past it would be calling as the user.
 
-### A3 — port `CodeIndexPanel` (≈2 days) — **gate**
+### A3 — port `CodeIndexPanel` — **gate**
 
-Move `clients/web/src/components/panels/CodeIndexPanel.tsx` (1307 lines, props `{client, onClose}`) out of the base bundle and behind the bridge, with **no changes to the component**.
+**Passed** — one line, and the line was wrong before.
 
-*Done when:* the panel renders, syncs, resyncs and closes inside the frame, and the diff against the component is empty. A non-empty diff is the finding — write down what it needed and revise the bridge before A4.
+`CodeIndexPanel` now renders real data through the real `connect()` bridge: `codeindex_status` and `codeindex_head_breakdown` go out as `postMessage` envelopes and come back as results. No stub stands in for the bridge; the only thing standing in for production is the window on the other side.
+
+The cost was the prop type. It read `client: IgniClient`, the concrete class — which has private fields and is therefore nominal to TypeScript, so no bridge could ever satisfy it whatever its shape. It is now `Pick<IgniClient, "rpc">`, which is what the panel was using all along: four calls, one method. The body is untouched.
+
+**Still named off `IgniClient`** rather than a hand-written interface, so a change to `rpc`'s signature breaks the panel and the bridge together. A parallel declaration would drift instead.
+
+**What this gate did not prove.** CodeIndex is the easy case — one method. A panel wanting `onEvent` or `runMessage` would widen the `Pick`, and at some point the bridge has to implement those, which is work rather than a type. The harder evidence arrives when Artifacts ports.
 
 ### A4 — contribution points (≈3 days)
 

@@ -289,7 +289,20 @@ export function CodeIndexPanel({
   client,
   onClose,
 }: {
-  client: IgniClient;
+  /**
+   * The four calls this panel makes, and nothing else.
+   *
+   * ``Pick`` rather than the whole ``IgniClient`` because this panel
+   * is hosted in an extension frame as well as in the app, and what
+   * reaches it there is the bridge — a different object with the same
+   * ``rpc``. ``IgniClient`` has private fields, which makes it nominal
+   * to TypeScript, so nothing but a real instance can satisfy it.
+   *
+   * Still named off ``IgniClient`` rather than a hand-written
+   * interface: if ``rpc``'s signature changes, this and the bridge
+   * both stop compiling, which a parallel declaration would not.
+   */
+  client: Pick<IgniClient, "rpc">;
   onClose: () => void;
 }) {
   const [status, setStatus] = useState<CodeIndexStatus | null>(null);
