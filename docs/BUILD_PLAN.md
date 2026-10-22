@@ -36,7 +36,7 @@ No dependencies. Roughly a week, done in any order.
 
 | # | Item | Where | Done when |
 |---|---|---|---|
-| 0.1 | Per-runtime `load_settings` | `backend/session_orchestrator.py:453` — it deep-copies the **boot** project's Settings | `test_a_session_uses_its_own_projects_permissions.py`: open a session on repo B from a backend booted on repo A; B's `permissions.deny` applies and A's does not. |
+| 0.1 | Per-runtime `load_settings` | `backend/session_orchestrator.py:453` — it deep-copies the **boot** project's Settings | A session uses its own project's permissions: open a session on repo B from a backend booted on repo A, and B's `permissions.deny` applies while A's does not. |
 | 0.2 | Don't kill a sidecar you don't own | `backend/neo4j_runtime.py:1288`, `:833` | A second attached backend shutting down leaves the first one's JVM alive; `stop_all()` honours the refcount. |
 | 0.3 | Stale pidfile is loud | `backend/neo4j_runtime.py:1156` | Killing the JVM externally and rebooting surfaces a FAILED subsystem with a reason and a fix, not a silent no-artifact-store. |
 | 0.4 | Reap orphans | `backend/neo4j_runtime.py` + a boot-time sweep | Boot removes state dirs with no live PID and `tmp*.tar.gz` older than a day, and logs the count. Measured against the current 36 JVMs / 481 dirs / 248 MB. |
@@ -72,17 +72,17 @@ The backend has **no HTTP server today** — `transport/websocket.py` is a raw `
 
 GET and HEAD only. Resolve-and-contain every path against the root. Per-response CSP that permits the extension's own origin plus nothing. No directory listing. Port reported to the frontend through the existing extension-status RPC.
 
-*Done when:* `test_an_extension_origin_serves_only_its_own_files.py` — a `..` escape, a symlink out of the root, and a POST are all refused, and two installed extensions get different ports.
+*Done when:* an extension origin serves only its own files — a `..` escape, a symlink out of the root and a POST are each refused, and two installed extensions get different ports.
 
 ### A2 — the bridge (≈3 days)
 
 Host side: `ExtensionFrame.tsx` — sandboxed iframe, versioned `postMessage` envelope, origin check on every inbound message, RPC methods filtered against the manifest allow-list.
 
-Guest side: `clients/extension-bridge/` — a module an extension imports that returns an object satisfying `IgniClient`: `rpc()`, event subscription, plus `navigate`, `identity`, `params`, `theme`, `close`.
+Guest side: a new bridge package under `clients/`, which an extension imports to get an object satisfying `IgniClient`: `rpc()`, event subscription, plus `navigate`, `identity`, `params`, `theme`, `close`.
 
 Both host CSPs need `frame-src` for the loopback origins: `clients/vscode/src/extension.ts:304` (`default-src 'none'`) and `clients/tauri/src-tauri/tauri.conf.json:16` (`default-src 'self'`).
 
-*Done when:* `test_the_bridge_refuses_a_method_the_manifest_did_not_ask_for.py`, and the same call is refused again at the backend with the frame's check removed.
+*Done when:* the bridge refuses a method the manifest did not ask for, and the same call is refused again at the backend with the frame's check removed.
 
 ### A3 — port `CodeIndexPanel` (≈2 days) — **gate**
 
@@ -132,13 +132,13 @@ Auth is first and nothing lands in front of it.
 
 OIDC/SAML at the transport handshake, not a parallel login. The connection carries principal + app identity before the first frame is dispatched. TLS, since it stops being loopback. `transport/websocket.py:111` default host stays `127.0.0.1`; `shared` binds explicitly and refuses to start without TLS and an issuer.
 
-*Done when:* `test_an_unauthenticated_attach_is_closed_before_the_first_frame.py`.
+*Done when:* an unauthenticated attach is closed before the first frame is dispatched.
 
 ### B3 — session ownership and subscription delivery (≈1 week)
 
 A session is owned by the principal that created it. An inbound `session_id` the connection's principal doesn't own is rejected — this closes the approval-hijack path, since inbound routes on `session_id` alone today. `WebSocketServerTransport.send()` (`transport/websocket.py:248`) stops fanning to `_conns` and delivers to subscribers.
 
-*Done when:* `test_two_principals_on_one_backend_do_not_see_each_other.py`, including that neither can answer the other's HITL approval.
+*Done when:* two principals on one backend do not see each other, including that neither can answer the other's HITL approval.
 
 ### B4 — store interfaces, then Postgres (≈2 weeks)
 
@@ -159,6 +159,11 @@ Separate HOME and OS user. `data_dir` is bypassed by ~21 hardcoded `Path.home()`
 Authenticate, resolve principal → group → that group's pool, place **least-loaded**, then pin. Sticky placement is permanent, so the placement decision is the whole design. Batch dispatch (Phase 6) reuses the resolution and skips the pin.
 
 ---
+
+> Each *done when* is written as a sentence because that is also the test's
+> name when it is written — this suite names tests as statements of what
+> holds. They are not quoted as filenames here: a plan that cites a path
+> before it exists sends its reader somewhere empty.
 
 ## Gates
 
