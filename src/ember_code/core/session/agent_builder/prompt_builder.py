@@ -41,7 +41,12 @@ class PromptBuilder:
     #: not; the markers themselves never reach the model. Add a name
     #: here and a matching entry in :meth:`_capabilities` to make a new
     #: capability switchable.
-    _CONDITIONALS: ClassVar[tuple[str, ...]] = ("artifacts", "codeindex", "user-memory", "can-persist")
+    _CONDITIONALS: ClassVar[tuple[str, ...]] = (
+        "artifacts",
+        "codeindex",
+        "user-memory",
+        "can-persist",
+    )
 
     def __init__(
         self,

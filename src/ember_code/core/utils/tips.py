@@ -109,15 +109,6 @@ class KnowledgeDisabledTip(ContextualTip):
         return not ctx.settings.artifacts.enabled
 
 
-class KnowledgeNoShareTip(ContextualTip):
-    id: str = "artifacts_no_share"
-    message: str = ()
-
-    def matches(self, ctx: TipContext) -> bool:
-        k = ctx.settings.artifacts
-        return k.enabled and not k.share
-
-
 class GuardrailsOffTip(ContextualTip):
     id: str = "guardrails_off"
     message: str = (
@@ -206,7 +197,6 @@ class TipRegistry(BaseModel):
             contextual=[
                 NoProjectContextTip(),
                 KnowledgeDisabledTip(),
-                KnowledgeNoShareTip(),
                 GuardrailsOffTip(),
                 ReasoningOffTip(),
                 LearningOffTip(),

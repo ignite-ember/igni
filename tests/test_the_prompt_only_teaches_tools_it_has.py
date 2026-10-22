@@ -38,8 +38,14 @@ from ember_code.core.session.agent_builder.prompt_builder import PromptBuilder
 # archivist gets the toolkit (agents/builder.py) — so none may appear in
 # the main prompt, store or no store.
 _ARTIFACT_TOOLS = (
-    "artifact_add", "artifact_create", "artifact_search", "artifact_read",
-    "artifact_revise", "artifact_delete", "artifact_status", "artifact_cypher",
+    "artifact_add",
+    "artifact_create",
+    "artifact_search",
+    "artifact_read",
+    "artifact_revise",
+    "artifact_delete",
+    "artifact_status",
+    "artifact_cypher",
 )
 
 
@@ -74,7 +80,7 @@ class TestTheTwoConditionsAgree:
 
         # The store is reached through the archivist, so that is what is
         # taught — and never an artifact tool, which the main agent lacks.
-        assert "spawn_agent(\"archivist\"" in prompt
+        assert 'spawn_agent("archivist"' in prompt
         assert not [tool for tool in _ARTIFACT_TOOLS if tool in prompt]
 
     def test_without_one_they_are_not_mentioned_at_all(self, codeindex):
@@ -194,7 +200,7 @@ class TestTheUserMemoryToolIsTaughtOnlyWhenAttached:
         for user_memory in (True, False):
             prompt = _build(knowledge=True, codeindex=codeindex, user_memory=user_memory)
 
-            assert "spawn_agent(\"archivist\"" in prompt
+            assert 'spawn_agent("archivist"' in prompt
 
     def test_with_neither_the_section_goes_too(self, codeindex):
         """Nothing to persist to, so "Persisting What You Learn" followed by

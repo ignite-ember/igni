@@ -45,6 +45,7 @@ import uuid
 from typing import TYPE_CHECKING, Any
 
 from ember_code.core.tools.orchestrate_events import (
+    VIS_SPEC_PREFIX,
     AgentBuildResult,
     AgentStartedEvent,
     EventAppender,
@@ -58,7 +59,6 @@ from ember_code.core.tools.orchestrate_events import (
     SubagentStopPayload,
     SubTeamBuildResult,
     TeamMode,
-    VIS_SPEC_PREFIX,
 )
 from ember_code.core.tools.orchestrate_sandbox import SpawnSandbox
 

@@ -56,7 +56,7 @@ import threading
 import uuid
 from collections.abc import Awaitable, Callable
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from agno.agent import Agent
 from agno.compression.manager import CompressionManager
@@ -139,6 +139,11 @@ from ember_code.core.utils.display import DisplayManager
 from ember_code.core.utils.response import extract_response_text  # noqa: F401 — test-patch target
 from ember_code.core.utils.rules_index import RulesIndex
 from ember_code.core.workspace import WorkspaceManager
+
+if TYPE_CHECKING:
+    # Imported for the annotation only. The runtime import stays local
+    # to ``attach_shared_artifacts`` — see the cycle note there.
+    from ember_code.core.artifacts.project import WorkingCopyProject
 
 logger = logging.getLogger(__name__)
 
@@ -653,7 +658,7 @@ class Session:
         self.subsystems = SubsystemRegistry()
         # Which document project this working copy belongs to; set when the
         # store attaches (see attach_artifacts_neo4j).
-        self.artifact_project = None
+        self.artifact_project: WorkingCopyProject | None = None
         self._knowledge_ready = threading.Event()
         self._knowledge_ready.set()
         if pre_artifacts is not None:

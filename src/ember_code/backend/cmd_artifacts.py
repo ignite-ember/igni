@@ -133,11 +133,15 @@ class ArtifactsCommand:
         if verb == "use":
             target = rest.strip()
             if not target:
-                return CommandResult.error("Name the project: `/artifacts project use <project id>`.")
+                return CommandResult.error(
+                    "Name the project: `/artifacts project use <project id>`."
+                )
             binding = await resolver.use(target)
             if binding is None or binding.project_id != target:
                 return CommandResult.error(f"No project {target} in your organisation.")
-            return CommandResult.info(f"This working copy now uses '{binding.name}' ({binding.project_id}).")
+            return CommandResult.info(
+                f"This working copy now uses '{binding.name}' ({binding.project_id})."
+            )
 
         binding = await resolver.binding(force=verb == "link")
         if binding is None:
@@ -152,7 +156,9 @@ class ArtifactsCommand:
                 return CommandResult.error("This working copy has no `origin` remote to link.")
             linked = await shared.link_remote(project_id=binding.project_id, remote=remote)
             if linked is None:
-                return CommandResult.error("The project is no longer there; run `/artifacts project` again.")
+                return CommandResult.error(
+                    "The project is no longer there; run `/artifacts project` again."
+                )
             resolver.invalidate()
             return CommandResult.info(
                 f"{linked.get('remote_key') or remote} now opens '{binding.name}' for everyone in your organisation."

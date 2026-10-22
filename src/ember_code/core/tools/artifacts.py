@@ -539,7 +539,9 @@ class ArtifactTools(Toolkit):
                 "document, call artifact_repin to move the pin forward and "
                 "leave the content alone."
             )
-        result = await self._mgr.accept_reconcile(plan=plan, content=_without_read_markers(updated_content))
+        result = await self._mgr.accept_reconcile(
+            plan=plan, content=_without_read_markers(updated_content)
+        )
         return result.message if result.success else f"Error: {result.error}"
 
     async def artifact_repin(self, ref: str, source_ref: str = "") -> str:

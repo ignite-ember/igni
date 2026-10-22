@@ -190,9 +190,7 @@ class TestPublishingOne:
 
         assert (await desk.read(doc_id)).content == "Worth keeping."
 
-    async def test_the_version_is_attributed_to_whoever_published_it(
-        self, desk, index, doc_id
-    ):
+    async def test_the_version_is_attributed_to_whoever_published_it(self, desk, index, doc_id):
         await desk.save(doc_id, "Mine.")
         await desk.publish(doc_id)
 

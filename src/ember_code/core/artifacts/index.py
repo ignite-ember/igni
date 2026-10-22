@@ -663,7 +663,6 @@ class ArtifactIndex:
             },
         )
 
-
     def _localise_passage_pins(self, sources: SourceDeclaration) -> SourceDeclaration:
         """Passage pins, keyed by this client's artifact id; one pin per version.
 
@@ -696,9 +695,10 @@ class ArtifactIndex:
 
     def _passage_owners(self) -> dict[str, str]:
         """Server document id -> artifact id, learned from search hits."""
-        owners = getattr(self, "_passage_owner_map", None)
+        owners: dict[str, str] | None = getattr(self, "_passage_owner_map", None)
         if owners is None:
-            owners = self._passage_owner_map = {}
+            owners = {}
+            self._passage_owner_map = owners
         return owners
 
     async def resolve(self, ref: str) -> ArtifactSummary | None:

@@ -123,7 +123,13 @@ class TestNoDeadToolSurvivesInEitherBranch:
     @pytest.mark.parametrize(("codeindex", "artifacts"), COMBINATIONS)
     @pytest.mark.parametrize(
         "dead",
-        ["knowledge_add", "knowledge_search", "knowledge_status", "knowledge_delete", "artifact_add"],
+        [
+            "knowledge_add",
+            "knowledge_search",
+            "knowledge_status",
+            "knowledge_delete",
+            "artifact_add",
+        ],
     )
     def test_it_is_gone(self, codeindex, artifacts, dead):
         assert dead not in _render(codeindex=codeindex, artifacts=artifacts)

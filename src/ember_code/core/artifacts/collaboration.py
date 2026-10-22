@@ -1001,7 +1001,9 @@ class CollaborationSync:
         machine had pulled, so a document going stale elsewhere was
         invisible until somebody happened to sync it.
         """
-        response = await self._request("GET", "/v1/artifacts/stale", params={"limit": max(1, limit)})
+        response = await self._request(
+            "GET", "/v1/artifacts/stale", params={"limit": max(1, limit)}
+        )
         response.raise_for_status()
         return list(response.json().get("rows") or [])
 

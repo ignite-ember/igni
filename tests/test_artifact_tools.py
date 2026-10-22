@@ -215,7 +215,9 @@ class TestReads:
         """A page read in full can be cited by paragraph, as from search.
         The ids sit where each passage starts, over the server's text."""
         kit, _ = tools(
-            version_result=ArtifactVersion(artifact_id="a1", version_id="a1::3", n=3, content="local copy", head=True),
+            version_result=ArtifactVersion(
+                artifact_id="a1", version_id="a1::3", n=3, content="local copy", head=True
+            ),
             passages_result={
                 "n": 3,
                 "content": "# Plan\n\nShip in May.\n\nRisks: none.",
@@ -234,15 +236,23 @@ class TestReads:
     async def test_passages_for_another_version_are_not_shown(self):
         """Spans of a different text would label the wrong paragraph."""
         kit, _ = tools(
-            version_result=ArtifactVersion(artifact_id="a1", version_id="a1::3", n=3, content="local copy", head=True),
-            passages_result={"n": 2, "content": "older", "passages": [{"chunk_id": "doc::2::0", "line_from": 1, "line_to": 1}]},
+            version_result=ArtifactVersion(
+                artifact_id="a1", version_id="a1::3", n=3, content="local copy", head=True
+            ),
+            passages_result={
+                "n": 2,
+                "content": "older",
+                "passages": [{"chunk_id": "doc::2::0", "line_from": 1, "line_to": 1}],
+            },
         )
         out = await kit.artifact_read("a1")
         assert "local copy" in out and "cite as" not in out
 
     async def test_an_older_version_says_how_to_cite_it(self):
         kit, mgr = tools(
-            version_result=ArtifactVersion(artifact_id="a1", version_id="a1::1", n=1, content="old text", head=False)
+            version_result=ArtifactVersion(
+                artifact_id="a1", version_id="a1::1", n=1, content="old text", head=False
+            )
         )
         out = await kit.artifact_read("a1", version=1)
         assert "old text" in out and "a1@1" in out
@@ -253,7 +263,8 @@ class TestReads:
         the labels as the page's own prose."""
         kit, mgr = tools()
         await kit.artifact_revise(
-            ref="a1", content="[cite as: doc::3::0]\n# Plan\n[cite as: doc::3::1]\nShip in June.",
+            ref="a1",
+            content="[cite as: doc::3::0]\n# Plan\n[cite as: doc::3::1]\nShip in June.",
             sources=["doc::3::1"],
         )
         written = next(c for c in mgr.calls if c[0] == "revise")[2]

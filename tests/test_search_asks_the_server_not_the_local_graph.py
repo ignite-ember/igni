@@ -43,14 +43,14 @@ def _index(shared: Any | None):
 
 def _hit(**overrides) -> dict:
     return {
-        'slug': 's1',
-        'artifact_id': 'a1',
-        'title': 'Rollback steps',
-        'text': 'Page the on-call engineer first.',
-        'line_from': 7,
-        'line_to': 9,
-        'version_n': 3,
-        'score': 0.88,
+        "slug": "s1",
+        "artifact_id": "a1",
+        "title": "Rollback steps",
+        "text": "Page the on-call engineer first.",
+        "line_from": 7,
+        "line_to": 9,
+        "version_n": 3,
+        "score": 0.88,
         **overrides,
     }
 
@@ -60,9 +60,9 @@ class TestItAsksTheServer:
         server = FakeSharedServer()
         server.hits = [_hit()]
 
-        await _index(server).search(query='how do we roll back', limit=4, record=False)
+        await _index(server).search(query="how do we roll back", limit=4, record=False)
 
-        assert server.searched == {'query': 'how do we roll back', 'limit': 4}
+        assert server.searched == {"query": "how do we roll back", "limit": 4}
 
     async def test_a_hit_keeps_the_identifier_this_client_keys_on(self):
         """The server returns both; without `artifact_id` a caller has
@@ -71,10 +71,10 @@ class TestItAsksTheServer:
         server = FakeSharedServer()
         server.hits = [_hit()]
 
-        hits = await _index(server).search(query='rollback', record=False)
+        hits = await _index(server).search(query="rollback", record=False)
 
-        assert [h.artifact_id for h in hits] == ['a1']
-        assert hits[0].name == 'Rollback steps'
+        assert [h.artifact_id for h in hits] == ["a1"]
+        assert hits[0].name == "Rollback steps"
         assert hits[0].n == 3
 
     async def test_a_hit_carries_where_the_passage_is(self):
@@ -84,17 +84,17 @@ class TestItAsksTheServer:
         server = FakeSharedServer()
         server.hits = [_hit()]
 
-        hits = await _index(server).search(query='rollback', record=False)
+        hits = await _index(server).search(query="rollback", record=False)
 
-        assert hits[0].metadata['line_from'] == '7'
-        assert hits[0].metadata['line_to'] == '9'
-        assert hits[0].metadata['slug'] == 's1'
+        assert hits[0].metadata["line_from"] == "7"
+        assert hits[0].metadata["line_to"] == "9"
+        assert hits[0].metadata["slug"] == "s1"
 
     async def test_the_limit_is_passed_through(self):
         server = FakeSharedServer()
-        server.hits = [_hit(artifact_id=f'a{i}') for i in range(10)]
+        server.hits = [_hit(artifact_id=f"a{i}") for i in range(10)]
 
-        hits = await _index(server).search(query='rollback', limit=3, record=False)
+        hits = await _index(server).search(query="rollback", limit=3, record=False)
 
         assert len(hits) == 3
 
@@ -107,10 +107,10 @@ class TestWithoutAServer:
         server = FakeSharedServer()
         server.is_configured = False  # type: ignore[misc]
 
-        assert await _index(server).search(query='rollback', record=False) == []
+        assert await _index(server).search(query="rollback", record=False) == []
 
     async def test_no_shared_client_at_all_is_the_same(self):
-        assert await _index(None).search(query='rollback', record=False) == []
+        assert await _index(None).search(query="rollback", record=False) == []
 
     async def test_a_deployment_without_search_returns_empty(self):
         """`None` from the client means the server has no graph or no
@@ -118,7 +118,7 @@ class TestWithoutAServer:
         server = FakeSharedServer()
         server.hits = None
 
-        assert await _index(server).search(query='rollback', record=False) == []
+        assert await _index(server).search(query="rollback", record=False) == []
 
 
 class TestTheRetrievalLedger:
@@ -128,13 +128,13 @@ class TestTheRetrievalLedger:
 
     async def test_a_recorded_search_pins_what_it_returned(self):
         server = FakeSharedServer()
-        server.hits = [_hit(artifact_id='a1', version_n=3)]
+        server.hits = [_hit(artifact_id="a1", version_n=3)]
         index = _index(server)
 
-        await index.search(query='rollback', record=True)
+        await index.search(query="rollback", record=True)
 
         pinned = {(p.artifact_id, p.n) for p in index.ledger.candidates()}
-        assert ('a1', 3) in pinned, pinned
+        assert ("a1", 3) in pinned, pinned
 
     async def test_record_false_captures_nothing(self):
         """The panel listing documents is not the agent learning from
@@ -143,7 +143,7 @@ class TestTheRetrievalLedger:
         server.hits = [_hit()]
         index = _index(server)
 
-        await index.search(query='rollback', record=False)
+        await index.search(query="rollback", record=False)
 
         assert not index.ledger.candidates()
 
@@ -160,10 +160,10 @@ class TestNothingEmbedsLocallyToSearch:
 
         body = inspect.getsource(ArtifactIndex.search)
 
-        assert '_require_embedder' not in body, body
-        assert 'embed(' not in body, body
+        assert "_require_embedder" not in body, body
+        assert "embed(" not in body, body
 
-    @pytest.mark.parametrize('forbidden', ['query_embedding', '_client.search'])
+    @pytest.mark.parametrize("forbidden", ["query_embedding", "_client.search"])
     def test_it_does_not_query_the_local_graph(self, forbidden):
         import inspect
 

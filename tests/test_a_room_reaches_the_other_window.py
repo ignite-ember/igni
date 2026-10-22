@@ -75,9 +75,7 @@ class TestWhatReachesTheOtherWindow:
     async def test_a_change_does(self, controller, bus):
         local_room(controller)
 
-        await controller.send_to_room(
-            artifact_id="doc-1", frame={"type": "edit", "update": "abc"}
-        )
+        await controller.send_to_room(artifact_id="doc-1", frame={"type": "edit", "update": "abc"})
 
         assert bus.kinds() == ["edit"]
 
@@ -121,9 +119,7 @@ class TestWhatIsWrittenDown:
     async def test_a_change_is_kept_for_whoever_opens_next(self, controller):
         local_room(controller)
 
-        await controller.send_to_room(
-            artifact_id="doc-1", frame={"type": "edit", "update": "abc"}
-        )
+        await controller.send_to_room(artifact_id="doc-1", frame={"type": "edit", "update": "abc"})
 
         state = await controller.room_state(artifact_id="doc-1")
         assert state.updates == ["abc"]
@@ -161,9 +157,7 @@ class TestWhatIsWrittenDown:
         # has to — otherwise closing the last window on a document
         # loses what was typed into it since the last save.
         local_room(controller)
-        await controller.send_to_room(
-            artifact_id="doc-1", frame={"type": "edit", "update": "abc"}
-        )
+        await controller.send_to_room(artifact_id="doc-1", frame={"type": "edit", "update": "abc"})
 
         await controller.leave_room(artifact_id="doc-1", watcher="w1")
 
@@ -172,9 +166,7 @@ class TestWhatIsWrittenDown:
 
     async def test_publishing_forgets_it(self, controller):
         local_room(controller)
-        await controller.send_to_room(
-            artifact_id="doc-1", frame={"type": "edit", "update": "abc"}
-        )
+        await controller.send_to_room(artifact_id="doc-1", frame={"type": "edit", "update": "abc"})
 
         controller.forget_local_draft("doc-1")
 
@@ -207,9 +199,7 @@ class TestWhoIsWatching:
         # log once, on connecting, which is long before a window that
         # opens the editor later starts listening.
         local_room(controller)
-        await controller.send_to_room(
-            artifact_id="doc-1", frame={"type": "edit", "update": "abc"}
-        )
+        await controller.send_to_room(artifact_id="doc-1", frame={"type": "edit", "update": "abc"})
 
         joined = await controller.watch_room(artifact_id="doc-1", watcher="w2")
 

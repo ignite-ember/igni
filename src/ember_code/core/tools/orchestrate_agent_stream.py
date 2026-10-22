@@ -22,6 +22,7 @@ from typing import Any
 from agno.run import agent as agent_events
 
 from ember_code.core.tools.orchestrate_events import (
+    VIS_SPEC_PREFIX,
     AgentCompletedEvent,
     AgentPausedEvent,
     ContentPreviewEvent,
@@ -33,7 +34,6 @@ from ember_code.core.tools.orchestrate_events import (
     SubAgentRegistry,
     ToolCompletedEvent,
     ToolStartedEvent,
-    VIS_SPEC_PREFIX,
     VisualizationDeltaEvent,
 )
 from ember_code.core.tools.orchestrate_preview import PREVIEWS

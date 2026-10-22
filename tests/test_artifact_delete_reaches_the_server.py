@@ -58,7 +58,8 @@ async def test_a_server_failure_deletes_nothing_locally():
 
 @pytest.mark.asyncio
 async def test_a_session_not_signed_in_is_refused_not_half_done():
-    signed_out = MagicMock(); signed_out.is_configured = False
+    signed_out = MagicMock()
+    signed_out.is_configured = False
     index = _index(signed_out)
 
     with pytest.raises(DeleteRefused, match="not signed in"):
@@ -71,7 +72,9 @@ async def test_the_tool_reports_the_refusal_instead_of_claiming_success():
     from ember_code.core.tools.artifacts import ArtifactTools
 
     mgr = MagicMock()
-    mgr.delete = AsyncMock(side_effect=DeleteRefused("'Release plan' was not deleted: the server refused."))
+    mgr.delete = AsyncMock(
+        side_effect=DeleteRefused("'Release plan' was not deleted: the server refused.")
+    )
 
     out = await ArtifactTools(mgr).artifact_delete(ref="a1", confirm=True)
 

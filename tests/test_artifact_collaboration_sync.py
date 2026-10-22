@@ -631,9 +631,7 @@ class TestEditingThroughTheDraft:
         await desk.publish(CODEC.artifact_id("Auth model"))
 
         pushes = [
-            r
-            for r in server.requests
-            if r.method == "POST" and r.url.path.endswith("/versions")
+            r for r in server.requests if r.method == "POST" and r.url.path.endswith("/versions")
         ]
         assert pushes == [], "the server already has it; pushing would carry a stale base"
 

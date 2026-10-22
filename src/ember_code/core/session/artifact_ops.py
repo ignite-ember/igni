@@ -18,12 +18,11 @@ the moment to ask is while the agent still knows the answer.
 
 from __future__ import annotations
 
-from typing import Any
-
 import logging
 import uuid
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Any
 
 from ember_code.backend.schemas_artifacts import ArtifactCommentResolved
 from ember_code.core.artifacts.collaboration import CollaborationSync, NotAllowed
@@ -692,9 +691,7 @@ class SessionArtifactManager:
         # that concluded there was nothing filed.
         count = await self._count_or_zero("documents", self.artifacts.count)
         versions = await self._count_or_zero("versions", self.artifacts.version_count)
-        stale = await self._count_or_zero(
-            "stale", lambda: self._stale_count()
-        )
+        stale = await self._count_or_zero("stale", lambda: self._stale_count())
         candidates = await self._count_or_zero("candidates", self.artifacts.candidate_count)
         return ArtifactStatus(
             enabled=True,

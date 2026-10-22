@@ -60,5 +60,9 @@ async def test_the_stale_query_stays_within_what_the_server_accepts():
 async def test_every_figure_is_reported_when_nothing_fails():
     status = await _manager(_index()).status()
 
-    assert (status.document_count, status.version_count,
-            status.stale_count, status.pending_candidates) == (3, 7, 2, 1)
+    assert (
+        status.document_count,
+        status.version_count,
+        status.stale_count,
+        status.pending_candidates,
+    ) == (3, 7, 2, 1)

@@ -1081,7 +1081,8 @@ class Neo4jArtifactClient:
                 parent=record["parent"] or "",
                 proj=self._project_id,
             )
-            moved = (await promoted.single())["n"]
+            counted = await promoted.single()
+            moved = counted["n"] if counted is not None else 0
             await session.run(
                 "MATCH (f:Folder {folder_id: $fid, project_hash: $proj}) DELETE f",
                 fid=folder_id,

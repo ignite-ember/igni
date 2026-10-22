@@ -69,22 +69,25 @@ class TestTheReasonItGives:
     def test_no_account_asks_for_sign_in(self):
         reason = _controller(object(), server=_SignedOut())._unavailable()
 
-        assert 'Sign in' in reason
-        assert 'server' in reason, 'the sentence should say where the documents are'
+        assert "Sign in" in reason
+        assert "server" in reason, "the sentence should say where the documents are"
 
     def test_disabled_says_disabled(self):
         """A deployment that switched documents off is not a deployment
         somebody can sign into differently."""
-        assert _controller(None)._unavailable() == 'Artifacts are disabled.'
+        assert _controller(None)._unavailable() == "Artifacts are disabled."
 
     def test_a_signed_in_session_is_not_refused(self):
-        assert _controller(object(), server=_SignedIn())._unavailable() == ''
+        assert _controller(object(), server=_SignedIn())._unavailable() == ""
 
     def test_the_two_reasons_are_different_sentences(self):
         """Told apart because the remedies differ: one is a sign-in,
         the other is a configuration change nobody using the app can
         make."""
-        assert _controller(None)._unavailable() != _controller(object(), server=_SignedOut())._unavailable()
+        assert (
+            _controller(None)._unavailable()
+            != _controller(object(), server=_SignedOut())._unavailable()
+        )
 
 
 class TestTheTreeDoesNotAnswerEmpty:
@@ -94,7 +97,7 @@ class TestTheTreeDoesNotAnswerEmpty:
         tree = await _controller(object(), server=_SignedOut()).tree()
 
         assert tree.error
-        assert 'Sign in' in tree.error
+        assert "Sign in" in tree.error
         assert tree.nodes == []
 
 
@@ -116,16 +119,17 @@ class TestEveryEntryPointIsBehindIt:
         """
         lines = _SOURCE.splitlines()
         stragglers = [
-            f'line {i + 1}'
+            f"line {i + 1}"
             for i, line in enumerate(lines)
-            if 'if self._session.artifacts is None:' in line
-            and 'return "Artifacts are disabled."' not in (lines[i + 1] if i + 1 < len(lines) else '')
+            if "if self._session.artifacts is None:" in line
+            and 'return "Artifacts are disabled."'
+            not in (lines[i + 1] if i + 1 < len(lines) else "")
         ]
 
-        assert not stragglers, f'guard(s) still testing the index directly: {stragglers}'
+        assert not stragglers, f"guard(s) still testing the index directly: {stragglers}"
 
     def test_the_literal_only_follows_a_missing_collaborator(self):
-        """"Artifacts are disabled." is the half answer everywhere
+        """ "Artifacts are disabled." is the half answer everywhere
         except where it is the *whole* answer: a draft desk or a query
         planner that could not be built, which a sign-in does not fix.
 
@@ -140,20 +144,20 @@ class TestEveryEntryPointIsBehindIt:
             if '"Artifacts are disabled."' not in line:
                 continue
             # The definition itself, and the docstring explaining it.
-            if 'return "Artifacts are disabled."' in line or line.strip().startswith('call sites'):
+            if 'return "Artifacts are disabled."' in line or line.strip().startswith("call sites"):
                 continue
-            previous = lines[i - 1] if i else ''
-            if 'desk is None' in previous or 'planner is None' in previous:
+            previous = lines[i - 1] if i else ""
+            if "desk is None" in previous or "planner is None" in previous:
                 continue
-            offenders.append(f'line {i + 1}: {line.strip()}')
+            offenders.append(f"line {i + 1}: {line.strip()}")
 
-        assert not offenders, 'refusals that cannot say "sign in":\n' + '\n'.join(offenders)
+        assert not offenders, 'refusals that cannot say "sign in":\n' + "\n".join(offenders)
 
     @pytest.mark.parametrize(
-        'method',
-        ['tree', 'provenance', 'candidate_evidence', 'export', 'save_draft', 'publish_draft'],
+        "method",
+        ["tree", "provenance", "candidate_evidence", "export", "save_draft", "publish_draft"],
     )
     def test_the_main_entry_points_ask(self, method):
         body = inspect.getsource(getattr(ArtifactController, method))
 
-        assert '_unavailable()' in body, f'{method} does not wall'
+        assert "_unavailable()" in body, f"{method} does not wall"

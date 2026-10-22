@@ -17,7 +17,9 @@ from ember_code.backend.neo4j_runtime import Neo4jRuntime
 def _config(runtime: Neo4jRuntime, root: Path, name: str) -> dict[str, str]:
     data = root / name / "data"
     text = runtime._build_config(7687, 7474, "pw", data, root / name / "logs")
-    return dict(line.split("=", 1) for line in text.splitlines() if "=" in line and not line.startswith("#"))
+    return dict(
+        line.split("=", 1) for line in text.splitlines() if "=" in line and not line.startswith("#")
+    )
 
 
 def test_the_run_directory_is_set_explicitly(tmp_path):

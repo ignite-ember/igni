@@ -373,8 +373,14 @@ class ArtifactController:
                 placed = " It is at the top level — filing it failed."
         return msg.Info(text=f"{result.message}{placed}")
 
-    async def list(self) -> list[ArtifactListEntry]:
-        """Every artifact, head version — the panel's Browse tab."""
+    async def entries(self) -> list[ArtifactListEntry]:
+        """Every artifact, head version — the panel's Browse tab.
+
+        Named ``entries`` rather than ``list``: a method called ``list``
+        shadows the builtin for every annotation *after* it in the class
+        body, so the eight ``list[...]`` returns below this point stopped
+        being types and became references to this function.
+        """
         mgr = self._session.artifact_mgr
         try:
             summaries = await mgr.list_artifacts()
@@ -1600,14 +1606,20 @@ class ArtifactController:
             # 404 covers "no such document" and "not public", which is
             # the server refusing to confirm which — see the read
             # path's note. Said the same way here.
-            return {"error": "That link did not open. It may be private, or it may have been revoked."}
+            return {
+                "error": "That link did not open. It may be private, or it may have been revoked."
+            }
 
         versions = (answer.json() or {}).get("versions") or []
         if not versions:
-            return {"error": "That link did not open. It may be private, or it may have been revoked."}
+            return {
+                "error": "That link did not open. It may be private, or it may have been revoked."
+            }
 
         content = str(versions[-1].get("content") or "")
-        first = next((ln.strip().lstrip("# ").strip() for ln in content.splitlines() if ln.strip()), "")
+        first = next(
+            (ln.strip().lstrip("# ").strip() for ln in content.splitlines() if ln.strip()), ""
+        )
         return {"ok": "1", "title": first[:120] or "Shared document", "content": content}
 
     async def _shared_destination(self, parent_id: str) -> Any:

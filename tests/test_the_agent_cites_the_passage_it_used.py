@@ -45,15 +45,15 @@ def _index(shared: Any | None):
 
 def _hit(**overrides) -> dict:
     return {
-        'chunk_id': 'doc-7::3::2',
-        'slug': 's1',
-        'artifact_id': 'a1',
-        'title': 'Release checklist',
-        'text': 'Page the on-call engineer first.',
-        'line_from': 7,
-        'line_to': 9,
-        'version_n': 3,
-        'score': 0.9,
+        "chunk_id": "doc-7::3::2",
+        "slug": "s1",
+        "artifact_id": "a1",
+        "title": "Release checklist",
+        "text": "Page the on-call engineer first.",
+        "line_from": 7,
+        "line_to": 9,
+        "version_n": 3,
+        "score": 0.9,
         **overrides,
     }
 
@@ -65,9 +65,9 @@ class TestThePassageIdSurvives:
         server = FakeSharedServer()
         server.hits = [_hit()]
 
-        hits = await _index(server).search(query='rollback', record=False)
+        hits = await _index(server).search(query="rollback", record=False)
 
-        assert hits[0].chunk_id == 'doc-7::3::2'
+        assert hits[0].chunk_id == "doc-7::3::2"
 
     async def test_a_server_that_sends_none_is_not_an_error(self):
         """An older deployment, or a hit from somewhere without
@@ -76,10 +76,10 @@ class TestThePassageIdSurvives:
         server = FakeSharedServer()
         server.hits = [_hit(chunk_id=None)]
 
-        hits = await _index(server).search(query='rollback', record=False)
+        hits = await _index(server).search(query="rollback", record=False)
 
-        assert hits[0].chunk_id == ''
-        assert hits[0].artifact_id == 'a1'
+        assert hits[0].chunk_id == ""
+        assert hits[0].artifact_id == "a1"
 
 
 class TestTheAgentIsToldToCite:
@@ -104,16 +104,16 @@ class TestTheAgentIsToldToCite:
 
         from ember_code.core.tools.artifacts import ArtifactTools
 
-        return re.sub(r'\s+', ' ', inspect.getsource(ArtifactTools))
+        return re.sub(r"\s+", " ", inspect.getsource(ArtifactTools))
 
     def test_search_prints_the_id_to_cite(self):
-        assert 'cite as:' in self._tool_source()
+        assert "cite as:" in self._tool_source()
 
     def test_create_asks_for_the_passage_not_just_the_document(self):
         body = self._tool_source()
 
-        assert 'Prefer the passage id' in body
-        assert 'Passage ids from ``artifact_search``' in body
+        assert "Prefer the passage id" in body
+        assert "Passage ids from ``artifact_search``" in body
 
     def test_it_asks_for_markers_in_the_text(self):
         """The `sources` list is about the document; a marker is about
@@ -122,49 +122,49 @@ class TestTheAgentIsToldToCite:
         inferring it afterwards is the guess this design avoids."""
         body = self._tool_source()
 
-        assert '[cite:<passage id>]' in body
-        assert 'stripped when' in body
+        assert "[cite:<passage id>]" in body
+        assert "stripped when" in body
 
     def test_it_states_the_newline_rule(self):
         """A marker split across a line break is silently ignored
         server-side. An agent that is not told will write one
         eventually, and nothing will say why the citation vanished."""
-        assert 'split across a line break' in self._tool_source()
+        assert "split across a line break" in self._tool_source()
 
     def test_it_says_what_a_bare_document_id_costs(self):
         """An agent choosing the cheaper option should know what it is
         giving up, or it will always choose the cheaper option."""
         body = self._tool_source()
 
-        assert 'nothing to check' in body
+        assert "nothing to check" in body
 
 
 class TestACitationParsesIntoAPin:
     def test_a_passage_id_becomes_a_pin_that_carries_it(self):
-        pin = VersionPin.parse('doc-7::3::2')
+        pin = VersionPin.parse("doc-7::3::2")
 
         assert pin is not None
-        assert pin.artifact_id == 'doc-7'
-        assert [p.chunk_id for p in pin.passages] == ['doc-7::3::2']
+        assert pin.artifact_id == "doc-7"
+        assert [p.chunk_id for p in pin.passages] == ["doc-7::3::2"]
 
     def test_the_version_comes_from_the_id_not_the_head(self):
         """A passage belongs to the version it was read from. Pinning
         it to whatever the head happens to be at write time would
         claim the agent read text it never saw."""
-        assert VersionPin.parse('doc-7::3::2').n == 3
+        assert VersionPin.parse("doc-7::3::2").n == 3
 
     def test_a_document_ref_still_parses_and_cites_nothing(self):
-        pin = VersionPin.parse('design-doc@4')
+        pin = VersionPin.parse("design-doc@4")
 
         assert pin is not None and pin.n == 4
         assert pin.passages == []
 
     def test_a_bare_name_still_pins_to_the_head(self):
-        pin = VersionPin.parse('design-doc')
+        pin = VersionPin.parse("design-doc")
 
         assert pin is not None and pin.n == 0
 
-    @pytest.mark.parametrize('bad', ['doc::notanumber::2', 'https://example.test/x', '', '   '])
+    @pytest.mark.parametrize("bad", ["doc::notanumber::2", "https://example.test/x", "", "   "])
     def test_rubbish_does_not_become_a_pin(self, bad):
         assert VersionPin.parse(bad) is None
 
@@ -188,16 +188,16 @@ class TestThePinReachesTheServer:
         seen: dict = {}
 
         def handler(request: httpx.Request) -> httpx.Response:
-            seen.update(json.loads(request.content or b'{}'))
-            return httpx.Response(200, json={'n': 1, 'head_n': 1})
+            seen.update(json.loads(request.content or b"{}"))
+            return httpx.Response(200, json={"n": 1, "head_n": 1})
 
         sync = CollaborationSync(
             None,
-            server_url='https://igni.example',
-            access_token='t',
+            server_url="https://igni.example",
+            access_token="t",
             client=httpx.AsyncClient(transport=httpx.MockTransport(handler)),
         )
-        await sync.push_content(slug='s1', content='x', base_n=0, pins=pins)
+        await sync.push_content(slug="s1", content="x", base_n=0, pins=pins)
         return seen
 
     async def test_passages_are_sent_with_the_pin(self):
@@ -207,36 +207,47 @@ class TestThePinReachesTheServer:
         from ember_code.core.artifacts.models import CitedPassage
 
         pin = VersionPin(
-            artifact_id='a1',
+            artifact_id="a1",
             n=3,
-            passages=[CitedPassage(chunk_id='doc-7::3::2', quote='Page the on-call engineer first.')],
+            passages=[
+                CitedPassage(chunk_id="doc-7::3::2", quote="Page the on-call engineer first.")
+            ],
         )
 
         body = await self._sent([pin])
 
-        assert body['sources']['pins'][0]['passages'] == [
-            {'chunk_id': 'doc-7::3::2', 'quote': 'Page the on-call engineer first.'}
+        assert body["sources"]["pins"][0]["passages"] == [
+            {"chunk_id": "doc-7::3::2", "quote": "Page the on-call engineer first."}
         ]
 
     async def test_a_pin_without_passages_sends_an_empty_list(self):
         """Not a missing key. A key that is sometimes absent is a shape
         every reader has to special-case."""
-        body = await self._sent([VersionPin(artifact_id='a1', n=3)])
+        body = await self._sent([VersionPin(artifact_id="a1", n=3)])
 
-        assert body['sources']['pins'][0]['passages'] == []
+        assert body["sources"]["pins"][0]["passages"] == []
 
 
 class TestWhatTheHitLooksLikeToTheAgent:
     async def test_the_search_output_shows_the_id_on_its_own_line(self):
         """The agent has to copy it exactly, and an id buried in a
         heading gets paraphrased."""
+
         class _Mgr:
             async def search(self, query, limit=5, record=True):
                 from ember_code.core.artifacts.models import ArtifactSearchResponse
 
                 return ArtifactSearchResponse(
                     query=query,
-                    results=[ArtifactSearchHit(**{k: v for k, v in _hit().items() if k in ArtifactSearchHit.model_fields})],
+                    results=[
+                        ArtifactSearchHit(
+                            **{
+                                k: v
+                                for k, v in _hit().items()
+                                if k in ArtifactSearchHit.model_fields
+                            }
+                        )
+                    ],
                     total=1,
                 )
 
@@ -244,6 +255,6 @@ class TestWhatTheHitLooksLikeToTheAgent:
 
         tools = ArtifactTools.__new__(ArtifactTools)
         tools._mgr = _Mgr()  # type: ignore[attr-defined]
-        out = await ArtifactTools.artifact_search(tools, 'rollback')
+        out = await ArtifactTools.artifact_search(tools, "rollback")
 
-        assert 'cite as: doc-7::3::2' in out
+        assert "cite as: doc-7::3::2" in out

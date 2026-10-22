@@ -21,7 +21,9 @@ def _index() -> ArtifactIndex:
     index = ArtifactIndex.__new__(ArtifactIndex)
     index._client = MagicMock()
     known = SimpleNamespace(artifact_id="88a3e6040ef8320d", name="Postmortem")
-    index._client.get_artifact = AsyncMock(side_effect=lambda aid: known if aid == known.artifact_id else None)
+    index._client.get_artifact = AsyncMock(
+        side_effect=lambda aid: known if aid == known.artifact_id else None
+    )
     index._client.find_by_name = AsyncMock(return_value=None)
     return index
 
@@ -29,8 +31,15 @@ def _index() -> ArtifactIndex:
 @pytest.mark.asyncio
 async def test_a_passage_id_from_search_resolves_to_its_document():
     index = _index()
-    hit = index._hit_from_server({"chunk_id": "3cfe8a81-fc2c::2::0", "artifact_id": "88a3e6040ef8320d",
-                                  "title": "Postmortem", "version_n": 2, "text": "…"})
+    hit = index._hit_from_server(
+        {
+            "chunk_id": "3cfe8a81-fc2c::2::0",
+            "artifact_id": "88a3e6040ef8320d",
+            "title": "Postmortem",
+            "version_n": 2,
+            "text": "…",
+        }
+    )
     index._passage_owners()[hit.chunk_id.split("::", 1)[0]] = hit.artifact_id
 
     found = await index.resolve("3cfe8a81-fc2c::2::0")
@@ -57,10 +66,12 @@ def test_a_cited_passage_is_written_against_this_clients_document():
 
     index = _index()
     index._passage_owners()["3cfe8a81-fc2c"] = "88a3e6040ef8320d"
-    declared = SourceDeclaration(pins=[
-        VersionPin.parse("3cfe8a81-fc2c::2::0"),
-        VersionPin.parse("3cfe8a81-fc2c::2::4"),
-    ])
+    declared = SourceDeclaration(
+        pins=[
+            VersionPin.parse("3cfe8a81-fc2c::2::0"),
+            VersionPin.parse("3cfe8a81-fc2c::2::4"),
+        ]
+    )
 
     pins = index._localise_passage_pins(declared).pins
 

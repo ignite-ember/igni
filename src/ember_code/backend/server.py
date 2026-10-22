@@ -1008,8 +1008,8 @@ class BackendServer:
         return await self.artifacts.revise(entry_id=entry_id, content=content)
 
     async def artifact_list(self) -> list[ArtifactListEntry]:
-        """See :meth:`ArtifactController.list`."""
-        return await self.artifacts.list()
+        """See :meth:`ArtifactController.entries`."""
+        return await self.artifacts.entries()
 
     async def artifact_get(self, entry_id: str, version: int = 0) -> ArtifactGetResult:
         """See :meth:`ArtifactController.get`."""
