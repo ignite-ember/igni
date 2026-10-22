@@ -73,7 +73,11 @@ dependencies = [
     "arxiv~=4.0.0",
     "wikipedia~=1.4.0",
     "dateparser~=1.4.0",
-    "sentence-transformers~=5.5.1",
+    # ``~=5.5.1`` capped PYSEC-2026-4164, whose fix is 5.6.0. Widened
+    # to the minor the way ``pypdf`` was, for the same reason: a patch
+    # pin on a dependency that ships security fixes in minors is a
+    # standing block on them.
+    "sentence-transformers~=5.6",
     # Bypass mode's last check (core/hooks/bypass_guard.py). Runs locally
     # beside the embedder; needs nothing torch/transformers do not already.
     "laya~=0.4.4",
@@ -107,7 +111,9 @@ dev = [
     "python-dotenv~=1.2.2",
 ]
 mcp = [
-    "mcp~=1.28.1",
+    # ``~=1.28.1`` capped CVE-2026-59951, whose fix is 1.30.0. This pin
+    # has now blocked a fix once; widened to the minor.
+    "mcp~=1.30",
 ]
 gemini = [
     "google-genai~=2.8.0",
