@@ -29,6 +29,7 @@ import {
   isGuestMessage,
   methodAllowed,
 } from "./protocol";
+import { readThemeTokens } from "./tokens";
 
 /** What the frame is permitted to reach, and where it lives. */
 export interface ExtensionFrameProps {
@@ -185,6 +186,10 @@ export function ExtensionFrame({
       extensionId,
       params: params ?? {},
       theme,
+      // Read at send time, not at render time: a token defined in a
+      // media query resolves to what the user is actually looking at
+      // only once the document has settled.
+      tokens: readThemeTokens(),
     });
   }, [extensionId, nonce, params, post, theme]);
 
@@ -192,7 +197,12 @@ export function ExtensionFrame({
   // than a reload: a panel that reloaded every time the user flipped
   // to light mode would lose whatever they were in the middle of.
   useEffect(() => {
-    post({ igni: BRIDGE_VERSION, kind: "theme", theme });
+    post({
+      igni: BRIDGE_VERSION,
+      kind: "theme",
+      theme,
+      tokens: readThemeTokens(),
+    });
   }, [post, theme]);
 
   return (

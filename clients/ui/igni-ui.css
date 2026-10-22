@@ -1,0 +1,275 @@
+/**
+ * igni-ui — the controls an extension draws with.
+ *
+ * Bundle this into your extension. Do not link it from igni's origin:
+ * your page runs under its own origin with `default-src 'self'`, so a
+ * cross-origin stylesheet is refused, and that refusal is deliberate.
+ *
+ * Every value here is a token with a fallback. The fallback is what
+ * you see standalone — opening your page outside igni gives you
+ * something that looks right rather than something unstyled. Inside
+ * igni the bridge pushes the live values, so the same markup follows
+ * dark mode, light mode, and whatever a group's policy has branded,
+ * without you doing anything.
+ *
+ * Class names match igni's own, and that is the point: a control
+ * here is the control there. When one changes, both change.
+ *
+ * What this covers is what igni has as a shared control today —
+ * buttons, chips, dialogs, panels, fields. It does not yet cover
+ * tables, badges, empty states or spinners, because igni does not
+ * have those as shared controls either: they exist eleven times over
+ * inside feature stylesheets. Those are being generalised; until
+ * they are, writing your own is the honest answer, and these tokens
+ * are what to write it against.
+ */
+
+/* ── The tokens, as fallbacks ──────────────────────────────────────
+   Values match igni's dark theme. The bridge overwrites them on
+   `:root` at handshake; these are what applies before it does, and
+   what applies if your page is opened on its own. */
+:root {
+  --bg: #262624;
+  --bg-inset: #1f1f1d;
+  --bg-surface: #30302e;
+  --bg-raised: #3a3a37;
+
+  --fg: #f0efea;
+  --fg-muted: #b8b5ad;
+  --fg-faint: #8c8a83;
+
+  --border: #45453f;
+  --border-soft: #3a3a35;
+
+  --success: #4ade80;
+  --warning: #fbbf24;
+  --danger: #f87171;
+  --danger-text: #fca5a5;
+  --accent-blue: #60a5fa;
+
+  --ember-orange: #f97316;
+  --ember-red: #dc2626;
+  --ember-gradient: linear-gradient(135deg, #f97316, #dc2626);
+
+  --radius-sm: 6px;
+  --radius: 10px;
+  --radius-lg: 14px;
+  --font-ui:
+    ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+/* ── The page ──────────────────────────────────────────────────── */
+
+.igni-root {
+  margin: 0;
+  background: var(--bg);
+  color: var(--fg);
+  font-family: var(--font-ui);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+/* ── Buttons ───────────────────────────────────────────────────── */
+
+.btn {
+  appearance: none;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-surface);
+  color: var(--fg);
+  padding: 7px 14px;
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.btn:hover:not(:disabled) {
+  background: var(--bg-raised);
+}
+
+.btn:disabled,
+.btn[aria-disabled="true"] {
+  opacity: 0.45;
+  cursor: not-allowed;
+  background: var(--bg-surface);
+  box-shadow: none;
+}
+
+.btn-primary {
+  background: var(--ember-gradient);
+  border: none;
+  color: #fff;
+}
+
+/* A disabled primary has to stay recognisable as a button. Without
+   this it collapses to a borderless rectangle on the same colour as
+   the surface behind it and effectively disappears. */
+.btn-primary:disabled,
+.btn-primary[aria-disabled="true"] {
+  opacity: 0.6;
+  background: var(--ember-gradient);
+  color: rgba(255, 255, 255, 0.85);
+}
+
+.btn-primary:hover:not(:disabled) {
+  box-shadow: 0 6px 18px rgba(249, 115, 22, 0.3);
+  background: var(--ember-gradient);
+}
+
+/* The border keeps the stronger colour; the text uses the
+   contrast-safe variant. `--danger` is 3.74:1 on a raised surface
+   where WCAG AA wants 4.5:1, and `--danger-text` is the same hue at
+   4.50. */
+.btn-danger {
+  border-color: color-mix(in srgb, var(--danger) 55%, transparent);
+  color: var(--danger-text, var(--danger));
+}
+
+.btn-sm {
+  padding: 4px 10px;
+  font-size: 12px;
+}
+
+.btn-xs {
+  padding: 2px 8px;
+  font-size: 11px;
+}
+
+.btn-quiet {
+  background: transparent;
+  border-color: transparent;
+}
+
+.btn-quiet:hover:not(:disabled) {
+  background: var(--bg-raised);
+}
+
+/* ── Chips ─────────────────────────────────────────────────────── */
+
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 9px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--bg-surface);
+  color: var(--fg-muted);
+  font-size: 12px;
+  cursor: default;
+}
+
+.chip:hover {
+  background: var(--bg-raised);
+}
+
+.chip[data-tone="success"] {
+  color: var(--success);
+}
+.chip[data-tone="warning"] {
+  color: var(--warning);
+}
+.chip[data-tone="danger"] {
+  color: var(--danger-text, var(--danger));
+}
+
+/* ── Panels ────────────────────────────────────────────────────── */
+
+.panel {
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 14px 16px;
+}
+
+.panel-title {
+  margin: 0 0 8px;
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--fg);
+}
+
+.panel-sub {
+  margin: 0;
+  font-size: 12px;
+  color: var(--fg-muted);
+}
+
+/* ── Fields ────────────────────────────────────────────────────── */
+
+.panel-form-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.panel-input {
+  flex: 1;
+  background: var(--bg-inset);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--fg);
+  font-family: inherit;
+  font-size: 13px;
+  padding: 7px 10px;
+}
+
+.panel-input::placeholder {
+  color: var(--fg-faint);
+}
+
+.panel-input:focus {
+  outline: none;
+  border-color: var(--accent-blue);
+}
+
+/* ── Dialogs ───────────────────────────────────────────────────── */
+
+.overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 50;
+}
+
+.dialog {
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  padding: 18px 20px;
+  max-width: 520px;
+  width: calc(100% - 32px);
+}
+
+.dialog-title {
+  margin: 0 0 6px;
+  font-size: 15px;
+  font-weight: 700;
+}
+
+.dialog-sub {
+  margin: 0 0 14px;
+  font-size: 13px;
+  color: var(--fg-muted);
+}
+
+.dialog-pre {
+  background: var(--bg-inset);
+  border-radius: var(--radius-sm);
+  padding: 10px 12px;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  overflow-x: auto;
+}
+
+.dialog-actions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+  margin-top: 16px;
+}

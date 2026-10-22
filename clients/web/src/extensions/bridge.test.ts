@@ -53,6 +53,7 @@ function hello(over: Record<string, unknown> = {}) {
     extensionId: "igni.codeindex",
     params: {},
     theme: "dark",
+    tokens: { "--bg": "#262624", "--fg": "#f0efea" },
     ...over,
   };
 }
@@ -215,11 +216,12 @@ describe("the rest of the surface", () => {
     const seen: string[] = [];
     const stop = bridge.onTheme((next) => seen.push(next));
 
-    host.send({ kind: "theme", theme: "light" });
+    host.send({ kind: "theme", theme: "light", tokens: { "--bg": "#ffffff" } });
     expect(bridge.theme).toBe("light");
+    expect(bridge.tokens["--bg"]).toBe("#ffffff");
 
     stop();
-    host.send({ kind: "theme", theme: "dark" });
+    host.send({ kind: "theme", theme: "dark", tokens: { "--bg": "#262624" } });
 
     expect(seen).toEqual(["light"]);
     // The reading still follows even with nobody watching.

@@ -114,6 +114,7 @@ function hostAnswering(answers: Record<string, unknown> = ANSWERS) {
           extensionId: "igni.codeindex",
           params: {},
           theme: "dark",
+          tokens: { "--bg": "#262624" },
         },
       });
       Object.defineProperty(event, "source", { value: host });

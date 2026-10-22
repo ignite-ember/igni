@@ -14,6 +14,7 @@
  * app around it and used to get by being inside it.
  */
 
+import { applyThemeTokens, type ThemeTokens } from "./tokens";
 import {
   BRIDGE_VERSION,
   type CallMessage,
@@ -34,6 +35,12 @@ export interface Bridge {
   readonly params: Record<string, unknown>;
   /** The host's theme now. Use `onTheme` to follow it. */
   readonly theme: string;
+  /**
+   * The published design tokens, already applied to this document's
+   * root. Here as a reading for anything that needs a value rather
+   * than a CSS variable — a canvas, a chart library.
+   */
+  readonly tokens: ThemeTokens;
   /** Call a backend RPC. Rejects with the host's refusal, as a sentence. */
   rpc<T = unknown>(
     method: string,
@@ -105,12 +112,18 @@ function build(
     extensionId: string;
     params: Record<string, unknown>;
     theme: string;
+    tokens: ThemeTokens;
   },
 ): Bridge {
   const pending = new Map<string, Pending>();
   const themeWatchers = new Set<(theme: string) => void>();
   let theme = hello.theme;
+  let tokens = hello.tokens;
   let counter = 0;
+
+  // Applied before the page renders anything, so an extension never
+  // paints once in the fallback palette and again in the real one.
+  applyThemeTokens(tokens, document.documentElement);
 
   window.addEventListener("message", (event: MessageEvent) => {
     if (event.source !== host) return;
@@ -118,6 +131,8 @@ function build(
 
     if (event.data.kind === "theme") {
       theme = event.data.theme;
+      tokens = event.data.tokens;
+      applyThemeTokens(tokens, document.documentElement);
       for (const fn of themeWatchers) fn(theme);
       return;
     }
@@ -153,6 +168,9 @@ function build(
     params: hello.params,
     get theme() {
       return theme;
+    },
+    get tokens() {
+      return tokens;
     },
     rpc<T>(
       method: string,

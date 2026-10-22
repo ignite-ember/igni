@@ -29,6 +29,15 @@ export interface HelloMessage {
   params: Record<string, unknown>;
   /** `"light"` or `"dark"`, following the host. */
   theme: string;
+  /**
+   * The published design tokens, as the host currently computes them.
+   *
+   * Sent rather than fetched: the guest is a different origin and its
+   * own CSP refuses a cross-origin stylesheet. Sent rather than
+   * baked into the guest's package, because a copy of a theme defined
+   * across forty-five blocks drifts within a release.
+   */
+  tokens: Record<string, string>;
 }
 
 /** Host → guest, whenever the host's theme changes. */
@@ -36,6 +45,7 @@ export interface ThemeMessage {
   igni: typeof BRIDGE_VERSION;
   kind: "theme";
   theme: string;
+  tokens: Record<string, string>;
 }
 
 /** Guest → host: call a backend RPC. */
@@ -125,10 +135,16 @@ export function isHostMessage(data: unknown): data is HostMessage {
         typeof m.extensionId === "string" &&
         typeof m.theme === "string" &&
         typeof m.params === "object" &&
-        m.params !== null
+        m.params !== null &&
+        typeof m.tokens === "object" &&
+        m.tokens !== null
       );
     case "theme":
-      return typeof m.theme === "string";
+      return (
+        typeof m.theme === "string" &&
+        typeof m.tokens === "object" &&
+        m.tokens !== null
+      );
     case "result":
       return typeof m.id === "string" && typeof m.ok === "boolean";
     default:
