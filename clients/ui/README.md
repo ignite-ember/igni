@@ -97,4 +97,14 @@ One deliberate exception survives, labelled where it lives: a digit inside a 12p
 
 **Padding is 62% on the scale, and the rest is probably right.** The values that stayed literal are overwhelmingly *odd* — 1, 3, 5, 7, 9, 11, 13px — which is the signature of optical correction against a 1px border rather than drift. Forcing them onto even steps would move things by a pixel for no reason. They are visible as literals now, which is the right state for a deliberate exception.
 
-**Primitives beyond the controls above.** See the inventory earlier: 14 patterns are each reimplemented per feature, but they share far less than the names suggest. `*-row` agrees only on `display: flex`; `*-card` has 4 of 10 sharing a core. They do not duplicate so much as diverge, so there is nothing to extract — the design has to be decided, then features migrated to it. That changes pixels, so it is yours to call.
+## Primitives
+
+`ui-row`, `ui-actions`, `ui-list`, `ui-toolbar`, `ui-card`, `ui-item`, `ui-badge`, `ui-empty`, `ui-table`.
+
+These were decided, not extracted. There was very little duplication to extract: the 231 classes named `-row`, `-card`, `-actions` share almost nothing — `*-row` agreed only on `display: flex`, and deduplicating all fourteen patterns saved 84 declarations out of 17,789 lines. They did not repeat, they diverged, each feature choosing its own gaps and paddings because there was no scale to choose from.
+
+So where the existing uses agreed, the agreement became the value. Where they split, the split is resolved once with a reason rather than per feature. `ui-empty` is the clearest: its colour was split exactly eight and eight between `--fg-faint` and `--fg-muted`. Both clear WCAG AA since F138, so the tie breaks on meaning — an empty state is text you must read to know what to do next, which makes it content rather than de-emphasised chrome.
+
+There is deliberately **no `ui-title`**. Titles varied across four type steps, and that variation is the design — a heading level, not drift. Use the type scale and a weight.
+
+**Remaining:** igni's own 231 feature classes still carry their own copies. The primitives exist and are what an extension builds against; migrating the app onto them moves pixels in 64 files, and is worth doing behind the visual suite rather than blind.
