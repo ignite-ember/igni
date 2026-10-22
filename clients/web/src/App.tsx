@@ -34,11 +34,13 @@ import {
   openRoot,
   pop as popPage,
   restore as restorePages,
+  basePages,
   serialise as serialisePages,
   truncateTo,
   type PageKind,
   type PageRoute,
 } from "./chat/pageStack";
+import { Contributions } from "./extensions/contributions";
 import { PageContext } from "./components/PageShell";
 import { Monogram } from "./components/Monogram";
 import { WorkflowsPage } from "./components/pages/WorkflowsPage";
@@ -102,8 +104,16 @@ import { LoopPanel } from "./components/panels/LoopPanel";
 import { McpPanel } from "./components/panels/McpPanel";
 import { WatcherPanel } from "./components/panels/WatcherPanel";
 import { SchedulePanel } from "./components/panels/SchedulePanel";
-import { IgniClient, pickNativeDirectory, type ConnectionState } from "./protocol/client";
-import type { HITLRequest, ServerMessage, StatusUpdate } from "./protocol/messages";
+import {
+  IgniClient,
+  pickNativeDirectory,
+  type ConnectionState,
+} from "./protocol/client";
+import type {
+  HITLRequest,
+  ServerMessage,
+  StatusUpdate,
+} from "./protocol/messages";
 import { withDetails } from "./chat/hitlDetails";
 import { countOf } from "./lib/plural";
 
@@ -140,7 +150,7 @@ interface UpdateInfo {
  * it: places, not conversations. Three and not thirteen — the rest
  * keep their place in `TOOLS_MENU` below, and these are the ones you
  * go back to while working rather than configure once. */
-const SIDEBAR_LINKS: { kind: PageKind; label: string }[] = [
+const BASE_SIDEBAR_LINKS: { kind: PageKind; label: string }[] = [
   { kind: "plugins", label: "Plugins" },
   { kind: "mcp", label: "MCPs" },
   { kind: "artifacts", label: "Artifacts" },
@@ -148,7 +158,7 @@ const SIDEBAR_LINKS: { kind: PageKind; label: string }[] = [
 
 /** Entries for the header tools menu — each opens its feature's UI
  * directly (no slash command visible to the user). */
-const TOOLS_MENU: { label: string; command: string; desc: string }[] = [
+const BASE_TOOLS_MENU: { label: string; command: string; desc: string }[] = [
   { label: "MCP servers", command: "/mcp", desc: "connect external tools" },
   { label: "CodeIndex", command: "/codeindex", desc: "semantic code search" },
   { label: "Agents", command: "/agents", desc: "agent pool" },
@@ -184,6 +194,21 @@ const TOOLS_MENU: { label: string; command: string; desc: string }[] = [
   },
   { label: "Help", command: "/help", desc: "all commands" },
 ];
+
+/**
+ * The app's navigation, with whatever is installed folded in.
+ *
+ * Module scope, because it outlives any one render and because the
+ * two lists above were module scope for the same reason. What is
+ * contributed to it comes from the extensions the backend reports;
+ * until that wiring exists (A6 registers them), this holds exactly
+ * the base entries and behaves as the two constants did.
+ */
+const contributions = new Contributions(
+  BASE_SIDEBAR_LINKS,
+  BASE_TOOLS_MENU,
+  basePages,
+);
 
 /** Walk back from a ``stats`` item's index to find the assistant
  *  text that closes the same run. The inline copy-response button on
@@ -570,7 +595,11 @@ export default function App() {
     if (!sharedSlug || !status?.cloud_email) return;
     const url = new URL(window.location.href);
     url.searchParams.delete("doc");
-    window.history.replaceState(null, "", `${url.pathname}${url.search}${url.hash}`);
+    window.history.replaceState(
+      null,
+      "",
+      `${url.pathname}${url.search}${url.hash}`,
+    );
   }, [sharedSlug, status?.cloud_email]);
   const [sidebarOpen, setSidebarOpenState] = useState(window.innerWidth > 700);
   const setSidebarOpen = useCallback(
@@ -1099,7 +1128,7 @@ export default function App() {
             setPages(
               sharedSlug
                 ? [{ kind: "artifacts", label: "Artifacts" }]
-                : restorePages(clientState.get(PAGE_KEY)),
+                : restorePages(clientState.get(PAGE_KEY), contributions.pages),
             );
             // Adopt a session for this view. An already-bound
             // sessionId wins outright (reconnect mid-session — don't
@@ -1515,7 +1544,11 @@ export default function App() {
         } else if (m.channel === "http_retry_attempt") {
           // HTTP request is being retried. Dispatch a window event
           // so the RetryBanner can listen and display progress.
-          const payload = m.payload as { attempt?: number; delay_seconds?: number; url?: string };
+          const payload = m.payload as {
+            attempt?: number;
+            delay_seconds?: number;
+            url?: string;
+          };
           window.dispatchEvent(
             new CustomEvent("ember:http_retry_attempt", {
               detail: {
@@ -2763,7 +2796,10 @@ export default function App() {
   if (knowYet && !signedIn) {
     return (
       <>
-        <SignInWall client={client} onSignIn={() => setPanel({ kind: "login" })} />
+        <SignInWall
+          client={client}
+          onSignIn={() => setPanel({ kind: "login" })}
+        />
         {/* The login dialog belongs to this branch too. It is rendered
             at the foot of the app below, which this return skips —
             without it the Sign in button would set a state nothing
@@ -2802,10 +2838,10 @@ export default function App() {
         open={sidebarOpen}
         sessions={sessions}
         currentId={sessionId}
-        links={SIDEBAR_LINKS}
+        links={contributions.sidebar()}
         activeLink={page?.kind}
         onLink={(kind) => {
-          const link = SIDEBAR_LINKS.find((l) => l.kind === kind);
+          const link = contributions.sidebar().find((l) => l.kind === kind);
           if (link) goPage({ kind: link.kind, label: link.label });
         }}
         onNewChat={() => void runCommand("/clear", false)}
@@ -2958,7 +2994,9 @@ export default function App() {
           )}
           {status?.cloud_connected && (
             <button
-              className={waiting ? "chip chip-bell has-waiting" : "chip chip-bell"}
+              className={
+                waiting ? "chip chip-bell has-waiting" : "chip chip-bell"
+              }
               title={
                 waiting
                   ? `${waiting} ${waiting === 1 ? "comment is" : "comments are"} waiting on you`
@@ -3432,7 +3470,7 @@ export default function App() {
           processing={processing}
           skills={skills}
           backendCommands={backendCommands}
-          tools={TOOLS_MENU}
+          tools={contributions.tools()}
           seed={composerSeed}
           sessionId={sessionId}
           clientState={clientState}

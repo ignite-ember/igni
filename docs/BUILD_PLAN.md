@@ -104,13 +104,20 @@ The cost was the prop type. It read `client: IgniClient`, the concrete class —
 
 **What this gate did not prove.** CodeIndex is the easy case — one method. A panel wanting `onEvent` or `runMessage` would widen the `Pick`, and at some point the bridge has to implement those, which is work rather than a type. The harder evidence arrives when Artifacts ports.
 
-### A4 — contribution points (≈3 days)
+### A4 — contribution points
 
-- `PageKind` union → `string` + registry (`clients/web/src/chat/pageStack.ts:28`).
-- `SIDEBAR_LINKS` and `TOOLS_MENU` built from static + contributed (`clients/web/src/App.tsx:143`).
-- The static `ArtifactPanel` import at `App.tsx:3300` goes the same way as A3's panel.
+**Done** for the navigation; the static panel imports move with A5.
 
-*Done when:* an extension contributing a page and a sidebar entry appears in both, and removing the extension removes both without a reload crash.
+- `PageKind` is a `string`. `BASE_PAGE_KINDS` holds the thirteen this build ships and `BasePageKind` stays exact for the app's own code. What the union bought — a typo failing the build — moves to `PageRegistry.add`, which is where it has to be: the set of destinations is decided at install time by what an administrator put on the machine.
+- `restore()` takes the live registry, so a saved stack naming an extension's page restores while that extension is installed and opens on the chat once it is not. It used to check a compile-time set, so an extension's page could never have survived a reload.
+- `SIDEBAR_LINKS` / `TOOLS_MENU` are now `BASE_*`, joined with contributions by `Contributions`. Base entries keep their order and come first — an extension cannot push igni's own navigation down the list.
+- Removal is by **owner**, one call per extension. The entry nobody remembers to delete is the one that outlives the extension and opens onto nothing.
+
+*Done when:* an extension contributing a page and a sidebar entry appears in both, and removing the extension removes both — **met**, 14 tests in `contributions.test.ts`.
+
+Two things found on the way. `pageStack.ts` claimed unknown kinds were "dropped individually"; the code has always truncated the trail at the first one, which is the correct behaviour for a breadcrumb — a trail with a hole in it says something untrue about how the reader got there. The docstring was wrong, not the code. And `ArtifactPanel` at `App.tsx:3300` is still a static import: moving it is the same work as A5 and belongs there.
+
+The static `ArtifactPanel` import at `App.tsx:3300` goes the same way as A3's panel, with A5.
 
 ### A5 — prompt and agent contributions (≈3 days)
 

@@ -24,23 +24,23 @@
  * union — it just had one slot instead of several.
  */
 
-/** The destinations that are pages. Dialogs stay in `PanelState`. */
-export type PageKind =
-  | "plugins"
-  | "artifacts"
-  | "codeindex"
-  | "mcp"
-  | "watcher"
-  | "hooks"
-  | "schedule"
-  | "agents"
-  | "skills"
-  | "workflows"
-  | "loop"
-  | "help"
-  | "context";
+/**
+ * The destinations that are pages. Dialogs stay in `PanelState`.
+ *
+ * A string, not a union of the thirteen this build happens to ship.
+ * An extension contributes pages, and a closed union cannot admit one:
+ * the set of destinations is decided at install time by what an
+ * administrator put on the machine, not at compile time by us.
+ *
+ * What the union was buying — a typo failing the build — moves to
+ * registration, which is where it has to be anyway. `PageRegistry`
+ * below is what answers "is this a real destination?", and it answers
+ * at the moment the question is actually asked.
+ */
+export type PageKind = string;
 
-const PAGE_KINDS: ReadonlySet<string> = new Set<PageKind>([
+/** The destinations this build ships with. Extensions add to these. */
+export const BASE_PAGE_KINDS = [
   "plugins",
   "artifacts",
   "codeindex",
@@ -54,7 +54,73 @@ const PAGE_KINDS: ReadonlySet<string> = new Set<PageKind>([
   "loop",
   "help",
   "context",
-]);
+] as const;
+
+/** One of the thirteen above — still exact, for the app's own code. */
+export type BasePageKind = (typeof BASE_PAGE_KINDS)[number];
+
+/**
+ * Which destinations exist right now.
+ *
+ * Holds the base kinds plus whatever the installed extensions
+ * contribute, and knows which extension owns each one so that
+ * disabling an extension takes its pages with it.
+ *
+ * A contribution that collides with a base name, or with another
+ * extension's, is refused here rather than quietly shadowing it. The
+ * contract calls that a validation error at install; this is the
+ * runtime half of the same rule, for the case where an install was
+ * never validated.
+ */
+export class PageRegistry {
+  private readonly base: ReadonlySet<string>;
+  private readonly contributed = new Map<string, string>();
+
+  constructor(base: readonly string[] = BASE_PAGE_KINDS) {
+    this.base = new Set(base);
+  }
+
+  /**
+   * Record a page an extension contributes.
+   *
+   * @returns the reason it was refused, or `null` when accepted.
+   */
+  add(kind: string, owner: string): string | null {
+    if (!kind) return "a page needs a kind";
+    if (this.base.has(kind)) {
+      return `'${kind}' is one of igni's own pages, so '${owner}' cannot contribute it`;
+    }
+    const existing = this.contributed.get(kind);
+    if (existing !== undefined && existing !== owner) {
+      return `'${kind}' is already contributed by '${existing}'`;
+    }
+    this.contributed.set(kind, owner);
+    return null;
+  }
+
+  /** Forget everything one extension contributed. */
+  removeOwner(owner: string): void {
+    for (const [kind, by] of [...this.contributed]) {
+      if (by === owner) this.contributed.delete(kind);
+    }
+  }
+
+  has(kind: string): boolean {
+    return this.base.has(kind) || this.contributed.has(kind);
+  }
+
+  /** The extension that contributed this page, if one did. */
+  ownerOf(kind: string): string | null {
+    return this.contributed.get(kind) ?? null;
+  }
+
+  kinds(): string[] {
+    return [...this.base, ...this.contributed.keys()];
+  }
+}
+
+/** What the app uses when nobody passes a registry of their own. */
+export const basePages = new PageRegistry();
 
 export interface PageRoute {
   kind: PageKind;
@@ -93,7 +159,10 @@ export function openRoot(route: PageRoute): PageRoute[] {
 }
 
 /** Drill one level deeper into the destination you are already in. */
-export function push(stack: readonly PageRoute[], route: PageRoute): PageRoute[] {
+export function push(
+  stack: readonly PageRoute[],
+  route: PageRoute,
+): PageRoute[] {
   return [...stack, route];
 }
 
@@ -103,7 +172,10 @@ export function pop(stack: readonly PageRoute[]): PageRoute[] {
 }
 
 /** Jump to a breadcrumb, dropping everything above it. */
-export function truncateTo(stack: readonly PageRoute[], index: number): PageRoute[] {
+export function truncateTo(
+  stack: readonly PageRoute[],
+  index: number,
+): PageRoute[] {
   if (index < 0) return [];
   return stack.slice(0, index + 1);
 }
@@ -125,10 +197,25 @@ export function serialise(stack: readonly PageRoute[]): string {
  * across releases, so a route kind that existed last version may not
  * exist now — and a window that refuses to render because it cannot
  * parse where it used to be is worse than one that opens on the chat.
- * Unknown kinds are dropped individually, so a stack that is half
- * recognisable restores the half that is.
+ *
+ * An unknown kind truncates the trail rather than being skipped. A
+ * stack is a path: with the middle missing, what is above it has no
+ * context to sit in, and a breadcrumb trail with a hole in it says
+ * something untrue about how the reader got there. (The docstring
+ * here used to say "dropped individually", which the code has never
+ * done — it has always broken out of the loop.)
+ *
+ * `known` decides what counts. The set is no longer fixed at compile
+ * time: an extension contributes pages, so a saved stack may name a
+ * destination that exists only while that extension is installed and
+ * enabled. Passing the live registry is what makes a disabled
+ * extension's page restore as "back to the chat" rather than as a
+ * route to a surface that is not there.
  */
-export function restore(raw: string | null | undefined): PageRoute[] {
+export function restore(
+  raw: string | null | undefined,
+  known: { has(kind: string): boolean } = basePages,
+): PageRoute[] {
   if (!raw) return [];
   try {
     const parsed: unknown = JSON.parse(raw);
@@ -137,7 +224,7 @@ export function restore(raw: string | null | undefined): PageRoute[] {
     for (const entry of parsed) {
       if (!entry || typeof entry !== "object") break;
       const { kind, label, params } = entry as Record<string, unknown>;
-      if (typeof kind !== "string" || !PAGE_KINDS.has(kind)) break;
+      if (typeof kind !== "string" || !known.has(kind)) break;
       out.push({
         kind: kind as PageKind,
         label: typeof label === "string" ? label : kind,
