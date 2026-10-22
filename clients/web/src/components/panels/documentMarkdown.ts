@@ -141,10 +141,22 @@ export function sameContent(a: Block, b: Block): boolean {
  * order — and falling straight to a content search would let an
  * edited paragraph adopt the wrapping of an identical paragraph
  * somewhere else in the document.
+ *
+ * Line endings are the document's, not this function's. A CRLF
+ * document used to come back with CRLF inside its blocks and a bare
+ * LF between them, because the blocks were the original's bytes and
+ * the joins were written here — mixed endings, and a Compare
+ * versions view that shows every paragraph boundary as changed. The
+ * work is done in LF and the document's own ending is restored at
+ * the end.
  */
 export function preserveWrapping(original: string, edited: string): string {
-  const was = blocksOf(original);
-  const now = blocksOf(edited);
+  const eol = original.includes("\r\n") ? "\r\n" : "\n";
+  const toLf = (s: string) => s.replace(/\r\n/g, "\n");
+  const source = toLf(original);
+
+  const was = blocksOf(source);
+  const now = blocksOf(toLf(edited));
   const spare = new Map<string, Block>();
   was.forEach((block, i) => {
     if (!sameContent(block, now[i] ?? "")) spare.set(flatKey(block), block);
@@ -166,7 +178,8 @@ export function preserveWrapping(original: string, edited: string): string {
   const body = kept.join("\n\n");
   // The trailing newline is a property of the file, not of the last
   // paragraph, and dropping it is a one-character diff on every save.
-  return original.endsWith("\n") ? `${body}\n` : body;
+  const out = source.endsWith("\n") ? `${body}\n` : body;
+  return eol === "\n" ? out : out.replace(/\n/g, eol);
 }
 
 function flatKey(block: Block): string {

@@ -118,6 +118,23 @@ describe("a document somebody edited", () => {
     expect(preserveWrapping("A\n", "A\n")).toBe("A\n");
     expect(preserveWrapping("A", "A\n")).toBe("A");
   });
+
+  it("gives a CRLF document back with CRLF throughout", () => {
+    // Found on the Windows runner, where git checks the fixture out
+    // with CRLF. The blocks were the original's bytes and the joins
+    // between them were written in this module, so the result was
+    // CRLF inside paragraphs and a bare LF between them. Mixed
+    // endings read as a change on every paragraph boundary in the
+    // Compare versions view — the failure this file exists for,
+    // arriving on one platform only.
+    const original = "# Title\r\n\r\nOne line\r\nwrapped over two.\r\n";
+    const edited = "# Title\n\nOne line\nwrapped over two.\n";
+
+    const out = preserveWrapping(original, edited);
+
+    expect(out).toBe(original);
+    expect(out).not.toMatch(/[^\r]\n/);
+  });
 });
 
 describe("splitting a document into blocks", () => {
