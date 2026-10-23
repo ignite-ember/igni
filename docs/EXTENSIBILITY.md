@@ -358,8 +358,8 @@ This replaces a line that read "the React component tree, CSS class names, any t
 | Group policy packs | **shipped** |
 | json-render catalog + action round-trip | **shipped** |
 | Phones-home test | **shipped** |
-| Capability services as separate images | **shipped** (`igni__code-index`, `igni__artifacts`) |
-| Prompt fragments / variants as contributions | not started |
+| Capability services as separate images | **shipped in the service repos** (`igni__code-index`, `igni__artifacts`) — and **not extracted here**: both still live in `core/` and are imported unconditionally by the agent and tool builders, so neither is separable. See `docs/EXTRACTING_A_CAPABILITY.md`. |
+| Prompt fragments / variants as contributions | **shipped** (`extensions/contributions.py`, tied to `READY` rather than to being installed) |
 | Manifest + validation | **shipped** (`docs/extension-manifest.schema.json` for the author's editor, `extensions/manifest.py` for the installer, held to each other by `tests/test_the_manifest_model_and_its_schema_agree.py`) |
 | Manifest signature verification | not started — the field is modelled and required for any trust tier but `unsigned`; nothing checks it against a key yet |
 | `ext.<id>.*` RPC namespace | **shipped** (`extensions/registry.py`, `extensions/rpc.py`, `extensions/service.py`) |
