@@ -23,20 +23,25 @@
  * ## What does not work yet
  *
  * This compiles, is type-checked in CI, and is written against the
- * real published surface. It cannot run, for three reasons that are
- * tracked and none of which are about this file:
+ * real published surface. It cannot run, for two reasons that are
+ * tracked and neither of which is about this file:
  *
  *   1. `@igni/extension-bridge` and `@igni/ui-react` are not
  *      published packages — they are a tsconfig alias inside
  *      `clients/web`.
- *   2. Nothing renders `ExtensionFrame`, so no extension is mounted.
- *   3. `ext.acme.scanner.*` cannot be answered. `RpcMethod` is a
- *      closed enum and the router validates against it exhaustively,
- *      so an extension's own service has no namespace to reply on.
- *      Every call below would be refused.
+ *   2. Nothing installs an extension. `ExtensionRegistry` takes a
+ *      validated manifest and `ExtensionRpc.bind` takes a service,
+ *      but nothing starts a sidecar or registers an endpoint, and
+ *      nothing renders `ExtensionFrame`.
  *
- * Until (3) lands, an extension's UI can only render igni's own data
- * back to the user.
+ * The third reason is gone: `ext.acme.scanner.*` is a real
+ * namespace now. Each call below is parsed, checked against this
+ * extension's `permissions.rpc`, and routed to its service as an MCP
+ * tool call — see EXTENSIBILITY §"A third party calling its own
+ * service". `tests/test_an_extension_can_call_its_own_service.py`
+ * asserts that all four methods this file uses are granted by the
+ * manifest beside it, so narrowing that grant fails there rather
+ * than in somebody's browser.
  */
 
 import {

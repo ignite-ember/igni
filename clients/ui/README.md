@@ -103,7 +103,7 @@ This is a build change rather than a code change, and it is the first thing to d
 
 Worth knowing before you design around it:
 
-- **Call its own backend.** `RpcMethod` is a closed enum and the router validates against it exhaustively, so there is no namespace an extension's own service can answer on. Your panel can call igni's methods; it cannot reach your sidecar.
+- **Be installed.** Calling your own backend works — `ext.<your-id>.<method>` is a real namespace, authorised against your manifest's `permissions.rpc` and routed to your service as an MCP tool call. What does not exist yet is the pipeline that starts your sidecar or registers your endpoint, so there is nothing to route *to* outside a test.
 - **Receive a push.** The host sends `hello`, `theme` and `result`. Following a long-running job means polling an RPC on an interval — which is what igni's own CodeIndex panel does.
 - **Be mounted.** Nothing renders `ExtensionFrame` in the app yet, and no manifest loader exists.
 

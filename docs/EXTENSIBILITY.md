@@ -338,9 +338,12 @@ This replaces a line that read "the React component tree, CSS class names, any t
 | Phones-home test | **shipped** |
 | Capability services as separate images | **shipped** (`igni__code-index`, `igni__artifacts`) |
 | Prompt fragments / variants as contributions | not started |
-| Manifest + validation + signature | not started |
+| Manifest + validation | **shipped** (`docs/extension-manifest.schema.json` for the author's editor, `extensions/manifest.py` for the installer, held to each other by `tests/test_the_manifest_model_and_its_schema_agree.py`) |
+| Manifest signature verification | not started — the field is modelled and required for any trust tier but `unsigned`; nothing checks it against a key yet |
+| `ext.<id>.*` RPC namespace | **shipped** (`extensions/registry.py`, `extensions/rpc.py`, `extensions/service.py`) |
+| Sidecar supervision / install pipeline | not started — the registry takes a manifest and a bound service; nothing yet starts a container or registers an endpoint |
 | Backend static origin, one port per extension | **shipped** (`extensions/origin.py`) |
-| Sandboxed iframe + bridge | **shipped** (`extensions/ExtensionFrame.tsx`, `bridge.ts`, `protocol.ts`) — but nothing renders the frame yet, and the host-side permission check has no backend counterpart |
+| Sandboxed iframe + bridge | **shipped** (`extensions/ExtensionFrame.tsx`, `bridge.ts`, `protocol.ts`) — the host-side permission check now has its backend counterpart; nothing renders the frame yet |
 | Policy cache keyed by `group_id` | not started |
 | Remote extension registration in group packs | not started |
 | Requirement resolver (local only) | not started |
@@ -349,7 +352,33 @@ This replaces a line that read "the React component tree, CSS class names, any t
 
 **First consumer is CodeIndex**, ported while still in-tree. `CodeIndexPanel` takes two props, and the bridge hosts it with one line changed — its prop type, from the concrete client class to the one method it uses.
 
-That proves the easy half and should not be quoted as more. All four of its RPCs are base `RpcMethod` members, so what was demonstrated is a first-party panel reaching first-party methods through a postMessage hop, in a unit test, against a stub window. **A third party calling its own service is not possible yet**: `RpcMethod` is a closed enum and `rpc_router` validates against it exhaustively, so there is no `ext.<id>.*` namespace to route anywhere. Until that exists, an extension's UI can only render igni's own data back to the user.
+That proves the easy half and should not be quoted as more. All four of its RPCs are base `RpcMethod` members, so what was demonstrated is a first-party panel reaching first-party methods through a postMessage hop, in a unit test, against a stub window.
+
+### A third party calling its own service
+
+This used to say it was not possible, and it was right: `RpcMethod` is a closed enum and the router validates against it exhaustively, so `ext.acme.scanner.list` missed the dispatch table and came back `Unknown RPC method` — a message indistinguishable from a typo, which is why the gap survived being written down in three places.
+
+The namespace is now real.
+
+**Grammar.** `ext.<extension-id>.<method>`. The method is the final segment and the id is everything before it, so `ext.a.b.c` is id `a.b` and method `c`. Resolving that against the installed set instead would have meant a call's meaning changing depending on what else happened to be installed.
+
+**Not an enum member.** `RpcMethod` stays closed, because closing it is what gives the base its "every method is registered or boot fails" guarantee. Extension methods arrive with a manifest rather than at import time, so they get a prefix checked by a registry. Anything under `ext.` is answered there, including a malformed name — falling back would reproduce the `Unknown RPC method` that hid this.
+
+**Five checks, in this order**, each raising with a sentence that names the fix:
+
+1. the name parses as an extension method;
+2. the request says which extension it came from — `RPCRequest.caller`, set by `IgniClient.asExtension`. igni's own UI has no business in this namespace, and a client too old to identify itself cannot be trusted to be either;
+3. the caller *is* the extension it is addressing. The id is in the method name, so without this, spelling somebody else's namespace would be enough to read their service;
+4. that extension is installed and `READY`, and a refusal repeats the state's reason — "licence expired, install the renewed key" is not something MCP can report;
+5. the method is in the manifest's `permissions.rpc`.
+
+Authorisation is decided before the service is consulted, and that ordering is tested rather than asserted: otherwise a permissions problem surfaces as a connection error and sends an author looking in the wrong place.
+
+**Enforced here, not in the client.** The web client checks the grant before forwarding and its comment said the backend re-checked. That was aspirational — there was nothing to re-check with. A frame is a renderer; its check is a courtesy that makes the error immediate.
+
+**The transport is MCP**, per §Principles. An extension's service answers `ext.<id>.<method>` as a tool call named `<method>`, on the same server that serves the agent. Two grant lists over one server: `permissions.tools` is what the *agent* may call, `permissions.rpc` what the extension's own *UI* may call. `structuredContent` is used where a server sends it; otherwise text blocks are joined and parsed as JSON when they are JSON, because that is what a server written for a UI sends.
+
+**What is still missing** is the install pipeline. `ExtensionRegistry.install` takes a validated manifest and `ExtensionRpc.bind` takes a service; nothing yet starts a sidecar container, registers an endpoint, or verifies a signature. So the namespace works and has no production path to being populated — which is the next thing, not this thing.
 
 ## Reference
 

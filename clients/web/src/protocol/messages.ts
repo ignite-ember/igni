@@ -361,11 +361,25 @@ export const fe = {
     id,
     session_id: sessionId,
   }),
-  rpcRequest: (method: string, args: Record<string, unknown>, id: string) => ({
+  rpcRequest: (
+    method: string,
+    args: Record<string, unknown>,
+    id: string,
+    /**
+     * Which extension's frame this came from.
+     *
+     * Omitted for igni's own UI, and the backend refuses the `ext.*`
+     * namespace without it: an extension reaches its own service and
+     * no other, and with no caller there is nothing to check that
+     * against.
+     */
+    caller?: string,
+  ) => ({
     type: "rpc_request",
     id,
     method,
     args,
+    ...(caller === undefined ? {} : { caller }),
   }),
   shutdown: () => ({ type: "shutdown" }),
 };

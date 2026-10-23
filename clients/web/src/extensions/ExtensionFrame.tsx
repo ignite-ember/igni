@@ -15,10 +15,19 @@
  *      somewhere else and kept posting does not have the new one.
  *   4. **The method.** Against the list this extension was granted.
  *
- * The method check is not the last word. The frame is untrusted, so
- * the backend re-checks the same grant; this one exists so a refusal
- * is immediate and legible rather than a round trip. See
- * `docs/BUILD_PLAN.md` for where the backend half lives.
+ * The method check is not the last word, and for a while it was the
+ * only word. The frame is untrusted, so the backend re-checks the
+ * same grant against the installed manifest — see
+ * `ember_code.extensions.registry.ExtensionRegistry.authorise`. This
+ * one exists so a refusal is immediate and legible rather than a
+ * round trip; it is a courtesy, not the decision.
+ *
+ * For that re-check to be possible the backend has to know *which*
+ * extension is asking, which is what `IgniClient.asExtension` is
+ * for: wire `onCall` through it and every call carries the id. Wired
+ * to a bare `client.rpc` instead, an `ext.*` call is refused with
+ * "this request did not say which extension it came from" — loudly,
+ * rather than by being trusted.
  */
 
 import { useCallback, useEffect, useMemo, useRef } from "react";
@@ -41,7 +50,13 @@ export interface ExtensionFrameProps {
   path?: string;
   /** RPC methods this extension was granted. Exact, or a `foo_*` prefix. */
   allow: readonly string[];
-  /** Makes the backend call. The host's client, never handed to the frame. */
+  /**
+   * Makes the backend call. The host's client, never handed to the
+   * frame.
+   *
+   * Build it from `client.asExtension(extensionId).rpc` so the call
+   * carries its caller; see the note above.
+   */
   onCall: (method: string, args: Record<string, unknown>) => Promise<unknown>;
   /** The frame asked the app to go somewhere. The app decides. */
   onNavigate?: (to: string) => void;

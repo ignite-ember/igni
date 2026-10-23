@@ -27,6 +27,8 @@ import logging
 from typing import Any
 
 from ember_code.backend.login_coordinator import LoginCoordinator
+from ember_code.extensions.registry import ExtensionRefused
+from ember_code.extensions.rpc import ExtensionRpc
 from ember_code.protocol import messages as msg
 from ember_code.protocol.messages import Message
 
@@ -50,12 +52,19 @@ class MessageDispatcher:
         rpc_table: dict,
         queue: list[str],
         login: LoginCoordinator | None,
+        extensions: ExtensionRpc | None = None,
     ) -> None:
         self._backend = backend
         self._transport = transport
         self._rpc_table = rpc_table
         self._queue = queue
         self._login = login
+        # Optional so every existing construction site keeps working.
+        # Absent, an ``ext.*`` call is refused with the reason rather
+        # than falling through to ``Unknown RPC method``, which is
+        # what it did for as long as the namespace did not exist and
+        # is the least informative thing it could say.
+        self._extensions = extensions
 
     async def dispatch(self, message: Any) -> None:
         req_id = message.id or ""
@@ -255,6 +264,16 @@ class MessageDispatcher:
             await self._login.cancel()
 
     async def _on_rpc_request(self, message: Any, req_id: str) -> None:
+        # The extension namespace is checked before the base table,
+        # not after. A base method could otherwise shadow an
+        # extension's by being named ``ext.something`` — unlikely, but
+        # the failure would be an extension silently served by igni's
+        # own handler, which is the worst shape a routing bug can
+        # take.
+        if ExtensionRpc.owns(message.method):
+            await self._on_extension_rpc(message, req_id)
+            return
+
         handler = self._rpc_table.get(message.method)
         if handler is None:
             await self._transport.send(
@@ -296,6 +315,45 @@ class MessageDispatcher:
         except Exception as exc:
             logger.error("RPC %s failed: %s", message.method, exc, exc_info=True)
             await self._transport.send(msg.RPCResponse.fail(req_id, str(exc)))
+
+    async def _on_extension_rpc(self, message: Any, req_id: str) -> None:
+        """Serve one ``ext.<id>.<method>`` call.
+
+        Separate from :meth:`_on_rpc_request` because the failure
+        modes have nothing in common. A base RPC fails by raising out
+        of a handler; an extension call fails by being refused, and a
+        refusal is a sentence written for the extension's author with
+        the manifest line that would fix it. Folding the two together
+        would mean wrapping refusals in the "is a required argument"
+        machinery above, which is about something else entirely.
+        """
+        if self._extensions is None:
+            await self._transport.send(
+                msg.RPCResponse.fail(
+                    req_id,
+                    f"{message.method}: this backend has no extension support, "
+                    "so nothing can answer the 'ext.' namespace.",
+                )
+            )
+            return
+        try:
+            result = await self._extensions.dispatch(
+                caller=getattr(message, "caller", None),
+                method=message.method,
+                args=message.args,
+            )
+        except ExtensionRefused as exc:
+            # Expected, and not worth a traceback: a refusal is the
+            # system working. Logged at info so an administrator
+            # chasing "why can it not call this" has a record.
+            logger.info("extension rpc %s refused: %s", message.method, exc)
+            await self._transport.send(msg.RPCResponse.fail(req_id, str(exc)))
+            return
+        except Exception as exc:
+            logger.error("extension rpc %s failed: %s", message.method, exc, exc_info=True)
+            await self._transport.send(msg.RPCResponse.fail(req_id, str(exc)))
+            return
+        await self._transport.send(msg.RPCResponse.ok(req_id, _serialize(result)))
 
 
 def _serialize(value: Any) -> Any:

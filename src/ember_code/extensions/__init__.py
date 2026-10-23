@@ -7,6 +7,33 @@ always travel over MCP; a UI is an optional contribution. See
 for what is built and in what order.
 """
 
+from ember_code.extensions.manifest import ExtensionManifest
 from ember_code.extensions.origin import ExtensionOrigin, ExtensionOrigins
+from ember_code.extensions.registry import (
+    ExtensionMethod,
+    ExtensionRefused,
+    ExtensionRegistry,
+    ExtensionState,
+    InstalledExtension,
+)
+from ember_code.extensions.rpc import ExtensionRpc
+from ember_code.extensions.service import (
+    ExtensionService,
+    ExtensionServiceError,
+    McpExtensionService,
+)
 
-__all__ = ["ExtensionOrigin", "ExtensionOrigins"]
+__all__ = [
+    "ExtensionManifest",
+    "ExtensionMethod",
+    "ExtensionOrigin",
+    "ExtensionOrigins",
+    "ExtensionRefused",
+    "ExtensionRegistry",
+    "ExtensionRpc",
+    "ExtensionService",
+    "ExtensionServiceError",
+    "ExtensionState",
+    "InstalledExtension",
+    "McpExtensionService",
+]

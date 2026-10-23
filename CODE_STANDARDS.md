@@ -585,7 +585,7 @@ cited here.
 
 ### For a new small pure reducer
 - **Model:** `clients/web/src/chat/observerBusy.ts` — testable pure function, one thing.
-- **Model:** `clients/web/src/ui-react/visualizationStream.ts` — partial JSON reducer.
+- **Model:** `clients/web/src/chat/visualizationStream.ts` — partial JSON reducer.
 
 ### For a new subsystem manager
 - **Model:** `core/mcp/client.py` — async client class, no globals; every concern a named collaborator, and `connect()` returns an explicit `MCPConnectResult`.

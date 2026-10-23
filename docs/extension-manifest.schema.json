@@ -285,9 +285,13 @@
               "options": {
                 "type": "array",
                 "items": { "type": "string" },
-                "description": "Required when `type` is `enum`."
+                "minItems": 1,
+                "description": "The choices, when `type` is `enum`. Required in that case and refused otherwise — this was prose for a while, which meant an enum setting with nothing to choose from validated cleanly and then rendered as an empty dropdown."
               }
-            }
+            },
+            "if": { "properties": { "type": { "const": "enum" } } },
+            "then": { "required": ["options"] },
+            "else": { "not": { "required": ["options"] } }
           }
         }
       }

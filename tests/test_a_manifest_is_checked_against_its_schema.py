@@ -25,6 +25,8 @@ from pathlib import Path
 import pytest
 from jsonschema import Draft202012Validator
 
+from tests.manifest_corpus import BASE, REFUSALS
+
 REPO = Path(__file__).resolve().parents[1]
 SCHEMA_PATH = REPO / "docs" / "extension-manifest.schema.json"
 EXAMPLES = REPO / "examples"
@@ -74,111 +76,15 @@ def test_an_example_points_at_the_schema(path: Path, schema: dict) -> None:
 
 # ── What the schema has to refuse ──────────────────────────────────
 #
-# A schema is only worth the shapes it rejects. Each case below is a
-# mistake that was either already made or is one keystroke away, and
-# each asserts the *location* of the complaint as well as the fact of
-# it: an error reported against the wrong path sends an author to the
-# wrong line.
-
-BASE = {
-    "id": "acme.scanner",
-    "version": "1.0.0",
-    "contract": ">=1.0 <2",
-    "trust": "unsigned",
-    "sidecar": {"image": "acme__scanner:1.0.0", "mcp": {"transport": "stdio"}},
-}
+# A schema is only worth the shapes it rejects. The corpus lives in
+# ``tests/manifest_corpus.py`` because the Pydantic model the backend
+# installs through is held to the same cases from the other side — a
+# manifest an author's editor accepts and the installer rejects is a
+# support ticket, and the reverse is a permission somebody believes
+# they declared.
 
 
-def _with(**overrides: object) -> dict:
-    return {**BASE, **overrides}
-
-
-@pytest.mark.parametrize(
-    ("name", "manifest", "where"),
-    [
-        (
-            "a sidecar with nowhere to come from",
-            _with(sidecar={"mcp": {"transport": "stdio"}}),
-            "sidecar",
-        ),
-        (
-            "both packagings at once",
-            _with(endpoint={"url": "https://scanner.internal/mcp"}),
-            "",
-        ),
-        (
-            "neither packaging",
-            {k: v for k, v in BASE.items() if k != "sidecar"},
-            "",
-        ),
-        (
-            "a signed trust tier with no signature",
-            _with(trust="partner"),
-            "",
-        ),
-        (
-            "an id that is not reverse-DNS",
-            _with(id="scanner"),
-            "id",
-        ),
-        (
-            "a version that is not semver",
-            _with(version="1.0"),
-            "version",
-        ),
-        (
-            "a command without its leading slash",
-            _with(contributes={"commands": [{"command": "compliance", "desc": "x"}]}),
-            "contributes/commands/0/command",
-        ),
-        (
-            "a menu entry misfiled as a command",
-            _with(contributes={"commands": [{"label": "C", "command": "/c", "desc": "x"}]}),
-            "contributes/commands/0",
-        ),
-        (
-            "a prompt fragment with no text",
-            _with(contributes={"promptFragments": [{"anchor": "ACME_POLICY"}]}),
-            "contributes/promptFragments/0",
-        ),
-        (
-            "an anchor in the wrong case",
-            _with(contributes={"promptFragments": [{"anchor": "acme_policy", "source": "file"}]}),
-            "contributes/promptFragments/0/anchor",
-        ),
-        (
-            "an rpc pattern that is not a prefix",
-            _with(permissions={"rpc": ["ext.*.scanner.list"]}),
-            "permissions/rpc/0",
-        ),
-        (
-            "an egress entry that is a URL rather than a host",
-            _with(permissions={"egress": ["https://ledger.internal"]}),
-            "permissions/egress/0",
-        ),
-        (
-            "a capability named as a product",
-            _with(
-                sidecar={
-                    "image": "acme__scanner:1.0.0",
-                    "mcp": {"transport": "stdio"},
-                    "requires": [{"capability": "postgres", "constraint": ">=14"}],
-                }
-            ),
-            "sidecar/requires/0/capability",
-        ),
-        (
-            "a typo in a top-level key",
-            _with(permissons={"workspace": "read"}),
-            "",
-        ),
-        (
-            "a page kind that is not namespaced",
-            _with(contributes={"pages": [{"kind": "scan", "label": "Scan"}]}),
-            "contributes/pages/0/kind",
-        ),
-    ],
-)
+@pytest.mark.parametrize(("name", "manifest", "where"), REFUSALS, ids=[c[0] for c in REFUSALS])
 def test_the_schema_refuses(
     name: str, manifest: dict, where: str, validator: Draft202012Validator
 ) -> None:
@@ -186,6 +92,15 @@ def test_the_schema_refuses(
     assert errors, f"{name}: accepted, and should not have been"
     paths = {"/".join(map(str, e.absolute_path)) for e in errors}
     assert where in paths, f"{name}: complained at {sorted(paths)}, wanted {where!r}"
+
+
+def test_the_base_manifest_is_valid(validator: Draft202012Validator) -> None:
+    """The refusal cases are edits to one valid manifest.
+
+    If that base were itself invalid, every case above would pass for
+    the wrong reason and none of them would be testing what it says.
+    """
+    assert not list(validator.iter_errors(BASE))
 
 
 def test_the_reference_manifest_would_fail_if_broken(

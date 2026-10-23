@@ -130,19 +130,30 @@ complete:
 
 ## What it cannot do yet
 
-This compiles, is type-checked in CI, and **cannot run**. Three
-reasons, none of them about this code:
+This compiles, is type-checked in CI, and **cannot run**. Two reasons,
+neither of them about this code:
 
 1. `@igni/extension-bridge` and `@igni/ui-react` are not published
    packages — they are a tsconfig alias inside `clients/web`.
-2. Nothing renders `ExtensionFrame`, so no extension is mounted.
-3. `ext.acme.scanner.*` cannot be answered. `RpcMethod` is a closed
-   enum validated exhaustively, so an extension's own service has no
-   namespace to reply on, and every `igni.rpc` call here would be
-   refused.
+2. Nothing installs an extension. `ExtensionRegistry` takes a
+   validated manifest and `ExtensionRpc.bind` takes a service, but
+   nothing starts a sidecar, registers an endpoint, or renders
+   `ExtensionFrame`.
 
-Until (3) lands an extension's UI can only render igni's own data back
-to the user. That is the highest-value item in Track A.
+**The third reason is gone.** `ext.acme.scanner.*` used to be
+unanswerable — `RpcMethod` is a closed enum validated exhaustively, so
+every call here came back `Unknown RPC method`. The namespace is real
+now: a call is parsed, checked against this manifest's
+`permissions.rpc`, and routed to the extension's service as an MCP
+tool call. The method igni calls is the final segment, so
+`ext.acme.scanner.list` calls the tool `list` — your server's tool
+names are plain, not namespaced.
+
+That is also why `permissions.rpc` is worth getting right. It is
+enforced by the backend against the installed manifest, not by the
+frame: the host checks it too, but only so a refusal is immediate.
+Narrow it and your own panel stops working; the refusal will tell you
+which line to add.
 
 ## What it had to hand-roll
 

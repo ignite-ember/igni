@@ -170,6 +170,7 @@
     ],
     "rpc_request": [
       "args",
+      "caller",
       "event_seq",
       "id",
       "method",
