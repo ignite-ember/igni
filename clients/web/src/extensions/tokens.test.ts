@@ -147,15 +147,17 @@ describe("the published list and the stylesheet agree", () => {
     );
   });
 
-  it("gives every token it uses a standalone fallback", () => {
-    const used = new Set(
-      [...css.matchAll(/var\((--[a-z0-9-]+)/g)].map((m) => m[1]),
-    );
+  it("gives every token it PUBLISHES a standalone fallback", () => {
+    // Not "every token it uses" — that was the original assertion and
+    // it passed while six published tokens had no fallback at all,
+    // among them the four contrast-safe --accent-*-text colours an
+    // extension needs for severity. The README promises development
+    // without the app running; that is only true for tokens declared
+    // in the stylesheet.
     const declared = new Set(
       [...css.matchAll(/^\s+(--[a-z0-9-]+)\s*:/gm)].map((m) => m[1]),
     );
-    // Opening the page outside igni must not give an unstyled one.
-    expect([...used].filter((name) => !declared.has(name))).toEqual([]);
+    expect(TOKEN_NAMES.filter((name) => !declared.has(name))).toEqual([]);
   });
 });
 

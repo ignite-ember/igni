@@ -9,6 +9,10 @@
  * extension would reimplement and get wrong in ways only keyboard
  * and screen-reader users notice.
  */
+import { readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
+
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -377,5 +381,40 @@ describe("an extension can bring its own icon", () => {
   it("still draws nothing for a name nobody has", () => {
     const { container } = render(<MenuIcon name={"nope" as never} />);
     expect(container.querySelector("svg")).toBeNull();
+  });
+});
+
+describe("a typed prop that does nothing is worse than no prop", () => {
+  // Found by an engineer trying to build a panel whose whole job was
+  // ranking by severity: `<Badge tone="danger">` and
+  // `<Badge tone="success">` rendered identically, because nothing
+  // styled the tone. The prop existed, autocompleted, and lied.
+  const css = readFileSync(
+    join(dirname(fileURLToPath(import.meta.url)), "../../../ui/igni-ui.css"),
+    "utf8",
+  );
+
+  it("styles every badge tone the type allows", () => {
+    for (const tone of ["neutral", "success", "warning", "danger"]) {
+      expect(css).toContain(`.ui-badge[data-tone="${tone}"]`);
+    }
+  });
+
+  it("styles every button variant the type allows", () => {
+    // `btn-warn` was typed and absent from the package: inside an
+    // extension frame it rendered as a plain default button while
+    // TypeScript vouched for it.
+    for (const variant of ["primary", "danger", "warn", "quiet"]) {
+      expect(css).toContain(`.btn-${variant}`);
+    }
+  });
+
+  it("gives keyboard users a focus ring on everything focusable", () => {
+    // Absent from the package entirely, which would have made an
+    // extension the cause of its host's accessibility findings.
+    expect(css).toContain(":focus-visible");
+    for (const cls of [".btn", ".ui-item", ".ui-tab", ".ui-switch"]) {
+      expect(css).toContain(`${cls}:focus-visible`);
+    }
   });
 });

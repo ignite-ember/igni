@@ -4333,6 +4333,45 @@ button {
 
 /* ── Buttons / dialogs / drawers ────────────────────────────────── */
 
+/* A badge's whole job is to say which kind of thing this is, so a
+   tone that renders identically to neutral is the one defect that
+   makes the component pointless. `Badge` exports a typed `tone`
+   prop; these are what make it mean something. */
+.ui-badge[data-tone="neutral"] {
+  background: var(--bg-raised);
+  color: var(--fg-muted);
+}
+
+.ui-badge[data-tone="success"] {
+  background: color-mix(in srgb, var(--success) 18%, transparent);
+  color: var(--accent-green-text, var(--success));
+}
+
+.ui-badge[data-tone="warning"] {
+  background: color-mix(in srgb, var(--warning) 18%, transparent);
+  color: var(--accent-orange-text, var(--warning));
+}
+
+.ui-badge[data-tone="danger"] {
+  background: color-mix(in srgb, var(--danger) 18%, transparent);
+  color: var(--danger-text, var(--danger));
+}
+
+/* Keyboard users get the same affordance as pointer users. Absent
+   from the extension package entirely, which would have made an
+   extension the cause of its host's accessibility findings. */
+.btn:focus-visible,
+.ui-item:focus-visible,
+.ui-tab:focus-visible,
+.ui-switch:focus-visible,
+.chip:focus-visible,
+.ui-select:focus-visible,
+.ui-textarea:focus-visible,
+.panel-input:focus-visible {
+  outline: 2px solid var(--accent-blue);
+  outline-offset: 2px;
+}
+
 /* ── Form controls ────────────────────────────────────────────────
    Generic versions of controls the app only had feature-scoped
    copies of — `kb-add-textarea`, `mcp-tool-switch`, `kb-aside-tab`,

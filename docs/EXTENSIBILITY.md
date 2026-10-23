@@ -167,7 +167,8 @@ Optional, and packaging-independent *within a single-user backend*: the client i
 > The second reason is the one that decides the bridge. A `postMessage` from an opaque origin arrives at the host as `origin: "null"`, so the host cannot tell one extension from another, and the origin check every inbound message depends on has nothing to check. With a port each, `e.origin` is that extension's own `http://127.0.0.1:<port>`.
 >
 > These two bullets used to specify an opaque origin *and* `default-src 'self'`. They were coherent only while every extension shared one port, where an opaque origin was the only isolation on offer.
-- **Bridge API**: `rpc`, `subscribe`, `identity`, `params`/`onParams`, `navigate`, `setTitle`/`setStatus`/`notify`, `theme`, `storage` — all namespaced, budgeted, cancellable. Origin and per-session nonce checked on every message.
+- **Bridge API, as built**: `rpc`, `navigate`, `close`, `params`, `theme`/`onTheme`, `tokens`. Origin, source window and per-session nonce checked on every inbound message.
+- **Bridge API, not built**: `subscribe`, `identity`, `setTitle`, `setStatus`, `notify`, `storage`, and per-call budgets or cancellation. This list used to be written in the present tense alongside the one above, which told an author that live push was solved. It is not: `HostMessage` is `hello | theme | result`, so the only way to follow a long-running job is to poll an RPC. `storage` is worse than missing — each extension gets an ephemeral port, so a new port is a new origin and `localStorage` is wiped whenever the backend restarts.
 
 **A capability UI never holds a credential and never opens a socket.** Every privileged call goes through the backend, where credentials already live.
 
@@ -273,7 +274,7 @@ This replaces a line that read "the React component tree, CSS class names, any t
 
 ## 9. Developing one
 
-- **`igni ext init`** scaffolds something that runs on first launch; the reference extension lives in-tree.
+- **`igni ext init`** will scaffold something that runs on first launch, and a reference extension will live in-tree. Neither exists yet — `src/ember_code/extensions/` holds the origin server and nothing else. Stated as future because an author who goes looking for the reference extension does not find one.
 - **Dev mode** runs from localhost, unsigned, with a persistent banner and hot reload. The only place `trust: unsigned` is accepted.
 - **`igni ext doctor`** checks manifest schema, contract range, permissions, collisions, deprecations, the MCP round-trip and the phones-home scan. **If doctor passes, it loads** — that equivalence is the promise.
 - **Errors carry fixes**, because the reader is often a partner's L2 engineer with no internet.
@@ -297,14 +298,16 @@ This replaces a line that read "the React component tree, CSS class names, any t
 | Prompt fragments / variants as contributions | not started |
 | Manifest + validation + signature | not started |
 | Backend static origin, one port per extension | **shipped** (`extensions/origin.py`) |
-| Sandboxed iframe + bridge | not started |
+| Sandboxed iframe + bridge | **shipped** (`extensions/ExtensionFrame.tsx`, `bridge.ts`, `protocol.ts`) — but nothing renders the frame yet, and the host-side permission check has no backend counterpart |
 | Policy cache keyed by `group_id` | not started |
 | Remote extension registration in group packs | not started |
 | Requirement resolver (local only) | not started |
 | Deployment profile: URL builder + the four raw-sqlite3 stores | not started |
 | `igni ext init` / `doctor` | not started |
 
-**First consumer is CodeIndex**, ported while still in-tree. `CodeIndexPanel` takes two props; if the bridge hosts it unchanged, the contract is real.
+**First consumer is CodeIndex**, ported while still in-tree. `CodeIndexPanel` takes two props, and the bridge hosts it with one line changed — its prop type, from the concrete client class to the one method it uses.
+
+That proves the easy half and should not be quoted as more. All four of its RPCs are base `RpcMethod` members, so what was demonstrated is a first-party panel reaching first-party methods through a postMessage hop, in a unit test, against a stub window. **A third party calling its own service is not possible yet**: `RpcMethod` is a closed enum and `rpc_router` validates against it exhaustively, so there is no `ext.<id>.*` namespace to route anywhere. Until that exists, an extension's UI can only render igni's own data back to the user.
 
 ## Reference
 

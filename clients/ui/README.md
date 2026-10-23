@@ -16,7 +16,7 @@ Bundle `igni-ui.css` into your extension. Do not link it from igni's origin — 
 Then connect. The bridge applies the live theme before your first paint:
 
 ```ts
-import { connect } from "@igni/extension-bridge";
+import { connect } from "@igni/extension-bridge";  // not published yet — see below
 
 const igni = await connect();          // tokens are on :root by now
 const status = await igni.rpc("codeindex_status");
@@ -40,36 +40,9 @@ The published token list is in `clients/web/src/extensions/tokens.ts`, and it is
 
 Buttons (`btn`, with `-primary`, `-danger`, `-sm`, `-xs`, `-quiet`), chips, panels, fields, dialogs and the overlay behind them.
 
-These are the classes igni itself uses. When one changes, both change — that is the point of sharing the names rather than copying the rules.
+These are the same class names igni itself uses, so a surface built here reads as part of the app rather than beside it.
 
-## What is not here, and why
-
-No table, row, card, badge, empty state, spinner, tab or toolbar.
-
-Not an oversight, and not a decision to leave extensions short. **igni does not have them either.** They exist as feature-scoped classes, written once per feature:
-
-| Pattern | Times it is reimplemented in `theme.css` |
-|---|---|
-| `*-row` | 44 |
-| `*-item` | 33 |
-| `*-actions` | 32 |
-| `*-title` | 27 |
-| `*-empty` | 18 |
-| `*-card` | 17 |
-| `*-list` | 15 |
-| `*-toolbar` | 10 |
-| `*-table` | 10 |
-| `*-badge` | 7 |
-
-231 classes across 14 patterns — `kb-row`, `doc-row`, `codeindex-row`, `plugins-row`, and so on. 1120 of the stylesheet's 1159 classes are feature-scoped like this.
-
-Publishing a `table` before deciding what a table *is* here would mean picking one of ten existing answers and making it the floor — where we cannot take it back, and where every extension inherits whichever we picked. The generalisation has to happen in igni first.
-
-Until it does: write your own against these tokens. That is the honest answer, and it is why the tokens are published even where the components are not.
-
-## Versioning
-
-This package follows the extension contract version, not igni's. See [EXTENSIBILITY.md](../../docs/EXTENSIBILITY.md) §8 for what counts as breaking and the deprecation window.
+**They are copies, not one file.** `theme.css` and `igni-ui.css` each carry their own rules, and nothing yet holds them to each other — the first drift was `btn-warn`, which existed in the app and not here, so a typed `variant="warn"` rendered as a plain button inside a frame. Generating this file from `theme.css` is the fix and is not done. Until it is, treat a difference as a bug and report it.
 
 ## The spacing scale
 
@@ -108,3 +81,19 @@ So where the existing uses agreed, the agreement became the value. Where they sp
 There is deliberately **no `ui-title`**. Titles varied across four type steps, and that variation is the design — a heading level, not drift. Use the type scale and a weight.
 
 **Remaining:** igni's own 231 feature classes still carry their own copies. The primitives exist and are what an extension builds against; migrating the app onto them moves pixels in 64 files, and is worth doing behind the visual suite rather than blind.
+
+## Not installable yet
+
+`@igni/extension-bridge` and `@igni/ui-react` are a tsconfig `paths` entry and a Vite alias inside `clients/web`. There is no package.json, no registry entry, no build. **You cannot `npm install` either of them today**, and vendoring them by hand means maintaining a fork of the thing that was handed to you as a compatibility floor.
+
+This is a build change rather than a code change, and it is the first thing to do before anyone outside this repository is asked to build against this.
+
+## What an extension still cannot do
+
+Worth knowing before you design around it:
+
+- **Call its own backend.** `RpcMethod` is a closed enum and the router validates against it exhaustively, so there is no namespace an extension's own service can answer on. Your panel can call igni's methods; it cannot reach your sidecar.
+- **Receive a push.** The host sends `hello`, `theme` and `result`. Following a long-running job means polling an RPC on an interval — which is what igni's own CodeIndex panel does.
+- **Be mounted.** Nothing renders `ExtensionFrame` in the app yet, and no manifest loader exists.
+
+These are named here rather than left to be discovered three days into a build.
