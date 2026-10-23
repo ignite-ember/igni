@@ -255,7 +255,9 @@
   cursor: pointer;
 }
 
-.ui-check input:disabled,
+/* Only the wrapper. Both selectors matched when the input was
+   disabled, so the opacity applied twice and the control rendered at
+   0.25 rather than 0.5. */
 .ui-check:has(input:disabled) {
   cursor: not-allowed;
   opacity: 0.5;
