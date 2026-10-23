@@ -6,14 +6,14 @@ The UI refactor, as it stands. Updated as it moves.
 
 igni had 84 colour tokens and nothing else. `gap` had 20 distinct values, `padding` 161, `font-size` 27, `border-radius` 28 — every one hardcoded — so each feature invented its own numbers and none of them agreed.
 
-The 231 classes named `-row`, `-card`, `-actions` looked like duplication and were not: `*-row` agreed only on `display: flex`, and deduplicating all fourteen patterns saved 84 declarations out of 17,789 lines. They did not repeat. They diverged, because there was nothing to diverge *from*.
+The 231 classes named `-row`, `-card`, `-actions` looked like duplication and were not: `*-row` agreed only on `display: flex`, and deduplicating all fourteen patterns saved 84 declarations out of the 17,789 lines `theme.css` had at the time. They did not repeat. They diverged, because there was nothing to diverge *from*.
 
 ## Done
 
 | | |
 |---|---|
 | **Spacing scale** | `--space-1`…`--space-16`. 375 declarations migrated. Verified byte-identical by resolving every token back and diffing. |
-| **Type scale** | `--text-2xs`…`--text-4xl`. 22 hardcoded sizes → 9 steps. 267 moved, none by more than 1px. 98% of font sizes name a step. |
+| **Type scale** | `--text-2xs`…`--text-4xl`. 22 hardcoded sizes → 9 steps. 266 literals became tokens; **four moved by 2px** (two 19px → `--text-xl` at 17px, two 22px → `--text-2xl` at 20px) and the rest by 1px or less. 98% of font sizes name a step. |
 | **Shape** | `--radius-pill` and `--radius-circle` added. `9999px` and `999px` unified. |
 | **Primitives** | 9: `ui-row`, `ui-actions`, `ui-list`, `ui-toolbar`, `ui-card`, `ui-item`, `ui-badge`, `ui-empty`, `ui-table`. Decided, not extracted. |
 | **Empty-state colour** | Was split 8/8 between `--fg-faint` and `--fg-muted`. Both clear WCAG AA, so decided on meaning: an empty state is content. All 17 agree. |
@@ -21,11 +21,15 @@ The 231 classes named `-row`, `-card`, `-actions` looked like duplication and we
 | **Cascade order** | The primitives sit above every feature rule, so a feature always wins. They did not at first, and five declarations were silently overridden — see below. |
 | **Published** | All scales and primitives are in `clients/ui/` for extensions, held to the app's by three tests. |
 
-Coverage: **1437 of 1789** spacing, type and shape declarations name a scale, from zero.
+Coverage: **1562 of 2269** spacing, type and shape declarations name a scale — 68.8%, from zero.
+
+Every number in this document comes from `clients/web/scripts/measure-theme.ts`. Run it rather than trusting the figure beside it; the ones that were here before it existed were produced once by a throwaway script and went stale, and a stale number cannot be corrected honestly — re-measuring with a slightly different definition gives a different answer that looks like a correction and is really a second opinion. This document quoted 1437 of 1789 and the first re-count produced 1343 of 2146; neither was wrong. They were answers to different questions. The question now lives in the script.
 
 ## Needs a human eye
 
-86 classes **gained** a property they were missing. That is what a primitive is for, and it is the only place pixels moved — verified: zero properties were overridden or lost.
+86 classes **gained** a property they were missing. That is what a primitive is for, and in the primitives merge it is the only place pixels moved — verified: zero properties were overridden or lost.
+
+It is not the only place pixels moved overall. The type scale moved four declarations by 2px, which this document asserted it had not until the migration was re-measured from the diff rather than from the sentence describing it.
 
 The 34 Playwright visual baselines are Linux-only and cannot run on this machine, so this is the list a CI round-trip should be checked against. Expect some baselines to need regenerating with `--update-snapshots` — an approval, not a rubber stamp.
 
