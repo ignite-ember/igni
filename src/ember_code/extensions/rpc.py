@@ -21,6 +21,7 @@ connection error and goes looking in the wrong place.
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable
 from typing import Any
 
 from ember_code.extensions.registry import (
@@ -39,10 +40,24 @@ class ExtensionRpc:
     def __init__(self, registry: ExtensionRegistry) -> None:
         self._registry = registry
         self._services: dict[str, ExtensionService] = {}
+        self._on_failure: Callable[[str], None] | None = None
 
     @property
     def registry(self) -> ExtensionRegistry:
         return self._registry
+
+    def watch(self, on_failure: Callable[[str], None]) -> None:
+        """Be told when a call to an extension fails.
+
+        The health monitor uses this to probe immediately rather than
+        waiting out its interval. Without it the panel keeps saying
+        READY for up to that long after the user has already watched
+        something fail, which is the app contradicting them.
+
+        Called synchronously and expected not to block — a caller
+        here is in the middle of answering an RPC.
+        """
+        self._on_failure = on_failure
 
     def bind(self, extension_id: str, service: ExtensionService) -> None:
         """Attach the thing that answers for ``extension_id``."""
@@ -83,4 +98,10 @@ class ExtensionRpc:
         try:
             return await service.call(parsed.method, args)
         except ExtensionServiceError as exc:
+            # The service answered badly or not at all. Whether it is
+            # gone is a question for the health monitor — a failed
+            # call is a symptom, and a tool that raises is not a dead
+            # service.
+            if self._on_failure is not None:
+                self._on_failure(parsed.extension_id)
             raise ExtensionRefused(str(exc)) from exc

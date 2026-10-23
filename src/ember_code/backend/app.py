@@ -31,6 +31,7 @@ from ember_code.backend.server import BackendServer
 from ember_code.backend.session_orchestrator import SessionOrchestrator
 from ember_code.backend.supervisor import BackendSupervisor
 from ember_code.core.config.settings import Settings, load_settings
+from ember_code.extensions.health import ExtensionHealth
 from ember_code.extensions.origin import ExtensionOrigins
 from ember_code.extensions.registry import ExtensionRegistry
 from ember_code.extensions.rpc import ExtensionRpc
@@ -230,6 +231,18 @@ class BackendApp:
         # that can hand the same objects to both.
         self._extensions = ExtensionRpc(ExtensionRegistry())
         self._origins = ExtensionOrigins()
+        # ``ExtensionState`` was written once, at install, and never
+        # again — so a service that died ten minutes later left the
+        # registry, and therefore the UI, saying READY. This keeps it
+        # true, and asks immediately when a call fails rather than
+        # waiting out its interval while the panel contradicts what
+        # the user just saw.
+        self._extension_health = ExtensionHealth(
+            registry=self._extensions.registry,
+            rpc=self._extensions,
+            mcp=self._backend.mcp_manager,
+        )
+        self._extensions.watch(self._extension_health.on_call_failed)
         self._rpc_router = RpcRouter(
             backend=self._backend,
             transport=self._transport,
@@ -340,11 +353,17 @@ class BackendApp:
                 await self._transport.wait_for_connection(timeout=None)
             else:
                 await self._transport.wait_for_connection()
+            # Probing starts once there is a loop to run it on, and
+            # not before: nothing is installed at construction, so an
+            # earlier start would be a timer over an empty registry.
+            self._extension_health.start()
             logger.info("FE connected, processing messages")
             await self._orchestrator.serve(self._supervisor.shutdown_event)
         except Exception as exc:
             logger.error("Backend error: %s", exc, exc_info=True)
         finally:
+            await self._extension_health.stop()
+            await self._origins.stop_all()
             await self._supervisor.teardown()
 
     def _emit_ready_line(self) -> None:

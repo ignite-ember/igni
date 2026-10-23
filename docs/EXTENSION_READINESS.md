@@ -143,7 +143,7 @@ shipping without it costs nothing.
 
 | # | Missing | Done when |
 |---|---|---|
-| F1 | Health reporting | `ExtensionRegistry.set_state` exists; nothing reports into it. An extension that dies should show `FAILED` with a reason and a fix, not just stop answering. |
+| F1 | ✅ Health reporting | `ExtensionHealth` probes every installed extension on an interval and immediately after a failed call, moves the state with a reason, and restarts a service that is already dead — only once it is dead, because `disconnect_one` drops its reference without terminating the process, so restarting a live one would leak it. |
 | F2 | Upgrade path | A manifest asking for more permissions stays at its old grants until an administrator accepts, and they are shown the diff. |
 | F3 | Uninstall | Contributions withdrawn, prompt anchors removed, service stopped, port released. |
 | F4 | Observability | An administrator can see what an extension called and what was refused. The refusals are already logged at info; nothing surfaces them. |
@@ -152,8 +152,8 @@ shipping without it costs nothing.
 
 ## What to do in what order
 
-**To hand one trusted partner a thing that works** — Gate A is done,
-which leaves D1/D2 (a CLI to install with) and F1. That is the
+**To hand one trusted partner a thing that works** — Gate A and F1
+are done, which leaves D1/D2: a CLI to install with. That is the
 smallest honest deliverable: they can build, install, run, call their
 own service and see it fail legibly. Gate B stays open and is written
 into the agreement rather than the code.

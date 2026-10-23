@@ -9,11 +9,21 @@ stdio, exactly the way a development extension is.
 """
 
 import json
+import os
 import sys
+from pathlib import Path
 
 from mcp.server.fastmcp import FastMCP
 
 server = FastMCP("acme-scanner")
+
+# Its own pid, beside itself. The health test has to kill this
+# process to prove a crash is noticed, and finding it by scanning the
+# process tree was both fragile and a dependency; a service that
+# writes down where it is costs one line.
+#
+# ``cwd`` is the bundle, because that is what the installer sets.
+Path("server.pid").write_text(str(os.getpid()))
 
 
 @server.tool()

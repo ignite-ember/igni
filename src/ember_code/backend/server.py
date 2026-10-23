@@ -248,6 +248,21 @@ class BackendServer:
     def project_dir(self) -> Path:
         return self._session.project_dir
 
+    @property
+    def mcp_manager(self) -> Any:
+        """The session's MCP client manager.
+
+        Named here because an extension's service is an MCP server
+        and the pieces that supervise one — the installer and the
+        health monitor — are not session code and should not be
+        reaching through ``_session`` to find it.
+
+        Partial-init tolerant, like :attr:`runtime`: tests build this
+        class through ``__new__`` and never attach a session.
+        """
+        session = getattr(self, "_session", None)
+        return getattr(session, "mcp_manager", None)
+
     # ── Controller accessors (thin properties over Controllers bag) ──
     #
     # Every accessor tolerates the ``__new__``-bypass test path — if
