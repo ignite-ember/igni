@@ -139,6 +139,29 @@ shipping without it costs nothing.
 
 ---
 
+## Gate G — more than one person
+
+A deployment serving a group is a different shape, and the contract
+has always said so. Now it is checked.
+
+| # | State | Note |
+|---|---|---|
+| G1 | ✅ | `IGNI_DEPLOYMENT=shared` marks a backend as serving several principals. Single-user by default, because the permissive answer must not be what you get by forgetting to configure anything. |
+| G2 | ✅ | A shared backend refuses `sidecar` and `dev` packaging. One process is one instance shared by every principal, with one `IGNI_WORKSPACE` and one resolution of each secret — there is no answer to *whose*. The refusal names `endpoint` as the packaging that works. |
+| G3 | ✅ | A shared backend refuses `contributes.pages`. A frame is hosted by the igni app beside the user, and a shared backend has no such app, so the pages would be served and never shown. |
+| G4 | ✅ | `workspace` and `secrets` on an `endpoint` extension are refused rather than ignored. igni delivers those in the environment of a process it starts; an endpoint is somebody else's process, so the grant would be approved and never arrive. |
+| G5 | ❌ **the one that matters** | **There is no principal on the extension call path.** `RPCRequest.caller` is an *extension id* — the check is which extension is asking, never which person. So a multi-tenant endpoint, which is the shape a group is supposed to use, cannot tell two users apart; and a shared process could not be made safe by being careful, because the identity it would need does not exist. |
+
+**G5 is an architecture decision, not an install check.** It needs a
+principal on the wire, a decision about where it comes from (igni's
+own auth, or the deployment's), and a decision about whether an
+extension is told who the user is or only given an opaque,
+stable-per-user token. The second is usually the right answer and it
+is not ours to assume.
+
+Until it exists: a group can run extensions, and every extension it
+runs sees one undifferentiated caller.
+
 ## Gate F — operable once it is running
 
 | # | Missing | Done when |
@@ -164,6 +187,12 @@ into the agreement rather than the code.
 for the OS sandbox that `egress` and `workspace` need to bind on the
 extension's side rather than igni's. That is the remaining honest
 caveat, and it is one sentence rather than five.
+
+**To serve a group** — G1–G4 are done and G5 is not. A shared backend
+now refuses what it cannot run, which is the half that stops somebody
+being surprised. The half that is left is identity: every extension
+on a shared backend sees one caller, so a multi-tenant service cannot
+tell its users apart.
 
 **To call it rich** — Gate E. D4 is done and sharpened the list: the
 split is the biggest single gap for a two-pane shape, block markdown

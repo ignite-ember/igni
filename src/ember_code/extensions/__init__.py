@@ -9,6 +9,7 @@ for what is built and in what order.
 
 from ember_code.extensions.manifest import ExtensionManifest
 from ember_code.extensions.origin import ExtensionOrigin, ExtensionOrigins
+from ember_code.extensions.profile import DeploymentProfile
 from ember_code.extensions.registry import (
     ExtensionMethod,
     ExtensionRefused,
@@ -28,6 +29,7 @@ __all__ = [
     "ExtensionMethod",
     "ExtensionOrigin",
     "ExtensionOrigins",
+    "DeploymentProfile",
     "ExtensionRefused",
     "ExtensionRegistry",
     "ExtensionRpc",

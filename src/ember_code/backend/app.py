@@ -36,6 +36,7 @@ from ember_code.extensions.contributions import ExtensionContributions
 from ember_code.extensions.health import ExtensionHealth
 from ember_code.extensions.installer import ExtensionInstaller
 from ember_code.extensions.origin import ExtensionOrigins
+from ember_code.extensions.profile import DeploymentProfile
 from ember_code.extensions.registry import ExtensionRegistry, ExtensionState
 from ember_code.extensions.rpc import ExtensionRpc
 from ember_code.extensions.store import ExtensionStore
@@ -403,6 +404,7 @@ class BackendApp:
             mcp=self._backend.mcp_manager,
             origins=self._origins,
             project_dir=self._project_dir,
+            profile=DeploymentProfile.current(),
             allow_unsigned=_dev_extensions_allowed(),
         )
         for bundle in bundles:

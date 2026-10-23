@@ -36,9 +36,10 @@ from pathlib import Path
 from typing import Any
 
 from ember_code.core.mcp.config import MCPServerConfig, MCPTransport
-from ember_code.extensions.manifest import ExtensionManifest, Trust
+from ember_code.extensions.manifest import ExtensionManifest, Trust, Workspace
 from ember_code.extensions.origin import ExtensionOrigins
 from ember_code.extensions.permissions import PermissionDenied, Permissions
+from ember_code.extensions.profile import DeploymentProfile
 from ember_code.extensions.registry import (
     ExtensionRegistry,
     ExtensionState,
@@ -87,6 +88,7 @@ class ExtensionInstaller:
         trust_store: TrustStore | None = None,
         project_dir: Path | None = None,
         secret_resolver: Callable[[str], str | None] | None = None,
+        profile: DeploymentProfile | None = None,
         allow_unsigned: bool = False,
     ) -> None:
         """
@@ -110,6 +112,9 @@ class ExtensionInstaller:
                 when ``permissions.workspace`` grants it.
             secret_resolver: The deployment's secret source. A name
                 the manifest did not declare is never passed to it.
+            profile: How many principals this backend serves. A
+                sidecar is one process, so a shared backend refuses
+                one — see :mod:`ember_code.extensions.profile`.
             allow_unsigned: Whether ``trust: unsigned`` may be
                 installed. False everywhere but development, because
                 the easiest way to ship must not be the one with no
@@ -122,6 +127,7 @@ class ExtensionInstaller:
         self._trust = trust_store if trust_store is not None else TrustStore()
         self._project_dir = project_dir
         self._secret_resolver = secret_resolver
+        self._profile = profile if profile is not None else DeploymentProfile.current()
         self._allow_unsigned = allow_unsigned
 
     async def install(self, bundle: Path) -> InstalledExtension:
@@ -137,6 +143,8 @@ class ExtensionInstaller:
         """
         manifest = self._read(bundle)
         self._check_trust(manifest, bundle)
+        self._check_profile(manifest)
+        self._check_deliverable(manifest)
 
         if self._registry.get(manifest.id) is not None:
             raise InstallError(
@@ -271,6 +279,64 @@ class ExtensionInstaller:
         except SignatureError as exc:
             raise InstallError(f"{manifest.id}: {exc}") from exc
         logger.info("extension %s signed by %s", manifest.id, key.owner)
+
+    def _check_profile(self, manifest: ExtensionManifest) -> None:
+        """What this deployment's shape forbids.
+
+        Both rules have been in EXTENSIBILITY since it was written
+        and neither was checked, so an administrator could install
+        the thing the document says does not work and find out from
+        the behaviour.
+        """
+        if not self._profile.is_shared:
+            return
+
+        if manifest.sidecar is not None or manifest.dev is not None:
+            raise InstallError(
+                f"{manifest.id} is packaged to run as a process here, and this "
+                "backend serves more than one principal. One process would be "
+                "one instance shared by all of them, with a single workspace "
+                "and a single resolution of each secret — there is no answer "
+                "to whose. Use 'endpoint' packaging, which is a service that "
+                "can be multi-tenant."
+            )
+
+        if manifest.contributes.pages:
+            raise InstallError(
+                f"{manifest.id} contributes pages and this backend serves more "
+                "than one principal. A frame is hosted by the igni app beside "
+                "the user, and a shared backend has no such app — the pages "
+                "would be served and never shown."
+            )
+
+    @staticmethod
+    def _check_deliverable(manifest: ExtensionManifest) -> None:
+        """Refuse a grant this packaging cannot deliver.
+
+        ``workspace`` and ``secrets`` reach a service through its
+        environment, and igni only sets an environment for a process
+        it starts. A registered endpoint is somebody else's process:
+        the grant is declared, approved by an administrator, and
+        then silently does nothing — which is the failure this whole
+        system has been removing, so it is refused rather than
+        ignored.
+        """
+        if manifest.endpoint is None:
+            return
+        undeliverable = []
+        if manifest.permissions.workspace is not Workspace.NONE:
+            undeliverable.append(f"workspace: {manifest.permissions.workspace.value}")
+        if manifest.permissions.secrets:
+            undeliverable.append(f"secrets: {list(manifest.permissions.secrets)}")
+        if not undeliverable:
+            return
+        raise InstallError(
+            f"{manifest.id} declares {' and '.join(undeliverable)}, and igni "
+            "delivers those in the environment of a process it starts. This is "
+            "an endpoint — somebody else's process — so the grant would be "
+            "approved and never arrive. Remove it, or have the service read "
+            "its own configuration."
+        )
 
     def _service_config(
         self, manifest: ExtensionManifest, bundle: Path, permissions: Permissions

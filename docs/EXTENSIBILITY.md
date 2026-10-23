@@ -22,7 +22,9 @@ An **extension** is a capability with a service behind it. It arrives one of two
 
 **Any backend can attach a remote extension.** A single-user local backend can register one; a shared backend serving everyone can too. CodeIndex is sidecar-only because it is bound to a checkout, not because of where the backend runs.
 
-**A sidecar is single-user only.** The profile refuses to install one on a shared backend: a sidecar is one supervised process, so on a backend serving many principals it is one instance shared by all of them, which is neither the isolation nor the blast radius described below.
+**A sidecar is single-user only**, and this is now checked rather than stated. `IGNI_DEPLOYMENT=shared` marks a backend as serving several principals, and an install there refuses `sidecar` and `dev` packaging naming `endpoint` as the fix. A sidecar is one supervised process, so on such a backend it is one instance shared by all of them — one `IGNI_WORKSPACE`, one resolution of each secret, and no answer to whose.
+
+**And no extension on a shared backend knows who is calling.** `RPCRequest.caller` is an extension id, not a principal, so even the endpoint packaging that *is* allowed there cannot tell two users apart. That is the open item, recorded as G5 in `EXTENSION_READINESS.md`; it needs a principal on the wire and a decision about whether an extension learns who somebody is or only an opaque token that is stable for them.
 
 **UI is a single-user contribution.** A remote extension attached to a local backend may contribute a surface, and the local backend serves its bundle. A shared backend serves no extension UI — the frame is hosted by the igni app next to the user, and a shared backend has no such app.
 

@@ -24,7 +24,7 @@ from pathlib import Path
 
 import click
 
-from ember_code.extensions.manifest import ExtensionManifest, Trust
+from ember_code.extensions.manifest import ExtensionManifest, Trust, Workspace
 from ember_code.extensions.store import ExtensionStore, StoreError
 
 #: What this build of igni implements. An extension declares a range
@@ -109,6 +109,32 @@ def doctor(bundle: Path) -> None:
             problems.append(
                 "has an endpoint and declares no egress, so igni will refuse to dial it"
             )
+        # igni sets an environment for a process it starts, and an
+        # endpoint is somebody else's process. A grant that cannot be
+        # delivered is the failure this system keeps removing.
+        if manifest.permissions.workspace is not Workspace.NONE:
+            problems.append(
+                f"declares workspace: {manifest.permissions.workspace.value} and "
+                "is an endpoint, so the grant could never be delivered"
+            )
+        if manifest.permissions.secrets:
+            problems.append(
+                f"declares secrets {list(manifest.permissions.secrets)} and is an "
+                "endpoint, so they could never be delivered"
+            )
+
+    if manifest.sidecar is not None or manifest.dev is not None:
+        notes.append(
+            "runs as a process on the machine igni is on, so it installs only on "
+            "a single-user backend. One process cannot serve a group: there is "
+            "one workspace and one resolution of each secret, and no answer to "
+            "whose."
+        )
+    if manifest.contributes.pages:
+        notes.append(
+            "contributes pages, which only a single-user backend shows — a frame "
+            "is hosted by the igni app beside the user."
+        )
 
     if manifest.dev is not None:
         command = Path(manifest.dev.command[0])
