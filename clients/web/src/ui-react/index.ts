@@ -69,6 +69,7 @@ export {
   Switch,
   type SwitchProps,
   Table,
+  TabPanel,
   Tabs,
   type TabsProps,
   Text,

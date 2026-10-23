@@ -89,6 +89,15 @@ describe("controls carry the classes the app uses", () => {
     expect(onClick).not.toHaveBeenCalled();
   });
 
+  it("actually forwards the handler, which the disabled case cannot show", () => {
+    // jsdom does not dispatch to a disabled button, so the test above
+    // passes even against a Button that dropped onClick on the floor.
+    const onClick = vi.fn();
+    render(<Button onClick={onClick}>Go</Button>);
+    fireEvent.click(screen.getByText("Go"));
+    expect(onClick).toHaveBeenCalledTimes(1);
+  });
+
   it("marks a tone as data rather than as a class", () => {
     // A tone is a state of the thing, not a different thing. Reading
     // it off `data-tone` keeps the class list one item long.
@@ -158,6 +167,13 @@ describe("Dialog does the things an extension would get wrong", () => {
     open();
     const dialog = screen.getByRole("dialog");
     expect(dialog.getAttribute("aria-modal")).toBe("true");
+    // And it says which dialog. Without a name a screen reader
+    // announces "dialog" and stops.
+    const labelledBy = dialog.getAttribute("aria-labelledby");
+    expect(labelledBy).toBeTruthy();
+    expect(document.getElementById(labelledBy as string)?.textContent).toBe(
+      "Delete this document?",
+    );
   });
 
   it("takes focus, so the first Tab lands inside it", () => {
@@ -262,7 +278,12 @@ describe("the controls a floor has to have", () => {
     );
     const err = screen.getByRole("alert");
     expect(err.textContent).toBe("Already taken.");
-    expect(err.id).toBe("n-note");
+    // The part the original test left out, which is the whole claim:
+    // something has to *reference* the id. Without this the test
+    // passed against a Field that announced nothing.
+    const input = screen.getByLabelText("Name");
+    expect(input.getAttribute("aria-describedby")).toBe(err.id);
+    expect(input.getAttribute("aria-invalid")).toBe("true");
   });
 
   it("prefers the error over the hint, because one of them is urgent", () => {
@@ -276,7 +297,7 @@ describe("the controls a floor has to have", () => {
 
   it("reports progress as a value, and as sliding when it has none", () => {
     const { container, rerender } = render(
-      <Progress value={0.42} label="Indexing" />,
+      <Progress value={42} label="Indexing" />,
     );
     const bar = screen.getByRole("progressbar", { name: "Indexing" });
     expect(bar.getAttribute("aria-valuenow")).toBe("42");
@@ -296,7 +317,7 @@ describe("the controls a floor has to have", () => {
   });
 
   it("clamps a progress value rather than overflowing the bar", () => {
-    const { container } = render(<Progress value={3} label="x" />);
+    const { container } = render(<Progress value={300} label="x" />);
     expect(
       container.querySelector<HTMLElement>(".ui-progress-fill")?.style.width,
     ).toBe("100%");
@@ -322,6 +343,10 @@ describe("the controls a floor has to have", () => {
   });
 
   it("wraps around at the ends", () => {
+    // Three tabs, not two: with two, ArrowLeft and ArrowRight from
+    // the first both land on the second, so the original test could
+    // not tell the directions apart — or tell wrapping from an
+    // implementation that always returned tabs[1].
     const onChange = vi.fn();
     render(
       <Tabs
@@ -331,11 +356,58 @@ describe("the controls a floor has to have", () => {
         tabs={[
           { id: "a", label: "Browse" },
           { id: "b", label: "Search" },
+          { id: "c", label: "Lineage" },
         ]}
       />,
     );
     fireEvent.keyDown(screen.getByRole("tablist"), { key: "ArrowLeft" });
-    expect(onChange).toHaveBeenCalledWith("b");
+    expect(onChange).toHaveBeenCalledWith("c");
+  });
+
+  it("takes Home and End", () => {
+    const onChange = vi.fn();
+    render(
+      <Tabs
+        label="Views"
+        active="b"
+        onChange={onChange}
+        tabs={[
+          { id: "a", label: "Browse" },
+          { id: "b", label: "Search" },
+          { id: "c", label: "Lineage" },
+        ]}
+      />,
+    );
+    const strip = screen.getByRole("tablist");
+    fireEvent.keyDown(strip, { key: "Home" });
+    expect(onChange).toHaveBeenLastCalledWith("a");
+    fireEvent.keyDown(strip, { key: "End" });
+    expect(onChange).toHaveBeenLastCalledWith("c");
+  });
+
+  it("does not crash on an empty tab list", () => {
+    // `tabs[(i + step + 0) % 0]` is tabs[NaN], thrown inside React's
+    // event dispatch, which takes the tree down.
+    render(<Tabs label="Views" active="" onChange={vi.fn()} tabs={[]} />);
+    expect(() =>
+      fireEvent.keyDown(screen.getByRole("tablist"), { key: "ArrowRight" }),
+    ).not.toThrow();
+  });
+
+  it("points each tab at a panel, and the panel back at the tab", () => {
+    // Half the ARIA pattern is worse than none: the strip announced
+    // it controlled something that did not exist.
+    render(
+      <Tabs
+        label="Views"
+        active="a"
+        onChange={vi.fn()}
+        tabs={[{ id: "a", label: "Browse" }]}
+      />,
+    );
+    const tab = screen.getByRole("tab");
+    expect(tab.id).not.toBe("");
+    expect(tab.getAttribute("aria-controls")).toBe(`${tab.id}-panel`);
   });
 
   it("ties a heading's size to its outline level", () => {
@@ -348,10 +420,13 @@ describe("the controls a floor has to have", () => {
   });
 
   it("gives a spinner a live region, so it is announced not just seen", () => {
-    const { container } = render(<Spinner />);
+    const { container } = render(<Spinner label="Loading" />);
     const s = container.querySelector(".ui-spinner");
     expect(s?.getAttribute("role")).toBe("status");
     expect(s?.getAttribute("aria-live")).toBe("polite");
+    // And it has something to say. role="status" on an empty span is
+    // a live region that announces silence.
+    expect(s?.textContent).toBe("Loading");
   });
 
   it("renders text tones as data, and a divider as an hr", () => {

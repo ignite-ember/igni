@@ -25,11 +25,19 @@ import type {
   ButtonHTMLAttributes,
   HTMLAttributes,
   InputHTMLAttributes,
+  ReactElement,
   ReactNode,
   SelectHTMLAttributes,
   TextareaHTMLAttributes,
 } from "react";
-import { useCallback, useEffect, useRef } from "react";
+import {
+  cloneElement,
+  isValidElement,
+  useCallback,
+  useEffect,
+  useId,
+  useRef,
+} from "react";
 
 /** Joins class names, skipping anything falsy. */
 function cx(...parts: (string | false | null | undefined)[]): string {
@@ -169,7 +177,10 @@ export function Empty({
 
 // ── Dialog ──────────────────────────────────────────────────────────
 
-export interface DialogProps {
+export interface DialogProps extends Omit<
+  HTMLAttributes<HTMLDivElement>,
+  "title"
+> {
   title: ReactNode;
   /** Shown under the title. A sentence, not a paragraph. */
   sub?: ReactNode;
@@ -195,9 +206,12 @@ export function Dialog({
   children,
   actions,
   onClose,
+  className,
+  ...rest
 }: DialogProps) {
   const panel = useRef<HTMLDivElement | null>(null);
   const opener = useRef<Element | null>(null);
+  const titleId = useId();
 
   useEffect(() => {
     opener.current = document.activeElement;
@@ -205,7 +219,11 @@ export function Dialog({
     // the title before the buttons is the point of having one.
     panel.current?.focus();
     return () => {
-      if (opener.current instanceof HTMLElement) opener.current.focus();
+      // Only if it is still in the document: an opener that has
+      // unmounted drops focus to <body> silently, which is worse than
+      // leaving it where the closing action put it.
+      const back = opener.current;
+      if (back instanceof HTMLElement && back.isConnected) back.focus();
     };
   }, []);
 
@@ -217,10 +235,31 @@ export function Dialog({
         return;
       }
       if (event.key !== "Tab") return;
+      // `:not([disabled])` matters more than it looks: a modal whose
+      // confirm button is disabled until a field is typed is the
+      // commonest pattern there is, and without this the wrap targets
+      // a disabled element, preventDefault fires, focus() is a no-op
+      // and Tab appears dead. Dead Tab is worse than escaping Tab.
+      // `iframe` is here because an extension *is* one.
       const focusable = panel.current?.querySelectorAll<HTMLElement>(
-        'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])',
+        [
+          "button:not([disabled])",
+          "a[href]",
+          "input:not([disabled]):not([type=hidden])",
+          "select:not([disabled])",
+          "textarea:not([disabled])",
+          "iframe",
+          "summary",
+          "[contenteditable]",
+          '[tabindex]:not([tabindex="-1"])',
+        ].join(", "),
       );
-      if (!focusable || focusable.length === 0) return;
+      if (!focusable || focusable.length === 0) {
+        // Nothing to move to, so hold the focus here rather than let
+        // Tab walk into the page behind a modal with no way back.
+        event.preventDefault();
+        return;
+      }
       const first = focusable[0];
       const last = focusable[focusable.length - 1];
       if (event.shiftKey && document.activeElement === first) {
@@ -235,19 +274,34 @@ export function Dialog({
   );
 
   return (
-    <div className="overlay" onMouseDown={onClose}>
+    <div
+      className="overlay"
+      onMouseDown={(e) => {
+        // Primary button only, and only on the backdrop itself. A
+        // right-click raising a context menu used to dismiss the
+        // modal underneath it.
+        if (e.button === 0 && e.target === e.currentTarget) onClose();
+      }}
+    >
       <div
+        {...rest}
         ref={panel}
-        className="dialog"
+        className={cx("dialog", className)}
         role="dialog"
         aria-modal="true"
+        // Without this a screen reader announces "dialog" and nothing
+        // else. The app's own hand-rolled dialogs got this right while
+        // the published one did not.
+        aria-labelledby={titleId}
         tabIndex={-1}
         onKeyDown={onKeyDown}
         // Without this a drag that starts inside and ends outside
         // closes the dialog, which eats a selection.
         onMouseDown={(e) => e.stopPropagation()}
       >
-        <h2 className="dialog-title">{title}</h2>
+        <h2 className="dialog-title" id={titleId}>
+          {title}
+        </h2>
         {sub ? <p className="dialog-sub">{sub}</p> : null}
         {children}
         {actions ? (
@@ -311,8 +365,15 @@ export interface SwitchProps extends Omit<
 > {
   checked: boolean;
   onChange: (next: boolean) => void;
-  /** Required: a switch with no name is unusable without sight. */
-  label: string;
+  /**
+   * Shown beside the switch, and used as its accessible name.
+   *
+   * Visible, like `Checkbox.label` and `Radio.label`. It was an
+   * `aria-label` and nothing else, so one prop name meant opposite
+   * things on two components in the same package and a sighted user
+   * got a bare toggle.
+   */
+  label: ReactNode;
 }
 
 /**
@@ -329,16 +390,24 @@ export function Switch({
   className,
   ...rest
 }: SwitchProps) {
+  const id = useId();
   return (
-    <button
-      type="button"
-      role="switch"
-      aria-checked={checked}
-      aria-label={label}
-      onClick={() => onChange(!checked)}
-      {...rest}
-      className={cx("ui-switch", className)}
-    />
+    <span className="ui-check">
+      <button
+        // `rest` goes first so a caller cannot clobber the parts that
+        // make this a switch. It used to spread last, and a caller's
+        // own onClick silently replaced the toggle — the control
+        // looked fine and did nothing.
+        {...rest}
+        type="button"
+        role="switch"
+        aria-checked={checked}
+        aria-labelledby={id}
+        onClick={() => onChange(!checked)}
+        className={cx("ui-switch", className)}
+      />
+      <span id={id}>{label}</span>
+    </span>
   );
 }
 
@@ -366,12 +435,25 @@ export function Field({
   htmlFor?: string;
 }) {
   const describedBy = htmlFor ? `${htmlFor}-note` : undefined;
+  // Cloned, not merely rendered beside. The first version put the id
+  // on the note and stopped, while the docstring claimed the control
+  // was wired to it — a claim its own test did not check, because the
+  // test asserted the id existed and never that anything referenced
+  // it. Nothing was announced. A Field cannot set an attribute on an
+  // opaque child without doing this.
+  const control =
+    isValidElement(children) && describedBy && (error || hint)
+      ? cloneElement(children as ReactElement<Record<string, unknown>>, {
+          "aria-describedby": describedBy,
+          ...(error ? { "aria-invalid": true } : {}),
+        })
+      : children;
   return (
     <div {...rest} className={cx("ui-field", className)}>
       <label className="ui-label" htmlFor={htmlFor}>
         {label}
       </label>
-      {children}
+      {control}
       {error ? (
         <span className="ui-error" id={describedBy} role="alert">
           {error}
@@ -387,39 +469,69 @@ export function Field({
 
 // ── Feedback ────────────────────────────────────────────────────────
 
-/** Work whose duration is unknown. `Skeleton` is for known shapes. */
+/**
+ * Work whose duration is unknown. `Skeleton` is for known shapes.
+ *
+ * `label` is required for the same reason `Progress.label` is. This
+ * was `role="status"` on an empty span: a live region with nothing
+ * to say, so a screen reader got silence while a sighted user
+ * watched something spin.
+ */
 export function Spinner({
+  label,
   className,
   ...rest
-}: HTMLAttributes<HTMLSpanElement>) {
+}: HTMLAttributes<HTMLSpanElement> & { label: string }) {
   return (
     <span
       {...rest}
       role="status"
       aria-live="polite"
       className={cx("ui-spinner", className)}
-    />
+    >
+      <span className="ui-visually-hidden">{label}</span>
+    </span>
   );
 }
 
 export interface ProgressProps extends HTMLAttributes<HTMLDivElement> {
-  /** 0–1. Omit for indeterminate, which slides rather than sits. */
+  /**
+   * How far along, against `max`. Omit for indeterminate, which
+   * slides rather than sits.
+   *
+   * This was 0–1 while the ARIA attributes beside it were 0–100, so
+   * `value={50}` meant 5000% and was silently clamped — the clamp hid
+   * the mistake instead of surfacing it. Every other progress API,
+   * `<progress>` included, takes a value against a max.
+   */
   value?: number;
+  /** Defaults to 100. */
+  max?: number;
   label: string;
 }
 
-export function Progress({ value, label, className, ...rest }: ProgressProps) {
+export function Progress({
+  value,
+  max = 100,
+  label,
+  className,
+  ...rest
+}: ProgressProps) {
   const determinate = typeof value === "number";
-  const pct = determinate ? Math.max(0, Math.min(1, value)) * 100 : undefined;
+  const clamped = determinate
+    ? Math.max(0, Math.min(max, value as number))
+    : undefined;
+  const pct = determinate ? ((clamped as number) / max) * 100 : undefined;
   return (
     <div
       {...rest}
       className={cx("ui-progress", className)}
       role="progressbar"
       aria-label={label}
-      aria-valuenow={determinate ? Math.round(pct as number) : undefined}
+      aria-valuenow={clamped}
       aria-valuemin={0}
-      aria-valuemax={100}
+      aria-valuemax={max}
+      aria-valuetext={determinate ? `${Math.round(pct as number)}%` : undefined}
       data-indeterminate={!determinate}
     >
       <div
@@ -454,25 +566,53 @@ export function Tabs({
   className,
   ...rest
 }: TabsProps) {
+  const base = useId();
+  const strip = useRef<HTMLDivElement | null>(null);
+
+  // Focus follows selection, which the ARIA practices require and
+  // this did not do. Without it the focus ring sits on a tab that is
+  // now tabIndex={-1} while a different one is selected, and the next
+  // Tab leaves the strip from somewhere the reader cannot see.
+  useEffect(() => {
+    const el = strip.current?.querySelector<HTMLElement>(
+      '[aria-selected="true"]',
+    );
+    if (el && strip.current?.contains(document.activeElement)) el.focus();
+  }, [active]);
+
   const onKeyDown = (event: React.KeyboardEvent) => {
-    const step =
-      event.key === "ArrowRight" ? 1 : event.key === "ArrowLeft" ? -1 : 0;
-    if (step === 0) return;
-    event.preventDefault();
+    if (tabs.length === 0) return;
     const i = tabs.findIndex((t) => t.id === active);
-    onChange(tabs[(i + step + tabs.length) % tabs.length].id);
+    let next: number | null = null;
+    if (event.key === "ArrowRight") next = (Math.max(i, 0) + 1) % tabs.length;
+    else if (event.key === "ArrowLeft")
+      next = (Math.max(i, 0) - 1 + tabs.length) % tabs.length;
+    else if (event.key === "Home") next = 0;
+    else if (event.key === "End") next = tabs.length - 1;
+    if (next === null) return;
+    event.preventDefault();
+    onChange(tabs[next].id);
   };
+
   return (
     <div
       {...rest}
+      ref={strip}
       role="tablist"
       aria-label={label}
+      aria-orientation="horizontal"
       className={cx("ui-tabs", className)}
       onKeyDown={onKeyDown}
     >
       {tabs.map((tab) => (
         <button
           key={tab.id}
+          // Real DOM ids, so a panel can point back with
+          // aria-labelledby and this one can point at it. Without
+          // them a screen reader announces "tab, 1 of 2" controlling
+          // nothing.
+          id={`${base}-${tab.id}`}
+          aria-controls={`${base}-${tab.id}-panel`}
           type="button"
           role="tab"
           aria-selected={tab.id === active}
@@ -483,6 +623,40 @@ export function Tabs({
           {tab.label}
         </button>
       ))}
+    </div>
+  );
+}
+
+/**
+ * The panel a tab controls. Needs the same `base` the strip used.
+ *
+ * Published because `Tabs` without it is half the ARIA pattern: the
+ * strip announced that it controlled something and there was nothing
+ * for it to control.
+ */
+export function TabPanel({
+  base,
+  id,
+  active,
+  children,
+  className,
+  ...rest
+}: HTMLAttributes<HTMLDivElement> & {
+  base: string;
+  id: string;
+  active: string;
+}) {
+  if (id !== active) return null;
+  return (
+    <div
+      {...rest}
+      id={`${base}-${id}-panel`}
+      role="tabpanel"
+      aria-labelledby={`${base}-${id}`}
+      tabIndex={0}
+      className={className}
+    >
+      {children}
     </div>
   );
 }
