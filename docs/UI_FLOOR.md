@@ -4,8 +4,9 @@ What `@igni/ui-react` and `igni-ui.css` must contain before "build any
 extension" is true, and how a deployment restyles all of it without
 forking.
 
-Status today: **46 exports, 50 tokens, 100 published classes**, with
-Tier 0 complete.
+Status today: **48 exports, 50 tokens, 120 published classes**, with
+Tier 0 complete and the two measured Tier 1 items — `Split` and block
+`Markdown` — done.
 
 It was 34 exports and no layout at all, which was enough for one pane
 of forms and a table — exactly the shape of the reference extension,
@@ -63,7 +64,7 @@ extension writes the same six lines, differently.
 |---|---|---|
 | `AppShell` | ✅ | Header/body/footer rows, `height: 100%`, `box-sizing` reset. The six lines everybody writes. |
 | `Scroll` | ✅ | A scroll container with `min-height: 0` — the flexbox trap that makes a pane grow instead of scroll. |
-| `Split` | 🔧 `ColumnHandle.tsx`, 180 lines | Pointer capture, clamping, persisted width, a keyboard-operable `separator` with `aria-valuenow`. Pure behaviour. **Measured, not reasoned**: `examples/release-notes` hand-rolls it, and it is the biggest single gap for a two-pane shape. |
+| `Split` | ✅ | Pointer capture, clamping, persisted width, a keyboard-operable `separator` with `aria-valuenow`. Pure behaviour. **Measured, not reasoned**: `examples/release-notes` hand-rolls it, and it is the biggest single gap for a two-pane shape. |
 | `Stack` / `Inline` | ❌ | Gap on the scale, so spacing cannot drift off it. |
 | `Grid` | ❌ | Responsive columns against the space scale. |
 | `Row` | ✅ | |
@@ -160,8 +161,8 @@ Strongest area already.
 | Component | State | Notes |
 |---|---|---|
 | `Heading` `Text` `Code` `Divider` | ✅ | |
-| `Markdown` (block) | ❌ | Only `MarkdownInline` is published, and it is *designed* to destroy block structure for previews. Blocked on prose styling being in `theme.css`. |
-| `Prose` | ❌ | The wrapper that styles arbitrary rendered markup. |
+| `Markdown` (block) | ✅ | Only `MarkdownInline` is published, and it is *designed* to destroy block structure for previews. Blocked on prose styling being in `theme.css`. |
+| `.ui-prose` | ✅ (CSS) | The wrapper that styles arbitrary rendered markup. |
 | `Kbd` | ❌ | Trivial, but everyone invents a different one. |
 | `Truncate` | ❌ | Clamp plus a title, and the "is it actually truncated" check. |
 | `CopyButton` | 🔧 inside `Mermaid.tsx` | Copy + confirmation + the clipboard-blocked path. |
@@ -203,9 +204,10 @@ The reference extension consumes all of it: its live region, its error boundary 
 
 **Tier 1 — breadth**
 
-Ordered by what the two built extensions actually reached for:
-`Split` and block `Markdown` first, since `examples/release-notes`
-hand-rolls both. The rest —
+`Split` and block `Markdown` are **done** — they were first because
+`examples/release-notes` hand-rolled both, and that example uses the
+published ones now. What is left, still ordered by reasoning rather
+than by use:
 `Combobox`, `Popover`, `Drawer`, `Form`, `Fieldset`,
 `SearchInput`, `NumberInput`, `DescriptionList`, `Accordion`,
 `CodeBlock`, `Markdown`, `ConfirmDialog`, `StatusDot`, `Breadcrumbs`,

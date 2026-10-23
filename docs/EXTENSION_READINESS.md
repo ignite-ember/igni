@@ -130,7 +130,7 @@ actually block a shape rather than merely annoy:
 | E1 | `Combobox` | Any search-and-pick. The hardest to hand-roll correctly and the most-wanted. |
 | E2 | `Popover` | Anything anchored that is not a menu or a tooltip. |
 | E3 | `Split` | Two-pane anything. Already written as `ColumnHandle`, 180 lines, unpublished. |
-| E4 | `Markdown` (block) | Any document or prose surface. Only the inline renderer is published and it is *designed* to flatten block structure. |
+| E4 | ✅ `Markdown` (block) | Published, with `.ui-prose`, so prose in an extension looks like prose in igni. GitHub-flavoured, no raw HTML, links with `noopener`. |
 | E5 | `Form` / `Fieldset` | Multi-field editing: submit semantics, error summary focus. |
 | E6 | `Drawer` | Side panels; shares `Dialog`'s trap machinery. |
 

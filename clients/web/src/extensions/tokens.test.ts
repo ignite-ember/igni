@@ -131,11 +131,29 @@ describe("the published list and the stylesheet agree", () => {
     "utf8",
   );
 
+  /*
+   * A variable a component owns, rather than a token the host sends.
+   *
+   * `Split` writes its width into one, named per instance so two
+   * splits on a page do not fight over a single property. The host
+   * neither knows nor sends it, and holding it to the published list
+   * would be holding it to the wrong list.
+   *
+   * The `--ui-` prefix is the convention, and it is checkable: a
+   * typo in a real token name does not start with it, so it still
+   * fails here rather than being waved through as component-local.
+   */
+  const isComponentLocal = (name: string) => name.startsWith("--ui-");
+
   it("uses no token that is not published", () => {
     const used = new Set(
       [...css.matchAll(/var\((--[a-z0-9-]+)/g)].map((m) => m[1]),
     );
-    expect([...used].filter((name) => !TOKEN_NAMES.includes(name))).toEqual([]);
+    expect(
+      [...used].filter(
+        (name) => !TOKEN_NAMES.includes(name) && !isComponentLocal(name),
+      ),
+    ).toEqual([]);
   });
 
   it("declares a fallback for nothing it does not publish", () => {

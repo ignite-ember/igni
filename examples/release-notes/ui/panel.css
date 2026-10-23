@@ -7,86 +7,12 @@
  * follow a theme change without a line about it.
  */
 
-/* ── The split ─────────────────────────────────────────────────────
-   `ColumnHandle` is 180 lines in the app, does exactly this, and is
-   not published. So every two-pane extension writes the grid, the
-   width variable, the pointer capture and the keyboard-operable
-   separator again — differently. */
-:root {
-  --split-w: 280px;
-}
-
-.split {
-  display: grid;
-  grid-template-columns: var(--split-w) 5px 1fr;
-  flex: 1 1 auto;
-  /* The flexbox trap, again. Without it the panes grow the page
-     instead of scrolling, which `Scroll` fixes inside itself and
-     cannot fix for a container it does not own. */
-  min-height: 0;
-}
-
-.split-list,
-.split-main {
-  min-height: 0;
-  min-width: 0;
-}
-
-.split-main {
-  display: flex;
-  flex-direction: column;
-  border-left: 1px solid var(--border-soft, #3d3d39);
-}
-
-.split-handle {
-  cursor: col-resize;
-  background: transparent;
-  /* Wider than it looks, because a 1px target is a target most
-     people miss. */
-  margin: 0 -2px;
-  z-index: 1;
-}
-
-.split-handle:hover,
-.split-handle:focus-visible {
-  background: var(--accent-blue, #6aa3f7);
-  outline: none;
-}
-
-/* ── Prose ─────────────────────────────────────────────────────────
-   The floor publishes `MarkdownInline`, which flattens block
-   structure by design. A document needs the opposite, so this styles
-   a hand-rolled subset — and it does not look like igni's own prose,
-   because that styling lives in `theme.css` and is not published
-   either. */
-.prose {
-  max-width: 48rem;
-  padding: var(--space-8, 16px);
-}
-
-.prose > * + * {
-  margin-top: var(--space-6, 12px);
-}
-
-.prose-list {
-  margin: 0;
-  padding-left: var(--space-10, 20px);
-}
-
-.prose-list li + li {
-  margin-top: var(--space-2, 4px);
-}
-
-.prose-code {
-  margin: 0;
-  padding: var(--space-7, 14px);
-  overflow-x: auto;
-  background: var(--bg-inset, #1f1f1d);
-  border: 1px solid var(--border-soft, #3d3d39);
-  border-radius: var(--radius, 12px);
-  font-family: var(--font-mono, ui-monospace, monospace);
-  font-size: var(--text-sm, 12px);
-}
+/*
+ * The split and the prose styling used to be here. Both are
+ * published now — `Split` and `Markdown` — which is what this
+ * example existing was for. What is left is genuinely this
+ * extension's own.
+ */
 
 /* ── Editor ────────────────────────────────────────────────────────
    `Textarea` is a bare textarea with a `min-height`. A document

@@ -141,7 +141,9 @@ export {
   useAnnounce,
   type Urgency,
 } from "./LiveRegion";
+export { Markdown, type MarkdownProps } from "./Markdown";
 export { MarkdownInline } from "./MarkdownInline";
+export { Split, type SplitProps } from "./Split";
 export { MenuIcon, type MenuIconName, type MenuIconProps } from "./MenuIcon";
 export { Monogram } from "./Monogram";
 export { OverflowMenu, type OverflowAction } from "./OverflowMenu";

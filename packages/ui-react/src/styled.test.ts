@@ -169,9 +169,33 @@ describe("the published fallbacks are igni's values", () => {
     },
   );
 
+  /*
+   * A variable a component owns rather than a token igni publishes.
+   *
+   * `Split` writes its width into one, per instance, so two splits
+   * on a page do not fight over a single property. It has no theme
+   * value and never will, so holding it to one would be holding it
+   * to nothing.
+   *
+   * The convention earns its keep by being checkable: anything not
+   * declared by `theme.css` must be named `--ui-…`, so a typo in a
+   * real token name still fails here rather than being waved
+   * through as component-local.
+   */
+  const isComponentLocal = (name: string) => name.startsWith("--ui-");
+
   it.each([...published.inline.entries()])(
     "var(%s) fallback matches theme.css",
     (name, value) => {
+      if (!theme.has(name)) {
+        expect(
+          isComponentLocal(name),
+          `${name} is not a token theme.css declares and is not named ` +
+            `--ui-…, so it is either a typo or a component variable that ` +
+            `needs renaming`,
+        ).toBe(true);
+        return;
+      }
       expect(value).toBe(theme.get(name));
     },
   );

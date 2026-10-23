@@ -21,19 +21,25 @@
  *   possible at all. Without `min-height: 0` the left list grows the
  *   page instead of scrolling.
  *
- * **What it had to hand-roll, which is the finding**
+ * **What it found**
  *
- * - **The split.** `ColumnHandle` exists in the app, is 180 lines,
- *   and is not published. Every two-pane extension writes pointer
- *   capture, clamping and a keyboard-operable separator again.
- * - **Block markdown.** The floor publishes `MarkdownInline`, which
- *   is *designed* to flatten block structure for previews. A document
- *   surface needs the opposite, so this renders a deliberately small
- *   subset itself and the result does not look like igni's prose.
+ * - **A published pair that could not be used as a pair.** `Tabs`
+ *   generated its own id prefix and `TabPanel` required one, with
+ *   nothing to let a caller learn it. Fixed.
+ * - **The split** was forty lines here and a block of CSS. `Split`
+ *   is published now, and this file uses it.
+ * - **Block markdown** was a hand-rolled subset that did not look
+ *   like igni's prose. `Markdown` is published now, and so is
+ *   `.ui-prose`.
+ *
+ * **What it still has to hand-roll**
+ *
  * - **An unsaved-work guard.** `close()` is one-way and `HostMessage`
  *   has no "about to close", so there is no way to stop the host
  *   navigating away from a dirty draft. The best available is to warn
- *   after the fact, which is not a guard.
+ *   after the fact, which is not a guard. This is a gap in the
+ *   envelope rather than in the component list, and it is the one
+ *   left.
  *
  * ## What does not work yet
  *
@@ -46,10 +52,7 @@
 import {
   useCallback,
   useEffect,
-  useMemo,
-  useRef,
   useState,
-  type ReactNode,
 } from "react";
 import { createRoot } from "react-dom/client";
 
@@ -67,10 +70,12 @@ import {
   Item,
   List,
   LiveRegion,
+  Markdown,
   Monogram,
   Row,
   Scroll,
   Spinner,
+  Split,
   Tabs,
   TabPanel,
   Text,
@@ -120,6 +125,13 @@ export function NotesPanel({
   const [selected, setSelected] = useState<string | null>(
     typeof igni.params.version === "string" ? igni.params.version : null,
   );
+  // Restored from the host's URL, which is the only place an
+  // extension has that survives its backend restarting.
+  const [asideWidth, setAsideWidth] = useState(() => {
+    const raw = igni.params.width;
+    const parsed = typeof raw === "string" ? Number.parseInt(raw, 10) : NaN;
+    return Number.isFinite(parsed) ? parsed : 280;
+  });
 
   useEffect(() => {
     let alive = true;
@@ -184,36 +196,45 @@ export function NotesPanel({
       ) : null}
 
       {/*
-        The split. Hand-rolled: `ColumnHandle` is 180 lines in the app
-        and is not published, so the width, the pointer capture and
-        the keyboard-operable separator are all in panel.css and
-        below. This is the single biggest thing the floor is missing
-        for a two-pane shape.
+        The split was forty lines of this file and a block of CSS
+        until the floor published one. What is left is the two panes
+        and a name for the separator.
+
+        The width is not persisted, deliberately: an extension is
+        served from an ephemeral port, so its `localStorage` is wiped
+        whenever the backend restarts. `onResize` hands it back and
+        this one puts it in the host's URL, which does survive.
       */}
-      <div className="split">
-        <Scroll className="split-list">
-          <ReleaseList
-            releases={releases}
-            selected={selected}
-            onPick={pick}
-            loading={load.state === "loading"}
-          />
-        </Scroll>
-
-        <Separator />
-
-        <div className="split-main">
-          {selected === null ? (
-            <Empty>Pick a release to see its notes.</Empty>
-          ) : (
-            // Remounting on a different version is what resets the
-            // editor. Holding the draft above this would show the
-            // previous release's text against the new one's revision,
-            // and the first save would overwrite it.
-            <NoteView key={selected} client={client} version={selected} />
-          )}
-        </div>
-      </div>
+      <Split
+        aside={
+          <Scroll>
+            <ReleaseList
+              releases={releases}
+              selected={selected}
+              onPick={pick}
+              loading={load.state === "loading"}
+            />
+          </Scroll>
+        }
+        label="Resize the release list"
+        defaultWidth={asideWidth}
+        onResize={(width) => {
+          setAsideWidth(width);
+          if (selected !== null) {
+            igni.setLocation({ version: selected, width: String(width) });
+          }
+        }}
+      >
+        {selected === null ? (
+          <Empty>Pick a release to see its notes.</Empty>
+        ) : (
+          // Remounting on a different version is what resets the
+          // editor. Holding the draft above this would show the
+          // previous release's text against the new one's revision,
+          // and the first save would overwrite it.
+          <NoteView key={selected} client={client} version={selected} />
+        )}
+      </Split>
     </AppShell>
   );
 }
@@ -254,62 +275,6 @@ function ReleaseList({
         </Item>
       ))}
     </List>
-  );
-}
-
-/**
- * The drag handle between the panes.
- *
- * A `separator` with `aria-valuenow`, because a split that can only
- * be moved with a pointer is a split half the users cannot move. The
- * width lives in a CSS variable rather than React state so dragging
- * does not re-render the document on every pointer move — which is
- * the reason the app's own `ColumnHandle` does the same thing, and
- * the reason copying its 180 lines into every extension is the wrong
- * answer.
- */
-function Separator() {
-  const held = useRef(false);
-
-  const setWidth = (px: number) => {
-    const clamped = Math.min(520, Math.max(180, px));
-    document.documentElement.style.setProperty("--split-w", `${clamped}px`);
-  };
-
-  const current = () =>
-    Number.parseInt(
-      getComputedStyle(document.documentElement).getPropertyValue("--split-w"),
-      10,
-    ) || 280;
-
-  return (
-    <div
-      role="separator"
-      aria-orientation="vertical"
-      aria-label="Resize the release list"
-      aria-valuenow={current()}
-      aria-valuemin={180}
-      aria-valuemax={520}
-      tabIndex={0}
-      className="split-handle"
-      onPointerDown={(event) => {
-        held.current = true;
-        event.currentTarget.setPointerCapture(event.pointerId);
-      }}
-      onPointerMove={(event) => {
-        if (held.current) setWidth(event.clientX);
-      }}
-      onPointerUp={(event) => {
-        held.current = false;
-        event.currentTarget.releasePointerCapture(event.pointerId);
-      }}
-      onKeyDown={(event) => {
-        if (event.key === "ArrowLeft") setWidth(current() - 16);
-        else if (event.key === "ArrowRight") setWidth(current() + 16);
-        else return;
-        event.preventDefault();
-      }}
-    />
   );
 }
 
@@ -465,7 +430,7 @@ function NoteView({
 
       <TabPanel base={`note-${version}`} id="preview" active={tab}>
         <Scroll>
-          <Markdown source={draft} />
+          <Markdown>{draft}</Markdown>
         </Scroll>
       </TabPanel>
 
@@ -532,65 +497,6 @@ function CommentList({ comments }: { comments: Comment[] }) {
         </div>
       ))}
     </List>
-  );
-}
-
-/**
- * Block markdown, badly, because the floor does not publish it.
- *
- * `MarkdownInline` is the only markdown the floor exports and it is
- * *designed* to destroy block structure — headings lose their size,
- * lists become middots, images return null. That is right for a
- * two-line preview and exactly wrong for a document.
- *
- * So this renders a deliberately small subset: headings, paragraphs,
- * bullets and fenced code. It is not a markdown renderer and should
- * not grow into one — what it is, is the shape of the gap. An
- * extension that wants real prose today bundles remark and then
- * eyeballs igni's typography, because the prose styling lives in
- * `theme.css` and is not in the floor either.
- */
-function Markdown({ source }: { source: string }): ReactNode {
-  const blocks = useMemo(() => source.split(/\n{2,}/), [source]);
-
-  return (
-    <div className="prose">
-      {blocks.map((block, index) => {
-        const trimmed = block.trim();
-        if (trimmed.length === 0) return null;
-
-        const heading = /^(#{1,4})\s+(.*)$/.exec(trimmed);
-        if (heading) {
-          const level = Math.min(4, heading[1].length) as 1 | 2 | 3 | 4;
-          return (
-            <Heading key={index} level={level}>
-              {heading[2]}
-            </Heading>
-          );
-        }
-
-        if (trimmed.startsWith("```")) {
-          return (
-            <pre key={index} className="prose-code">
-              {trimmed.replace(/^```[\w-]*\n?/, "").replace(/```$/, "")}
-            </pre>
-          );
-        }
-
-        const lines = trimmed.split("\n");
-        if (lines.every((line) => /^[-*]\s+/.test(line))) {
-          return (
-            <ul key={index} className="prose-list">
-              {lines.map((line, item) => (
-                <li key={item}>{line.replace(/^[-*]\s+/, "")}</li>
-              ))}
-            </ul>
-          );
-        }
-
-        return <Text key={index}>{trimmed}</Text>;
-      })}
-    </div>
   );
 }
 

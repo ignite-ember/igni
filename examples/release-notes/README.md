@@ -46,26 +46,27 @@ That is the whole argument for a second example, in one bug.
 - **`ErrorBoundary`, `ToastHost`, `LiveRegion`** — all three were on
   the reference extension's hand-rolled list and are not on this one's.
 
-## What it had to hand-roll
+## What it had to hand-roll, and what the floor took back
 
-This is the floor's to-do, and it is shorter than it was.
+This example's first draft hand-rolled three things. Two of them are
+published now, which is what it was built for:
 
-- **The split.** `ColumnHandle` is 180 lines in the app, does exactly
-  this, and is not published. So `ui/panel.css` and `Separator` in
-  `panel.tsx` are pointer capture, clamping, a width in a CSS
-  variable (so dragging does not re-render the document) and a
-  keyboard-operable `role="separator"`. Every two-pane extension
-  writes this again, differently. **The biggest single gap for this
-  shape.**
-- **Block markdown.** The floor publishes `MarkdownInline`, which is
-  *designed* to flatten block structure for previews — headings lose
-  their size, lists become middots. A document needs the opposite, so
-  `Markdown` here renders a deliberately small subset and should not
-  grow into a renderer. An extension that wants real prose bundles
-  remark and then eyeballs igni's typography, because the prose
-  styling lives in `theme.css` and is not published either.
+- **The split** was forty lines of `panel.tsx` and a block of CSS —
+  pointer capture, clamping, a width in a custom property so dragging
+  does not re-render the document, and a keyboard-operable
+  `role="separator"`. `Split` is published. It deliberately does
+  *not* persist the width the way the app's `ColumnHandle` does,
+  because an extension's `localStorage` dies with its ephemeral port;
+  it hands the width back and this example puts it in the host's URL,
+  which survives.
+- **Block markdown** was a deliberately small subset that did not
+  look like igni's prose, because the prose styling lived in
+  `theme.css`. `Markdown` and `.ui-prose` are published.
+
+Still ours:
+
 - **An editor that fills its pane.** `Textarea` is a bare textarea
-  with a `min-height`.
+  with a `min-height`, and a document editor wants the pane.
 
 ## The gap that is not a component
 
