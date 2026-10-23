@@ -478,3 +478,62 @@ describe("events reaching a frame", () => {
     });
   });
 });
+
+describe("settings reach the frame", () => {
+  it("arrive in `hello`, separately from the launch parameters", async () => {
+    // The backend's `set_extension_settings` has always said the
+    // values "reach the extension as launch params on its next
+    // mount". Nothing passed them, so a setting could be declared,
+    // validated, stored, and never seen by the thing it configures.
+    const { posted, frame } = mountFrame({
+      params: { doc: "from-the-link" },
+      settings: { doc: "from-the-admin", retries: 3 },
+    });
+    frame?.dispatchEvent(new Event("load"));
+
+    await waitFor(() => {
+      const hello = (
+        posted as {
+          kind: string;
+          params?: Record<string, unknown>;
+          settings?: Record<string, unknown>;
+        }[]
+      ).find((m) => m.kind === "hello");
+      expect(hello).toBeTruthy();
+      // Two namespaces, not one. `params` is where you are and
+      // `settings` is how you are set up; merged, the key `doc`
+      // would be whichever the host happened to write last.
+      expect(hello?.params).toEqual({ doc: "from-the-link" });
+      expect(hello?.settings).toEqual({ doc: "from-the-admin", retries: 3 });
+    });
+  });
+
+  it("are an empty object when the extension declares none", async () => {
+    const { posted, frame } = mountFrame();
+    frame?.dispatchEvent(new Event("load"));
+    await waitFor(() => {
+      const hello = (posted as { kind: string; settings?: unknown }[]).find(
+        (m) => m.kind === "hello",
+      );
+      expect(hello?.settings).toEqual({});
+    });
+  });
+
+  it("a greeting without them is still a greeting", () => {
+    // Added after the envelope shipped. A guest built against this
+    // version may be framed by a host that predates it, and
+    // refusing the hello would turn an additive field into a
+    // version wall.
+    expect(
+      isHostMessage({
+        igni: BRIDGE_VERSION,
+        kind: "hello",
+        nonce: "n",
+        extensionId: "acme.scanner",
+        params: {},
+        theme: "dark",
+        tokens: {},
+      }),
+    ).toBe(true);
+  });
+});

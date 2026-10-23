@@ -19,7 +19,7 @@ import pytest
 
 from ember_code.core.code_index.neo4j_schema import COMMIT_SCHEMA_STATEMENTS
 from ember_code.core.code_index.schema.items import ChunkRow
-from ember_code.core.tools.codeindex.cypher_guard import (
+from ember_code.core.graph.cypher_guard import (
     CypherGuardError,
     assert_read_only_cypher,
 )

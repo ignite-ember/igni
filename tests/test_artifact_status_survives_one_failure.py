@@ -14,7 +14,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from ember_code.core.session.artifact_ops import SessionArtifactManager
+from ember_code.core.artifacts.session_manager import SessionArtifactManager
 
 
 def _manager(index: MagicMock) -> SessionArtifactManager:

@@ -35,7 +35,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from ember_code.core.code_index.index import CodeIndex
-from ember_code.core.tools.codeindex.cypher_guard import (
+from ember_code.core.graph.cypher_guard import (
     CypherGuardError,
     CypherReadOnlyViolation,
     CypherUnknownParam,
@@ -581,7 +581,7 @@ class TestTheStringLiteralBypass:
         """A named constant so the reasoning survives, and asserted so
         re-adding an entry is a deliberate act with a test to change.
         Any procedure that runs its argument defeats the token scan."""
-        from ember_code.core.tools.codeindex.cypher_guard import _ALLOWED_APOC
+        from ember_code.core.graph.cypher_guard import _ALLOWED_APOC
 
         assert frozenset() == _ALLOWED_APOC
 

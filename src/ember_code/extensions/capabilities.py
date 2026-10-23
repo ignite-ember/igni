@@ -99,6 +99,7 @@ from __future__ import annotations
 
 import logging
 import re
+from collections.abc import Iterable, Iterator
 from typing import Protocol, runtime_checkable
 
 from pydantic import BaseModel, Field
@@ -158,6 +159,95 @@ class Resolved(BaseModel):
     #: What actually satisfied this, for an administrator reading a
     #: log: ``"provisioned"`` or ``"bound to the deployment's"``.
     how: str = ""
+
+
+class Connection:
+    """One resolved capability, as the service is told about it.
+
+    A value object over a :class:`Resolved` whose job is the two
+    variable names. They are derived from the capability rather
+    than written out, so a kind added to :class:`Capability` is
+    reachable without a second edit — and so neither side spells
+    ``IGNI_CAPABILITY_GRAPH_DB_URI`` as a literal.
+    """
+
+    #: What every variable this class produces begins with.
+    PREFIX = "IGNI_CAPABILITY"
+
+    def __init__(self, resolved: Resolved) -> None:
+        self._resolved = resolved
+
+    @property
+    def capability(self) -> Capability:
+        return self._resolved.capability
+
+    @property
+    def slug(self) -> str:
+        """``graph-db`` as it appears in a variable name."""
+        return self._resolved.capability.value.upper().replace("-", "_")
+
+    @property
+    def uri_variable(self) -> str:
+        return f"{self.PREFIX}_{self.slug}_URI"
+
+    @property
+    def secret_variable(self) -> str:
+        return f"{self.PREFIX}_{self.slug}_SECRET"
+
+    def environment(self) -> dict[str, str]:
+        """This one connection, as environment entries.
+
+        The secret is a *name*, exactly as :class:`Resolved` carries
+        it — its value reaches the service through the ordinary
+        secrets path, so a connection string and a credential travel
+        separately and neither is written into a manifest.
+        """
+        env = {self.uri_variable: self._resolved.uri}
+        if self._resolved.secret:
+            env[self.secret_variable] = self._resolved.secret
+        return env
+
+
+class Connections:
+    """Everything the resolver found, as the service is told it.
+
+    Resolution used to end at the log line. The installer called the
+    resolver, wrote "provisioned" at info, and started the service
+    with no way to reach what had just been resolved — so a manifest
+    could declare ``requires: graph-db``, have it satisfied, and the
+    extension would come up unable to find it. The same shape as a
+    grant that is approved and never arrives, which is the failure
+    this system has spent its life removing.
+
+    Shaped like :class:`~ember_code.extensions.permissions.Secrets`
+    and :class:`~ember_code.extensions.permissions.WorkspaceAccess`,
+    because it is the third thing the installer merges into one
+    service environment and three spellings of that would be three
+    things to keep in step.
+    """
+
+    def __init__(self, resolved: Iterable[Resolved]) -> None:
+        self._connections = tuple(Connection(one) for one in resolved)
+
+    def __iter__(self) -> Iterator[Connection]:
+        return iter(self._connections)
+
+    def __len__(self) -> int:
+        return len(self._connections)
+
+    def of(self, capability: Capability) -> Connection | None:
+        """The connection for one kind, or ``None`` if none was asked for."""
+        for connection in self._connections:
+            if connection.capability is capability:
+                return connection
+        return None
+
+    def environment(self) -> dict[str, str]:
+        """Every connection, as the environment a service is started with."""
+        env: dict[str, str] = {}
+        for connection in self._connections:
+            env.update(connection.environment())
+        return env
 
 
 @runtime_checkable

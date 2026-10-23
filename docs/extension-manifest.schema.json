@@ -4,128 +4,127 @@
   "title": "igni extension manifest",
   "description": "Everything an extension declares about itself. One manifest per extension; packaging decides which of `sidecar` and `endpoint` applies. The contract this describes is docs/EXTENSIBILITY.md — read §2 for the reasoning and this file for the shape. Point your editor at it with \"$schema\": \"https://igni.sh/schema/extension-manifest-1.json\" and it will complete and check as you type.",
   "type": "object",
-  "required": ["id", "version", "contract", "trust"],
+  "required": [
+    "id",
+    "version",
+    "contract",
+    "trust"
+  ],
   "additionalProperties": false,
-
   "properties": {
-    "$schema": { "type": "string" },
-
+    "$schema": {
+      "type": "string"
+    },
     "id": {
       "type": "string",
       "description": "Reverse-DNS, immutable, and the namespace for everything this extension contributes. Changing it is a new extension, not a new version.",
       "pattern": "^[a-z][a-z0-9]*(\\.[a-z][a-z0-9-]*)+$",
-      "examples": ["acme.scanner", "com.acme.ledgersync"]
+      "examples": [
+        "acme.scanner",
+        "com.acme.ledgersync"
+      ]
     },
-
     "version": {
       "type": "string",
       "description": "The extension's own version. Semver. Independent of the contract version and of igni's.",
       "pattern": "^\\d+\\.\\d+\\.\\d+(-[0-9A-Za-z.-]+)?$"
     },
-
     "contract": {
       "type": "string",
       "description": "The range of contract versions this extension works against — the only compatibility axis. Never name an igni version. A deployment advertises one contract version, the lower of what its backend and its installed client implement; `igni ext doctor` prints it.",
-      "examples": [">=1.0 <2"]
+      "examples": [
+        ">=1.0 <2"
+      ]
     },
-
     "name": {
       "type": "string",
       "description": "What an administrator sees in an install list. Defaults to `id` when absent, which reads badly.",
       "maxLength": 60
     },
-
     "description": {
       "type": "string",
       "description": "One sentence, for the same install list.",
       "maxLength": 200
     },
-
     "vendor": {
       "type": "string",
       "description": "Who to contact. Shown beside the trust tier, because 'partner' only means something if the administrator knows which partner."
     },
-
     "trust": {
-      "enum": ["first-party", "partner", "unsigned"],
+      "enum": [
+        "first-party",
+        "partner",
+        "unsigned"
+      ],
       "description": "first-party: signed by igni's key, compiled into the base. partner: signed by a key this deployment's administrator added to its trust store — the SI's, or the customer's own. unsigned: development only, never production, and the install refuses unless the deployment has explicitly allowed it."
     },
-
     "signature": {
       "type": "string",
       "description": "Detached signature over the bundle, verified locally against a key this deployment trusts. No network, so it survives an air-gap. Required unless `trust` is `unsigned`."
     },
-
     "sidecar": {
       "type": "object",
       "description": "Packaging A: a signed image igni installs and supervises. Single-user backends only — a sidecar is one process, so on a shared backend it would be one instance shared by every principal on it.",
-      "required": ["image", "mcp"],
+      "required": [
+        "image",
+        "mcp"
+      ],
       "additionalProperties": false,
       "properties": {
         "image": {
           "type": "string",
           "description": "The container image, with a tag. Present in the bundle; never pulled at install, because an air-gapped deployment has no registry to pull from.",
-          "examples": ["acme__ledger-sync:1.0.0"]
+          "examples": [
+            "acme__ledger-sync:1.0.0"
+          ]
         },
         "mcp": {
           "type": "object",
-          "required": ["transport"],
+          "required": [
+            "transport"
+          ],
           "additionalProperties": false,
           "properties": {
             "transport": {
-              "enum": ["stdio"],
+              "enum": [
+                "stdio"
+              ],
               "description": "A sidecar speaks MCP over stdio. An endpoint speaks it over SSE; that is the difference between the two packagings, not a choice you make here."
-            }
-          }
-        },
-        "requires": {
-          "type": "array",
-          "description": "Infrastructure **the deployment** provides and igni brokers. Not igni's own: a deployment running Qdrant has a vector store igni knows nothing about, and igni's job is to hand you a connection to it rather than to be it. On a laptop the deployment is the laptop, and igni is the only thing around to act for it — which is why it provisions there and binds everywhere else. Brokered rather than configured by you, so that the endpoint and the credential stay out of your bundle and the same bundle installs in both places. Resolved offline, at install, naming the fix when it cannot be.",
-          "items": {
-            "type": "object",
-            "required": ["capability", "constraint"],
-            "additionalProperties": false,
-            "properties": {
-              "capability": {
-                "enum": ["graph-db", "vector-store", "relational-db", "object-store", "embedder"],
-                "description": "A kind, never a product. A regulated customer often has a sanctioned Postgres you must use, and a manifest naming 'postgres' cannot express 'or whatever they have'. `embedder` is text in, vectors out — a kind for the same reason, and because two extensions sharing one must agree on the vector width."
-              },
-              "constraint": {
-                "type": "string",
-                "description": "What this requirement will accept. **Its meaning depends on the kind** — it is not always a version range. For `graph-db`, `relational-db` and `object-store` it is a semver range over the major version: `>=14` against a relational-db means Postgres 14 or later if that is what the deployment has. For `vector-store` and `embedder` it is `dim=<n>`, the vector width, because width is the axis on which they are compatible: a newer model of the same width is a safe substitution and an older one of a different width is not, and a version range cannot say that. An extension declaring both must give them the same width — vectors written at one and queried at another return nonsense rather than failing.",
-                "examples": [">=5", ">=14", "dim=384"]
-              },
-              "mode": {
-                "enum": ["shared", "dedicated", "bind-only"],
-                "default": "shared",
-                "description": "shared: use the deployment's instance, provisioning one if absent. dedicated: always provision a separate instance. bind-only: use an existing instance and fail at install if there is none — which is what a customer's sanctioned database requires, and what you want when provisioning would breach their change control."
-              }
             }
           }
         }
       }
     },
-
     "endpoint": {
       "type": "object",
       "description": "Packaging B: a service someone else runs, registered rather than installed. Its availability, scaling and failover are its own. Always inside the customer's network — igni hosts nothing.",
-      "required": ["url"],
+      "required": [
+        "url"
+      ],
       "additionalProperties": false,
       "properties": {
         "url": {
           "type": "string",
           "format": "uri",
           "description": "Where its MCP endpoint answers, over SSE.",
-          "examples": ["https://artifacts.internal/mcp"]
+          "examples": [
+            "https://artifacts.internal/mcp"
+          ]
         },
         "auth": {
           "type": "object",
           "description": "How igni authenticates to it.",
-          "required": ["kind"],
+          "required": [
+            "kind"
+          ],
           "additionalProperties": false,
           "properties": {
             "kind": {
-              "enum": ["none", "bearer", "mtls"],
+              "enum": [
+                "none",
+                "bearer",
+                "mtls"
+              ],
               "description": "none is only defensible on a network segment the customer treats as trusted."
             },
             "secret": {
@@ -136,19 +135,27 @@
         }
       }
     },
-
     "dev": {
       "type": "object",
       "description": "Packaging C: a command igni runs on this machine, speaking MCP over stdio. Development only, and the schema refuses it on anything but `trust: unsigned` — it is an arbitrary command out of a text file, which is exactly what a signature exists to prevent. It exists because the other two packagings both need something an author does not have on their laptop: a container registry, or a deployed service.",
-      "required": ["command"],
+      "required": [
+        "command"
+      ],
       "additionalProperties": false,
       "properties": {
         "command": {
           "type": "array",
           "description": "argv, not a shell string. A shell string would be parsed by a shell, and the quoting rules of whichever shell that turns out to be are not a thing a manifest should depend on.",
-          "items": { "type": "string" },
+          "items": {
+            "type": "string"
+          },
           "minItems": 1,
-          "examples": [["node", "./server.js"]]
+          "examples": [
+            [
+              "node",
+              "./server.js"
+            ]
+          ]
         },
         "cwd": {
           "type": "string",
@@ -157,64 +164,108 @@
         "env": {
           "type": "object",
           "description": "Extra environment for the command. Values are literals — a secret belongs in `permissions.secrets`, which resolves to a handle rather than putting the credential in a file somebody commits.",
-          "additionalProperties": { "type": "string" }
+          "additionalProperties": {
+            "type": "string"
+          }
         }
       }
     },
-
     "permissions": {
       "type": "object",
       "description": "Declared here, granted by an administrator, enforced by the base, denied by default. An extension that asks for more on upgrade stays at its old grants until an administrator accepts — permission drift is how extension ecosystems rot.",
       "additionalProperties": false,
       "properties": {
         "workspace": {
-          "enum": ["none", "read", "write"],
+          "enum": [
+            "none",
+            "read",
+            "write"
+          ],
           "default": "none",
           "description": "Access to the user's project directory."
         },
         "workspacePaths": {
           "type": "array",
           "description": "Globs the workspace grant is scoped to, relative to the project root. Absent means the whole project, which is rarely what you need.",
-          "items": { "type": "string" },
-          "examples": [["src/**", "*.toml"]]
+          "items": {
+            "type": "string"
+          },
+          "examples": [
+            [
+              "src/**",
+              "*.toml"
+            ]
+          ]
         },
         "egress": {
           "type": "array",
           "description": "Hosts this extension may reach, as `host` or `host:port`. Empty by default, and empty is the right answer for most extensions. Undeclared egress is a contract violation rather than a bug: it is the one failure that costs a customer their accreditation.",
-          "items": { "type": "string", "pattern": "^[a-z0-9.-]+(:\\d{1,5})?$" },
+          "items": {
+            "type": "string",
+            "pattern": "^[a-z0-9.-]+(:\\d{1,5})?$"
+          },
           "default": [],
-          "examples": [["ledger.internal", "vault.internal:8200"]]
+          "examples": [
+            [
+              "ledger.internal",
+              "vault.internal:8200"
+            ]
+          ]
         },
         "secrets": {
           "type": "array",
           "description": "Named grants the deployment resolves. A name not declared here is never resolved, and the resolver is the deployment's — never anything the bundle supplies. The value reaches your service in its environment as `IGNI_SECRET_<NAME>`; an earlier version of this said you receive a handle rather than a value, which described an exchange step that does not exist.",
-          "items": { "type": "string" },
+          "items": {
+            "type": "string"
+          },
           "default": []
         },
         "tools": {
           "type": "array",
           "description": "MCP tool names this extension may register with the agent. Namespaced by `id`, so a tool cannot shadow a base tool or another extension's. This is about the *agent's* tools — see `rpc` for what the extension's own UI may call.",
-          "items": { "type": "string" },
-          "examples": [["acme.ledgersync.lookup_account"]]
+          "items": {
+            "type": "string"
+          },
+          "examples": [
+            [
+              "acme.ledgersync.lookup_account"
+            ]
+          ]
         },
         "events": {
           "type": "array",
-          "description": "Host events this extension may be told about — an exact topic, or a `*`-suffixed prefix. Only topics igni publishes: its own events, under `ext.<your-id>.`, need no grant, and another extension's cannot be granted at all, not by a wildcard and not by naming it. The check happens where an event is dispatched, never where it is received, because a host that broadcast everything and asked each frame to discard what was not its own would be trusting the frame to discard it. Granting a topic does not decide what you are handed: the two `workspace.*` topics also require `permissions.workspace`, and `workspace.files-changed` is filtered to your `workspacePaths` before it is sent. Asking for one without the workspace is warned about at install, never refused — but it will be addressed to nobody.",
-          "items": { "type": "string", "pattern": "^[a-z][a-z0-9.-]*\\*?$" },
+          "description": "Host events this extension may be told about — an exact topic, or a `*`-suffixed prefix. Only topics igni publishes: its own events, under `ext.<your-id>.`, need no grant, and another extension's cannot be granted at all, not by a wildcard and not by naming it. The check happens where an event is dispatched, never where it is received, because a host that broadcast everything and asked each frame to discard what was not its own would be trusting the frame to discard it. Granting a topic does not decide what you are handed: the two `workspace.*` topics also require `permissions.workspace`, and `workspace.files-changed` is filtered to your `workspacePaths` before it is sent. Asking for one without the workspace is warned about at install, never refused — but it will be addressed to nobody. An event reaches a frame through the bridge and a service through the reserved tool `igni_on_event(topic, payload)` — implement it and your service hears whether or not you have a page. igni never offers that tool to the model.",
+          "items": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9.-]*\\*?$"
+          },
           "default": [],
-          "examples": [["workspace.head-changed"], ["workspace.*"]]
+          "examples": [
+            [
+              "workspace.head-changed"
+            ],
+            [
+              "workspace.*"
+            ]
+          ]
         },
-
         "rpc": {
           "type": "array",
           "description": "Backend RPC methods this extension's UI may call over the bridge. Exact names, or a `*`-suffixed prefix — no other patterns, because this list is read by whoever approves the install. An extension's own service answers under `ext.<id>.*`; naming a base method here requests access to igni's own data.",
-          "items": { "type": "string", "pattern": "^[a-z0-9_.]+\\*?$" },
+          "items": {
+            "type": "string",
+            "pattern": "^[a-z0-9_.]+\\*?$"
+          },
           "default": [],
-          "examples": [["ext.acme.scanner.*", "codeindex_status"]]
+          "examples": [
+            [
+              "ext.acme.scanner.*",
+              "codeindex_status"
+            ]
+          ]
         }
       }
     },
-
     "contributes": {
       "type": "object",
       "description": "What this extension adds beyond tools. MCP carries tools; none of the below travels over it.",
@@ -225,7 +276,10 @@
           "description": "Surfaces the extension renders, in its own frame. A headless extension contributes none, which is normal.",
           "items": {
             "type": "object",
-            "required": ["kind", "label"],
+            "required": [
+              "kind",
+              "label"
+            ],
             "additionalProperties": false,
             "properties": {
               "kind": {
@@ -233,7 +287,10 @@
                 "description": "Namespaced by `id`. A collision with a base page or another extension's is a validation error at install, not a surprise at runtime.",
                 "pattern": "^[a-z][a-z0-9]*(\\.[a-z][a-z0-9-]*)+$"
               },
-              "label": { "type": "string", "maxLength": 24 },
+              "label": {
+                "type": "string",
+                "maxLength": 24
+              },
               "sidebar": {
                 "type": "boolean",
                 "default": false,
@@ -252,12 +309,25 @@
           "description": "Entries in the header tools menu. Named `menu` rather than `tools`: `permissions.tools` already means MCP tool names, and one word meaning two things in one file is how a manifest gets written wrong.",
           "items": {
             "type": "object",
-            "required": ["label", "command", "desc"],
+            "required": [
+              "label",
+              "command",
+              "desc"
+            ],
             "additionalProperties": false,
             "properties": {
-              "label": { "type": "string", "maxLength": 24 },
-              "command": { "type": "string", "pattern": "^/[a-z][a-z0-9-]*$" },
-              "desc": { "type": "string", "maxLength": 60 }
+              "label": {
+                "type": "string",
+                "maxLength": 24
+              },
+              "command": {
+                "type": "string",
+                "pattern": "^/[a-z][a-z0-9-]*$"
+              },
+              "desc": {
+                "type": "string",
+                "maxLength": 60
+              }
             }
           }
         },
@@ -266,7 +336,11 @@
           "description": "Small status chips in the host's own chrome, beside igni's. For a capability whose health the user needs at a glance without opening its page — an index that has gone stale is the case this exists for. Not a frame: a chip is twenty pixels and an iframe is not what twenty pixels costs. The host renders it; the extension decides what it says, because what `PREPARING` means for one capability is not what it means for another.",
           "items": {
             "type": "object",
-            "required": ["id", "label", "source"],
+            "required": [
+              "id",
+              "label",
+              "source"
+            ],
             "additionalProperties": false,
             "properties": {
               "id": {
@@ -296,17 +370,25 @@
             }
           }
         },
-
         "commands": {
           "type": "array",
           "description": "Slash commands the extension answers.",
           "items": {
             "type": "object",
-            "required": ["command", "desc"],
+            "required": [
+              "command",
+              "desc"
+            ],
             "additionalProperties": false,
             "properties": {
-              "command": { "type": "string", "pattern": "^/[a-z][a-z0-9-]*$" },
-              "desc": { "type": "string", "maxLength": 60 }
+              "command": {
+                "type": "string",
+                "pattern": "^/[a-z][a-z0-9-]*$"
+              },
+              "desc": {
+                "type": "string",
+                "maxLength": 60
+              }
             }
           }
         },
@@ -315,7 +397,10 @@
           "description": "Text this extension supplies at a named anchor in a system prompt. The anchor must already appear in a prompt that is in scope — base prompt text is not in the floor, so in practice an extension's anchors land in prompts it also contributes through `promptVariants`.",
           "items": {
             "type": "object",
-            "required": ["anchor", "source"],
+            "required": [
+              "anchor",
+              "source"
+            ],
             "additionalProperties": false,
             "properties": {
               "anchor": {
@@ -324,7 +409,10 @@
                 "pattern": "^[A-Z][A-Z0-9_]*$"
               },
               "source": {
-                "enum": ["tool", "file"],
+                "enum": [
+                  "tool",
+                  "file"
+                ],
                 "description": "Where the text comes from. `tool`: igni calls the named MCP tool and uses what it returns, so the text can change as the extension's data does. `file`: a static file in the bundle. Required, because a fragment that declares only an anchor has no text and nothing to substitute."
               },
               "from": {
@@ -337,72 +425,217 @@
         "promptVariants": {
           "type": "array",
           "description": "Variant names this extension makes live while it is READY. An agent file named `<agent>.<variant>.md` takes over from the plain `<agent>.md` whenever the variant is live. Namespace these: a bare word can collide with an agent whose own name contains a dot.",
-          "items": { "type": "string", "pattern": "^[a-z][a-z0-9-]*$" }
+          "items": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9-]*$"
+          }
         },
         "settings": {
           "type": "array",
           "description": "Configuration the host renders into its own settings surface. Values are stored per deployment and reach the extension through its launch params.",
           "items": {
             "type": "object",
-            "required": ["key", "type", "label"],
+            "required": [
+              "key",
+              "type",
+              "label"
+            ],
             "additionalProperties": false,
             "properties": {
-              "key": { "type": "string", "pattern": "^[a-z][a-zA-Z0-9_]*$" },
-              "type": { "enum": ["string", "number", "boolean", "enum"] },
-              "label": { "type": "string" },
+              "key": {
+                "type": "string",
+                "pattern": "^[a-z][a-zA-Z0-9_]*$"
+              },
+              "type": {
+                "enum": [
+                  "string",
+                  "number",
+                  "boolean",
+                  "enum"
+                ]
+              },
+              "label": {
+                "type": "string"
+              },
               "default": {},
               "options": {
                 "type": "array",
-                "items": { "type": "string" },
+                "items": {
+                  "type": "string"
+                },
                 "minItems": 1,
                 "description": "The choices, when `type` is `enum`. Required in that case and refused otherwise — this was prose for a while, which meant an enum setting with nothing to choose from validated cleanly and then rendered as an empty dropdown."
               }
             },
-            "if": { "properties": { "type": { "const": "enum" } } },
-            "then": { "required": ["options"] },
-            "else": { "not": { "required": ["options"] } }
+            "if": {
+              "properties": {
+                "type": {
+                  "const": "enum"
+                }
+              }
+            },
+            "then": {
+              "required": [
+                "options"
+              ]
+            },
+            "else": {
+              "not": {
+                "required": [
+                  "options"
+                ]
+              }
+            }
+          }
+        },
+        "plugin": {
+          "type": "string",
+          "description": "A directory inside your bundle holding a plugin, installed with the extension and removed with it. **This is how an extension ships agents, skills and hooks** — they are not contribution types, because igni already delivers them through plugins and a second path for the same thing is a second thing to keep in step. The directory is a Claude-Code-shaped plugin (`.claude-plugin/plugin.json` plus `agents/`, `skills/`, `hooks/`); igni copies it into the plugins directory at install and deletes it at uninstall, and the loader that was already there picks it up. Relative to the bundle root and inside it: a plugin from somewhere else is one you install yourself.",
+          "examples": [
+            "plugin"
+          ]
+        }
+      }
+    },
+    "requires": {
+      "type": "array",
+      "description": "Infrastructure **the deployment** provides and igni brokers. Not igni's own: a deployment running Qdrant has a vector store igni knows nothing about, and igni's job is to hand you a connection to it rather than to be it. On a laptop the deployment is the laptop, and igni is the only thing around to act for it — which is why it provisions there and binds everywhere else. Brokered rather than configured by you, so that the endpoint and the credential stay out of your bundle and the same bundle installs in both places. Resolved offline, at install, naming the fix when it cannot be. Declared here rather than under a packaging: you need a graph store whether you ship as an image, as an endpoint, or run from source while writing this.",
+      "items": {
+        "type": "object",
+        "required": [
+          "capability",
+          "constraint"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "capability": {
+            "enum": [
+              "graph-db",
+              "vector-store",
+              "relational-db",
+              "object-store",
+              "embedder"
+            ],
+            "description": "A kind, never a product. A regulated customer often has a sanctioned Postgres you must use, and a manifest naming 'postgres' cannot express 'or whatever they have'. `embedder` is text in, vectors out — a kind for the same reason, and because two extensions sharing one must agree on the vector width."
+          },
+          "constraint": {
+            "type": "string",
+            "description": "What this requirement will accept. **Its meaning depends on the kind** — it is not always a version range. For `graph-db`, `relational-db` and `object-store` it is a semver range over the major version: `>=14` against a relational-db means Postgres 14 or later if that is what the deployment has. For `vector-store` and `embedder` it is `dim=<n>`, the vector width, because width is the axis on which they are compatible: a newer model of the same width is a safe substitution and an older one of a different width is not, and a version range cannot say that. An extension declaring both must give them the same width — vectors written at one and queried at another return nonsense rather than failing.",
+            "examples": [
+              ">=5",
+              ">=14",
+              "dim=384"
+            ]
+          },
+          "mode": {
+            "enum": [
+              "shared",
+              "dedicated",
+              "bind-only"
+            ],
+            "default": "shared",
+            "description": "shared: use the deployment's instance, provisioning one if absent. dedicated: always provision a separate instance. bind-only: use an existing instance and fail at install if there is none — which is what a customer's sanctioned database requires, and what you want when provisioning would breach their change control."
           }
         }
       }
     }
   },
-
   "oneOf": [
     {
-      "required": ["sidecar"],
+      "required": [
+        "sidecar"
+      ],
       "allOf": [
-        { "not": { "required": ["endpoint"] } },
-        { "not": { "required": ["dev"] } }
+        {
+          "not": {
+            "required": [
+              "endpoint"
+            ]
+          }
+        },
+        {
+          "not": {
+            "required": [
+              "dev"
+            ]
+          }
+        }
       ]
     },
     {
-      "required": ["endpoint"],
+      "required": [
+        "endpoint"
+      ],
       "allOf": [
-        { "not": { "required": ["sidecar"] } },
-        { "not": { "required": ["dev"] } }
+        {
+          "not": {
+            "required": [
+              "sidecar"
+            ]
+          }
+        },
+        {
+          "not": {
+            "required": [
+              "dev"
+            ]
+          }
+        }
       ]
     },
     {
-      "required": ["dev"],
+      "required": [
+        "dev"
+      ],
       "allOf": [
-        { "not": { "required": ["sidecar"] } },
-        { "not": { "required": ["endpoint"] } }
+        {
+          "not": {
+            "required": [
+              "sidecar"
+            ]
+          }
+        },
+        {
+          "not": {
+            "required": [
+              "endpoint"
+            ]
+          }
+        }
       ]
     }
   ],
-
   "allOf": [
     {
-      "if": { "required": ["dev"] },
+      "if": {
+        "required": [
+          "dev"
+        ]
+      },
       "then": {
-        "properties": { "trust": { "const": "unsigned" } },
+        "properties": {
+          "trust": {
+            "const": "unsigned"
+          }
+        },
         "description": "A dev command is an arbitrary executable named in a text file. Allowing it on a signed manifest would mean a signature attested to something that then ran whatever it liked."
       }
     },
     {
-      "if": { "properties": { "trust": { "enum": ["first-party", "partner"] } } },
+      "if": {
+        "properties": {
+          "trust": {
+            "enum": [
+              "first-party",
+              "partner"
+            ]
+          }
+        }
+      },
       "then": {
-        "required": ["signature"],
+        "required": [
+          "signature"
+        ],
         "description": "Anything but a development build carries a signature."
       }
     }

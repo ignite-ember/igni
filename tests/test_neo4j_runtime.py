@@ -240,9 +240,7 @@ def test_default_tarball_url_format(tmp_path: Path, tarball_url: str) -> None:
 
 def test_runtime_resolves_paths_via_canonical_module(tmp_path: Path) -> None:
     """Paths must agree with :mod:`core.code_index.paths`."""
-    from ember_code.core.code_index.paths import (
-        neo4j_data_dir,
-    )
+    from ember_code.core.data_paths import neo4j_data_dir
 
     rt = Neo4jRuntime(data_dir=tmp_path)
     assert rt._neo4j_root == neo4j_data_dir(tmp_path)

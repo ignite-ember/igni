@@ -736,7 +736,7 @@ class CypherInput(BaseModel):
     ``project_hash = $proj`` filter is required in the Cypher.
 
     The hard validator lives at
-    :func:`ember_code.core.tools.codeindex.cypher_guard.assert_read_only_cypher`
+    :func:`ember_code.core.graph.cypher_guard.assert_read_only_cypher`
     — keep the rules in one place so the test surface doesn't
     fragment across model + service.
     """

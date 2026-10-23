@@ -32,8 +32,8 @@ from typing import TYPE_CHECKING
 
 from ember_code.backend.hitl_tracer import HITLTracer
 from ember_code.backend.pending_requirements_store import PendingRequirementsStore
-from ember_code.core.code_index.paths import state_db_path
 from ember_code.core.config.user_config_store import UserConfigStore
+from ember_code.core.data_paths import state_db_path
 from ember_code.core.session.pending_messages import PendingMessageStore
 from ember_code.core.session.session_preferences import SessionPreferencesStore
 

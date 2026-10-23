@@ -94,14 +94,13 @@ REFUSALS: list[tuple[str, dict[str, Any], str]] = [
     ),
     (
         "a capability named as a product",
-        with_(
-            sidecar={
-                "image": "acme__scanner:1.0.0",
-                "mcp": {"transport": "stdio"},
-                "requires": [{"capability": "postgres", "constraint": ">=14"}],
-            }
-        ),
-        "sidecar/requires/0/capability",
+        with_(requires=[{"capability": "postgres", "constraint": ">=14"}]),
+        "requires/0/capability",
+    ),
+    (
+        "a requirement with no constraint",
+        with_(requires=[{"capability": "graph-db"}]),
+        "requires/0",
     ),
     ("a typo in a top-level key", with_(permissons={"workspace": "read"}), ""),
     (

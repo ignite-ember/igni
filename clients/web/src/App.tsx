@@ -41,6 +41,7 @@ import {
   type PageRoute,
 } from "./chat/pageStack";
 import { Contributions } from "./extensions/contributions";
+import { ExtensionsPanel } from "./components/panels/ExtensionsPanel";
 import {
   ExtensionPage,
   type ExtensionSummary,
@@ -168,6 +169,7 @@ const EXTENSION_EVENT_BACKLOG = 32;
 const BASE_SIDEBAR_LINKS: { kind: PageKind; label: string }[] = [
   { kind: "plugins", label: "Plugins" },
   { kind: "mcp", label: "MCPs" },
+  { kind: "extensions", label: "Extensions" },
   { kind: "artifacts", label: "Artifacts" },
 ];
 
@@ -179,6 +181,11 @@ const BASE_TOOLS_MENU: { label: string; command: string; desc: string }[] = [
   { label: "Agents", command: "/agents", desc: "agent pool" },
   { label: "Skills", command: "/skills", desc: "slash-command workflows" },
   { label: "Plugins", command: "/plugins", desc: "marketplaces & installs" },
+  {
+    label: "Extensions",
+    command: "/extensions",
+    desc: "installed extensions & their settings",
+  },
   { label: "Artifacts", command: "/artifacts", desc: "project artifacts" },
   { label: "Hooks", command: "/hooks", desc: "pre/post tool hooks" },
   { label: "Loop", command: "/loop", desc: "recurring prompt status" },
@@ -2664,6 +2671,9 @@ export default function App() {
           case "plugins":
             goPage({ kind: "plugins", label: "Plugins" });
             return;
+          case "extensions":
+            goPage({ kind: "extensions", label: "Extensions" });
+            return;
           case "artifacts":
             goPage({ kind: "artifacts", label: "Artifacts" });
             return;
@@ -3463,6 +3473,17 @@ export default function App() {
           >
             {page.kind === "plugins" && (
               <PluginsPanel client={client} onClose={goChat} />
+            )}
+            {page.kind === "extensions" && (
+              <ExtensionsPanel
+                client={client}
+                extensions={extensions}
+                // `set_extension_settings` answers with the whole
+                // list, so the panel hands it straight back rather
+                // than merging one row into state it does not own.
+                onChanged={setExtensions}
+                onClose={goChat}
+              />
             )}
             {/* No ``onAsk`` here: commenting on a document runs the
                 turn on the document's own page, so the reply lands

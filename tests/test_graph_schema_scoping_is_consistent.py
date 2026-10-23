@@ -20,7 +20,7 @@ from __future__ import annotations
 import re
 
 from ember_code.core.code_index.neo4j_schema import GRAPH_SCHEMA_DESCRIPTION
-from ember_code.core.tools.codeindex.cypher_guard import (
+from ember_code.core.graph.cypher_guard import (
     ALLOWED_PARAM_NAMES,
     assert_read_only_cypher,
 )

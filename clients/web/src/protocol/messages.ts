@@ -135,6 +135,7 @@ export type CommandAction =
   | "help"
   | "mcp"
   | "plugins"
+  | "extensions"
   | "agents"
   | "skills"
   | "artifacts"

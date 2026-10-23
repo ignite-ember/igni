@@ -31,8 +31,8 @@ from typing import Any
 from neo4j import AsyncDriver
 
 from ember_code.core.artifacts.metadata_codec import ArtifactMetadataCodec
-from ember_code.core.code_index.neo4j_schema import DEFAULT_DATABASE
-from ember_code.core.tools.codeindex.cypher_guard import (
+from ember_code.core.graph import DEFAULT_DATABASE
+from ember_code.core.graph.cypher_guard import (
     CypherGuardError,
     assert_read_only_cypher,
 )

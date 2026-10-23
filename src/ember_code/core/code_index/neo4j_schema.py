@@ -40,6 +40,8 @@ from __future__ import annotations
 
 import re
 
+from ember_code.core.graph import DEFAULT_DATABASE as _DEFAULT_DATABASE
+
 # ── Single-DB schema ────────────────────────────────────────────────────
 
 
@@ -47,7 +49,9 @@ import re
 # is created automatically by every Neo4j deployment, so we
 # don't need (and on Community Edition, *can't*) issue
 # ``CREATE DATABASE``. Single constant, single source of truth.
-DEFAULT_DATABASE: str = "neo4j"
+# Re-exported from the shared package rather than defined twice.
+# Both stores use it, so it is not CodeIndex's to own.
+DEFAULT_DATABASE = _DEFAULT_DATABASE
 
 
 COMMIT_SCHEMA_STATEMENTS: tuple[str, ...] = (
@@ -149,106 +153,6 @@ META_SCHEMA_STATEMENTS: tuple[str, ...] = (
     "CREATE INDEX meta_project_key IF NOT EXISTS FOR (m:Meta) ON (m.project_hash, m.key)",
     "CREATE INDEX commit_project_sha IF NOT EXISTS FOR (c:Commit) ON (c.project_hash, c.sha)",
     "CREATE INDEX commit_last_used IF NOT EXISTS FOR (c:Commit) ON (c.last_used_at)",
-)
-
-
-# ── Artifact store schema ────────────────────────────────────────────
-#
-# The artifact store is **per-project** (one process per project,
-# shared across commits) — unlike the code index, which is
-# per-(project, commit). It got its own statements here because the
-# per-project store used to apply ``COMMIT_SCHEMA_STATEMENTS``: the
-# code index's DDL, in a database that has no :Item and no :Commit.
-# That built four dead indexes and dropped three constraints that
-# were never there, on every attach.
-#
-# Shape:
-#
-#   (:Artifact {artifact_id, head_n})
-#     -[:HAS_VERSION]-> (:Version {n, content, head, embedding})
-#       -[:HAS_CHUNK]-> (:Chunk)
-#       -[:DERIVED_FROM {pinned_n, state}]-> (:Version)
-#       -[:CITES]-> (:Source)
-#
-# ``head`` is denormalised onto :Version so the vector search can
-# drop superseded versions without a join back to :Artifact —
-# retrieval is the hot path and runs on every agent turn.
-ARTIFACT_SCHEMA_STATEMENTS: tuple[str, ...] = (
-    # ── Identity lookups ────────────────────────────────────────
-    # Plain indexes, not constraints, for the same reason the code
-    # index uses them: ``IS UNIQUE`` on a bare id collides across
-    # projects sharing the physical DB. Uniqueness per
-    # (project_hash, id) is enforced at the MERGE layer.
-    "CREATE INDEX artifact_idx IF NOT EXISTS FOR (a:Artifact) ON (a.artifact_id)",
-    "CREATE INDEX artifact_project IF NOT EXISTS FOR (a:Artifact) ON (a.project_hash)",
-    "CREATE INDEX artifact_kind IF NOT EXISTS FOR (a:Artifact) ON (a.kind)",
-    "CREATE INDEX version_idx IF NOT EXISTS FOR (v:Version) ON (v.version_id)",
-    # The version lookup is always "this artifact, that n" — a
-    # composite index so ``versions()`` and ``version(id, n)`` are
-    # index seeks rather than a label scan filtered down.
-    "CREATE INDEX version_artifact_n IF NOT EXISTS FOR (v:Version) ON (v.artifact_id, v.n)",
-    # Every retrieval query filters on this; without the index the
-    # head filter is a post-hoc scan over all versions ever written.
-    "CREATE INDEX version_head IF NOT EXISTS FOR (v:Version) ON (v.head)",
-    "CREATE INDEX version_project IF NOT EXISTS FOR (v:Version) ON (v.project_hash)",
-    "CREATE INDEX version_hash IF NOT EXISTS FOR (v:Version) ON (v.content_hash)",
-    "CREATE INDEX artifact_chunk_idx IF NOT EXISTS FOR (c:Chunk) ON (c.chunk_id)",
-    "CREATE INDEX artifact_chunk_parent IF NOT EXISTS FOR (c:Chunk) ON (c.parent_id)",
-    "CREATE INDEX source_idx IF NOT EXISTS FOR (s:Source) ON (s.source_id)",
-    "CREATE INDEX source_project IF NOT EXISTS FOR (s:Source) ON (s.project_hash)",
-    # ── Comments ────────────────────────────────────────────────
-    # Comments are captured on the server, where the reader is, and
-    # projected down here on sync. They live in the graph rather than
-    # being fetched over the API each time so the whole history is
-    # local: "which documents drew comments after their source moved"
-    # is then one query alongside everything else, and it still
-    # answers on a plane.
-    "CREATE INDEX comment_idx IF NOT EXISTS FOR (c:Comment) ON (c.comment_id)",
-    "CREATE INDEX comment_project IF NOT EXISTS FOR (c:Comment) ON (c.project_hash)",
-    # The review queue is "what is still open", and it is the query
-    # the local screen runs on every refresh.
-    "CREATE INDEX comment_status IF NOT EXISTS FOR (c:Comment) ON (c.status)",
-    "CREATE INDEX comment_thread IF NOT EXISTS FOR (c:Comment) ON (c.thread_id)",
-    # ── Edge properties ─────────────────────────────────────────
-    # The staleness query filters candidates out by state and
-    # compares pinned_n, so both are read on every sweep.
-    "CREATE INDEX derived_state IF NOT EXISTS FOR ()-[d:DERIVED_FROM]-() ON (d.state)",
-    "CREATE INDEX derived_pinned IF NOT EXISTS FOR ()-[d:DERIVED_FROM]-() ON (d.pinned_n)",
-    # Candidate pruning is "everything unconfirmed older than X".
-    "CREATE INDEX derived_at IF NOT EXISTS FOR ()-[d:DERIVED_FROM]-() ON (d.at)",
-    # ── Vector index ────────────────────────────────────────────
-    # On :Version, not :Artifact — the embedding describes one
-    # revision's text. Same 384 dims / cosine / HNSW tuning as the
-    # code index, so the same over-fetch-and-rerank applies.
-    # Folders are navigation only: a separate label from :Artifact so
-    # they cannot turn up in search, lineage, drift or the vector
-    # index, all of which key on that label.
-    "CREATE INDEX folder_idx IF NOT EXISTS FOR (f:Folder) ON (f.folder_id)",
-    "CREATE INDEX folder_project IF NOT EXISTS FOR (f:Folder) ON (f.project_hash)",
-    "CREATE VECTOR INDEX version_embedding IF NOT EXISTS "
-    "FOR (v:Version) ON (v.embedding) "
-    "OPTIONS {indexConfig: {"
-    "`vector.dimensions`: 384, "
-    "`vector.similarity_function`: 'cosine', "
-    "`vector.hnsw.m`: 32, "
-    "`vector.hnsw.ef_construction`: 400"
-    "}}",
-    # On :Chunk as well as :Version, because "which paragraph of this
-    # document came from which paragraph of its source" is a question
-    # about passages, and a whole-document vector cannot answer it.
-    # Same dims / metric / tuning, so the two are directly comparable.
-    "CREATE VECTOR INDEX chunk_embedding IF NOT EXISTS "
-    "FOR (c:Chunk) ON (c.embedding) "
-    "OPTIONS {indexConfig: {"
-    "`vector.dimensions`: 384, "
-    "`vector.similarity_function`: 'cosine', "
-    "`vector.hnsw.m`: 32, "
-    "`vector.hnsw.ef_construction`: 400"
-    "}}",
-    # ── Full-text over names ────────────────────────────────────
-    # Artifacts are looked up by name far more often than code is —
-    # the agent cites "the auth design doc", not a hash.
-    "CREATE FULLTEXT INDEX artifact_name_ft IF NOT EXISTS FOR (a:Artifact) ON EACH [a.name]",
 )
 
 

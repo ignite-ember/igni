@@ -17,8 +17,8 @@ import logging
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from ember_code.core.code_index.paths import state_db_path
 from ember_code.core.config.settings import Settings
+from ember_code.core.data_paths import state_db_path
 
 if TYPE_CHECKING:
     from agno.db.base import AsyncBaseDb

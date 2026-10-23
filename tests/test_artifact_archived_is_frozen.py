@@ -234,7 +234,7 @@ class TestRulingOnACommentTheServerHasNeverSeen:
     @pytest.mark.asyncio
     async def test_it_says_the_comment_is_not_on_the_shared_copy(self):
         from ember_code.core.artifacts.collaboration import NotAllowed
-        from ember_code.core.session.artifact_ops import SessionArtifactManager
+        from ember_code.core.artifacts.session_manager import SessionArtifactManager
 
         class Refusing:
             async def resolve(self, **_):
@@ -259,7 +259,7 @@ class TestRulingOnACommentTheServerHasNeverSeen:
     async def test_a_real_failure_still_reads_as_one(self):
         # The distinction is only worth drawing if the other branch
         # still says what it used to.
-        from ember_code.core.session.artifact_ops import SessionArtifactManager
+        from ember_code.core.artifacts.session_manager import SessionArtifactManager
 
         class Broken:
             async def resolve(self, **_):

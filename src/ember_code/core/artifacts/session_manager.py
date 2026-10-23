@@ -3,6 +3,14 @@
 Returns the higher-level result models the tools and CLI consume, and
 exposes the URL/path ingestion path.
 
+**Why this is in ``core/artifacts/`` and not in ``core/session/``.**
+It was ``core/session/artifact_ops.py``, and the name said what it
+reached for rather than what it belongs to: nine of its imports are
+``core.artifacts`` and none is ``core.session``. :class:`SessionArtifactManager`
+takes an index, settings and a directory — not a ``Session`` — so
+"session" here means *scoped to one*, not *part of the session
+layer*. Artifacts is being extracted, and this goes with it.
+
 It used to mirror every write into ``.igni/artifacts.yaml`` as well.
 A document's home is the cloud: the version chain, the declaration
 each collaborator rebuilds their edges from, and the filing all live
@@ -24,7 +32,6 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from ember_code.backend.schemas_artifacts import ArtifactCommentResolved
 from ember_code.core.artifacts.collaboration import CollaborationSync, NotAllowed
 from ember_code.core.artifacts.draft_desk import DraftDesk, DraftRefused
 from ember_code.core.artifacts.errors import SourcesRequired
@@ -45,6 +52,7 @@ from ember_code.core.artifacts.models import (
     SourceDeclaration,
     StaleDependent,
 )
+from ember_code.core.artifacts.schemas_rpc import ArtifactCommentResolved
 from ember_code.core.config.settings import Settings
 
 # ``SourcesRequired`` is re-exported because callers reach for it from

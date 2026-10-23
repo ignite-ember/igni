@@ -69,7 +69,7 @@ PAIRS: list[tuple[str, type[BaseModel]]] = [
     ("", ExtensionManifest),
     ("sidecar", Sidecar),
     ("sidecar.mcp", McpBinding),
-    ("sidecar.requires[]", Requirement),
+    ("requires[]", Requirement),
     ("dev", DevCommand),
     ("endpoint", Endpoint),
     ("endpoint.auth", EndpointAuth),

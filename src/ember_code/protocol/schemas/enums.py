@@ -89,6 +89,7 @@ class CommandAction(StrEnum):
     HELP = "help"
     MCP = "mcp"
     PLUGINS = "plugins"
+    EXTENSIONS = "extensions"
     AGENTS = "agents"
     SKILLS = "skills"
     ARTIFACTS = "artifacts"

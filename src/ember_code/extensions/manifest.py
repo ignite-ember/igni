@@ -141,7 +141,6 @@ class Sidecar(Strict):
     #: an air-gapped deployment has no registry to pull from.
     image: str
     mcp: McpBinding
-    requires: list[Requirement] = Field(default_factory=list)
 
 
 class EndpointAuth(Strict):
@@ -313,6 +312,27 @@ class Contributes(Strict):
     promptFragments: list[PromptFragment] = Field(default_factory=list)
     promptVariants: list[Annotated[str, Field(pattern=SLUG.pattern)]] = Field(default_factory=list)
     settings: list[Setting] = Field(default_factory=list)
+    #: A directory inside the bundle holding a plugin, installed
+    #: with the extension and removed with it.
+    #:
+    #: **Agents, skills and hooks are not contribution types, and
+    #: this is why they do not need to be.** A capability usually
+    #: brings agents — Artifacts has the archivist, which is the
+    #: only agent allowed to touch the document store, and CodeIndex
+    #: has ten variant files. igni already has a way to deliver
+    #: those, and adding ``contributes.agents`` beside it would be
+    #: the second path this contract says not to build.
+    #:
+    #: So an extension *wraps* a plugin. The named directory is a
+    #: Claude-Code-shaped plugin — ``.claude-plugin/plugin.json``
+    #: plus ``agents/``, ``skills/``, ``hooks/`` — copied into the
+    #: plugins directory at install and deleted at uninstall. The
+    #: loader that was already there picks it up, and nothing about
+    #: agents had to learn what an extension is.
+    #:
+    #: Relative to the bundle root, and inside it: a plugin from
+    #: somewhere else is a plugin you install yourself.
+    plugin: str | None = None
 
 
 class ExtensionManifest(Strict):
@@ -333,6 +353,19 @@ class ExtensionManifest(Strict):
     sidecar: Sidecar | None = None
     endpoint: Endpoint | None = None
     dev: DevCommand | None = None
+
+    #: Infrastructure the deployment provides and igni brokers.
+    #:
+    #: On the manifest rather than on the packaging, which is where
+    #: it was: an extension needs a graph store whether it ships as
+    #: an image, as an endpoint, or runs from source on a laptop.
+    #: Hanging it off ``sidecar`` meant a ``dev`` extension could
+    #: not say it needed anything — it was silently resolved as
+    #: nothing — and that moving from ``dev`` to ``sidecar`` changed
+    #: what the extension *needed*, which is not a packaging
+    #: decision. Found by writing the first extension that requires
+    #: anything.
+    requires: list[Requirement] = Field(default_factory=list)
 
     permissions: Permissions = Field(default_factory=Permissions)
     contributes: Contributes = Field(default_factory=Contributes)

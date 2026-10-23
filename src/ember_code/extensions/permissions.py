@@ -43,6 +43,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from urllib.parse import urlparse
 
+from ember_code.extensions.events import EVENT_SINK_TOOL
 from ember_code.extensions.manifest import ExtensionManifest, Workspace
 
 logger = logging.getLogger(__name__)
@@ -124,7 +125,15 @@ class Tools:
         ``acme.scanner.list`` — the manifest is read by an
         administrator, so it is the one that should carry the
         namespace.
+
+        One name is never allowed however it is declared:
+        ``igni_on_event`` is how igni tells a service that something
+        happened, and a model able to call it could tell an
+        extension that HEAD moved when it had not. A control channel
+        the agent can drive is not a control channel.
         """
+        if tool == EVENT_SINK_TOOL:
+            return False
         if tool in self._declared:
             return True
         prefix = f"{self._id}."

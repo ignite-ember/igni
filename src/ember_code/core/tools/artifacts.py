@@ -53,7 +53,7 @@ from ember_code.core.artifacts.errors import DeleteRefused, SourcesRequired
 from ember_code.core.artifacts.models import EdgeState
 
 if TYPE_CHECKING:
-    from ember_code.core.session.artifact_ops import SessionArtifactManager
+    from ember_code.core.artifacts.session_manager import SessionArtifactManager
 
 logger = logging.getLogger(__name__)
 

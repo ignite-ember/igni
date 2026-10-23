@@ -27,11 +27,11 @@ from typing import Any
 from agno.tools import Toolkit
 
 from ember_code.core.code_index.index import CodeIndex
-from ember_code.core.paths import DEFAULT_DATA_DIR
-from ember_code.core.tools.codeindex.cypher_guard import (
+from ember_code.core.graph.cypher_guard import (
     CypherGuardError,
     assert_read_only_cypher,
 )
+from ember_code.core.paths import DEFAULT_DATA_DIR
 from ember_code.core.tools.codeindex.invocation import ToolInvocationRecorder
 from ember_code.core.tools.codeindex.schemas import CypherInput
 from ember_code.core.tools.codeindex.serializer import JsonSerializer

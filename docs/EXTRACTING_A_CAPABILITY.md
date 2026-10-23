@@ -87,10 +87,11 @@ they are not looking at.
 `server_artifacts.py:3126` broadcasts on channel `artifact_waiting`;
 `App.tsx:724` and `NotificationsPanel.tsx:79` subscribe.
 
-`HostMessage` is `hello | theme | params | result`, so an extension
-can only poll. §5 says so honestly. But Artifacts is a collaborative
-surface — a comment arriving is the event the whole feature is about
-— and polling a 2-second interval for it is not the same product.
+`HostMessage` **was** `hello | theme | params | result`, so an
+extension could only poll, and §5 said so honestly. But Artifacts is
+a collaborative surface — a comment arriving is the event the whole
+feature is about — and polling a 2-second interval for it is not the
+same product.
 
 **This was the gap that mattered most**, because it is the one an
 extension cannot work around — layout can be hand-rolled, a missing
@@ -109,11 +110,15 @@ two `workspace.*` ones, the pool's `attach_session` behind
 Each listener gets its own payload, so a `workspace.files-changed`
 is filtered to that extension's `workspacePaths` before it is sent.
 
+Delivery reaches both surfaces: a frame through the bridge, a
+service through the reserved `igni_on_event`, so an extension with
+no page — or a closed one — still hears.
+
 What Artifacts still needs is its *own* events relayed from its
 service to its frame — the `ext.<id>.` half — which the envelope
-carries and nothing yet produces. And delivery ends at an iframe,
-so an extension with no page hears nothing at all; a service is
-told about the host by being called.
+carries and nothing yet produces. That is the opposite direction
+from `igni_on_event`: this is igni calling the service, and that
+would be the service telling igni.
 
 ### 3.4 Cross-user realtime
 
@@ -143,22 +148,69 @@ should not be discovered during the extraction.
 
 ## 5. What blocks extraction today
 
-Not the readers, and not the size. Two module-scope imports:
+### The data layout — **done**
+
+`core/code_index/paths.py` owned `state_db_path`, `data_root`,
+`global_db_path`, `resolve_project_id` and the whole Neo4j layout.
+None of it is an index: `state.db` holds the scheduler, the session
+list, `/loop` and the background-process registry, and the Neo4j
+sidecar serves Artifacts' knowledge store too.
+
+It has moved to `core/data_paths.py`, which sits below the index
+rather than inside it. **Thirty modules outside `core/code_index/`
+imported it; twenty-one do now** — the scheduler, memory, `/loop`,
+the process store, client state, session directories, the Neo4j
+runtime, the bootstrap and the artifact index stopped importing
+CodeIndex entirely, because all any of them wanted was a path.
+
+The count had grown from four to nine between two passes over this
+document, which is the shape of the problem: nobody relocates a
+directory to add one lookup.
+`tests/test_the_host_can_find_its_own_data.py` ratchets it, so the
+number can go down and cannot go up.
+
+### The import edges — **fifty-nine, not two**
+
+This section said two, and named them:
 
 ```
-core/agents/builder.py:23   from ember_code.core.tools.artifacts import ArtifactTools
-core/tools/tool_spec.py:36  from ember_code.core.tools.codeindex import CodeIndexTools
+core/agents/builder.py      from ember_code.core.tools.artifacts import ArtifactTools
+core/tools/tool_spec.py     from ember_code.core.tools.codeindex import CodeIndexTools
 ```
 
-Building *any* agent drags in the whole capability. An import blocker
-over either subtree stops the backend starting, which is the
-mechanical definition of "not separable".
+Both are real. Neither is the problem. Measured with an AST walk
+rather than a grep, the host reaches into CodeIndex and Artifacts in
+**59 places across 17 files**, 37 of them at module scope.
+`tests/test_a_capability_can_be_removed.py` counts them and ratchets
+the number so it can go down and not up.
 
-`ToolSpecCatalog` was already split into `base()` and `default()` for
-exactly this, and the split sits underneath an unconditional import,
-so it buys nothing until the edges are cut.
+The count is not fifty-nine small jobs. It is two clusters:
 
-Cutting them is small, and it is the first thing.
+| Where | Edges | What it is |
+|---|---|---|
+| `backend/server_artifacts.py` | 20 | the capability's 57 RPCs |
+| `core/session/` | 20 | `artifact_ops`, `core`, the agent builders |
+| everything else | 19 | spread thin, one or two per file |
+
+Neither cluster is unpicked one import at a time. They move with the
+capability or not at all — which is why "cut the two edges first" was
+the wrong first step, and why cutting them does not make the backend
+start: `backend/controller_registry` imports `server_artifacts`
+before anything an agent does.
+
+One edge is worth naming because no grep would find it:
+`core/evals/tool_names.py` imported `ArtifactTools` **inside a
+function its own class body calls**, so importing the module imported
+the capability while the file's import block looked clean. That one
+is now at module top, where it can be seen.
+
+**What was tried and undone.** Wrapping those two imports in
+`try: … except ImportError` with a sentinel. It made two call sites
+tolerate absence while fifty-seven others did not — a passing test
+and no separability, plus a pattern suggesting to the next reader
+that the work was nearly done. A capability's symbols belong in that
+capability's extension; until they are there, the host importing them
+directly is the honest spelling.
 
 ---
 
@@ -183,11 +235,23 @@ queries itself, and the extension contributes everything else.
 That is also why the import edges in §5 still matter: the index
 cannot move while `tool_spec.py` imports it unconditionally.
 
+Most of the twenty-one remaining importers are CodeIndex talking to
+itself across two directories — `core/tools/codeindex/` is its agent
+tool and `backend/server_codeindex.py` its RPCs, and both leave with
+it. The edges above are what stops them going.
+
 ## 6. The order
 
-1. **Cut the two import edges**, with a test that blocks the subtrees
-   and asserts the backend still starts. Until that passes, nothing
-   else is checkable.
+0. ~~**Lift the data layout out.**~~ Done — `core/data_paths.py`.
+   It was the cheapest step and the only one getting worse with
+   time, because every new data path was one more edge into the
+   thing being extracted.
+1. **Move `server_artifacts.py`**, not the two imports. Twenty of the
+   fifty-nine edges are there, it is the 57 RPCs, and it is what
+   `controller_registry` pulls in before an agent exists. The
+   blocked-subtree test is in the suite as a strict `xfail`, so it
+   starts passing on its own the day this lands rather than needing
+   somebody to remember to check.
 2. **Close the floor gaps in §3** — `indicators`, `notifications`,
    and push. Push is the hard one and the one worth doing properly,
    because it is additive to the envelope exactly as `params` and

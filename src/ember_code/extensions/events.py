@@ -1,9 +1,10 @@
 """What an extension may be told, and by whom.
 
 An extension could call and could be called back on nothing: the
-bridge is ``hello | theme | params | result``, so following anything
-meant polling. Artifacts broadcasts ``artifact_waiting`` today and
-two host components subscribe; an extension has no such thing.
+bridge was ``hello | theme | params | result``, so following
+anything meant polling. Artifacts broadcast ``artifact_waiting``
+and two host components subscribed; an extension had no such
+thing. This is that thing.
 
 ## Two kinds of event, one envelope
 
@@ -19,6 +20,16 @@ never permitted to hear another.
 One envelope carries both, because the guest handles them
 identically — a topic and a payload — and two mechanisms for one job
 is two things to keep in step.
+
+## Two surfaces, one event
+
+A frame is told through the bridge. A *service* is told by being
+called, on :data:`EVENT_SINK_TOOL`, because MCP runs host→server
+and there is no other direction. Both, when both exist: the frame
+redraws and the service invalidates, which are different consumers
+of the same fact. See
+:class:`~ember_code.extensions.service_events.ServiceEvents` for
+what stops a slow service holding the host up.
 
 ## Subscription is a grant, not a filter
 
@@ -46,6 +57,20 @@ from enum import StrEnum
 from ember_code.extensions.registry import NAMESPACE, InstalledExtension
 
 logger = logging.getLogger(__name__)
+
+#: The tool igni calls on a service to tell it something happened.
+#:
+#: Reserved, and prefixed so it cannot collide with a name an
+#: extension author would pick. Implementing it is how a service
+#: with no page — or a service whose page is closed — hears a host
+#: event at all; MCP runs host→server, so being called is the only
+#: direction available.
+#:
+#: Never offered to the agent, whatever ``permissions.tools`` says.
+#: It is a control channel between igni and the service, and a
+#: model that could call it could tell an extension that HEAD moved
+#: when it had not.
+EVENT_SINK_TOOL = "igni_on_event"
 
 #: A topic: dotted, lowercase, no wildcards. Wildcards belong in a
 #: grant, which is read by whoever approves an install; a topic is

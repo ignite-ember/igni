@@ -31,18 +31,21 @@ needs a container runtime this does not have yet and fails saying so.
 from __future__ import annotations
 
 import logging
+import shutil
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
 from ember_code.core.mcp.config import MCPServerConfig, MCPTransport
+from ember_code.core.mcp.naming import bare_tool_name
 from ember_code.extensions.capabilities import (
     CapabilityResolver,
+    Connections,
     Resolved,
     UnresolvedRequirement,
     check_dimensions_agree,
 )
-from ember_code.extensions.events import unknown_grants
+from ember_code.extensions.events import EVENT_SINK_TOOL, unknown_grants
 from ember_code.extensions.manifest import ExtensionManifest, Trust, Workspace
 from ember_code.extensions.origin import ExtensionOrigins
 from ember_code.extensions.permissions import PermissionDenied, Permissions
@@ -97,6 +100,7 @@ class ExtensionInstaller:
         secret_resolver: Callable[[str], str | None] | None = None,
         profile: DeploymentProfile | None = None,
         resolver: CapabilityResolver | None = None,
+        plugins_dir: Path | None = None,
         allow_unsigned: bool = False,
     ) -> None:
         """
@@ -142,6 +146,11 @@ class ExtensionInstaller:
         self._profile = profile if profile is not None else DeploymentProfile.current()
         self._resolver = resolver
         self._allow_unsigned = allow_unsigned
+        # Where a plugin an extension carries is installed.
+        # ``None`` means this deployment does not take them —
+        # the extension still installs, and its agents do not
+        # arrive, which is said at install rather than found out.
+        self._plugins_dir = plugins_dir
 
     async def install(self, bundle: Path) -> InstalledExtension:
         """Install the bundle at ``bundle`` and try to start it.
@@ -176,8 +185,8 @@ class ExtensionInstaller:
         permissions = Permissions(manifest, secret_resolver=self._secret_resolver)
 
         try:
-            await self._resolve_requirements(manifest)
-            config = self._service_config(manifest, bundle, permissions)
+            resolved = await self._resolve_requirements(manifest)
+            config = self._service_config(manifest, bundle, permissions, resolved)
         except (InstallError, PermissionDenied, UnresolvedRequirement) as exc:
             # Packaging we cannot honour. Recorded rather than raised:
             # the extension is installed and not runnable here, which
@@ -191,6 +200,7 @@ class ExtensionInstaller:
             return entry
 
         self._restrict_tools(manifest, config.name, permissions)
+        self._check_event_sink(manifest, config.name)
 
         self._rpc.bind(
             manifest.id,
@@ -205,6 +215,8 @@ class ExtensionInstaller:
             self._rpc.unbind(manifest.id)
             self._registry.set_state(manifest.id, ExtensionState.FAILED, ui_reason)
             return entry
+
+        self._install_plugin(manifest, bundle)
 
         self._registry.set_state(manifest.id, ExtensionState.READY)
         logger.info("extension %s is READY", manifest.id)
@@ -255,6 +267,7 @@ class ExtensionInstaller:
             await self._mcp.disconnect_one(server_name(extension_id))
         except Exception as exc:  # pragma: no cover — best effort
             logger.warning("stopping %s failed: %s", extension_id, exc)
+        self._remove_plugin(extension_id)
         self._registry.remove(extension_id)
         logger.info("extension %s removed", extension_id)
         return True
@@ -407,7 +420,7 @@ class ExtensionInstaller:
         infrastructure already runs. The extension cannot tell, and
         that is what lets the same bundle install in both.
         """
-        requires = manifest.sidecar.requires if manifest.sidecar else []
+        requires = manifest.requires
         if not requires:
             return []
         if self._resolver is None:
@@ -436,7 +449,11 @@ class ExtensionInstaller:
         return resolved
 
     def _service_config(
-        self, manifest: ExtensionManifest, bundle: Path, permissions: Permissions
+        self,
+        manifest: ExtensionManifest,
+        bundle: Path,
+        permissions: Permissions,
+        resolved: list[Resolved],
     ) -> MCPServerConfig:
         """How to reach this extension's service, within its grants."""
         name = server_name(manifest.id)
@@ -449,6 +466,11 @@ class ExtensionInstaller:
             # one.
             env = dict(manifest.dev.env)
             env.update(permissions.service_environment(self._project_dir))
+            # What the resolver found, so the service can reach it.
+            # Last, for the same reason the grants go after the
+            # bundle's own ``env``: a literal in the manifest must
+            # not be how an extension picks its own graph store.
+            env.update(Connections(resolved).environment())
             return MCPServerConfig(
                 name=name,
                 type=MCPTransport.stdio,
@@ -496,14 +518,24 @@ class ExtensionInstaller:
         because the end state is identical — a tool the agent is not
         offered — and a second mechanism would be a second thing to
         keep in step.
+
+        **The two sides speak different names.** ``get_tools``
+        returns registered names (``mcp_ext:acme.scanner_list``) and
+        the manifest declares the server's own (``list``, or
+        ``acme.scanner.list``). This compared them directly, so
+        nothing ever matched and every tool was refused — including
+        the declared ones. It looked like working enforcement
+        because the failure is in the safe direction, and the unit
+        test agreed because it passed bare names, which is not what
+        this hands it.
         """
         client = self._mcp.get_client(server)
         if client is None:
             return
-        offered = self._mcp.get_tools(server)
-        refused = permissions.tools.refused(offered)
+        by_bare = {bare_tool_name(server, name): name for name in self._mcp.get_tools(server)}
+        refused = permissions.tools.refused(by_bare)
         for tool in refused:
-            self._mcp.set_tool_enabled(server, tool, False)
+            self._mcp.set_tool_enabled(server, by_bare[tool], False)
         if refused:
             logger.info(
                 "extension %s offered %d tools its manifest does not declare; not registering %s",
@@ -511,6 +543,117 @@ class ExtensionInstaller:
                 len(refused),
                 refused,
             )
+
+    def _check_event_sink(self, manifest: ExtensionManifest, server: str) -> None:
+        """Say when a granted event has nowhere to land.
+
+        An event reaches a frame or it reaches the service's
+        ``igni_on_event``. An extension with neither has written a
+        subscription that will be checked, approved, and then
+        delivered into nothing — the same silence a ``workspace.*``
+        grant without the workspace produces, from the other end.
+
+        Noted after the service is up, because that is the first
+        point igni knows which tools it offers.
+        """
+        if not manifest.permissions.events:
+            return
+        if manifest.contributes.pages:
+            return
+        offered = {bare_tool_name(server, name) for name in self._mcp.get_tools(server)}
+        if EVENT_SINK_TOOL in offered:
+            return
+        logger.warning(
+            "extension %s is granted events (%s) and has nowhere to receive them: "
+            "it contributes no pages, and its service does not offer '%s'. The "
+            "grant will be approved and every event dropped.",
+            manifest.id,
+            ", ".join(manifest.permissions.events),
+            EVENT_SINK_TOOL,
+        )
+
+    def _install_plugin(self, manifest: ExtensionManifest, bundle: Path) -> None:
+        """Put the plugin an extension carries where the loader looks.
+
+        Agents, skills and hooks are not contribution types, because
+        igni already delivers them through plugins — and a second
+        path for the same thing is a second thing to keep in step.
+        So an extension *wraps* one, and this copies it into the
+        plugins directory under the extension's own id.
+
+        Under the extension's id rather than the plugin's own name:
+        uninstalling has to find it again, and a plugin free to call
+        itself anything is a plugin that can be left behind, or can
+        collide with one somebody installed by hand.
+
+        Failures are logged, not raised. An extension whose service
+        works and whose agents did not arrive is degraded; refusing
+        the install would be worse, and the line says which it is.
+        """
+        name = manifest.contributes.plugin
+        if not name:
+            return
+        if self._plugins_dir is None:
+            logger.warning(
+                "extension %s carries a plugin and this deployment has no "
+                "plugins directory configured, so its agents, skills and "
+                "hooks will not be loaded.",
+                manifest.id,
+            )
+            return
+
+        source = (bundle / name).resolve()
+        # Inside the bundle, checked rather than trusted: the path
+        # comes from a manifest, and ``../../..`` is a manifest
+        # asking igni to copy somebody else's directory.
+        if not source.is_relative_to(bundle.resolve()) or not source.is_dir():
+            logger.error(
+                "extension %s names a plugin directory that is not in its "
+                "bundle: %r. Not installed.",
+                manifest.id,
+                name,
+            )
+            return
+        if not (source / ".claude-plugin" / "plugin.json").is_file():
+            logger.error(
+                "extension %s names %r as a plugin and it has no "
+                ".claude-plugin/plugin.json, so the loader would skip it "
+                "silently. Not installed.",
+                manifest.id,
+                name,
+            )
+            return
+
+        target = self._plugins_dir / manifest.id
+        try:
+            if target.exists():
+                shutil.rmtree(target)
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copytree(source, target)
+        except OSError:
+            logger.exception("installing %s's plugin failed", manifest.id)
+            return
+        logger.info("extension %s installed its plugin at %s", manifest.id, target)
+
+    def _remove_plugin(self, extension_id: str) -> None:
+        """Take the carried plugin away with the extension.
+
+        An agent left behind is worse than one that never arrived:
+        the archivist with no Artifacts installed is an agent whose
+        every tool call fails, offered in the same list as the ones
+        that work.
+        """
+        if self._plugins_dir is None:
+            return
+        target = self._plugins_dir / extension_id
+        if not target.is_dir():
+            return
+        try:
+            shutil.rmtree(target)
+        except OSError:  # pragma: no cover — best effort
+            logger.exception("removing %s's plugin failed", extension_id)
+            return
+        logger.info("extension %s's plugin removed from %s", extension_id, target)
 
     async def _start(self, config: MCPServerConfig) -> str | None:
         """Connect to the service. Returns a reason on failure."""

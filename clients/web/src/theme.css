@@ -16480,3 +16480,80 @@ button {
   color: var(--fg-muted);
   margin: 0 0 20px;
 }
+
+/* ── Extensions panel ──────────────────────────────────────────
+   Installed extensions, their state, and the form for
+   `contributes.settings`. The settings shape travelled on
+   `list_extensions` long before anything drew it, so the grant was
+   declarable and unreachable. */
+
+.ext-row {
+  display: block;
+}
+
+.ext-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
+.ext-state {
+  flex: none;
+  font-size: var(--text-sm);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  padding: 2px 8px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border-soft);
+  color: var(--fg-muted);
+}
+
+.ext-state-ready {
+  color: var(--success);
+  border-color: var(--success);
+}
+
+.ext-state-failed {
+  color: var(--danger);
+  border-color: var(--danger);
+}
+
+.ext-state-busy {
+  color: var(--warning);
+  border-color: var(--warning);
+}
+
+.ext-settings {
+  margin-top: var(--space-3);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.ext-setting {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+/* The label takes the fixed share so the controls line up down the
+   column; without it every row's input starts at its own label's
+   width and the form reads as a list of unrelated things. */
+.ext-setting-label {
+  flex: none;
+  width: 40%;
+  font-size: var(--text-md);
+  color: var(--fg-muted);
+}
+
+.ext-settings-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin-top: var(--space-2);
+}
+
+.ext-settings-error {
+  color: var(--danger-text);
+}

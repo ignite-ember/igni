@@ -50,6 +50,12 @@ class FakeService:
         self.raises = raises
         self.calls: list[tuple[str, dict[str, Any]]] = []
 
+    def offers(self, tool: str) -> bool:
+        # Everything. This fake is about what reaches `call`, and a
+        # discovery answer of "no" would make every test here look
+        # like a service that is not connected.
+        return True
+
     async def call(self, method: str, args: dict[str, Any]) -> Any:
         self.calls.append((method, args))
         if self.raises is not None:

@@ -12,8 +12,8 @@ from pathlib import Path
 
 from sqlalchemy import delete, select
 
-from ember_code.core.code_index.paths import state_db_path
 from ember_code.core.config.settings import Settings
+from ember_code.core.data_paths import state_db_path
 from ember_code.core.db.database import Database
 from ember_code.core.loop.db_models import LoopProgressModel, LoopStateModel
 from ember_code.core.loop.models import LoopState

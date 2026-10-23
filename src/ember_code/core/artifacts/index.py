@@ -50,7 +50,7 @@ from ember_code.core.artifacts.models import (
 from ember_code.core.artifacts.neo4j_client import Neo4jArtifactClient
 from ember_code.core.artifacts.reconcile import Reconciler
 from ember_code.core.artifacts.render import ArtifactRenderer, RenderRequest
-from ember_code.core.code_index.project import resolve_project_id
+from ember_code.core.data_paths import resolve_project_id
 from ember_code.core.paths import DEFAULT_DATA_DIR
 
 logger = logging.getLogger(__name__)

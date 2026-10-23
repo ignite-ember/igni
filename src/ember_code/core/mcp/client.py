@@ -43,6 +43,7 @@ except ImportError:  # pragma: no cover — exercised by test_connect_import_err
 
 from ember_code.core.mcp.approval import MCPApprovalManager
 from ember_code.core.mcp.config import MCPConfigLoader, MCPPolicy, MCPServerConfig
+from ember_code.core.mcp.naming import tool_name_prefix
 from ember_code.core.mcp.schemas import (
     MCPConnectResult,
     MCPPrompt,
@@ -227,7 +228,9 @@ class MCPClientManager:
             # asymmetry was silent: stdio servers were namespaced, SSE servers
             # were not, and nothing in the config hints that the transport
             # decides it.
-            mcp_tools = _MCPTools(url=config.url, transport="sse", tool_name_prefix=f"mcp_{name}")
+            mcp_tools = _MCPTools(
+                url=config.url, transport="sse", tool_name_prefix=tool_name_prefix(name)
+            )
             await mcp_tools.__aenter__()
             return mcp_tools
         if transport == "stdio":

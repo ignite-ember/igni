@@ -19,7 +19,7 @@ import logging
 import sqlite3
 from pathlib import Path
 
-from ember_code.core.code_index.paths import data_root
+from ember_code.core.data_paths import data_root
 from ember_code.core.session._sqlite_utils import connect_kv
 
 logger = logging.getLogger(__name__)

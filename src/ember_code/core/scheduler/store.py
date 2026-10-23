@@ -14,8 +14,8 @@ from typing import Any
 
 from sqlalchemy import delete, select
 
-from ember_code.core.code_index.paths import state_db_path
 from ember_code.core.config.settings import Settings
+from ember_code.core.data_paths import state_db_path
 from ember_code.core.db.database import Database
 from ember_code.core.paths import DEFAULT_DATA_DIR
 from ember_code.core.scheduler.db_models import ScheduledTaskModel

@@ -1,8 +1,12 @@
 """A real MCP server, for the end-to-end install test.
 
-Small on purpose: three tools, one of which fails, so the test can
-prove a tool result reaches an extension's UI *and* that a failure
-reaches it as a sentence rather than as a crash.
+Small on purpose: a handful of tools, one of which fails, so the
+test can prove a tool result reaches an extension's UI *and* that a
+failure reaches it as a sentence rather than as a crash.
+
+It also implements ``igni_on_event``, the reserved sink, and writes
+what it is told to ``events.jsonl`` — which is how a test proves a
+host event reached a *service* rather than only a frame.
 
 Run by :mod:`ember_code.extensions.installer` as a subprocess over
 stdio, exactly the way a development extension is.
@@ -68,6 +72,19 @@ def compliance(args: str = "") -> str:
     the same one ``ext.<id>.<method>`` already uses.
     """
     return f"Compliance report{f' for {args}' if args else ''}: 1 open violation."
+
+
+@server.tool()
+def igni_on_event(topic: str, payload: dict) -> str:
+    """The reserved sink: igni telling this service something.
+
+    Appended to a file rather than held in memory, because the test
+    that reads it is in another process — the whole point of this
+    fixture is that nothing here is a stub.
+    """
+    with Path("events.jsonl").open("a") as handle:
+        handle.write(json.dumps({"topic": topic, "payload": payload}) + "\n")
+    return json.dumps({"ok": True})
 
 
 @server.tool()

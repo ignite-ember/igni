@@ -40,6 +40,7 @@ from ember_code.backend.cmd_loop import cmd_loop
 from ember_code.backend.cmd_memory import cmd_memory
 from ember_code.backend.cmd_misc import (
     cmd_bug,
+    cmd_extensions,
     cmd_mcp,
     cmd_quit,
     cmd_skills,
@@ -160,6 +161,9 @@ class BuiltinCommandRegistry:
             BuiltinCommand("/loop", "Run a prompt in a loop", cmd_loop),
             BuiltinCommand("/plugin", "Install / update / remove a plugin", cmd_plugin),
             BuiltinCommand("/plugins", "Open the plugins panel", cmd_plugins),
+            BuiltinCommand(
+                "/extensions", "Installed extensions and their settings", cmd_extensions
+            ),
             BuiltinCommand("/compact", "Compact the conversation context", _compact_wrapper),
             BuiltinCommand("/ctx", "Show context window usage", _ctx_wrapper),
             BuiltinCommand(

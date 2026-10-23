@@ -57,16 +57,11 @@ from ember_code.core.code_index.delta import apply_delta
 from ember_code.core.code_index.embedder import Embedder, HashEmbedder
 from ember_code.core.code_index.git_branches import GitBranchReader
 from ember_code.core.code_index.manifest import Manifest
-from ember_code.core.code_index.paths import (
-    NEO4J_KNOWLEDGE_SLUG,
-    code_index_dir,
-    legacy_commit_index_path,
-    neo4j_state_root,
-)
-from ember_code.core.code_index.project import resolve_project_id
+from ember_code.core.code_index.paths import code_index_dir, legacy_commit_index_path
 from ember_code.core.code_index.schema.items import ChunkRow, CodeIndexItem, CodeIndexResult
 from ember_code.core.code_index.schema.stats import HeadStats
 from ember_code.core.code_index.schema.where_filter import ChromaWhereFilter
+from ember_code.core.data_paths import NEO4J_KNOWLEDGE_SLUG, neo4j_state_root, resolve_project_id
 from ember_code.core.paths import DEFAULT_DATA_DIR
 
 logger = logging.getLogger(__name__)

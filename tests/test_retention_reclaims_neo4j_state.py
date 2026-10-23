@@ -21,7 +21,7 @@ from unittest.mock import AsyncMock
 import pytest
 
 from ember_code.core.code_index.index import CodeIndex
-from ember_code.core.code_index.paths import neo4j_runtime_dir, neo4j_state_root
+from ember_code.core.data_paths import neo4j_runtime_dir, neo4j_state_root
 
 
 def _index(tmp_path: Path, *, runtime=None) -> CodeIndex:

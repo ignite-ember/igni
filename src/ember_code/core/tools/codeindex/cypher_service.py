@@ -8,7 +8,7 @@ and :class:`neo4j._Record` values that come back from the
 driver.
 
 The hard read-only validator lives at
-:mod:`ember_code.core.tools.codeindex.cypher_guard`. This
+:mod:`ember_code.core.graph.cypher_guard`. This
 module assumes the input already passed the guard — the
 toolkit runs :func:`assert_read_only_cypher` BEFORE invoking
 ``run``.

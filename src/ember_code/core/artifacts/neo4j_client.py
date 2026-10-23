@@ -41,6 +41,7 @@ from typing import Any
 
 from neo4j import AsyncDriver, AsyncSession
 
+from ember_code.core.artifacts.graph_schema import ARTIFACT_SCHEMA_STATEMENTS
 from ember_code.core.artifacts.metadata_codec import ArtifactMetadataCodec
 from ember_code.core.artifacts.models import (
     ArtifactLineage,
@@ -57,10 +58,7 @@ from ember_code.core.artifacts.models import (
     VersionPin,
 )
 from ember_code.core.artifacts.provenance import Passage
-from ember_code.core.code_index.neo4j_schema import (
-    ARTIFACT_SCHEMA_STATEMENTS,
-    DEFAULT_DATABASE,
-)
+from ember_code.core.graph import DEFAULT_DATABASE
 
 logger = logging.getLogger(__name__)
 

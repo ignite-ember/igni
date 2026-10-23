@@ -18,12 +18,8 @@ from ember_code.core.code_index.cutover import (
     _rmtree_knowledge_chroma,
     maybe_cutover,
 )
-from ember_code.core.code_index.paths import (
-    code_index_dir,
-    legacy_artifact_index_path,
-    manifest_path,
-)
-from ember_code.core.code_index.project import resolve_project_id
+from ember_code.core.code_index.paths import code_index_dir, manifest_path
+from ember_code.core.data_paths import legacy_artifact_index_path, resolve_project_id
 
 
 @pytest.fixture
@@ -162,7 +158,7 @@ async def test_drop_legacy_tables_drops_them_from_the_real_state_db(
     import sqlite3
 
     from ember_code.core.code_index.cutover import _drop_legacy_tables
-    from ember_code.core.code_index.paths import state_db_path
+    from ember_code.core.data_paths import state_db_path
     from ember_code.core.db.database import Database
 
     data_dir = tmp_path / "data"
@@ -221,7 +217,7 @@ async def test_drop_legacy_tables_drops_them_from_the_real_state_db(
 async def test_drop_legacy_tables_is_a_no_op_without_a_state_db(tmp_path: Path) -> None:
     """It returns early rather than creating one."""
     from ember_code.core.code_index.cutover import _drop_legacy_tables
-    from ember_code.core.code_index.paths import state_db_path
+    from ember_code.core.data_paths import state_db_path
 
     data_dir = tmp_path / "data"
     data_dir.mkdir()

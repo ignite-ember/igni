@@ -65,6 +65,7 @@ from ember_code.backend.schemas_codeindex_rpc import RefreshAvailabilityResult
 from ember_code.backend.schemas_model import ModelSwitchResult
 from ember_code.core.agents import AgentPool
 from ember_code.core.artifacts.capture import RetrievalLedger
+from ember_code.core.artifacts.session_manager import SessionArtifactManager
 from ember_code.core.auth.credentials import CloudCredentials
 from ember_code.core.broadcast_schema import BroadcastEvent
 from ember_code.core.code_index import CodeIndex, CodeIndexSyncManager
@@ -72,6 +73,7 @@ from ember_code.core.code_index.embedder import LiveEmbedder
 from ember_code.core.config.models import ModelRegistry
 from ember_code.core.config.settings import Settings
 from ember_code.core.config.tool_permissions import ToolPermissions
+from ember_code.core.data_paths import resolve_project_id
 from ember_code.core.guardrails.runner import GuardrailRunner
 from ember_code.core.hooks.events import HookEvent
 from ember_code.core.hooks.executor import HookExecutor
@@ -93,7 +95,6 @@ from ember_code.core.session.agent_factory import (
     create_guardrails,
     create_reasoning_tools,
 )
-from ember_code.core.session.artifact_ops import SessionArtifactManager
 from ember_code.core.session.broadcast import BroadcastBus
 from ember_code.core.session.cloud_auth import SessionCloudAuth
 from ember_code.core.session.cloud_catalog import CloudModelCatalog
@@ -726,8 +727,6 @@ class Session:
         # ``runtime`` may be a real ``Neo4jRuntime`` (production) or
         # any duck-typed object with ``driver_for_artifacts(project_id)``
         # (test stubs). We only depend on the protocol surface.
-        from ember_code.core.code_index.project import resolve_project_id
-
         project_id = resolve_project_id(self.project_dir)
         # The per-project process has to exist before a driver can
         # point at it: ``driver_for_artifacts`` raises rather than

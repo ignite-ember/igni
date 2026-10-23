@@ -44,7 +44,7 @@ Everything below is a key under `contributes` in the manifest, and the list is e
 |---|---|---|
 | `promptFragments` | text injected at a named anchor in a system prompt, from a tool call or a bundled file | replaces the hardcoded `{{CODEINDEX_GRAPH_SCHEMA}}` placeholder. Fetched when the extension becomes `READY` and cached, because a supplier runs during prompt assembly and that is not an async context — so a fragment changes when its extension restarts, not when its data does. |
 | `promptVariants` | which agents switch to a variant while this extension is `READY` | generalises the `.codeindex.md` suffix. *Known* and *live* are separate: a variant whose extension is installed but down stays known, so its agent file is recognised and skipped rather than loaded as an agent whose name happens to contain a dot. |
-| `settings` | config the host renders into its own settings surface, stored per deployment and delivered through launch params | — . Stored *beside* the bundle rather than inside it: the bundle is what was signed, and a value an administrator typed is not part of what a vendor attested to. Never a secret — those are `permissions.secrets`, resolved by the deployment. |
+| `settings` | config the host renders into its own settings surface, stored per deployment and delivered through launch params | Rendered by igni's **Extensions** page (`/extensions`), a control per declared `type`. Stored *beside* the bundle rather than inside it: the bundle is what was signed, and a value an administrator typed is not part of what a vendor attested to. Never a secret — those are `permissions.secrets`, resolved by the deployment. A change applies the next time your page is opened; a frame already up keeps the values it launched with. |
 | `commands` | slash commands the extension answers | — . Dispatched to the tool with the command's own name, the rest of the line arriving as `args`. Declaring one *is* the grant, separately from `permissions.rpc`: that list is what the extension's UI may call, and a slash command is the user invoking something igni offered them. |
 | `menu` | entries in the header tools menu | — |
 | `pages` | **optional** UI — a surface the extension renders in its own frame | MCP has no UI concept |
@@ -114,10 +114,27 @@ HEAD is without announcing it, and forgets again when the last
 listener goes away — otherwise a freshly installed extension is told
 HEAD "moved" to where it has been since before it existed.
 
-**Events reach frames, not services.** Delivery is push → client →
-the one iframe it was addressed to, so an extension that contributes
-no page receives nothing. A service learns about the host by being
-called, which is the direction MCP runs in.
+**Two surfaces, one event.** A frame is told by a `postMessage`
+through the bridge. A *service* is told by being called — MCP runs
+host→server, so there is no other direction — on the reserved tool
+`igni_on_event(topic, payload)`. Implement it and your service
+hears host events whether or not you have a page, and whether or
+not that page is open; the frame redraws, the service invalidates,
+and they are different consumers of the same fact.
+
+`igni_on_event` is **never offered to the agent**, whatever
+`permissions.tools` says. A model that could call it could tell an
+extension that HEAD moved when it had not, and a control channel
+the agent can drive is not a control channel.
+
+A sink should **acknowledge and work afterwards**. igni sends one
+event at a time per extension, waits five seconds, and holds at
+most sixteen behind it — a service that reindexes inside
+`igni_on_event` is one the next event queues behind, and past
+sixteen the oldest is dropped and logged. An extension granted
+events with neither a page nor a sink is warned about at install,
+for the same reason as the workspace case: the grant is approved
+and every event lands in nothing.
 
 **Subscription is a grant, not a filter.** The check happens where
 an event is dispatched, never where it is received — anything that
@@ -383,8 +400,10 @@ Optional, and packaging-independent *within a single-user backend*: the client i
 > The second reason is the one that decides the bridge. A `postMessage` from an opaque origin arrives at the host as `origin: "null"`, so the host cannot tell one extension from another, and the origin check every inbound message depends on has nothing to check. With a port each, `e.origin` is that extension's own `http://127.0.0.1:<port>`.
 >
 > These two bullets used to specify an opaque origin *and* `default-src 'self'`. They were coherent only while every extension shared one port, where an opaque origin was the only isolation on offer.
-- **Bridge API, as built**: `rpc`, `navigate`, `close`, `params`/`onParams`, `setLocation`, `theme`/`onTheme`, `tokens`. Origin, source window and per-session nonce checked on every inbound message.
-- **Bridge API, not built**: `subscribe`, `identity`, `setTitle`, `setStatus`, `notify`, `storage`, and per-call budgets or cancellation. This list used to be written in the present tense alongside the one above, which told an author that live push was solved. It is not: `HostMessage` is `hello | theme | params | result`, so the only way to follow a long-running job is still to poll an RPC.
+- **Bridge API, as built**: `rpc`, `navigate`, `close`, `params`/`onParams`, `settings`, `onEvent`, `setLocation`, `theme`/`onTheme`, `tokens`. Origin, source window and per-session nonce checked on every inbound message.
+
+  `settings` is what `contributes.settings` is configured to, as an administrator left it. It is fixed for the life of the frame — a change applies at the next mount — so there is no `onSettings`. It is a separate namespace from `params` on purpose: `params` is *where you are*, replayed from `setLocation`, and this is *how you are set up*. One namespace would make a setting named `doc` and a link carrying `?doc=` the same key.
+- **Bridge API, not built**: `subscribe`, `identity`, `setTitle`, `setStatus`, `notify`, `storage`, and per-call budgets or cancellation. This list used to be written in the present tense alongside the one above, which told an author that live push was solved. `HostMessage` is `hello | theme | params | event | result`: host events and an extension's own both arrive through `onEvent`, so following a long-running job no longer has to mean polling. What is still missing from that list is a *subscription* API — an extension asks for topics in its manifest, not at runtime.
 
   `notify` means a message in *igni's* chrome. An extension's own toasts, inside its own frame, are published as `ToastHost`/`useToast` — the two are not interchangeable, and only something the user must see after navigating away belongs to the host.
 

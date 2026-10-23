@@ -42,6 +42,7 @@ export type PageKind = string;
 /** The destinations this build ships with. Extensions add to these. */
 export const BASE_PAGE_KINDS = [
   "plugins",
+  "extensions",
   "artifacts",
   "codeindex",
   "mcp",
@@ -56,7 +57,7 @@ export const BASE_PAGE_KINDS = [
   "context",
 ] as const;
 
-/** One of the thirteen above — still exact, for the app's own code. */
+/** One of the fourteen above — still exact, for the app's own code. */
 export type BasePageKind = (typeof BASE_PAGE_KINDS)[number];
 
 /**

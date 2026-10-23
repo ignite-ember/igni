@@ -1,9 +1,20 @@
 """Typed wire schemas for the artifacts panel.
 
-Consolidates every artifact wire type in one place, matching the
-existing ``schemas_run.py`` / ``schemas_pause.py`` convention so the
-controller module (``server_artifacts.py``) stays focused on
-behaviour.
+Consolidates every artifact wire type in one place so the controller
+module stays focused on behaviour.
+
+**Why this is in ``core/artifacts/`` and not in ``backend/``.** It
+was ``backend/schemas_artifacts.py``, beside its ``schemas_run.py``
+and ``schemas_pause.py`` siblings — a convention that held for every
+one of those because they describe a *host* subsystem. These
+describe a capability, and Artifacts is being extracted: when it
+leaves, this file leaves with it, and a file that has to be found in
+another package first is a file somebody forgets.
+
+It also closed a layering inversion. ``core/artifacts/session_manager.py``
+imported it, so ``core`` reached into ``backend`` for a wire type —
+which this module's own import list makes obviously unnecessary: it
+imports nothing from ``ember_code`` at all.
 
 These types are the privacy boundary for the panel the same way
 ``ExportBundle.to_payload`` is for the share path: they are

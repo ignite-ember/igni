@@ -2,7 +2,7 @@
 for one session: status, search, add, list, get, versions, lineage,
 stale, reconcile, export and remove.
 
-Wire types are declared in :mod:`schemas_artifacts` and re-exported
+Wire types are declared in :mod:`ember_code.core.artifacts.schemas_rpc` and re-exported
 here so external callers keep the previous import surface.
 
 The controller stays a translation layer. Every decision — what
@@ -25,7 +25,44 @@ from typing import TYPE_CHECKING, Any
 import httpx
 
 from ember_code.backend.file_opener import FileOpener
-from ember_code.backend.schemas_artifacts import (
+from ember_code.core.artifacts import side_by_side
+from ember_code.core.artifacts.anchoring import RelevanceReview, surrounding, track_anchor
+from ember_code.core.artifacts.collaboration import (
+    CollaborationSync,
+    NotAllowed,
+    WaitingStream,
+)
+from ember_code.core.artifacts.conversation import CommentConversation
+from ember_code.core.artifacts.cypher import ArtifactCypherService, CypherResult
+from ember_code.core.artifacts.draft_desk import (
+    DraftDesk,
+    DraftRefused,
+    PublishedUnderneath,
+)
+from ember_code.core.artifacts.drift import (
+    AffectedPassage,
+    Divergence,
+    DriftReview,
+    DriftUpdate,
+)
+from ember_code.core.artifacts.export import (
+    ArtifactExporter,
+    ArtifactPublisher,
+    ExportFormat,
+)
+from ember_code.core.artifacts.mentions import resolve
+from ember_code.core.artifacts.models import (
+    ArtifactSummary,
+    Comment,
+    CommentOrigin,
+    EdgeState,
+    SourceDeclaration,
+    StaleDependent,
+)
+from ember_code.core.artifacts.pdf import PdfUnavailable
+from ember_code.core.artifacts.provenance import ProvenanceMapper, quote_lines, strength_of
+from ember_code.core.artifacts.query_planner import ArtifactQueryPlanner
+from ember_code.core.artifacts.schemas_rpc import (
     AccessAsk,
     ArtifactAccessAsked,
     ArtifactAccessAsks,
@@ -82,43 +119,6 @@ from ember_code.backend.schemas_artifacts import (
     ProvenancePassageRow,
     RosterPerson,
 )
-from ember_code.core.artifacts import side_by_side
-from ember_code.core.artifacts.anchoring import RelevanceReview, surrounding, track_anchor
-from ember_code.core.artifacts.collaboration import (
-    CollaborationSync,
-    NotAllowed,
-    WaitingStream,
-)
-from ember_code.core.artifacts.conversation import CommentConversation
-from ember_code.core.artifacts.cypher import ArtifactCypherService, CypherResult
-from ember_code.core.artifacts.draft_desk import (
-    DraftDesk,
-    DraftRefused,
-    PublishedUnderneath,
-)
-from ember_code.core.artifacts.drift import (
-    AffectedPassage,
-    Divergence,
-    DriftReview,
-    DriftUpdate,
-)
-from ember_code.core.artifacts.export import (
-    ArtifactExporter,
-    ArtifactPublisher,
-    ExportFormat,
-)
-from ember_code.core.artifacts.mentions import resolve
-from ember_code.core.artifacts.models import (
-    ArtifactSummary,
-    Comment,
-    CommentOrigin,
-    EdgeState,
-    SourceDeclaration,
-    StaleDependent,
-)
-from ember_code.core.artifacts.pdf import PdfUnavailable
-from ember_code.core.artifacts.provenance import ProvenanceMapper, quote_lines, strength_of
-from ember_code.core.artifacts.query_planner import ArtifactQueryPlanner
 from ember_code.core.artifacts.side_by_side import RowKind, VersionDiff
 from ember_code.core.artifacts.side_by_side import build as build_side_by_side
 from ember_code.core.artifacts.sourcing import CandidateReview, Overlap

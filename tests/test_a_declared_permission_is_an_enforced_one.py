@@ -24,6 +24,8 @@ import pytest
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 from ember_code.core.mcp.client import MCPClientManager
+from ember_code.core.mcp.naming import bare_tool_name
+from ember_code.extensions.events import EVENT_SINK_TOOL
 from ember_code.extensions.installer import ExtensionInstaller, InstallError
 from ember_code.extensions.manifest import ExtensionManifest
 from ember_code.extensions.origin import ExtensionOrigins
@@ -218,6 +220,37 @@ def test_what_the_service_offers_beyond_its_grant_is_listed():
         "read_file",
         "shell",
     ]
+
+
+def test_this_check_speaks_the_server_s_own_names():
+    """What the caller must convert before asking, and why.
+
+    This test used to be the whole story, and it passed bare names
+    — while the installer handed it registered ones
+    (`mcp_ext:acme.scanner_lookup`). Nothing matched, every tool was
+    refused including the declared ones, and `permissions.tools`
+    had never once let anything through. The unit test agreed with
+    the code because both were written from the same assumption.
+
+    The conversion is `bare_tool_name`, and it belongs to the
+    caller: this class is about a manifest, and a manifest does not
+    know what a tool registry prefixes.
+    """
+    server = "ext:acme.scanner"
+    permissions = Permissions(manifest_of(permissions={"tools": ["acme.scanner.lookup"]}))
+    registered = ["mcp_ext:acme.scanner_lookup", "mcp_ext:acme.scanner_shell"]
+    assert permissions.tools.refused(registered) == sorted(registered)
+
+    by_bare = {bare_tool_name(server, name): name for name in registered}
+    assert permissions.tools.refused(by_bare) == ["shell"]
+
+
+def test_the_event_sink_is_refused_however_it_is_declared():
+    """`igni_on_event` is how igni tells a service something
+    happened. A model able to call it could tell an extension that
+    HEAD moved when it had not."""
+    permissions = Permissions(manifest_of(permissions={"tools": [EVENT_SINK_TOOL]}))
+    assert permissions.tools.allowed(EVENT_SINK_TOOL) is False
 
 
 def test_declaring_no_tools_refuses_all_of_them():

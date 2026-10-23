@@ -115,6 +115,16 @@ export interface ExtensionFrameProps {
   events?: { topic: string; payload: Record<string, unknown>; n: number }[];
   /** Launch parameters, passed through on `hello`. */
   params?: Record<string, unknown>;
+  /**
+   * What `contributes.settings` is configured to, passed through on
+   * `hello` and never afterwards — a change applies at the next
+   * mount, which is what `set_extension_settings` promises.
+   *
+   * Its own prop rather than folded into `params`: those are a deep
+   * link and these are configuration, and one namespace would make
+   * a setting named `doc` and a link carrying `?doc=` collide.
+   */
+  settings?: Record<string, unknown>;
   /** Followed by the frame. */
   theme?: string;
   /** Accessible name for the region. */
@@ -154,6 +164,7 @@ export function ExtensionFrame({
   onLocation,
   events,
   params,
+  settings,
   theme = "dark",
   title,
 }: ExtensionFrameProps) {
@@ -288,13 +299,14 @@ export function ExtensionFrame({
       nonce,
       extensionId,
       params: sent,
+      settings: settings ?? {},
       theme,
       // Read at send time, not at render time: a token defined in a
       // media query resolves to what the user is actually looking at
       // only once the document has settled.
       tokens: readThemeTokens(),
     });
-  }, [extensionId, nonce, params, post, theme]);
+  }, [extensionId, nonce, params, post, settings, theme]);
 
   // Parameters that change under a mounted frame.
   //

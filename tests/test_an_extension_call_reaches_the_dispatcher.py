@@ -49,6 +49,9 @@ class _Service:
     def __init__(self) -> None:
         self.calls: list[tuple[str, dict]] = []
 
+    def offers(self, tool: str) -> bool:
+        return True
+
     async def call(self, method: str, args: dict) -> Any:
         self.calls.append((method, args))
         return {"ok": True, "method": method}

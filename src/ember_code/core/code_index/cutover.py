@@ -45,12 +45,12 @@ from pathlib import Path
 
 from sqlalchemy import text
 
-from ember_code.core.code_index.paths import (
-    code_index_dir,
+from ember_code.core.code_index.paths import code_index_dir, neo4j_migrated_marker_path
+from ember_code.core.data_paths import (
     legacy_artifact_index_path,
-    neo4j_migrated_marker_path,
+    resolve_project_id,
+    state_db_path,
 )
-from ember_code.core.code_index.project import resolve_project_id
 from ember_code.core.db.database import Database
 
 logger = logging.getLogger(__name__)
@@ -109,8 +109,6 @@ async def _drop_legacy_tables(project: Path, data_dir: str | Path) -> None:
     session prefs) are untouched. ``DROP TABLE IF EXISTS`` is
     idempotent — running on an already-empty DB is a no-op.
     """
-    from ember_code.core.code_index.paths import state_db_path
-
     db_path = state_db_path(project, data_dir=data_dir)
     if not db_path.exists():
         logger.debug("no state.db at %s; skipping table drop", db_path)

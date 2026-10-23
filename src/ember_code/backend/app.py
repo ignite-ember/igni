@@ -34,6 +34,7 @@ from ember_code.backend.server import BackendServer
 from ember_code.backend.session_orchestrator import SessionOrchestrator
 from ember_code.backend.supervisor import BackendSupervisor
 from ember_code.core.config.settings import Settings, load_settings
+from ember_code.core.plugins.installer import PluginInstaller
 from ember_code.extensions.contributions import ExtensionContributions
 from ember_code.extensions.events import EventRouter
 from ember_code.extensions.health import ExtensionHealth
@@ -42,6 +43,7 @@ from ember_code.extensions.origin import ExtensionOrigins
 from ember_code.extensions.profile import DeploymentProfile
 from ember_code.extensions.registry import ExtensionRegistry, ExtensionState
 from ember_code.extensions.rpc import ExtensionRpc
+from ember_code.extensions.service_events import ServiceEvents
 from ember_code.extensions.store import ExtensionStore
 
 logger = logging.getLogger(__name__)
@@ -267,6 +269,10 @@ class BackendApp:
         # the workspace poll, which does no git work until some
         # extension is actually entitled to hear the result.
         self._host_events = HostEvents(router=self._extension_events, project_dir=self._project_dir)
+        # The half of delivery that does not end at a frame. An
+        # extension with no page, or with its page closed, is told
+        # by being called — which is the only direction MCP runs.
+        self._service_events = ServiceEvents(rpc=self._extensions)
         self._wire_extension_events()
         self._rpc_router = RpcRouter(
             backend=self._backend,
@@ -393,6 +399,7 @@ class BackendApp:
         except Exception as exc:
             logger.error("Backend error: %s", exc, exc_info=True)
         finally:
+            await self._service_events.stop()
             await self._host_events.stop()
             await self._extension_health.stop()
             await self._origins.stop_all()
@@ -411,9 +418,15 @@ class BackendApp:
 
         def deliver(extension_id: str) -> Callable[[str, dict[str, Any]], None]:
             def post(topic: str, payload: dict[str, Any]) -> None:
+                # Both surfaces, because they are different
+                # consumers of the same fact: the frame redraws, the
+                # service invalidates. Each no-ops when it is not
+                # there, so an extension with one surface pays
+                # nothing for the other.
                 self._push_bridge.extension_event(
                     extension_id=extension_id, topic=topic, payload=payload
                 )
+                self._service_events.tell(extension_id, topic, payload)
 
             return post
 
@@ -453,6 +466,13 @@ class BackendApp:
             origins=self._origins,
             project_dir=self._project_dir,
             profile=DeploymentProfile.current(),
+            # Where a plugin an extension carries goes. The same
+            # directory ``igni plugin install`` writes to, because
+            # the loader only looks in one place and an extension's
+            # agents are not a different kind of agent.
+            plugins_dir=PluginInstaller(
+                data_dir=self._backend.settings.storage.data_dir
+            ).plugins_dir,
             allow_unsigned=_dev_extensions_allowed(),
         )
         for bundle in bundles:

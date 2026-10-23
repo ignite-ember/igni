@@ -14,11 +14,12 @@
 
   "sidecar": {
     "image": "acme__scanner:1.0.0",
-    "mcp": { "transport": "stdio" },
-    "requires": [
-      { "capability": "graph-db", "constraint": ">=5", "mode": "shared" }
-    ]
+    "mcp": { "transport": "stdio" }
   },
+
+  "requires": [
+    { "capability": "graph-db", "constraint": ">=5", "mode": "shared" }
+  ],
 
   "permissions": {
     "workspace": "read",

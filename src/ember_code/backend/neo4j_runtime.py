@@ -77,6 +77,7 @@ import httpx
 
 from ember_code.backend.jdk_bootstrap import JdkBootstrap, JdkBootstrapError
 from ember_code.backend.process_exit import format_child_failure
+from ember_code.core.data_paths import neo4j_data_dir
 
 if TYPE_CHECKING:
     from neo4j import AsyncDriver
@@ -453,12 +454,8 @@ class Neo4jRuntime:
         host: str = "127.0.0.1",
     ):
         self._data_dir = Path(str(data_dir)).expanduser()
-        # Resolve via the canonical paths module so the runtime
-        # and the cutover script agree on layout.
-        from ember_code.core.code_index.paths import (
-            neo4j_data_dir,
-        )
-
+        # Resolved via the canonical layout module so the runtime
+        # and the cutover agree.
         # ``self._state_root`` is the per-``(project, commit)``
         # parent dir. The shared distribution lives under
         # ``self._neo4j_root`` (same path for every project).

@@ -153,6 +153,11 @@ export function ExtensionPage({
       onLocation={onLocation}
       events={events}
       params={params}
+      // What an administrator set it to, from `list_extensions`.
+      // The backend has already filled defaults in and dropped keys
+      // the manifest no longer declares, so this is exactly the
+      // shape `contributes.settings` describes.
+      settings={extension.values}
       theme={theme}
       title={page.label}
     />

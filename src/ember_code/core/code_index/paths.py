@@ -1,71 +1,54 @@
-"""Filesystem layout for ember-code data.
+"""Where CodeIndex keeps its own files.
 
-Single source of truth for where state lives on disk:
+Four paths, all of them inside the project's data directory, and
+every one of them about an index.
 
-    ~/.igni/
-      ember.db                          # GLOBAL: agno memory + learning
-      projects/<project_hash>/
-        state.db                        # PROJECT: scheduler, sessions
-        knowledge.chroma/               # LEGACY: pre-Neo4j knowledge
-        code_index/
-          manifest.json                 # LIVE: head sha, commit list, branch pins
-          .neo4j_migrated               # the cutover's per-project marker
-          <sha>.chroma/                 # LEGACY: pre-Neo4j code vectors
-      neo4j/
-        state/<project_id>-<sha>/       # PER-COMMIT: one Neo4j store per commit
-        state/<project_id>-knowledge/   # PER-PROJECT: the knowledge store
+    ~/.igni/projects/<project_id>/
+      code_index/
+        manifest.json      # LIVE: head sha, commit list, branch pins
+        .neo4j_migrated    # the cutover's per-project marker
+        <sha>.chroma/      # LEGACY: pre-Neo4j code vectors
 
-The data root is configurable (``settings.storage.data_dir``); defaults
-to ``~/.igni``.
+## What used to be here and is not
+
+``data_root``, ``global_db_path``, ``project_dir``, ``state_db_path``
+and the whole Neo4j layout lived in this module and have moved to
+:mod:`ember_code.core.data_paths`. None of them was CodeIndex's:
+``state.db`` holds the scheduler, the session list, ``/loop`` and the
+background-process registry, and the Neo4j sidecar serves Artifacts'
+knowledge store as well as the code graph.
+
+Nine modules outside CodeIndex imported this file for them, up from
+four, because this is where a data path *was* and nobody relocates a
+directory to add one lookup. CodeIndex is becoming an extension, and
+a host that could not find its own scheduler database without
+importing CodeIndex is not one you can uninstall CodeIndex from.
 
 ## The chroma paths are legacy
 
 Nothing writes them. ``chromadb`` is not imported anywhere and is no
 longer a dependency; vectors live in the Neo4j sidecar. The helpers
-below survive because :mod:`ember_code.core.code_index.cutover` still
-has directories to delete — the cutover is **per-project and lazy**,
-gated on the sentinel that :func:`neo4j_migrated_marker_path` returns
-(in the project's own ``code_index/``), so a project nobody has opened
-since it shipped still holds its old ones.
+survive because :mod:`ember_code.core.code_index.cutover` still has
+directories to delete — the cutover is **per-project and lazy**,
+gated on the sentinel :func:`neo4j_migrated_marker_path` returns, so
+a project nobody has opened since it shipped still holds its old
+ones.
 
 They are named ``legacy_`` for that reason: a caller reaching for one
-outside the cutover is almost certainly measuring or reading something
-that no longer exists.
+outside the cutover is almost certainly measuring or reading
+something that no longer exists.
 """
 
 from __future__ import annotations
 
 from pathlib import Path
 
-from ember_code.core.code_index.project import resolve_project_id
+from ember_code.core.data_paths import project_data_dir
 from ember_code.core.paths import DEFAULT_DATA_DIR
 
 
-def data_root(data_dir: str | Path = DEFAULT_DATA_DIR) -> Path:
-    return Path(str(data_dir)).expanduser()
-
-
-def global_db_path(data_dir: str | Path = DEFAULT_DATA_DIR) -> Path:
-    return data_root(data_dir) / "ember.db"
-
-
-def project_dir(project: str | Path, *, data_dir: str | Path = DEFAULT_DATA_DIR) -> Path:
-    """Per-project data directory — derived from a stable git/path hash."""
-    return data_root(data_dir) / "projects" / resolve_project_id(project)
-
-
-def state_db_path(project: str | Path, *, data_dir: str | Path = DEFAULT_DATA_DIR) -> Path:
-    return project_dir(project, data_dir=data_dir) / "state.db"
-
-
-def legacy_artifact_index_path(
-    project: str | Path, *, data_dir: str | Path = DEFAULT_DATA_DIR
-) -> Path:
-    return project_dir(project, data_dir=data_dir) / "knowledge.chroma"
-
-
 def code_index_dir(project: str | Path, *, data_dir: str | Path = DEFAULT_DATA_DIR) -> Path:
-    return project_dir(project, data_dir=data_dir) / "code_index"
+    return project_data_dir(project, data_dir=data_dir) / "code_index"
 
 
 def legacy_commit_index_path(
@@ -78,71 +61,22 @@ def manifest_path(project: str | Path, *, data_dir: str | Path = DEFAULT_DATA_DI
     return code_index_dir(project, data_dir=data_dir) / "manifest.json"
 
 
-# ── Neo4j sidecar layout ──────────────────────────────────────────
-#
-#     ~/.igni/
-#       neo4j/                            # shared: distribution + per-commit state
-#         state/<project_hash>-<sha>/     # PER-COMMIT: data, auth, runtime.json
-#
-# The Neo4j distribution (and its JDK) is project-independent — one
-# download shared by every project — so ``neo4j_data_dir`` takes no
-# project argument. Per-commit process state lives under ``state/``.
-
-
-def neo4j_data_dir(data_dir: str | Path = DEFAULT_DATA_DIR) -> Path:
-    """Shared Neo4j root: distribution cache + per-commit process state.
-
-    Project-independent — the downloaded Neo4j (and bundled JDK) is
-    reused across every project, mirroring the Tauri backend-python
-    cache pattern.
-    """
-    return data_root(data_dir) / "neo4j"
-
-
-# The slug the backend runtime uses for the per-project knowledge store
-# (``<project_hash>-knowledge``). It sits in the same ``state/`` directory as
-# the per-commit slugs and is not a commit, so anything enumerating that
-# directory has to skip it — retention would otherwise read it as an untracked
-# commit and delete the project's knowledge graph.
-NEO4J_KNOWLEDGE_SLUG: str = "knowledge"
-
-
-def neo4j_state_root(data_dir: str | Path = DEFAULT_DATA_DIR) -> Path:
-    """Directory holding one sub-directory per Neo4j process.
-
-    Enumerable on purpose: this is where per-commit stores accumulate, and
-    retention needs to see the ones the manifest no longer tracks.
-    """
-    return neo4j_data_dir(data_dir) / "state"
-
-
-def neo4j_runtime_dir(
-    project: str | Path, commit_sha: str, *, data_dir: str | Path = DEFAULT_DATA_DIR
-) -> Path:
-    """Per-(project, commit) Neo4j process state directory.
-
-    Holds the commit's ``data/``, ``auth.txt``, and ``runtime.json``.
-    Keyed by ``<project_hash>-<commit_sha>`` so each commit gets its
-    own isolated Neo4j process/store.
-    """
-    slug = f"{resolve_project_id(project)}-{commit_sha}"
-    return neo4j_state_root(data_dir) / slug
-
-
-def neo4j_auth_file(
-    project: str | Path, commit_sha: str, *, data_dir: str | Path = DEFAULT_DATA_DIR
-) -> Path:
-    """Path to the generated Neo4j password file for this commit."""
-    return neo4j_runtime_dir(project, commit_sha, data_dir=data_dir) / "auth.txt"
-
-
 def neo4j_migrated_marker_path(
     project: str | Path, *, data_dir: str | Path = DEFAULT_DATA_DIR
 ) -> Path:
     """Sentinel marking that the chroma+sqlite→Neo4j cutover ran.
 
-    Lives in the per-project ``code_index/`` dir (not the shared
-    Neo4j root) because the cutover is project-scoped — it drops that
-    project's ``code_index_*`` SQLite tables and chroma dirs.
+    Lives in the per-project ``code_index/`` dir rather than the
+    shared Neo4j root because the cutover is project-scoped — it
+    drops that project's ``code_index_*`` SQLite tables and chroma
+    directories.
     """
     return code_index_dir(project, data_dir=data_dir) / ".neo4j_migrated"
+
+
+__all__ = [
+    "code_index_dir",
+    "legacy_commit_index_path",
+    "manifest_path",
+    "neo4j_migrated_marker_path",
+]

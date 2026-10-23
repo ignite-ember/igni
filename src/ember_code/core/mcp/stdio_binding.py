@@ -38,6 +38,8 @@ from datetime import timedelta
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from ember_code.core.mcp.naming import tool_name_prefix
+
 try:
     from agno.tools.mcp import MCPTools
     from mcp import ClientSession
@@ -108,7 +110,7 @@ class StdioMCPBinding:
         mcp_tools = MCPTools(
             server_params=params,
             transport="stdio",
-            tool_name_prefix=f"mcp_{name}",
+            tool_name_prefix=tool_name_prefix(name),
         )
 
         # Drive stdio_client with our errlog handle instead of

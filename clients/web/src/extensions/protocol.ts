@@ -27,6 +27,26 @@ export interface HelloMessage {
   extensionId: string;
   /** Opaque per-extension launch parameters, from the host. */
   params: Record<string, unknown>;
+  /**
+   * What `contributes.settings` is configured to, as an
+   * administrator left it.
+   *
+   * Separate from `params` on purpose. `params` is where you are —
+   * a deep link, replayed from `location`. This is how you are set
+   * up. Merging them would mean a setting called `doc` and a link
+   * carrying `?doc=` were the same key, and whichever the host
+   * wrote last would win silently.
+   *
+   * Sent in `hello` and nowhere else: a change applies at the next
+   * mount. Reconfiguring a frame mid-render is a harder promise
+   * than it is worth until somebody asks for it, and the host's
+   * `set_extension_settings` says the same thing.
+   *
+   * Optional on the wire, not in this host: it was added after
+   * the envelope shipped, so a guest must treat its absence as
+   * "nothing configured" rather than as a malformed greeting.
+   */
+  settings?: Record<string, unknown>;
   /** `"light"` or `"dark"`, following the host. */
   theme: string;
   /**
@@ -160,16 +180,9 @@ export interface ResultMessage {
 }
 
 export type HostMessage =
-  | HelloMessage
-  | ThemeMessage
-  | ParamsMessage
-  | EventMessage
-  | ResultMessage;
+  HelloMessage | ThemeMessage | ParamsMessage | EventMessage | ResultMessage;
 export type GuestMessage =
-  | CallMessage
-  | NavigateMessage
-  | LocationMessage
-  | CloseMessage;
+  CallMessage | NavigateMessage | LocationMessage | CloseMessage;
 
 /**
  * Is this a message from a guest, shaped the way we require?
@@ -229,6 +242,14 @@ export function isHostMessage(data: unknown): data is HostMessage {
         typeof m.theme === "string" &&
         typeof m.params === "object" &&
         m.params !== null &&
+        // `settings` is not required. It was added after the
+        // envelope shipped, and a guest built against this version
+        // may be framed by a host that predates it — refusing the
+        // greeting would turn an additive field into a version
+        // wall. Absent reads as "configured with nothing", which
+        // is what an older host means.
+        (m.settings === undefined ||
+          (typeof m.settings === "object" && m.settings !== null)) &&
         typeof m.tokens === "object" &&
         m.tokens !== null
       );

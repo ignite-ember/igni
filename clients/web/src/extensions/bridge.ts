@@ -47,6 +47,16 @@ export interface Bridge {
   readonly extensionId: string;
   /** Launch parameters, as the host passed them. */
   readonly params: Record<string, unknown>;
+  /**
+   * What `contributes.settings` is configured to.
+   *
+   * Fixed for the life of this frame — a change applies at the next
+   * mount, so there is no `onSettings`. Separate from {@link params}
+   * because that is *where you are* and this is *how you are set
+   * up*; one namespace for both would make a setting and a query
+   * key with the same name the same thing.
+   */
+  readonly settings: Record<string, unknown>;
   /** The host's theme now. Use `onTheme` to follow it. */
   readonly theme: string;
   /**
@@ -174,6 +184,7 @@ function build(
   hello: {
     extensionId: string;
     params: Record<string, unknown>;
+    settings?: Record<string, unknown>;
     theme: string;
     tokens: ThemeTokens;
   },
@@ -251,6 +262,9 @@ function build(
     get params() {
       return params;
     },
+    // Absent from an older host's greeting, which means the same
+    // thing as empty: nothing has been configured.
+    settings: hello.settings ?? {},
     get theme() {
       return theme;
     },

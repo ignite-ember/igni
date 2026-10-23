@@ -22,6 +22,7 @@ from typing import TYPE_CHECKING, Any
 
 from ember_code.core.agents import AgentPool
 from ember_code.core.artifacts.index import ArtifactIndex
+from ember_code.core.artifacts.session_manager import SessionArtifactManager
 from ember_code.core.config.settings import Settings
 from ember_code.core.config.tool_permissions import ToolPermissions
 from ember_code.core.hooks.executor import HookExecutor
@@ -29,7 +30,6 @@ from ember_code.core.lsp import LspServerManager
 from ember_code.core.mcp.client import MCPClientManager
 from ember_code.core.monitors import MonitorManager
 from ember_code.core.plugins import PluginLoader
-from ember_code.core.session.artifact_ops import SessionArtifactManager
 from ember_code.core.skills.loader import SkillPool
 from ember_code.core.sub_agent_hitl import SubAgentHITLCoordinator
 from ember_code.core.tools.loop import LoopTools

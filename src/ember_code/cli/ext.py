@@ -20,10 +20,14 @@ tell somebody to run first.
 from __future__ import annotations
 
 import json
+import tempfile
+from collections.abc import Iterator
+from contextlib import contextmanager
 from pathlib import Path
 
 import click
 
+from ember_code.core.plugins.git import GitClient, GitError
 from ember_code.extensions.manifest import ExtensionManifest, Trust, Workspace
 from ember_code.extensions.store import ExtensionStore, StoreError
 
@@ -165,27 +169,144 @@ def doctor(bundle: Path) -> None:
     click.echo("  no problems found")
 
 
+#: What we treat as a repository rather than a directory. Checked
+#: before the filesystem, so a relative path that happens to contain
+#: a colon is still a path and a URL that happens to exist on disk
+#: is still a URL.
+#:
+#: ``file://`` is here on purpose: it is how an air-gapped
+#: deployment installs from a mirror it already has, and it is what
+#: makes the clone path testable without a network.
+_REPOSITORY = ("http://", "https://", "git@", "ssh://", "git://", "file://")
+
+
+def _looks_like_sha(ref: str) -> bool:
+    """Whether ``ref`` is a commit rather than a branch or a tag.
+
+    Errs towards "branch": a seven-to-forty-character hex string is
+    a commit, and anything else is passed to ``git clone --branch``,
+    which is where a wrong guess produces a clear error rather than
+    a silent default-branch checkout.
+    """
+    if not 7 <= len(ref) <= 40:
+        return False
+    return all(c in "0123456789abcdefABCDEF" for c in ref)
+
+
+@contextmanager
+def _bundle_from(source: str, *, ref: str | None, subdir: str | None) -> Iterator[Path]:
+    """A bundle directory, cloning first when ``source`` is a repo.
+
+    The clone goes to a temporary directory and is deleted on the
+    way out: the store keeps its own copy, so a second one under
+    ``~/.igni`` would be a stale checkout nobody updates and
+    everybody finds.
+    """
+    if not source.startswith(_REPOSITORY):
+        bundle = Path(source)
+        if not bundle.is_dir():
+            raise click.ClickException(
+                f"{source} is not a directory, and does not look like a repository URL either."
+            )
+        if ref or subdir:
+            raise click.ClickException(
+                f"--ref and --subdir are for installing from a repository; {source} is a directory."
+            )
+        yield bundle
+        return
+
+    git = GitClient()
+    if not git.is_available():
+        raise click.ClickException(
+            "git is not on PATH, so a repository cannot be cloned. Clone it "
+            "yourself and pass the directory."
+        )
+    with tempfile.TemporaryDirectory(prefix="igni-ext-") as tmp:
+        checkout = Path(tmp) / "bundle"
+        click.echo(f"cloning {source}{f' at {ref}' if ref else ''} …")
+        try:
+            # A commit cannot be given to ``git clone --branch`` on
+            # older gits, so a SHA is cloned-then-checked-out — the
+            # same split ``PluginInstaller`` makes, because ``--ref``
+            # takes whatever a person would think to type.
+            sha = _looks_like_sha(ref) if ref else False
+            # A shallow clone holds only the tip, so checking out an
+            # older commit fails with "unable to read tree" — which
+            # reads like a corrupt repository rather than like the
+            # depth it is. Full history only when a commit was
+            # asked for; a branch, a tag and "latest" stay shallow.
+            git.clone(source, checkout, ref=None if sha else ref, shallow=not sha)
+            if ref and sha:
+                git.checkout(checkout, ref)
+            commit = git.current_sha(checkout)
+        except GitError as exc:
+            raise click.ClickException(f"cloning {source} failed: {exc}") from exc
+
+        # What was taken, as a fact rather than as advice. Whether to
+        # pin is the installer's call: "the latest" is a legitimate
+        # answer, and this is the commit it meant today.
+        click.echo(f"  at {commit}")
+
+        bundle = checkout / subdir if subdir else checkout
+        if not bundle.is_dir():
+            raise click.ClickException(f"{subdir!r} is not a directory in {source}.")
+        yield bundle
+
+
 @ext.command("install")
-@click.argument("bundle", type=click.Path(exists=True, file_okay=False, path_type=Path))
+@click.argument("source")
 @click.option(
     "--replace",
     is_flag=True,
     help="Upgrade an already-installed extension. Re-asks for its permissions.",
 )
+@click.option(
+    "--ref",
+    default=None,
+    help=(
+        "Branch, tag or commit to install from, when SOURCE is a repository. "
+        "Without it you get the default branch as it stands now, which is a "
+        "choice rather than an oversight."
+    ),
+)
+@click.option(
+    "--subdir",
+    default=None,
+    help="The bundle's directory inside the repository, when it is not the root.",
+)
 @click.option("--root", default=None, help="Install somewhere other than the default.")
-def install(bundle: Path, replace: bool, root: str | None) -> None:
+def install(
+    source: str, replace: bool, ref: str | None, subdir: str | None, root: str | None
+) -> None:
     """Install a bundle into this deployment.
+
+    SOURCE is a directory, or a repository URL — the same two things
+    ``igni plugin install`` takes, and deliberately so. A plugin is
+    shared as a repository because that is how people share things,
+    and an extension that could only be installed from a directory
+    somebody already had was an extension nobody could hand you.
+
+    A clone is a bundle like any other: the signature is over the
+    bundle digest, so ``trust: signed`` is verified exactly as it is
+    for a directory, and an unsigned one is refused in the same
+    place. Pin with ``--ref`` — an extension is a process, which is
+    more than a plugin is, so installing whatever ``main`` says
+    today is worth less here than it is there.
+
+    An air-gapped deployment clones nothing and passes a directory,
+    which is why the directory form stays rather than being replaced.
 
     Copies it into the store. The backend starts it at its next boot
     — this command does not reach into a running one, so a backend
     that is up will not see it until it restarts.
     """
     store = _store(root)
-    try:
-        manifest = store.read(bundle)
-        target = store.add(bundle, replace=replace)
-    except StoreError as exc:
-        raise click.ClickException(str(exc)) from exc
+    with _bundle_from(source, ref=ref, subdir=subdir) as bundle:
+        try:
+            manifest = store.read(bundle)
+            target = store.add(bundle, replace=replace)
+        except StoreError as exc:
+            raise click.ClickException(str(exc)) from exc
 
     click.echo(f"installed {manifest.display_name} ({manifest.id}) to {target}")
     _echo_grants(manifest)

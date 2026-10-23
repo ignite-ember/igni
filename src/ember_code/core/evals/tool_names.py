@@ -17,9 +17,15 @@ from __future__ import annotations
 
 from typing import ClassVar
 
+# At module top rather than inside the function below, which is where
+# it used to be. That hid a real edge: the table in this class body is
+# built while the body evaluates, so importing this module imports the
+# Artifacts toolkit — an edge no grep for an import would have found.
+from ember_code.core.tools.artifacts import ArtifactTools
 
-def _artifact_function_names() -> list[str]:
-    """Every tool ``ArtifactTools`` actually registers.
+
+def _artifact_expansion() -> dict[str, list[str]]:
+    """``{"Artifacts": [...]}``, derived from the toolkit.
 
     Read from the toolkit so the eval catalog cannot drift from the
     manifest the agent is given — which is how ``artifact_add``
@@ -30,9 +36,7 @@ def _artifact_function_names() -> list[str]:
     one is called, so this is enough to enumerate names and nothing
     here ever calls one.
     """
-    from ember_code.core.tools.artifacts import ArtifactTools
-
-    return list(ArtifactTools(None).async_functions)  # type: ignore[arg-type]
+    return {"Artifacts": sorted(ArtifactTools(None).async_functions)}  # type: ignore[arg-type]
 
 
 class ToolNameCatalog:
@@ -96,7 +100,7 @@ class ToolNameCatalog:
         # called neither allows nor forbids anything — the case passes
         # whatever happens, which is the worst way for an eval to be
         # wrong.
-        "Artifacts": sorted(_artifact_function_names()),
+        **_artifact_expansion(),
     }
 
     #: Tools that Agno may auto-invoke regardless of what the case asked

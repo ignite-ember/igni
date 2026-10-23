@@ -477,7 +477,7 @@ class CypherAssertionDriver(AssertionDriver):
                 return False, f"cypher does not contain {needle!r}"
 
         if assertion.kind == "guardrail_accepted":
-            from ember_code.core.tools.codeindex.cypher_guard import (
+            from ember_code.core.graph.cypher_guard import (
                 CypherGuardError,
                 assert_read_only_cypher,
             )
@@ -495,7 +495,7 @@ class CypherAssertionDriver(AssertionDriver):
             return True, "guardrail + param keys accepted"
 
         if assertion.kind == "schema_valid":
-            from ember_code.core.tools.codeindex.cypher_guard import (
+            from ember_code.core.graph.cypher_guard import (
                 ALLOWED_PARAM_NAMES,
             )
 

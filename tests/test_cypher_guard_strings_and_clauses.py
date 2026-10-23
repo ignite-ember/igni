@@ -21,7 +21,7 @@ from __future__ import annotations
 
 import pytest
 
-from ember_code.core.tools.codeindex.cypher_guard import (
+from ember_code.core.graph.cypher_guard import (
     CypherGuardError,
     CypherReadOnlyViolation,
     assert_read_only_cypher,
