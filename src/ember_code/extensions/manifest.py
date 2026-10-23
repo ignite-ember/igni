@@ -55,6 +55,11 @@ SLUG = re.compile(r"^[a-z][a-z0-9-]*$")
 #: A settings key, as code reads it.
 SETTING_KEY = re.compile(r"^[a-z][a-zA-Z0-9_]*$")
 
+#: An event grant: an exact topic, or a ``*``-suffixed prefix. Same
+#: grammar as an RPC grant, for the same reason — this list is read
+#: by whoever approves the install.
+EVENT_GRANT = re.compile(r"^[a-z][a-z0-9.-]*\*?$")
+
 #: An RPC grant: an exact method, or a ``*``-suffixed prefix. No other
 #: pattern, because this list is read by whoever approves the install
 #: and ``ext.*.scanner.list`` is not something a person can reason
@@ -195,6 +200,11 @@ class Permissions(Strict):
     #: the bridge. A different list, granted by the same person,
     #: enforced somewhere else entirely.
     rpc: list[Annotated[str, Field(pattern=RPC_GRANT.pattern)]] = Field(default_factory=list)
+    #: Host events this extension may be told about, from the
+    #: published vocabulary. Its *own* events need no grant and
+    #: another extension's cannot be granted at all — see
+    #: :mod:`ember_code.extensions.events`.
+    events: list[Annotated[str, Field(pattern=EVENT_GRANT.pattern)]] = Field(default_factory=list)
 
 
 class PageContribution(Strict):

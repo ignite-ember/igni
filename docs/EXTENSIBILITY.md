@@ -48,6 +48,7 @@ Everything below is a key under `contributes` in the manifest, and the list is e
 | `commands` | slash commands the extension answers | — . Dispatched to the tool with the command's own name, the rest of the line arriving as `args`. Declaring one *is* the grant, separately from `permissions.rpc`: that list is what the extension's UI may call, and a slash command is the user invoking something igni offered them. |
 | `menu` | entries in the header tools menu | — |
 | `pages` | **optional** UI — a surface the extension renders in its own frame | MCP has no UI concept |
+| `events` (in `permissions`) | being told when something happens, instead of polling for it | MCP carries no push to a UI. Two kinds, one envelope: **host events** from a published vocabulary, which need a grant, and an extension's **own** events under `ext.<id>.`, which do not. |
 | `indicators` | a status chip in igni's own chrome, beside igni's | MCP has no UI concept. Data rather than a frame: a chip is twenty pixels and an iframe is not what twenty pixels costs. The host draws it; the extension decides what it says, because what "preparing" means for an index is not what it means for a document store. |
 
 `menu` rather than `tools`, because `permissions.tools` already means the MCP tool names an extension may register with the agent. See §2.
@@ -59,6 +60,39 @@ UI is a contribution some extensions have, not what makes something an extension
 Agents, skills and hooks are **not** here: plugins and group packs already carry those. Don't build a second path.
 
 Everything is namespaced by extension id. A collision with a base name is a validation error at install, not a surprise at runtime.
+
+### Events
+
+**The vocabulary is published; igni's bus is not.** "Listen to host
+events" cannot mean "subscribe to our broadcast bus" — that bus is a
+refactoring surface, and an extension pinned to it would mean igni
+could never change it. `HostTopic` is the promise, a `StrEnum` for
+the same reason `RpcMethod` is one: the value is what travels, and
+an emitter naming a renamed member fails at import rather than
+delivering to nobody.
+
+| Topic | When |
+|---|---|
+| `session.switched` | the user moved to a different session |
+| `workspace.head-changed` | the project's git HEAD moved — what CodeIndex watches for, and the reason it polls today |
+| `workspace.files-changed` | files under the granted workspace paths changed, coalesced so a build is not ten thousand events |
+| `extension.state-changed` | *this* extension's own health moved |
+
+Short on purpose. A missing event costs an extension a poll; a wrong
+one costs igni a shape it can never change. Additive is never
+breaking, so it grows on demand.
+
+**Subscription is a grant, not a filter.** The check happens where
+an event is dispatched, never where it is received — anything that
+posted to every frame and asked each to discard what was not its own
+would be trusting the frame to discard it, and the frame is the
+untrusted party.
+
+**An extension never hears another.** Not by `ext.*`, not by naming
+one exactly: another extension's topics are unreachable rather than
+merely ungranted. Its own, under `ext.<id>.`, need no grant — it is
+always allowed to talk to itself. And events go host→extension only;
+an extension cannot emit into another.
 
 ### Not in v1
 

@@ -197,6 +197,14 @@
           "items": { "type": "string" },
           "examples": [["acme.ledgersync.lookup_account"]]
         },
+        "events": {
+          "type": "array",
+          "description": "Host events this extension may be told about — an exact topic, or a `*`-suffixed prefix. Only topics igni publishes: its own events, under `ext.<your-id>.`, need no grant, and another extension's cannot be granted at all, not by a wildcard and not by naming it. The check happens where an event is dispatched, never where it is received, because a host that broadcast everything and asked each frame to discard what was not its own would be trusting the frame to discard it.",
+          "items": { "type": "string", "pattern": "^[a-z][a-z0-9.-]*\\*?$" },
+          "default": [],
+          "examples": [["workspace.head-changed"], ["workspace.*"]]
+        },
+
         "rpc": {
           "type": "array",
           "description": "Backend RPC methods this extension's UI may call over the bridge. Exact names, or a `*`-suffixed prefix — no other patterns, because this list is read by whoever approves the install. An extension's own service answers under `ext.<id>.*`; naming a base method here requests access to igni's own data.",

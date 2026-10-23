@@ -15,6 +15,19 @@
  */
 
 import { applyThemeTokens, type ThemeTokens } from "./tokens";
+
+/**
+ * Does a delivered topic match a subscription?
+ *
+ * Exact, or a `*`-suffixed prefix. The same grammar the grant uses,
+ * so a subscription cannot be written in a shape the permission
+ * could not have expressed.
+ */
+function matchesTopic(topic: string, pattern: string): boolean {
+  return pattern.endsWith("*")
+    ? topic.startsWith(pattern.slice(0, -1))
+    : topic === pattern;
+}
 import {
   BRIDGE_VERSION,
   type CallMessage,
@@ -52,6 +65,27 @@ export interface Bridge {
   navigate(to: string): void;
   /** Tell the host this surface is finished. */
   close(): void;
+  /**
+   * Be told when something happens.
+   *
+   * `topic` is an exact topic, or a `*`-suffixed prefix for a
+   * family — `"workspace.*"`. Returns an unsubscribe.
+   *
+   * Two kinds arrive here. Host events need a grant in
+   * `permissions.events` and come from a published vocabulary; this
+   * extension's own, under `ext.<id>.`, need none. Nothing from
+   * another extension ever arrives, and that is enforced by the
+   * host at dispatch rather than filtered here.
+   *
+   * Subscribing to something ungranted is not an error — nothing
+   * simply arrives. An extension that could tell "refused" from
+   * "has not happened yet" could probe what else is installed.
+   */
+  onEvent(
+    topic: string,
+    fn: (payload: Record<string, unknown>, topic: string) => void,
+  ): () => void;
+
   /** Follow the host's theme. Returns an unsubscribe. */
   onTheme(fn: (theme: string) => void): () => void;
   /**
@@ -147,6 +181,10 @@ function build(
   const pending = new Map<string, Pending>();
   const themeWatchers = new Set<(theme: string) => void>();
   const paramWatchers = new Set<(params: Record<string, unknown>) => void>();
+  const eventWatchers = new Set<{
+    topic: string;
+    fn: (payload: Record<string, unknown>, topic: string) => void;
+  }>();
   let params = hello.params;
   let theme = hello.theme;
   let tokens = hello.tokens;
@@ -170,6 +208,13 @@ function build(
     if (event.data.kind === "params") {
       params = event.data.params;
       for (const fn of paramWatchers) fn(params);
+      return;
+    }
+    if (event.data.kind === "event") {
+      const { topic, payload } = event.data;
+      for (const watcher of eventWatchers) {
+        if (matchesTopic(topic, watcher.topic)) watcher.fn(payload, topic);
+      }
       return;
     }
     if (event.data.kind !== "result") return;
@@ -242,6 +287,14 @@ function build(
     onTheme(fn: (next: string) => void) {
       themeWatchers.add(fn);
       return () => themeWatchers.delete(fn);
+    },
+    onEvent(
+      topic: string,
+      fn: (payload: Record<string, unknown>, received: string) => void,
+    ) {
+      const watcher = { topic, fn };
+      eventWatchers.add(watcher);
+      return () => eventWatchers.delete(watcher);
     },
     onParams(fn: (next: Record<string, unknown>) => void) {
       paramWatchers.add(fn);
