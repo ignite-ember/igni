@@ -136,7 +136,29 @@ are `contributes.menu` and not `contributes.tools`.
 
 **One version axis.** An extension declares a `contract` range and never names a product version. The deployment advertises one contract version, the lower of what the backend and the installed client implement.
 
-### Requirements: what an extension needs igni to provide
+### Requirements: what an extension needs the deployment to provide
+
+**igni is the broker, not the provider.** A deployment running Qdrant
+has a vector store igni knows nothing about and does not own; igni's
+job is to hand an extension a connection to it. The one case where
+igni *is* also the provider is a laptop, where the deployment is the
+laptop and igni is the only thing around to act for it — which is
+exactly why there are two resolvers and not one.
+
+**Why broker it at all**, rather than let the extension connect to
+Qdrant itself with its own configuration:
+
+- **The endpoint and the credential stay out of the bundle.** An
+  extension that configures its own store is an extension trusted
+  with infrastructure access, and `egress` and `secrets` stop
+  meaning anything — the deployment can no longer see or control
+  what it reaches.
+- **One bundle, every deployment.** Self-configuration means a
+  different bundle per environment, or a bundle that has to know
+  where it is running. Neither is a contract.
+- **The operator declares once.** Ten extensions needing a vector
+  store configure it once, in the deployment, rather than ten times
+  in ten manifests that can disagree.
 
 **Declare a kind, never a product.** `graph-db`, `vector-store`,
 `relational-db`, `object-store`, `embedder`. A regulated customer

@@ -80,7 +80,7 @@
         },
         "requires": {
           "type": "array",
-          "description": "Infrastructure igni resolves on this extension's behalf, because there is no vendor service to run it. Resolved offline: the resolver binds to a running instance or provisions one from the bundle, and an unsatisfiable requirement fails at install naming the fix.",
+          "description": "Infrastructure **the deployment** provides and igni brokers. Not igni's own: a deployment running Qdrant has a vector store igni knows nothing about, and igni's job is to hand you a connection to it rather than to be it. On a laptop the deployment is the laptop, and igni is the only thing around to act for it — which is why it provisions there and binds everywhere else. Brokered rather than configured by you, so that the endpoint and the credential stay out of your bundle and the same bundle installs in both places. Resolved offline, at install, naming the fix when it cannot be.",
           "items": {
             "type": "object",
             "required": ["capability", "constraint"],

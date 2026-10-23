@@ -1,4 +1,19 @@
-"""Infrastructure an extension needs, and who makes it exist.
+"""Infrastructure an extension needs, and who provides it.
+
+**igni is the broker, not the provider.** A deployment running
+Qdrant has a vector store igni knows nothing about and does not own.
+What igni does is hand an extension a connection to it — which is
+why :class:`BindingResolver` is *constructed with* what the
+infrastructure provides rather than knowing how to make any of it.
+
+The one case where igni is also the provider is a laptop, where the
+deployment is the laptop and igni is the only thing around to act
+for it. That is the whole reason there are two resolvers.
+
+Brokered rather than self-configured, so that the endpoint and the
+credential stay out of the bundle — an extension that configures its
+own store is one trusted with infrastructure access, and ``egress``
+and ``secrets`` stop meaning anything.
 
 An extension declares a **kind** — a graph database, an embedder —
 and never a product. A regulated customer often has a sanctioned
