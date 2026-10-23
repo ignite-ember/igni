@@ -4,9 +4,12 @@ What `@igni/ui-react` and `igni-ui.css` must contain before "build any
 extension" is true, and how a deployment restyles all of it without
 forking.
 
-Status today: **34 components, 50 tokens, 77 published classes.** That
-is enough for one pane of forms and a table — which is exactly the
-shape of the reference extension, and why the gap was not obvious.
+Status today: **46 exports, 50 tokens, 100 published classes**, with
+Tier 0 complete.
+
+It was 34 exports and no layout at all, which was enough for one pane
+of forms and a table — exactly the shape of the reference extension,
+and why the gap was not obvious from looking at it.
 
 Companion documents: `DESIGN_SYSTEM.md` (how the scales and primitives
 were extracted, and what that cost), `EXTENSIBILITY.md` §8 (what the
@@ -58,8 +61,8 @@ extension writes the same six lines, differently.
 
 | Component | State | Why it is floor |
 |---|---|---|
-| `AppShell` | ❌ | Header/body/footer rows, `height: 100%`, `box-sizing` reset. The six lines everybody writes. |
-| `Scroll` | ❌ | A scroll container with `min-height: 0` — the flexbox trap that makes a pane grow instead of scroll. |
+| `AppShell` | ✅ | Header/body/footer rows, `height: 100%`, `box-sizing` reset. The six lines everybody writes. |
+| `Scroll` | ✅ | A scroll container with `min-height: 0` — the flexbox trap that makes a pane grow instead of scroll. |
 | `Split` | 🔧 `ColumnHandle.tsx`, 180 lines | Pointer capture, clamping, persisted width, a keyboard-operable `separator` with `aria-valuenow`. Wanted by every two-pane surface. Pure behaviour. |
 | `Stack` / `Inline` | ❌ | Gap on the scale, so spacing cannot drift off it. |
 | `Grid` | ❌ | Responsive columns against the space scale. |
@@ -92,7 +95,7 @@ extension writes the same six lines, differently.
 |---|---|---|
 | `Table` | ✅ (bare `<table>`) | Three CSS declarations. No cell padding, no header rule. |
 | `DataTable` | ❌ | Sortable headers with `aria-sort`, sticky header, row selection, column resize, zebra, empty and loading states. **The single biggest win.** |
-| `Th` (sortable) | ❌ | The sort button and its announcement. |
+| `SortableTh` | ✅ | The sort button and its announcement. |
 | `VirtualList` | ⛔ as a component / ❌ as a contract | We must not pick a partner's windowing library. We owe a documented stable row height, a scroll container, and `aria-rowcount`/`aria-rowindex` guidance. |
 | `DescriptionList` | ❌ | Key/value pairs — every detail pane. |
 | `Stat` | ❌ | A number with a label and a trend. |
@@ -143,13 +146,13 @@ Strongest area already.
 | `Drawer` | ❌ | Side sheet; same trap machinery as `Dialog`. |
 | `Popover` | ❌ | Anchored, dismiss-on-outside, `aria-expanded` on the trigger. |
 | `Tooltip` | ✅ | |
-| `Toast` / `useToast` | 🔧 `Toasts.tsx`, 87 lines | Specced in §5 as `notify`, absent. Every extension has an "it saved" moment. |
-| `Banner` / `Callout` | ❌ | Persistent page-level message with a tone and a dismiss. |
-| `ErrorBoundary` | ❌ | §7's isolation table promises one. The iframe protects the *host's* shell; nothing protects the extension's own tree, so a throw is a blank frame — the worst-looking failure available and the one a partner demo hits. |
-| `LiveRegion` / `useAnnounce` | ❌ | Currently hand-rolled with `ui-visually-hidden`. |
+| `Toast` / `useToast` | ✅ | Specced in §5 as `notify`, absent. Every extension has an "it saved" moment. |
+| `Banner` / `Callout` | ✅ | Persistent page-level message with a tone and a dismiss. |
+| `ErrorBoundary` | ✅ | §7's isolation table promises one. The iframe protects the *host's* shell; nothing protects the extension's own tree, so a throw is a blank frame — the worst-looking failure available and the one a partner demo hits. |
+| `LiveRegion` / `useAnnounce` | ✅ | Currently hand-rolled with `ui-visually-hidden`. |
 | `Empty` | ✅ | |
 | `Spinner` | ✅ | |
-| `StatusDot` | ❌ | The `READY`/`FAILED` pill, matching the health contract. |
+| `Status` | ✅ | The `READY`/`FAILED` pill, matching the health contract. |
 | `LoadingOverlay` | ❌ | Blocks a region while keeping layout, without a focus trap bug. |
 
 ### 2.6 Content and typography
@@ -176,8 +179,8 @@ gap, and no component can supply it.
 | `VisuallyHidden` | ✅ (class only) | Needs a component. |
 | `Portal` | ❌ | |
 | `useFocusTrap` | 🔧 inside `Dialog` | Extract so `Drawer` and `Popover` share it. |
-| `useLiveRegion` | ❌ | |
-| `useToast` | ❌ | |
+| `useAnnounce` | ✅ | |
+| `useToast` | ✅ | |
 | `useLocation` | ❌ | **Structural.** An extension's internal location is unaddressable, unsavable and unrestorable: `params` arrives once inside `hello`, there is no `params` host message, `allow-top-navigation` is correctly absent, and `localStorage` dies with the ephemeral port. Needs two additive envelope kinds. |
 | `useTokens` | ✅ via `bridge.tokens` | |
 | `useHotkeys` | ⛔ | §1 "not in v1". |
@@ -187,14 +190,16 @@ gap, and no component can supply it.
 
 ## 3. Order of work
 
-**Tier 0 — a second shape is impossible without these**
+**Tier 0 — done.** A second shape was impossible without these.
 
-1. `styled.test.ts` coverage for everything new (already enforcing).
-2. `AppShell` + `Scroll` + page-shell CSS.
-3. `ErrorBoundary`, `Toast`/`useToast`, `LiveRegion`.
-4. Selected state on `.ui-item` (`[aria-selected]`, `[aria-current]`) — one CSS rule, and without it every extension's selection looks different from igni's *and from each other's*.
-5. `useLocation` + the `params` host message.
-6. `DataTable` internals.
+1. ✅ `styled.test.ts` coverage for everything new.
+2. ✅ `AppShell` + `Scroll` + page-shell CSS — `html`/`body` height, `box-sizing` inherited from `.igni-root`, and the `min-height: 0` that makes a scroll container scroll instead of growing.
+3. ✅ `ErrorBoundary`, `ToastHost`/`useToast`/`Banner`, `LiveRegion`/`useAnnounce`.
+4. ✅ Selected state on `.ui-item`, driven by `[aria-selected]`/`[aria-current]` rather than a class — so what makes it look selected is the same thing that makes it announce as selected, and the two cannot disagree. Plus an inset edge, because a 16% tint is not a message on its own.
+5. ✅ `params` host message + `setLocation`/`onParams`. Both additive, so neither is breaking under §8.
+6. ✅ Table internals: cell padding, sticky opaque header, row-header weight, selected row, numeric columns with tabular figures, and `SortableTh`.
+
+The reference extension consumes all of it: its live region, its error boundary and its sortable headers were on its own hand-rolled list and are not any more. That is the check working.
 
 **Tier 1 — breadth**
 

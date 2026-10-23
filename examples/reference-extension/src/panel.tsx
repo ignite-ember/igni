@@ -61,11 +61,15 @@ import {
   Card,
   Dialog,
   Empty,
+  ErrorBoundary,
   Field,
   Heading,
+  LiveRegion,
   Progress,
   Row,
   Select,
+  SortableTh,
+  type SortDirection,
   Spinner,
   Table,
   Text,
@@ -89,6 +93,32 @@ const POLL_MS = 2_000;
 
 /** How long to back off after a failed poll, before trying again. */
 const POLL_RETRY_MS = 10_000;
+
+/** Which column the table is ordered by. */
+type SortColumn = "severity" | "rule" | "path";
+
+const COLUMNS: { key: SortColumn; label: string }[] = [
+  { key: "severity", label: "Severity" },
+  { key: "rule", label: "Rule" },
+  { key: "path", label: "Location" },
+];
+
+/**
+ * Order two violations by one column.
+ *
+ * Severity sorts by *rank*, not alphabetically — "critical" before
+ * "high" before "medium" before "low", which is the order
+ * `SEVERITIES` is declared in. Sorting a severity column
+ * alphabetically puts "critical" after nothing and "low" second, and
+ * it is the kind of wrong that looks sorted.
+ */
+function compare(a: Violation, b: Violation, column: SortColumn): number {
+  if (column === "severity") {
+    return SEVERITIES.indexOf(a.severity) - SEVERITIES.indexOf(b.severity);
+  }
+  if (column === "rule") return a.rule.localeCompare(b.rule);
+  return a.path.localeCompare(b.path) || a.line - b.line;
+}
 
 /** Severity maps onto the floor's four tones, not onto our colours. */
 const TONE = {
@@ -115,6 +145,10 @@ type Load =
 export function CompliancePanel({ client }: { client: ScannerClient }) {
   const [load, setLoad] = useState<Load>({ state: "loading" });
   const [severity, setSeverity] = useState<Severity | "all">("all");
+  const [sort, setSort] = useState<{
+    column: SortColumn;
+    direction: SortDirection;
+  }>({ column: "severity", direction: "ascending" });
   const [open, setOpen] = useState<Violation | null>(null);
   const [busy, setBusy] = useState(false);
   const [actionError, setActionError] = useState("");
@@ -213,11 +247,16 @@ export function CompliancePanel({ client }: { client: ScannerClient }) {
   }, [refresh]);
 
   const violations = load.state === "ready" ? load.violations : [];
-  const shown = useMemo(
-    () =>
-      violations.filter((v) => severity === "all" || v.severity === severity),
-    [violations, severity],
-  );
+  const shown = useMemo(() => {
+    const filtered = violations.filter(
+      (v) => severity === "all" || v.severity === severity,
+    );
+    // Sorted here rather than asked of the backend: the whole list is
+    // already in memory, and a round trip to reorder a hundred rows
+    // would be slower than the click that asked for it.
+    const sign = sort.direction === "ascending" ? 1 : -1;
+    return [...filtered].sort((a, b) => sign * compare(a, b, sort.column));
+  }, [violations, severity, sort]);
 
   const scan = load.state === "ready" ? load.scan : null;
   const running = scan?.state === "running";
@@ -305,23 +344,26 @@ export function CompliancePanel({ client }: { client: ScannerClient }) {
 
       {/*
         Counts change without anything moving focus, so they are
-        announced rather than only drawn. `aria-live="polite"` waits
-        for a pause instead of interrupting, which is right for a
-        number that updates every two seconds.
+        announced rather than only drawn. `LiveRegion` is polite, is
+        atomic so the whole sentence is read rather than the digit
+        that changed, and mounts empty — a region inserted with its
+        text already in it is frequently not announced at all.
 
-        This is `ui-visually-hidden` and a `<p>` because the floor
-        publishes no live region. It is on the list.
+        This was a hand-rolled `aria-live` paragraph until the floor
+        published one, which is what this file is for.
       */}
-      <p aria-live="polite" className="ui-visually-hidden">
+      <LiveRegion>
         {load.state === "ready"
           ? `${shown.length} violation${shown.length === 1 ? "" : "s"} shown`
           : ""}
-      </p>
+      </LiveRegion>
 
       <Body
         load={load}
         shown={shown}
         severity={severity}
+        sort={sort}
+        onSort={setSort}
         busy={busy}
         onReview={(violation, button) => {
           reopen.current = button;
@@ -389,6 +431,8 @@ function Body({
   load,
   shown,
   severity,
+  sort,
+  onSort,
   busy,
   onReview,
   onScan,
@@ -397,6 +441,8 @@ function Body({
   load: Load;
   shown: Violation[];
   severity: Severity | "all";
+  sort: { column: SortColumn; direction: SortDirection };
+  onSort: (next: { column: SortColumn; direction: SortDirection }) => void;
   busy: boolean;
   onReview: (violation: Violation, button: HTMLButtonElement) => void;
   onScan: () => void;
@@ -437,7 +483,9 @@ function Body({
     );
   }
 
-  return <ViolationTable rows={shown} onReview={onReview} />;
+  return (
+    <ViolationTable rows={shown} sort={sort} onSort={onSort} onReview={onReview} />
+  );
 }
 
 /**
@@ -451,9 +499,13 @@ function Body({
  */
 function ViolationTable({
   rows,
+  sort,
+  onSort,
   onReview,
 }: {
   rows: Violation[];
+  sort: { column: SortColumn; direction: SortDirection };
+  onSort: (next: { column: SortColumn; direction: SortDirection }) => void;
   onReview: (violation: Violation, button: HTMLButtonElement) => void;
 }) {
   return (
@@ -465,10 +517,20 @@ function ViolationTable({
       </caption>
       <thead>
         <tr>
-          <th scope="col">Severity</th>
-          <th scope="col">Rule</th>
-          <th scope="col">Location</th>
-          {/* Empty, so it is announced as a column with no name
+          {/* `aria-sort` goes on the `th`, which is what is
+              announced; the arrow is decoration and hidden. Saying
+              it twice is the usual hand-rolled mistake, and saying
+              it only with an arrow is the other one. */}
+          {COLUMNS.map(({ key, label }) => (
+            <SortableTh
+              key={key}
+              direction={sort.column === key ? sort.direction : undefined}
+              onSort={(direction) => onSort({ column: key, direction })}
+            >
+              {label}
+            </SortableTh>
+          ))}
+          {/* Named but not shown, so it is announced as a column
               rather than inheriting the one before it. */}
           <th scope="col">
             <span className="ui-visually-hidden">Actions</span>
@@ -610,7 +672,16 @@ async function main() {
     return;
   }
 
-  createRoot(root).render(<CompliancePanel client={new ScannerClient(igni)} />);
+  createRoot(root).render(
+    // A throw anywhere below here would otherwise unmount the tree
+    // and leave a blank frame inside a working app. The iframe
+    // protects igni from us; this is what protects us from
+    // ourselves. It catches render and lifecycle throws only —
+    // `ScannerClient` is what handles the async ones.
+    <ErrorBoundary onError={(error) => console.error("[acme.scanner]", error)}>
+      <CompliancePanel client={new ScannerClient(igni)} />
+    </ErrorBoundary>,
+  );
 }
 
 void main();

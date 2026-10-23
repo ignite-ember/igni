@@ -159,13 +159,17 @@ which line to add.
 
 Kept as a list because it is the floor's to-do:
 
-- **Table markup.** `Table` is a bare `<table>`; there is no
-  `Thead`/`Tr`/`Td`, no `th`/`td` padding, no sortable header, no
-  `aria-sort`.
-- **A live region.** The result count is announced through a
-  hand-written `aria-live` paragraph using `ui-visually-hidden`.
-- **An error boundary.** EXTENSIBILITY §7 promises "UI throws → its own
-  error boundary"; nothing provides one, so a throw today is a blank
-  frame inside a working app.
-- **A toast.** `notify` is named in §5 and does not exist.
-- **Virtualisation.** A real scan returns thousands of rows.
+- **Row markup.** `Table` is still a bare `<table>` and there is no
+  `Thead`/`Tr`/`Td`. Cell padding, the sticky header and `SortableTh`
+  are published now; which elements go inside remains ours, per §8.
+- **Virtualisation.** A real scan returns thousands of rows. The floor
+  will not pick a windowing library for you; what it owes is a stable
+  row height and a scroll container, and `Scroll` is that.
+- **Sort state across a reload.** `setLocation` exists and this panel
+  does not use it yet.
+
+Three things left this list because the floor grew them, which is what
+this file is for: the result count is a published `LiveRegion`, the
+root is wrapped in a published `ErrorBoundary`, and the column
+headings are `SortableTh` — `aria-sort` on the `th`, arrow hidden, so
+the sort is announced once rather than twice or not at all.

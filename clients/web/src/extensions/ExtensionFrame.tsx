@@ -40,6 +40,25 @@ import {
 } from "./protocol";
 import { readThemeTokens } from "./tokens";
 
+/**
+ * Are these the same parameters?
+ *
+ * Shallow and by value, because the common caller writes
+ * `params={{ id }}` — a fresh object on every parent render, and
+ * identity would make every one of those look like a change and
+ * post a message the frame then reacts to.
+ */
+function sameParams(
+  a: Record<string, unknown>,
+  b: Record<string, unknown>,
+): boolean {
+  const keys = Object.keys(a);
+  if (keys.length !== Object.keys(b).length) return false;
+  return keys.every(
+    (key) => Object.prototype.hasOwnProperty.call(b, key) && Object.is(a[key], b[key]),
+  );
+}
+
 /** What the frame is permitted to reach, and where it lives. */
 export interface ExtensionFrameProps {
   /** The manifest id. Namespaces everything and labels every log. */
@@ -62,6 +81,17 @@ export interface ExtensionFrameProps {
   onNavigate?: (to: string) => void;
   /** The frame says it is finished. */
   onClose?: () => void;
+  /**
+   * The frame says where inside itself the user now is.
+   *
+   * Not a navigation — fold it into the host's URL and hand it back
+   * as `params` on the next mount. Ignoring it is safe and means the
+   * extension is simply not addressable.
+   *
+   * Values are strings and the host should cap what it keeps: this
+   * ends up in an address bar, and the frame is the untrusted party.
+   */
+  onLocation?: (state: Record<string, string>) => void;
   /** Launch parameters, passed through on `hello`. */
   params?: Record<string, unknown>;
   /** Followed by the frame. */
@@ -100,6 +130,7 @@ export function ExtensionFrame({
   onCall,
   onNavigate,
   onClose,
+  onLocation,
   params,
   theme = "dark",
   title,
@@ -113,8 +144,8 @@ export function ExtensionFrame({
   // Read through refs so the message listener does not have to be torn
   // down and rebuilt whenever a caller passes a new closure — a
   // re-registered listener drops messages in flight.
-  const handlers = useRef({ onCall, onNavigate, onClose, allow });
-  handlers.current = { onCall, onNavigate, onClose, allow };
+  const handlers = useRef({ onCall, onNavigate, onClose, onLocation, allow });
+  handlers.current = { onCall, onNavigate, onClose, onLocation, allow };
 
   const post = useCallback(
     (message: unknown) => {
@@ -140,6 +171,7 @@ export function ExtensionFrame({
         onCall: call,
         onNavigate: navigate,
         onClose: close,
+        onLocation: located,
         allow: granted,
       } = handlers.current;
 
@@ -149,6 +181,10 @@ export function ExtensionFrame({
       }
       if (message.kind === "close") {
         close?.();
+        return;
+      }
+      if (message.kind === "location") {
+        located?.(message.state);
         return;
       }
 
@@ -191,15 +227,26 @@ export function ExtensionFrame({
     return () => window.removeEventListener("message", onMessage);
   }, [extensionId, nonce, origin, post]);
 
+  /**
+   * The `params` value the frame has been told about.
+   *
+   * `null` until `hello` goes out. The effect below uses it to tell
+   * "the host changed the parameters" from "the frame has not been
+   * greeted yet", which are the same render otherwise.
+   */
+  const delivered = useRef<Record<string, unknown> | null>(null);
+
   // The frame cannot be spoken to until it has loaded, and it cannot
   // do anything until it has the nonce, so `hello` goes on load.
   const onLoad = useCallback(() => {
+    const sent = params ?? {};
+    delivered.current = sent;
     post({
       igni: BRIDGE_VERSION,
       kind: "hello",
       nonce,
       extensionId,
-      params: params ?? {},
+      params: sent,
       theme,
       // Read at send time, not at render time: a token defined in a
       // media query resolves to what the user is actually looking at
@@ -207,6 +254,27 @@ export function ExtensionFrame({
       tokens: readThemeTokens(),
     });
   }, [extensionId, nonce, params, post, theme]);
+
+  // Parameters that change under a mounted frame.
+  //
+  // Without this they arrived exactly once, inside `hello`, and the
+  // only way to deliver new ones was to rebuild the frame — which
+  // throws away whatever the extension was holding. That is the
+  // difference between a widget and a page: a page can be linked to,
+  // and a link resolved while the frame is already up had nowhere to
+  // land.
+  //
+  // Skipped before `hello`, because `hello` carries them, and
+  // skipped when the value is the one already delivered, so a parent
+  // re-render with an inline object literal does not look like a
+  // change.
+  useEffect(() => {
+    if (delivered.current === null) return;
+    const next = params ?? {};
+    if (sameParams(delivered.current, next)) return;
+    delivered.current = next;
+    post({ igni: BRIDGE_VERSION, kind: "params", params: next });
+  }, [params, post]);
 
   // Theme changes after the handshake are their own message rather
   // than a reload: a panel that reloaded every time the user flipped

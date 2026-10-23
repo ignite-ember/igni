@@ -19,6 +19,7 @@ import {
   BRIDGE_VERSION,
   type CallMessage,
   type CloseMessage,
+  type LocationMessage,
   type NavigateMessage,
   type ResultMessage,
   isHostMessage,
@@ -53,6 +54,34 @@ export interface Bridge {
   close(): void;
   /** Follow the host's theme. Returns an unsubscribe. */
   onTheme(fn: (theme: string) => void): () => void;
+  /**
+   * Follow the launch parameters.
+   *
+   * They arrive in `hello` and can change afterwards — a link
+   * resolved while this frame was already mounted, or the host
+   * restoring a saved location. Without this the host would have to
+   * rebuild the frame to deliver a changed parameter, losing
+   * whatever state it held.
+   *
+   * Fires only on change, never for the initial value; read
+   * {@link params} for that.
+   */
+  onParams(fn: (params: Record<string, unknown>) => void): () => void;
+  /**
+   * Tell the host where inside this extension the user now is.
+   *
+   * Not a navigation — {@link navigate} is that. This says "still
+   * here, and here is now this". The host folds it into its own URL
+   * and replays it in the next `hello`, which is the only way an
+   * extension can be linked to or restored: the frame cannot write
+   * the address bar, and its `localStorage` dies with the ephemeral
+   * port it was served from.
+   *
+   * Strings only, and keep it small — it ends up in the host's URL.
+   * Call it when the user lands somewhere worth returning to, not on
+   * every keystroke.
+   */
+  setLocation(state: Record<string, string>): void;
 }
 
 interface Pending {
@@ -117,6 +146,8 @@ function build(
 ): Bridge {
   const pending = new Map<string, Pending>();
   const themeWatchers = new Set<(theme: string) => void>();
+  const paramWatchers = new Set<(params: Record<string, unknown>) => void>();
+  let params = hello.params;
   let theme = hello.theme;
   let tokens = hello.tokens;
   let counter = 0;
@@ -134,6 +165,11 @@ function build(
       tokens = event.data.tokens;
       applyThemeTokens(tokens, document.documentElement);
       for (const fn of themeWatchers) fn(theme);
+      return;
+    }
+    if (event.data.kind === "params") {
+      params = event.data.params;
+      for (const fn of paramWatchers) fn(params);
       return;
     }
     if (event.data.kind !== "result") return;
@@ -154,7 +190,9 @@ function build(
       );
   });
 
-  function post(message: CallMessage | NavigateMessage | CloseMessage) {
+  function post(
+    message: CallMessage | NavigateMessage | LocationMessage | CloseMessage,
+  ) {
     // Targeted at "*" deliberately: the guest does not know the host's
     // origin, and guessing one would mean a message silently going
     // nowhere the first time the app is served from somewhere else.
@@ -165,7 +203,9 @@ function build(
 
   return {
     extensionId: hello.extensionId,
-    params: hello.params,
+    get params() {
+      return params;
+    },
     get theme() {
       return theme;
     },
@@ -202,6 +242,13 @@ function build(
     onTheme(fn: (next: string) => void) {
       themeWatchers.add(fn);
       return () => themeWatchers.delete(fn);
+    },
+    onParams(fn: (next: Record<string, unknown>) => void) {
+      paramWatchers.add(fn);
+      return () => paramWatchers.delete(fn);
+    },
+    setLocation(state: Record<string, string>) {
+      post({ igni: BRIDGE_VERSION, kind: "location", nonce, state });
     },
   };
 }

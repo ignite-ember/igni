@@ -208,8 +208,12 @@ Optional, and packaging-independent *within a single-user backend*: the client i
 > The second reason is the one that decides the bridge. A `postMessage` from an opaque origin arrives at the host as `origin: "null"`, so the host cannot tell one extension from another, and the origin check every inbound message depends on has nothing to check. With a port each, `e.origin` is that extension's own `http://127.0.0.1:<port>`.
 >
 > These two bullets used to specify an opaque origin *and* `default-src 'self'`. They were coherent only while every extension shared one port, where an opaque origin was the only isolation on offer.
-- **Bridge API, as built**: `rpc`, `navigate`, `close`, `params`, `theme`/`onTheme`, `tokens`. Origin, source window and per-session nonce checked on every inbound message.
-- **Bridge API, not built**: `subscribe`, `identity`, `setTitle`, `setStatus`, `notify`, `storage`, and per-call budgets or cancellation. This list used to be written in the present tense alongside the one above, which told an author that live push was solved. It is not: `HostMessage` is `hello | theme | result`, so the only way to follow a long-running job is to poll an RPC. `storage` is worse than missing — each extension gets an ephemeral port, so a new port is a new origin and `localStorage` is wiped whenever the backend restarts.
+- **Bridge API, as built**: `rpc`, `navigate`, `close`, `params`/`onParams`, `setLocation`, `theme`/`onTheme`, `tokens`. Origin, source window and per-session nonce checked on every inbound message.
+- **Bridge API, not built**: `subscribe`, `identity`, `setTitle`, `setStatus`, `notify`, `storage`, and per-call budgets or cancellation. This list used to be written in the present tense alongside the one above, which told an author that live push was solved. It is not: `HostMessage` is `hello | theme | params | result`, so the only way to follow a long-running job is still to poll an RPC.
+
+  `notify` means a message in *igni's* chrome. An extension's own toasts, inside its own frame, are published as `ToastHost`/`useToast` — the two are not interchangeable, and only something the user must see after navigating away belongs to the host.
+
+  `storage` stays missing, but it is no longer the only way to keep a place. Each extension gets an ephemeral port, a port is part of an origin, so `localStorage` is wiped whenever the backend restarts. `setLocation` is the supported way to be restorable: the guest says where it is, the host folds that into its own URL and replays it in the next `hello`. Strings only, and small — it ends up in an address bar.
 
 **A capability UI never holds a credential and never opens a socket.** Every privileged call goes through the backend, where credentials already live.
 
@@ -268,7 +272,7 @@ Install, registration, upgrade, permission grant, tool invocation and bridge cal
 |---|---|---|
 | sidecar / endpoint down | `FAILED` + reason + fix; agent told it is unavailable | session crash, agent hang |
 | call times out | deadline fires, cancelled, degraded once per session | silent retry storm |
-| UI throws | its own error boundary | blank page, broken shell |
+| UI throws | the frame survives; `ErrorBoundary` keeps the rest of the extension up | blank page, broken shell |
 | manifest / entry invalid | refused at install, every error named at once | partial load |
 | contract out of range | refused, naming the version and which half is behind | "works mostly" |
 | licence expired | `DISABLED` with the renewal fix | hard stop on a *paying* customer mid-contract |

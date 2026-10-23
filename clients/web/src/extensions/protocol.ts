@@ -48,6 +48,49 @@ export interface ThemeMessage {
   tokens: Record<string, string>;
 }
 
+/**
+ * Host → guest: the launch parameters changed under a mounted frame.
+ *
+ * `params` used to arrive exactly once, inside `hello`, and there
+ * was no way to send new ones. That is the difference between a
+ * widget and a page: a page can be linked to, and a link that
+ * resolves while the frame is already mounted had nowhere to land.
+ * The host would have had to tear the frame down and rebuild it,
+ * losing whatever state it held, to deliver a changed query string.
+ */
+export interface ParamsMessage {
+  igni: typeof BRIDGE_VERSION;
+  kind: "params";
+  params: Record<string, unknown>;
+}
+
+/**
+ * Guest → host: where I am now.
+ *
+ * **Not a navigation.** `navigate` asks the host to go somewhere
+ * else; this says "I am still here, and here is now this". The host
+ * folds it into its own URL and replays it in the next `hello`, so a
+ * reload or a shared link comes back to the same place inside the
+ * extension.
+ *
+ * It exists because an extension has no other way to be addressable.
+ * It cannot write the address bar — `allow-top-navigation` is
+ * deliberately absent from the frame's sandbox — and it cannot
+ * persist anything, because each extension is served from an
+ * ephemeral port, a port is part of an origin, and so `localStorage`
+ * is wiped whenever the backend restarts.
+ *
+ * Strings only, and the host is free to cap or drop them: this ends
+ * up in a URL, and an extension that puts its whole state here would
+ * be writing an unbounded value into the host's address bar.
+ */
+export interface LocationMessage {
+  igni: typeof BRIDGE_VERSION;
+  kind: "location";
+  nonce: string;
+  state: Record<string, string>;
+}
+
 /** Guest → host: call a backend RPC. */
 export interface CallMessage {
   igni: typeof BRIDGE_VERSION;
@@ -86,8 +129,16 @@ export interface ResultMessage {
   error?: string;
 }
 
-export type HostMessage = HelloMessage | ThemeMessage | ResultMessage;
-export type GuestMessage = CallMessage | NavigateMessage | CloseMessage;
+export type HostMessage =
+  | HelloMessage
+  | ThemeMessage
+  | ParamsMessage
+  | ResultMessage;
+export type GuestMessage =
+  | CallMessage
+  | NavigateMessage
+  | LocationMessage
+  | CloseMessage;
 
 /**
  * Is this a message from a guest, shaped the way we require?
@@ -116,6 +167,17 @@ export function isGuestMessage(data: unknown): data is GuestMessage {
       );
     case "navigate":
       return typeof m.to === "string" && m.to.length > 0;
+    case "location":
+      // Every value a string, checked rather than assumed: this goes
+      // into the host's own URL, and a guest is the untrusted party.
+      return (
+        typeof m.state === "object" &&
+        m.state !== null &&
+        !Array.isArray(m.state) &&
+        Object.values(m.state as Record<string, unknown>).every(
+          (value) => typeof value === "string",
+        )
+      );
     case "close":
       return true;
     default:
@@ -144,6 +206,12 @@ export function isHostMessage(data: unknown): data is HostMessage {
         typeof m.theme === "string" &&
         typeof m.tokens === "object" &&
         m.tokens !== null
+      );
+    case "params":
+      return (
+        typeof m.params === "object" &&
+        m.params !== null &&
+        !Array.isArray(m.params)
       );
     case "result":
       return typeof m.id === "string" && typeof m.ok === "boolean";
