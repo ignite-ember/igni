@@ -253,6 +253,42 @@
             }
           }
         },
+        "indicators": {
+          "type": "array",
+          "description": "Small status chips in the host's own chrome, beside igni's. For a capability whose health the user needs at a glance without opening its page — an index that has gone stale is the case this exists for. Not a frame: a chip is twenty pixels and an iframe is not what twenty pixels costs. The host renders it; the extension decides what it says, because what `PREPARING` means for one capability is not what it means for another.",
+          "items": {
+            "type": "object",
+            "required": ["id", "label", "source"],
+            "additionalProperties": false,
+            "properties": {
+              "id": {
+                "type": "string",
+                "description": "Namespaced by the extension id, like a page kind.",
+                "pattern": "^[a-z][a-z0-9]*(\\.[a-z][a-z0-9-]*)+$"
+              },
+              "label": {
+                "type": "string",
+                "description": "What it is, when the chip has room to say so.",
+                "maxLength": 24
+              },
+              "source": {
+                "type": "string",
+                "description": "An MCP tool the host calls for the current state. It answers `{ label, tone, detail }` — `tone` being one of the four the design system publishes, so a chip cannot invent a colour igni does not have. Polled, because the bridge has no push; keep it cheap."
+              },
+              "opens": {
+                "type": "string",
+                "description": "A page kind this extension contributes, opened when the chip is clicked. Omit for a chip that only reports."
+              },
+              "intervalSeconds": {
+                "type": "number",
+                "description": "How often to ask. Clamped by the host, which will not poll faster than it polls its own.",
+                "minimum": 1,
+                "default": 30
+              }
+            }
+          }
+        },
+
         "commands": {
           "type": "array",
           "description": "Slash commands the extension answers.",

@@ -18,6 +18,7 @@ from typing import Any
 from pydantic import BaseModel, Field
 
 from ember_code.extensions.manifest import (
+    IndicatorContribution,
     MenuContribution,
     PageContribution,
     Setting,
@@ -38,6 +39,19 @@ class ExtensionMenuEntry(BaseModel):
     label: str
     command: str
     desc: str
+
+
+class ExtensionIndicator(BaseModel):
+    """A status chip the host renders in its own chrome."""
+
+    id: str
+    label: str
+    #: The tool the host polls for ``{label, tone, detail}``.
+    source: str
+    #: A page kind to open on click, or empty for a chip that only
+    #: reports.
+    opens: str = ""
+    intervalSeconds: float = 30.0
 
 
 class ExtensionSetting(BaseModel):
@@ -67,6 +81,7 @@ class ExtensionSummary(BaseModel):
     allow: list[str] = Field(default_factory=list)
     pages: list[ExtensionPage] = Field(default_factory=list)
     menu: list[ExtensionMenuEntry] = Field(default_factory=list)
+    indicators: list[ExtensionIndicator] = Field(default_factory=list)
     #: What this extension can be configured with, for the host to
     #: render. The shape only — the values are in `settings`.
     settings: list[ExtensionSetting] = Field(default_factory=list)
@@ -92,6 +107,7 @@ class ExtensionSummary(BaseModel):
             allow=list(manifest.permissions.rpc),
             pages=[_page(p) for p in manifest.contributes.pages],
             menu=[_menu(m) for m in manifest.contributes.menu],
+            indicators=[_indicator(i) for i in manifest.contributes.indicators],
             settings=[_setting(s) for s in manifest.contributes.settings],
             values=dict(values or {}),
         )
@@ -118,4 +134,14 @@ def _setting(setting: Setting) -> ExtensionSetting:
         label=setting.label,
         default=setting.default,
         options=list(setting.options),
+    )
+
+
+def _indicator(indicator: IndicatorContribution) -> ExtensionIndicator:
+    return ExtensionIndicator(
+        id=indicator.id,
+        label=indicator.label,
+        source=indicator.source,
+        opens=indicator.opens or "",
+        intervalSeconds=indicator.intervalSeconds,
     )

@@ -43,6 +43,7 @@ from ember_code.extensions.manifest import (
     Endpoint,
     EndpointAuth,
     ExtensionManifest,
+    IndicatorContribution,
     McpBinding,
     MenuContribution,
     PageContribution,
@@ -77,6 +78,7 @@ PAIRS: list[tuple[str, type[BaseModel]]] = [
     ("contributes.pages[]", PageContribution),
     ("contributes.menu[]", MenuContribution),
     ("contributes.commands[]", CommandContribution),
+    ("contributes.indicators[]", IndicatorContribution),
     ("contributes.promptFragments[]", PromptFragment),
     ("contributes.settings[]", Setting),
 ]

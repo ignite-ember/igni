@@ -218,6 +218,31 @@ class MenuContribution(Strict):
     desc: str
 
 
+class IndicatorContribution(Strict):
+    """A status chip in the host's own chrome.
+
+    For a capability whose health somebody needs at a glance without
+    opening its page — an index that has gone stale is the case this
+    exists for, and `CodeIndexIndicator` is the one already in the
+    composer today.
+
+    **Not a frame.** A chip is twenty pixels and an iframe is not
+    what twenty pixels costs. The host renders it from a value the
+    extension reports, which also puts the judgement in the right
+    place: what `PREPARING` means for one capability is not what it
+    means for another, and only the capability knows.
+    """
+
+    id: Annotated[str, Field(pattern=EXTENSION_ID.pattern)]
+    label: str
+    #: An MCP tool answering ``{label, tone, detail}``. Polled,
+    #: because the bridge has no push — so it should be cheap.
+    source: str
+    #: A page kind this extension contributes, opened on click.
+    opens: str | None = None
+    intervalSeconds: float = 30.0
+
+
 class CommandContribution(Strict):
     command: Annotated[str, Field(pattern=COMMAND.pattern)]
     desc: str
@@ -258,6 +283,7 @@ class Setting(Strict):
 class Contributes(Strict):
     pages: list[PageContribution] = Field(default_factory=list)
     menu: list[MenuContribution] = Field(default_factory=list)
+    indicators: list[IndicatorContribution] = Field(default_factory=list)
     commands: list[CommandContribution] = Field(default_factory=list)
     promptFragments: list[PromptFragment] = Field(default_factory=list)
     promptVariants: list[Annotated[str, Field(pattern=SLUG.pattern)]] = Field(default_factory=list)

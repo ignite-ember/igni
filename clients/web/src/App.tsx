@@ -45,6 +45,7 @@ import {
   ExtensionPage,
   type ExtensionSummary,
 } from "./extensions/ExtensionPage";
+import { ExtensionIndicator } from "./extensions/ExtensionIndicator";
 import { useDocumentTheme } from "./extensions/useDocumentTheme";
 import { PageContext } from "./components/PageShell";
 import { Monogram } from "@igni/ui-react";
@@ -3658,6 +3659,27 @@ export default function App() {
                 onOpen={() => goPage({ kind: "watcher", label: "Watcher" })}
               />
               <GroupIndicator client={client} />
+              {/*
+                Installed extensions' own chips, beside igni's three.
+                Data rather than frames: a chip is twenty pixels. The
+                extension decides what it says and the host draws it.
+              */}
+              {extensions.flatMap((extension) =>
+                extension.indicators.map((indicator) => (
+                  <ExtensionIndicator
+                    key={indicator.id}
+                    extensionId={extension.id}
+                    indicator={indicator}
+                    onCall={(method, args) =>
+                      client.asExtension(extension.id).rpc(method, args)
+                    }
+                    onOpen={(kind) => {
+                      const page = extension.pages.find((p) => p.kind === kind);
+                      if (page) goPage({ kind: page.kind, label: page.label });
+                    }}
+                  />
+                )),
+              )}
             </>
           )}
           {pendingUpdate && (

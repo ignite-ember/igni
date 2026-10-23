@@ -48,6 +48,7 @@ Everything below is a key under `contributes` in the manifest, and the list is e
 | `commands` | slash commands the extension answers | — . Dispatched to the tool with the command's own name, the rest of the line arriving as `args`. Declaring one *is* the grant, separately from `permissions.rpc`: that list is what the extension's UI may call, and a slash command is the user invoking something igni offered them. |
 | `menu` | entries in the header tools menu | — |
 | `pages` | **optional** UI — a surface the extension renders in its own frame | MCP has no UI concept |
+| `indicators` | a status chip in igni's own chrome, beside igni's | MCP has no UI concept. Data rather than a frame: a chip is twenty pixels and an iframe is not what twenty pixels costs. The host draws it; the extension decides what it says, because what "preparing" means for an index is not what it means for a document store. |
 
 `menu` rather than `tools`, because `permissions.tools` already means the MCP tool names an extension may register with the agent. See §2.
 
@@ -63,7 +64,9 @@ Everything is namespaced by extension id. A collision with a base name is a vali
 
 Keybindings, context menus, custom editors, theme overrides, i18n.
 
-Also **`indicators`** (a status chip beside the extension's name) and **`chatRenderers`** (inline rendering of an extension's tool results in the chat transcript). Both were in this table before anything implemented or specified them, which made them look declarable. `chatRenderers` is unlikely ever to arrive: a tool result that wants a rich view emits a `json-render` spec, which the chat already renders, and a second mechanism for the same job would be a second thing to keep in step.
+Also **`chatRenderers`** (inline rendering of an extension's tool results in the chat transcript). It was in the table above before anything implemented or specified it, which made it look declarable, and it is unlikely ever to arrive: a tool result that wants a rich view emits a `json-render` spec, which the chat already renders, and a second mechanism for the same job would be a second thing to keep in step.
+
+`indicators` was here too, for the same reason, and has moved back into the table — because the *first* extension needs one. `CodeIndexIndicator` sits in the composer today, hardcoded, and when CodeIndex becomes an extension that chip either comes from its manifest or is lost. "Nothing has specified it" was right about the specification and wrong about the need, which is the difference a real extraction surfaces and a reasoned list does not.
 
 Additive changes are never breaking, so omitting is cheap and premature inclusion is forever.
 

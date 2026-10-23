@@ -27,6 +27,23 @@ export interface ExtensionSummary {
   allow: string[];
   pages: { kind: string; label: string; sidebar: boolean; entry: string }[];
   menu: { label: string; command: string; desc: string }[];
+  /** Status chips this extension puts in the host's own chrome. */
+  indicators: {
+    id: string;
+    label: string;
+    source: string;
+    opens: string;
+    intervalSeconds: number;
+  }[];
+  /** What it can be configured with, and what it is configured to. */
+  settings: {
+    key: string;
+    type: string;
+    label: string;
+    default?: unknown;
+    options: string[];
+  }[];
+  values: Record<string, unknown>;
 }
 
 export interface ExtensionPageProps {

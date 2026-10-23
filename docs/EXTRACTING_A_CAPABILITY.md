@@ -49,7 +49,7 @@ chrome, with no contribution type for it. They were found by grepping
 for capability calls outside the capability's own panels — which is
 the check this document exists to be.
 
-### 3.1 Status indicators — `CodeIndexIndicator`
+### 3.1 Status indicators — `CodeIndexIndicator` — **closed**
 
 `App.tsx:3652` renders `CodeIndexIndicator` in the composer's chrome,
 beside `WatcherIndicator` and `GroupIndicator`. It shows index
@@ -58,9 +58,17 @@ freshness at a glance and opens the panel when clicked.
 `indicators` was in EXTENSIBILITY §1's table and was moved to **"not
 in v1"** on the grounds that nothing specified it. That reasoning was
 right about the specification and wrong about the need: the *first*
-extension uses one. Without it, CodeIndex-as-an-extension either
-loses the indicator or the host keeps a hardcoded one for an
-extension that may not be installed.
+extension uses one.
+
+**Shipped.** `contributes.indicators` declares a chip; the host polls
+the named tool for `{ label, tone, detail }` and draws it with the
+published `Status`. Data rather than a frame, because a chip is
+twenty pixels — and because it puts the judgement where it belongs:
+`classify()` in the existing component is 90 of its 127 lines and is
+entirely CodeIndex's opinion about its own states. A tone outside the
+four the design system publishes is refused and the chip is not
+drawn, so an extension cannot put a colour igni does not have into
+igni's chrome.
 
 ### 3.2 Notifications — the host's notification panel
 

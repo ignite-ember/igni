@@ -29,6 +29,9 @@ const READY: ExtensionSummary = {
     { kind: "acme.scan", label: "Compliance", sidebar: true, entry: "index.html" },
   ],
   menu: [],
+  indicators: [],
+  settings: [],
+  values: {},
 };
 
 function draw(extension: Partial<ExtensionSummary> = {}, kind = "acme.scan") {
