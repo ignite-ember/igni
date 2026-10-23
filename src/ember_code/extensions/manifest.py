@@ -94,6 +94,12 @@ class Capability(StrEnum):
     VECTOR_STORE = "vector-store"
     RELATIONAL_DB = "relational-db"
     OBJECT_STORE = "object-store"
+    #: Text in, vectors out. A kind rather than a model name for the
+    #: usual reason — a regulated customer runs their own, on their
+    #: own hardware — and because two extensions sharing one must
+    #: agree on the vector width, which is what its ``constraint``
+    #: says. See :mod:`ember_code.extensions.capabilities`.
+    EMBEDDER = "embedder"
 
 
 class ResolveMode(StrEnum):
@@ -109,6 +115,9 @@ class ResolveMode(StrEnum):
 
 class Requirement(Strict):
     capability: Capability
+    #: What it means depends on the kind: a semver range over the
+    #: major version for the stores, ``dim=<n>`` for an embedder.
+    #: The table is in :mod:`ember_code.extensions.capabilities`.
     constraint: str
     mode: ResolveMode = ResolveMode.SHARED
 

@@ -87,13 +87,13 @@
             "additionalProperties": false,
             "properties": {
               "capability": {
-                "enum": ["graph-db", "vector-store", "relational-db", "object-store"],
-                "description": "A kind, never a product. A regulated customer often has a sanctioned Postgres you must use, and a manifest naming 'postgres' cannot express 'or whatever they have'."
+                "enum": ["graph-db", "vector-store", "relational-db", "object-store", "embedder"],
+                "description": "A kind, never a product. A regulated customer often has a sanctioned Postgres you must use, and a manifest naming 'postgres' cannot express 'or whatever they have'. `embedder` is text in, vectors out — a kind for the same reason, and because two extensions sharing one must agree on the vector width."
               },
               "constraint": {
                 "type": "string",
-                "description": "A semver range over the major version of whatever satisfies the capability. `>=14` against a relational-db means Postgres 14 or later if that is what the deployment has.",
-                "examples": [">=5", ">=14"]
+                "description": "What this requirement will accept. **Its meaning depends on the kind** — it is not always a version range. For `graph-db`, `relational-db` and `object-store` it is a semver range over the major version: `>=14` against a relational-db means Postgres 14 or later if that is what the deployment has. For `vector-store` and `embedder` it is `dim=<n>`, the vector width, because width is the axis on which they are compatible: a newer model of the same width is a safe substitution and an older one of a different width is not, and a version range cannot say that. An extension declaring both must give them the same width — vectors written at one and queried at another return nonsense rather than failing.",
+                "examples": [">=5", ">=14", "dim=384"]
               },
               "mode": {
                 "enum": ["shared", "dedicated", "bind-only"],

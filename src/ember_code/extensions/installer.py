@@ -36,6 +36,12 @@ from pathlib import Path
 from typing import Any
 
 from ember_code.core.mcp.config import MCPServerConfig, MCPTransport
+from ember_code.extensions.capabilities import (
+    CapabilityResolver,
+    Resolved,
+    UnresolvedRequirement,
+    check_dimensions_agree,
+)
 from ember_code.extensions.manifest import ExtensionManifest, Trust, Workspace
 from ember_code.extensions.origin import ExtensionOrigins
 from ember_code.extensions.permissions import PermissionDenied, Permissions
@@ -89,6 +95,7 @@ class ExtensionInstaller:
         project_dir: Path | None = None,
         secret_resolver: Callable[[str], str | None] | None = None,
         profile: DeploymentProfile | None = None,
+        resolver: CapabilityResolver | None = None,
         allow_unsigned: bool = False,
     ) -> None:
         """
@@ -112,6 +119,10 @@ class ExtensionInstaller:
                 when ``permissions.workspace`` grants it.
             secret_resolver: The deployment's secret source. A name
                 the manifest did not declare is never passed to it.
+            resolver: Turns a declared ``requires`` into a connection.
+                Optional: a deployment with no infrastructure to
+                offer refuses an extension that needs some, which is
+                the honest answer and what ``None`` produces.
             profile: How many principals this backend serves. A
                 sidecar is one process, so a shared backend refuses
                 one — see :mod:`ember_code.extensions.profile`.
@@ -128,6 +139,7 @@ class ExtensionInstaller:
         self._project_dir = project_dir
         self._secret_resolver = secret_resolver
         self._profile = profile if profile is not None else DeploymentProfile.current()
+        self._resolver = resolver
         self._allow_unsigned = allow_unsigned
 
     async def install(self, bundle: Path) -> InstalledExtension:
@@ -162,8 +174,9 @@ class ExtensionInstaller:
         permissions = Permissions(manifest, secret_resolver=self._secret_resolver)
 
         try:
+            await self._resolve_requirements(manifest)
             config = self._service_config(manifest, bundle, permissions)
-        except (InstallError, PermissionDenied) as exc:
+        except (InstallError, PermissionDenied, UnresolvedRequirement) as exc:
             # Packaging we cannot honour. Recorded rather than raised:
             # the extension is installed and not runnable here, which
             # is exactly what an administrator needs to be shown.
@@ -337,6 +350,46 @@ class ExtensionInstaller:
             "approved and never arrive. Remove it, or have the service read "
             "its own configuration."
         )
+
+    async def _resolve_requirements(self, manifest: ExtensionManifest) -> list[Resolved]:
+        """Infrastructure this extension declared, made to exist.
+
+        At install, never later: an extension that starts and then
+        discovers it has no database fails in front of a user
+        instead of in front of the administrator who installed it.
+
+        A resolver always hands back a *connection*. On a laptop it
+        provisioned one first; in a deployment it bound to one the
+        infrastructure already runs. The extension cannot tell, and
+        that is what lets the same bundle install in both.
+        """
+        requires = manifest.sidecar.requires if manifest.sidecar else []
+        if not requires:
+            return []
+        if self._resolver is None:
+            raise UnresolvedRequirement(
+                f"{manifest.id} needs "
+                f"{sorted(r.capability.value for r in requires)} and this "
+                "backend has no capability resolver, so there is nothing to "
+                "satisfy it with."
+            )
+        # Before anything is resolved: an extension whose vector
+        # kinds disagree about width is broken whichever instance
+        # satisfies them.
+        check_dimensions_agree(list(requires), extension_id=manifest.id)
+
+        resolved: list[Resolved] = []
+        for requirement in requires:
+            answer = await self._resolver.resolve(requirement, extension_id=manifest.id)
+            logger.info(
+                "extension %s: %s %s (%s)",
+                manifest.id,
+                requirement.capability.value,
+                answer.how,
+                answer.uri,
+            )
+            resolved.append(answer)
+        return resolved
 
     def _service_config(
         self, manifest: ExtensionManifest, bundle: Path, permissions: Permissions

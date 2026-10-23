@@ -136,7 +136,84 @@ are `contributes.menu` and not `contributes.tools`.
 
 **One version axis.** An extension declares a `contract` range and never names a product version. The deployment advertises one contract version, the lower of what the backend and the installed client implement.
 
-**Sidecar requirements resolve offline.** Declare capability *kinds* (`graph-db`, `vector-store`, `relational-db`, `object-store`) — never a product name; a regulated customer often has a sanctioned Postgres you must use, and a manifest naming `postgres` cannot express "or whatever they have". `mode` picks how hard to try: `shared` uses the deployment's instance and provisions one if absent, `dedicated` always provisions its own, and `bind-only` uses an existing instance and fails at install if there is none — which is what a sanctioned database requires, and what you want when provisioning would breach a customer's change control. The resolver binds to a running instance or provisions one from the bundle. Nothing is fetched at resolve time. Unsatisfiable requirements fail **at install**, naming the fix.
+### Requirements: what an extension needs igni to provide
+
+**Declare a kind, never a product.** `graph-db`, `vector-store`,
+`relational-db`, `object-store`, `embedder`. A regulated customer
+often has a sanctioned Postgres you must use, and a manifest naming
+`postgres` cannot express "or whatever they have".
+
+**A resolver returns a connection, never a process.** That is the
+whole contract, and everything below follows from it. Two resolvers
+exist and they differ only in what they do *before* returning:
+
+| | On a laptop | In a deployment |
+|---|---|---|
+| Resolver | `ProvisioningResolver` | `BindingResolver` |
+| What it does | downloads, starts, loads — then returns a connection | returns a connection to infrastructure the deployment already runs |
+| What it builds | whatever is missing | **nothing** |
+| Missing instance | provisions one | **refuses the install**, because that is an operator's problem and a backend starting one quietly is the surprise |
+
+**The extension cannot tell which it got**, and that is the point:
+the same bundle, the same signature and the same manifest install in
+both places. A manifest that had to know where it was running would
+not be a contract.
+
+**Tenancy is in the result from the start.** A shared instance says
+which slice is this extension's — a database name, a collection
+prefix. On a laptop that is trivially "the only one" and it is
+*still* filled in, because a field that appeared only in the
+deployment case would make the deployment case a contract change
+rather than a resolver swap.
+
+**`mode` is the extension's requirement; the resolver decides how.**
+`shared` takes the deployment's instance, `dedicated` wants one
+nobody else is on, and `bind-only` means an existing instance and no
+new one. Each resolver refuses the one it cannot honour: a binding
+resolver refuses `dedicated` rather than quietly handing over a
+shared instance — the extension asked for isolation — and a
+provisioning resolver refuses `bind-only`, since starting an
+instance is exactly what that mode forbids.
+
+**`constraint` does not always mean a version.** Its meaning is
+defined by the kind, and saying "a semver range" was wrong the day
+embedders arrived:
+
+| Kind | `constraint` | Resolved `uri` |
+|---|---|---|
+| `graph-db` | semver range, e.g. `>=5` | `bolt://host:7687` |
+| `relational-db` | semver range, e.g. `>=14` | `postgresql://host:5432` |
+| `object-store` | semver range | `s3://…` or a base URL |
+| `vector-store` | **`dim=<n>`** — the vector width | product-dependent |
+| `embedder` | **`dim=<n>`** — the vector width | `http://host/embed` |
+
+The two vector kinds take a width rather than a version because
+width is the axis on which they are compatible. A newer model of the
+same width is a safe substitution; an older one of a different width
+is not, and a version range cannot say that.
+
+**An extension declaring both must give them the same width.**
+Vectors written at one width and queried at another do not fail —
+they return nonsense, slowly, which is the worst failure available,
+so it is refused at install.
+
+**One instance may satisfy several kinds.** `graph-db` and
+`vector-store` are usually the same Neo4j: it holds the graph *and*
+a native vector index on it, which is how both of igni's own
+capabilities use it. That is a resolver's business, not a manifest's
+— it maps each kind to a connection and two kinds may map to the
+same one.
+
+Merging them into a single kind would be the wrong fix. An extension
+that wants semantic search over its own documents and no graph would
+have to declare a graph database it never opens, and a deployment
+running Qdrant beside Neo4j could not express that either. **A kind
+is what the extension needs; an instance is what satisfies it.**
+
+**Resolution happens at install.** An extension that starts and then
+discovers it has no database fails in front of a user instead of in
+front of the administrator who installed it. Unsatisfiable
+requirements fail there, naming the fix.
 
 **A sidecar is a single instance, and that is the trade.** If it dies, one user is blocked. That is the correct blast radius for a laptop, and the reason none of a remote service's HA machinery belongs here.
 
