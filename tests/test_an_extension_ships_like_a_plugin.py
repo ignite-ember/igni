@@ -288,3 +288,75 @@ class TestThePluginActuallyArrives:
         async for _installer, entry in self._install(bundle, tmp_path, plugins):
             assert entry.state is ExtensionState.READY
             assert "plugin.json" in caplog.text
+
+
+class TestOneRepositoryCanHoldSeveral:
+    """`--subdir`, the same way plugins do it.
+
+    A plugin repository is often a parent of many — the official
+    marketplace's `git-subdir` source is about half its catalog —
+    and there is no reason an extension repository should be
+    different. It is not, and this says so rather than leaving it
+    to be discovered.
+
+    What an extension does *not* have is a marketplace. These are
+    installable but not browsable: you have to be told the subdir.
+    """
+
+    @pytest.fixture
+    def monorepo(self, tmp_path: Path) -> str:
+        root = tmp_path / "monorepo"
+        for name, ident in (("scanner", "acme.scanner"), ("auditor", "acme.auditor")):
+            where = root / "extensions" / name
+            shutil.copytree(FIXTURE, where)
+            manifest = json.loads((where / "manifest.json").read_text())
+            manifest["id"] = ident
+            (where / "manifest.json").write_text(json.dumps(manifest))
+        _git(root, "init", "-b", "main")
+        _git(root, "add", "-A")
+        _git(root, "commit", "-m", "two extensions")
+        return f"file://{root}"
+
+    def test_each_one_installs_from_its_own_subdir(self, monorepo, tmp_path):
+        store = tmp_path / "store"
+        for name, ident in (("scanner", "acme.scanner"), ("auditor", "acme.auditor")):
+            done = CliRunner().invoke(
+                ext,
+                ["install", monorepo, "--root", str(store), "--subdir", f"extensions/{name}"],
+            )
+            assert done.exit_code == 0, done.output
+            assert ident in done.output
+        assert sorted(p.name for p in store.iterdir()) == ["acme.auditor", "acme.scanner"]
+
+    def test_a_subdir_that_is_not_there_says_so(self, monorepo, tmp_path):
+        """Rather than installing the repository root, which would
+        be a bundle with no manifest and a confusing error."""
+        done = CliRunner().invoke(
+            ext,
+            ["install", monorepo, "--root", str(tmp_path / "s"), "--subdir", "extensions/nope"],
+        )
+        assert done.exit_code != 0
+        assert "not a directory" in done.output
+
+    def test_two_bundles_with_one_id_collide(self, tmp_path):
+        """The store keys by extension id, not by where it came
+        from — so a monorepo's ids are a namespace its author has
+        to manage, and the second install refuses rather than
+        overwriting the first."""
+        root = tmp_path / "clash"
+        for name in ("one", "two"):
+            shutil.copytree(FIXTURE, root / name)
+        _git(root, "init", "-b", "main")
+        _git(root, "add", "-A")
+        _git(root, "commit", "-m", "same id twice")
+
+        store = tmp_path / "store"
+        first = CliRunner().invoke(
+            ext, ["install", f"file://{root}", "--root", str(store), "--subdir", "one"]
+        )
+        assert first.exit_code == 0, first.output
+        second = CliRunner().invoke(
+            ext, ["install", f"file://{root}", "--root", str(store), "--subdir", "two"]
+        )
+        assert second.exit_code != 0
+        assert "already" in second.output.lower()

@@ -176,8 +176,16 @@ class MarketplaceGitSubdirSource(BaseModel):
     sha: str | None = None
 
 
-class MarketplacePluginEntry(BaseModel):
-    """One row in a marketplace's catalog.
+class MarketplaceCatalogEntry(BaseModel):
+    """One row in a marketplace's catalog — a plugin or an extension.
+
+    The two are listed separately and installed by different
+    commands, and the row is the same shape because the question it
+    answers is the same one: *where do I clone this from, and which
+    part of it do I want?* :meth:`resolved_source` is the fifty
+    lines that answer it, and having a second copy for extensions
+    would be a second place for a novel catalog shape to go
+    unhandled.
 
     Mirrors Claude Code's ``marketplace.json#plugins[*]`` schema.
     ``source`` is a discriminated union over the three supported
@@ -261,14 +269,41 @@ class MarketplacePluginEntry(BaseModel):
         return None
 
 
+class MarketplacePluginEntry(MarketplaceCatalogEntry):
+    """A ``plugins[*]`` row — agents, skills, hooks, prompts."""
+
+
+class MarketplaceExtensionEntry(MarketplaceCatalogEntry):
+    """An ``extensions[*]`` row — a process with permissions.
+
+    ``id`` is the extension id the bundle declares, carried so the
+    catalog can be shown against what is installed without cloning
+    every row to find out. Optional, because a catalog that omits
+    it is still usable — you just cannot tell from the listing
+    which rows you already have.
+    """
+
+    id: str | None = None
+
+
 class MarketplaceCatalog(BaseModel):
-    """The ``.claude-plugin/marketplace.json`` shape."""
+    """The ``.claude-plugin/marketplace.json`` shape, plus ours.
+
+    ``extensions`` is igni's addition, and additive on purpose: the
+    file already parses with ``extra="allow"``, so a Claude Code
+    marketplace stays readable here and an igni one carries both
+    lists in the file people already know how to write. A separate
+    ``igni-marketplace.json`` would have been a second catalog to
+    register, fetch, cache and refresh — for a row with the same
+    four fields.
+    """
 
     model_config = ConfigDict(extra="allow")
 
     name: str
     description: str | None = None
     plugins: list[MarketplacePluginEntry] = Field(default_factory=list)
+    extensions: list[MarketplaceExtensionEntry] = Field(default_factory=list)
 
 
 class MarketplaceEntry(BaseModel):
@@ -343,6 +378,28 @@ class MarketplaceRegistry(BaseModel):
         before = len(self.marketplaces)
         self.marketplaces = [m for m in self.marketplaces if m.name != name]
         return len(self.marketplaces) != before
+
+    def resolve_extension_ref(
+        self, install_ref: InstallRef
+    ) -> tuple[ResolvedSource, MarketplaceExtensionEntry] | None:
+        """The same lookup, against the catalog's ``extensions``.
+
+        Separate from :meth:`resolve_install_ref` rather than a
+        flag, because the two commands are separate: ``igni plugin
+        install @m/x`` must not quietly install an extension, which
+        is a process with permissions rather than a directory of
+        prompts.
+        """
+        entry = self.find(install_ref.marketplace)
+        if entry is None or entry.cached is None:
+            return None
+        for extension in entry.cached.extensions:
+            if extension.name == install_ref.plugin:
+                resolved = extension.resolved_source(entry.url)
+                if resolved is None:
+                    return None
+                return resolved, extension
+        return None
 
     def resolve_install_ref(
         self, install_ref: InstallRef

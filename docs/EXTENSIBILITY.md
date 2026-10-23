@@ -148,6 +148,106 @@ merely ungranted. Its own, under `ext.<id>.`, need no grant — it is
 always allowed to talk to itself. And events go host→extension only;
 an extension cannot emit into another.
 
+### Shipping one
+
+An extension installs from a **directory or a repository URL** —
+the same two forms `igni plugin install` takes. The signature is
+over the bundle digest, so a clone verifies exactly as a directory
+does, and an air-gapped deployment passes a directory because it
+clones nothing.
+
+```
+igni ext install ./my-extension
+igni ext install https://github.com/acme/scanner
+igni ext install https://github.com/acme/tools --subdir extensions/scanner --ref v1.2.0
+```
+
+`--ref` takes a branch, a tag or a commit. Without it you get the
+default branch as it stands, which is a choice rather than an
+oversight; the commit that was installed is always printed either
+way. Pinning is yours to decide — igni says what it took and does
+not argue about it.
+
+**One repository, several extensions.** `--subdir` is how, and it
+is the shape plugins already use for the same reason. The store
+keys by extension *id*, so two bundles in one repository need
+different ids — the second refuses rather than overwriting the
+first. Note that extensions have no marketplace: a monorepo of
+them is installable but not browsable, and somebody has to be told
+the subdir.
+
+**One repository, extension *and* plugin.** `contributes.plugin`
+names a directory inside your bundle, so the plugin is not a
+second thing to publish, version or hand anybody — it ships, and
+is removed, with the extension. One plugin per extension: two
+would be asking which agents belong to what.
+
+### A marketplace, which is a repository you run
+
+```
+igni ext marketplace add https://github.com/acme/catalog
+igni ext marketplace list
+igni ext install @acme/scanner
+```
+
+A marketplace is `.claude-plugin/marketplace.json` in a git
+repository you control. igni reads an `extensions` array beside
+the `plugins` one:
+
+```json
+{
+  "name": "acme",
+  "extensions": [
+    { "name": "scanner", "id": "acme.scanner",
+      "source": "./extensions/scanner",
+      "description": "Policy violations in this repository" }
+  ]
+}
+```
+
+`source` takes the same three shapes a plugin row does — a URL, a
+`./relative/path` inside the catalog's own repository, or the
+object form with `git-subdir` — because the question is the same
+one: where do I clone this from, and which part of it do I want.
+
+**Self-hosted, and only that.** There is no index igni publishes
+and nothing to submit to. A marketplace is a repository, which
+means an air-gapped deployment hosts its own and the usual access
+control is the usual access control.
+
+**The same registry as plugins.** `igni ext marketplace add` and
+`igni plugin marketplace add` write the same file; a catalog may
+offer either kind or both, and a Claude Code marketplace still
+parses here. What is *not* shared is the install command: `igni
+plugin install @acme/scanner` will not install an extension and
+will not fall back to looking for one. A plugin is a directory of
+prompts and an extension is a process with permissions, and a ref
+that quietly resolved to the wrong kind would be the worst
+possible convenience.
+
+### Pushed to a fleet
+
+A group policy pack — set in the portal, polled every five minutes
+— can carry `kind: "extensions"` beside the agents, MCPs, plugins
+and settings it already ships. The bundle is cloned and staged;
+the ordinary install path runs over it at next boot, so trust,
+profile, deliverability and capability resolution all apply
+unchanged. A second install path for pushed extensions would be a
+second place for a permission check to go missing.
+
+**Two things a policy may not push.** An **unsigned** extension:
+its contents are whatever the repository said this morning, and
+nobody at the machine reads the policy. And one with **`dev`
+packaging**, which is a command igni runs — locally that sits
+behind `IGNI_DEV_EXTENSIONS`, a flag the person at the keyboard
+sets for themselves, and a policy is written by somebody else. The
+local flag is not theirs to spend, so it is ignored here.
+
+Withdrawing an entry prunes the bundle, unlike a plugin clone
+which is kept: a plugin the group stopped shipping is a directory,
+and an extension it stopped shipping is a process it no longer
+wants running.
+
 ### Not in v1
 
 Keybindings, context menus, custom editors, theme overrides, i18n.

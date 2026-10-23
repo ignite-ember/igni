@@ -28,6 +28,7 @@ from pathlib import Path
 import click
 
 from ember_code.core.plugins.git import GitClient, GitError
+from ember_code.core.plugins.marketplace_store import MarketplaceRegistryStore
 from ember_code.extensions.manifest import ExtensionManifest, Trust, Workspace
 from ember_code.extensions.store import ExtensionStore, StoreError
 
@@ -202,6 +203,25 @@ def _bundle_from(source: str, *, ref: str | None, subdir: str | None) -> Iterato
     ``~/.igni`` would be a stale checkout nobody updates and
     everybody finds.
     """
+    marketplace = MarketplaceRegistryStore().resolve_extension_ref(source)
+    if marketplace is not None:
+        resolved, row = marketplace
+        click.echo(f"{row.name} — {row.description or 'from the catalog'}")
+        # The catalog's own ref wins only when the caller gave
+        # none: somebody typing `--ref` has said something more
+        # specific than the listing did.
+        with _bundle_from(
+            resolved.url, ref=ref or resolved.ref, subdir=subdir or resolved.subdir
+        ) as bundle:
+            yield bundle
+        return
+    if source.startswith("@"):
+        raise click.ClickException(
+            f"{source} does not name an extension in any registered "
+            "marketplace. `igni ext marketplace list` shows what is "
+            "registered, and `igni ext marketplace add <url>` adds one."
+        )
+
     if not source.startswith(_REPOSITORY):
         bundle = Path(source)
         if not bundle.is_dir():
@@ -280,8 +300,9 @@ def install(
 ) -> None:
     """Install a bundle into this deployment.
 
-    SOURCE is a directory, or a repository URL — the same two things
-    ``igni plugin install`` takes, and deliberately so. A plugin is
+    SOURCE is a marketplace ref (``@acme/scanner``), a directory, or
+    a repository URL — the same three things ``igni plugin install``
+    takes, and deliberately so. A plugin is
     shared as a repository because that is how people share things,
     and an extension that could only be installed from a directory
     somebody already had was an extension nobody could hand you.
@@ -526,3 +547,95 @@ Then restart igni. The page appears in the sidebar.
 enabled development mode will refuse it. Sign the bundle and set
 `trust` to `partner`.
 """
+
+
+@ext.group("marketplace")
+def marketplace() -> None:
+    """Catalogs of extensions you can install by name.
+
+    **The same registry ``igni plugin marketplace`` uses**, and the
+    same ``.claude-plugin/marketplace.json`` file — igni reads an
+    ``extensions`` array beside the ``plugins`` one. A catalog can
+    offer either or both, a Claude Code marketplace still parses,
+    and adding one here makes its plugins available there too.
+
+    Two doors, one room. The commands are duplicated because
+    somebody installing an extension should not have to know that
+    the registry lives under ``plugin``; the registry is not.
+
+    Self-hosted: a marketplace is a git repository you control.
+    There is no index igni publishes and nothing to submit to.
+    """
+
+
+def _marketplace_store() -> MarketplaceRegistryStore:
+    return MarketplaceRegistryStore()
+
+
+@marketplace.command("add")
+@click.argument("url")
+def marketplace_add(url: str) -> None:
+    """Register the catalog at URL."""
+    try:
+        entry = _marketplace_store().add(url)
+    except Exception as exc:
+        raise click.ClickException(f"adding {url} failed: {exc}") from exc
+    catalog = entry.cached
+    extensions = len(catalog.extensions) if catalog else 0
+    plugins = len(catalog.plugins) if catalog else 0
+    click.echo(f"added {entry.name} — {extensions} extension(s), {plugins} plugin(s)")
+
+
+@marketplace.command("remove")
+@click.argument("name")
+def marketplace_remove(name: str) -> None:
+    """Forget a registered catalog. Installed extensions stay."""
+    if not _marketplace_store().remove(name):
+        raise click.ClickException(f"no marketplace named {name!r} is registered")
+    click.echo(f"removed {name}")
+
+
+@marketplace.command("refresh")
+@click.argument("name", required=False)
+def marketplace_refresh(name: str | None) -> None:
+    """Re-fetch one catalog, or every one."""
+    store = _marketplace_store()
+    if name:
+        if store.refresh(name) is None:
+            raise click.ClickException(f"no marketplace named {name!r} is registered")
+        click.echo(f"refreshed {name}")
+        return
+    outcomes = store.refresh_all()
+    if not outcomes:
+        click.echo("no marketplaces registered")
+        return
+    for outcome in outcomes:
+        click.echo(f"  {'ok  ' if outcome.ok else 'fail'} {outcome.name} {outcome.reason}")
+
+
+@marketplace.command("list")
+def marketplace_list() -> None:
+    """What is registered, and what each one offers.
+
+    Extensions only. A catalog's plugins are listed by ``igni
+    plugin marketplace list``, which is the command somebody
+    looking for a plugin would reach for.
+    """
+    registry = _marketplace_store().load()
+    if not registry.marketplaces:
+        click.echo("no marketplaces registered")
+        click.echo()
+        click.echo("  igni ext marketplace add <git-url>")
+        return
+    for entry in registry.marketplaces:
+        catalog = entry.cached
+        click.echo(f"{entry.name}  {entry.url}")
+        if catalog is None:
+            click.echo("    not fetched yet — igni ext marketplace refresh")
+            continue
+        if not catalog.extensions:
+            click.echo("    no extensions (it may still offer plugins)")
+            continue
+        for row in catalog.extensions:
+            summary = f" — {row.description}" if row.description else ""
+            click.echo(f"    @{entry.name}/{row.name}{summary}")

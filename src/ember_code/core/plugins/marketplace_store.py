@@ -38,6 +38,7 @@ from ember_code.core.plugins.models import (
     InstallRef,
     MarketplaceCatalog,
     MarketplaceEntry,
+    MarketplaceExtensionEntry,
     MarketplacePluginEntry,
     MarketplaceRegistry,
     ResolvedSource,
@@ -306,6 +307,24 @@ class MarketplaceRegistryStore:
         # the failed ones alongside them.
         self.save(registry)
         return outcomes
+
+    def resolve_extension_ref(
+        self, ref: str
+    ) -> tuple[ResolvedSource, MarketplaceExtensionEntry] | None:
+        """Resolve ``@<marketplace>/<extension>`` to a clone spec.
+
+        The extension half of :meth:`resolve_install_ref`, against
+        the catalog's ``extensions`` list. ``None`` when the ref
+        does not parse, the marketplace is not registered, its
+        catalog has not been fetched, or the row is not there —
+        and the caller falls through to treating ``ref`` as a plain
+        git URL, which is what makes ``@`` an addition rather than
+        a mode.
+        """
+        install_ref = InstallRef.parse(ref)
+        if install_ref is None:
+            return None
+        return self.load().resolve_extension_ref(install_ref)
 
     def resolve_install_ref(self, ref: str) -> tuple[ResolvedSource, MarketplacePluginEntry] | None:
         """Resolve an ``@<marketplace>/<plugin>`` ref to a clone
