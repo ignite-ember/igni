@@ -82,7 +82,7 @@ not this — a toast is inside the extension's own frame, and this is
 the host telling somebody that a colleague commented on a document
 they are not looking at.
 
-### 3.3 Push — `artifact_waiting`
+### 3.3 Push — `artifact_waiting` — **closed**
 
 `server_artifacts.py:3126` broadcasts on channel `artifact_waiting`;
 `App.tsx:724` and `NotificationsPanel.tsx:79` subscribe.
@@ -92,9 +92,20 @@ can only poll. §5 says so honestly. But Artifacts is a collaborative
 surface — a comment arriving is the event the whole feature is about
 — and polling a 2-second interval for it is not the same product.
 
-**This is the gap that matters most**, because it is the one an
-extension cannot work around. Layout can be hand-rolled; a missing
+**This was the gap that mattered most**, because it is the one an
+extension cannot work around — layout can be hand-rolled, a missing
 event cannot.
+
+**Shipped.** `permissions.events` grants host topics from a
+published `HostTopic` vocabulary; an extension's own events, under
+`ext.<id>.`, need no grant and another's are unreachable. The check
+happens at dispatch rather than delivery, because a host that posted
+everything and asked each frame to discard what was not its own
+would be trusting the frame to discard it.
+
+What Artifacts still needs is its *own* events relayed from its
+service to its frame — the `ext.<id>.` half — which the envelope
+carries and nothing yet produces.
 
 ### 3.4 Cross-user realtime
 

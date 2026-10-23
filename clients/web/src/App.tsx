@@ -282,6 +282,17 @@ export default function App() {
   // document, so without this an extension frame would be told the
   // theme at mount and never again.
   const frameTheme = useDocumentTheme();
+  /**
+   * The latest event for each extension.
+   *
+   * Addressed by the backend, which decided who was entitled to
+   * hear it — this only routes. Counted rather than compared,
+   * because two identical events are two events and a frame
+   * waiting for "the file changed again" has to hear it again.
+   */
+  const [extensionEvents, setExtensionEvents] = useState<
+    Record<string, { topic: string; payload: Record<string, unknown>; n: number }>
+  >({});
   const [composerSeed, setComposerSeed] = useState<{
     text: string;
     n: number;
@@ -1668,6 +1679,40 @@ export default function App() {
     const t = setInterval(refreshStatus, 5_000);
     return () => clearInterval(t);
   }, [conn, refreshStatus]);
+
+  // Events for installed extensions. One channel for all of them;
+  // the payload says which frame it is for, and nothing is posted
+  // into a frame it was not addressed to.
+  useEffect(() => {
+    if (conn !== "connected") return;
+    return client.onEvent((message) => {
+      const push = message as unknown as {
+        channel?: string;
+        payload?: unknown;
+      };
+      if (push.channel !== "extension_event") return;
+      const body = (push.payload ?? {}) as {
+        extension_id?: unknown;
+        topic?: unknown;
+        payload?: unknown;
+      };
+      if (typeof body.extension_id !== "string" || typeof body.topic !== "string") {
+        return;
+      }
+      const payload =
+        typeof body.payload === "object" && body.payload !== null
+          ? (body.payload as Record<string, unknown>)
+          : {};
+      setExtensionEvents((current) => ({
+        ...current,
+        [body.extension_id as string]: {
+          topic: body.topic as string,
+          payload,
+          n: (current[body.extension_id as string]?.n ?? 0) + 1,
+        },
+      }));
+    });
+  }, [client, conn]);
 
   /**
    * What is installed, and its contributions folded into the nav.
@@ -3505,6 +3550,7 @@ export default function App() {
                   extension={extension}
                   kind={page.kind}
                   theme={frameTheme}
+                  events={extensionEvents[extension.id]}
                   onClose={goChat}
                   // Every call carries its caller, which is what lets
                   // the backend enforce this extension's

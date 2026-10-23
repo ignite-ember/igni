@@ -92,6 +92,16 @@ export interface ExtensionFrameProps {
    * ends up in an address bar, and the frame is the untrusted party.
    */
   onLocation?: (state: Record<string, string>) => void;
+  /**
+   * Events for *this* extension, from the host.
+   *
+   * Already addressed: the backend decided who was entitled to
+   * hear each one and sent it to this extension by name. Nothing
+   * is filtered here, because filtering here would mean the host
+   * had posted somebody else's event into this frame and trusted
+   * the frame not to read it.
+   */
+  events?: { topic: string; payload: Record<string, unknown>; n: number };
   /** Launch parameters, passed through on `hello`. */
   params?: Record<string, unknown>;
   /** Followed by the frame. */
@@ -131,6 +141,7 @@ export function ExtensionFrame({
   onNavigate,
   onClose,
   onLocation,
+  events,
   params,
   theme = "dark",
   title,
@@ -275,6 +286,24 @@ export function ExtensionFrame({
     delivered.current = next;
     post({ igni: BRIDGE_VERSION, kind: "params", params: next });
   }, [params, post]);
+
+  /*
+    One event into the frame, when a new one arrives.
+
+    Keyed on `n` rather than on the payload: two identical events
+    are two events, and a guest waiting for "the file changed
+    again" must hear it again. Skipped before `hello`, because a
+    frame that has not been greeted has no nonce and no listener.
+  */
+  useEffect(() => {
+    if (events === undefined || delivered.current === null) return;
+    post({
+      igni: BRIDGE_VERSION,
+      kind: "event",
+      topic: events.topic,
+      payload: events.payload,
+    });
+  }, [events, post]);
 
   // Theme changes after the handshake are their own message rather
   // than a reload: a panel that reloaded every time the user flipped

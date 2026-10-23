@@ -139,6 +139,16 @@ shipping without it costs nothing.
 
 ---
 
+## Gate H — events
+
+| # | State | Note |
+|---|---|---|
+| H1 | ✅ | `HostTopic`, a `StrEnum` like `RpcMethod`, with `validate_vocabulary()` as the analogue of `validate_rpc_table`. Four topics. |
+| H2 | ✅ | `permissions.events`, checked at dispatch and never at delivery. An extension's own `ext.<id>.` topics need no grant; another's are unreachable. |
+| H3 | ✅ | An `event` envelope kind and `bridge.onEvent`, additive like `params` and `location`. |
+| H4 | ✅ | Delivery: `EventRouter` → `extension_event` push → the one frame it was addressed to. `emit_to` for events that are *about* an extension. |
+| H5 | ⚠️ | Only `extension.state-changed` is emitted. `workspace.head-changed` and `workspace.files-changed` need a watcher wired to them, and `session.switched` needs the orchestrator to call it. The transport is done; the producers are not. |
+
 ## Gate G — more than one person
 
 A deployment serving a group is a different shape, and the contract

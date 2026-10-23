@@ -326,6 +326,12 @@ class PushChannel(StrEnum):
     OUTPUT_STYLE_CHANGED = "output_style_changed"
     PLAN_SUBMITTED = "plan_submitted"
     FILE_EDITED = "file_edited"
+    #: One extension's event, on its way to that extension's frame.
+    #: One channel for all of them rather than one each: the
+    #: audience was already decided by
+    #: :class:`~ember_code.extensions.events.EventRouter`, and the
+    #: payload names which extension it is for.
+    EXTENSION_EVENT = "extension_event"
     PROCESS_STARTED = "process_started"
     PROCESS_LINE = "process_line"
     PROCESS_EXITED = "process_exited"

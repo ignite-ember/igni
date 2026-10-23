@@ -38,6 +38,7 @@ from ember_code.core.tools.edit import (
     default_file_edit_notifier,
 )
 from ember_code.protocol import messages as msg
+from ember_code.protocol.schemas.enums import PushChannel
 
 logger = logging.getLogger(__name__)
 
@@ -322,6 +323,18 @@ class PushNotificationBridge:
         self.bind_to_file_edit_listener()
         backend.wire_orchestrate_progress(self.on_orchestrate_progress)
         self.bind_to_broadcast_bus(backend)
+
+    def extension_event(self, *, extension_id: str, topic: str, payload: dict) -> None:
+        """One extension's event, on its way to that extension's frame.
+
+        Addressed, not broadcast: who was entitled to hear this was
+        decided by :class:`~ember_code.extensions.events.EventRouter`
+        before the call, and the client posts it into one frame.
+        """
+        self._schedule_push(
+            PushChannel.EXTENSION_EVENT,
+            {"extension_id": extension_id, "topic": topic, "payload": payload},
+        )
 
     # ── Private helpers ─────────────────────────────────────────
 

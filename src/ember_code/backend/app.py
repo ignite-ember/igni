@@ -21,6 +21,7 @@ import asyncio
 import json
 import logging
 import os
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -33,6 +34,7 @@ from ember_code.backend.session_orchestrator import SessionOrchestrator
 from ember_code.backend.supervisor import BackendSupervisor
 from ember_code.core.config.settings import Settings, load_settings
 from ember_code.extensions.contributions import ExtensionContributions
+from ember_code.extensions.events import EventRouter, HostTopic
 from ember_code.extensions.health import ExtensionHealth
 from ember_code.extensions.installer import ExtensionInstaller
 from ember_code.extensions.origin import ExtensionOrigins
@@ -256,6 +258,11 @@ class BackendApp:
             registry=self._extensions.registry, rpc=self._extensions
         )
         self._extension_contributions.attach()
+        # Who hears what. The grant is checked here, at dispatch,
+        # and the client posts each event into one frame — so an
+        # extension never receives another's even in transit.
+        self._extension_events = EventRouter(self._extensions.registry)
+        self._wire_extension_events()
         self._rpc_router = RpcRouter(
             backend=self._backend,
             transport=self._transport,
@@ -379,6 +386,44 @@ class BackendApp:
             await self._extension_health.stop()
             await self._origins.stop_all()
             await self._supervisor.teardown()
+
+    def _wire_extension_events(self) -> None:
+        """Deliver events, and emit the one igni always knows.
+
+        ``extension.state-changed`` is the event the host can always
+        produce, because the registry is the host's. It is also the
+        one that matters most to a frame: an extension whose service
+        has died can stop asking and say so, instead of discovering
+        it on its next call.
+        """
+        router = self._extension_events
+
+        def deliver(extension_id: str) -> Callable[[str, dict[str, Any]], None]:
+            def post(topic: str, payload: dict[str, Any]) -> None:
+                self._push_bridge.extension_event(
+                    extension_id=extension_id, topic=topic, payload=payload
+                )
+
+            return post
+
+        def on_change(entry: Any, extension_id: str) -> None:
+            if entry is None:
+                router.disconnect(extension_id)
+                return
+            router.connect(extension_id, deliver(extension_id))
+            # To *that* extension, not to everyone who granted the
+            # topic. This is one extension's health, and broadcasting
+            # it would tell every other extension about it — the
+            # isolation rule failing in the place it is easiest to
+            # miss, because the grant would have been checked and the
+            # audience would still be wrong.
+            router.emit_to(
+                extension_id,
+                HostTopic.EXTENSION_STATE_CHANGED,
+                {"state": entry.state.value, "reason": entry.reason},
+            )
+
+        self._extensions.registry.watch(on_change)
 
     async def _start_extensions(self) -> None:
         """Start everything ``igni ext install`` put in the store.

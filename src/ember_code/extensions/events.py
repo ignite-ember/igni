@@ -232,6 +232,21 @@ class EventRouter:
         self._registry = registry
         self._deliver: dict[str, object] = {}
 
+    @staticmethod
+    def _check_topic(topic: str) -> None:
+        if not TOPIC.match(topic):
+            raise UnknownTopic(
+                f"{topic!r} is not a topic. Dotted and lowercase, and never a "
+                "wildcard — wildcards are grant syntax, and an emitted event "
+                "names exactly one thing."
+            )
+        if not topic.startswith(NAMESPACE) and topic not in BY_TOPIC:
+            raise UnknownTopic(
+                f"{topic!r} is not in the published vocabulary and is not an "
+                "extension's own. Add it to VOCABULARY, which is a promise "
+                "under EXTENSIBILITY section 8."
+            )
+
     def connect(self, extension_id: str, deliver: object) -> None:
         """Attach the thing that posts into one extension's frame."""
         self._deliver[extension_id] = deliver
@@ -247,19 +262,7 @@ class EventRouter:
         administrator asking "why did my extension not see that"
         needs, and what the tests assert against.
         """
-        if not TOPIC.match(topic):
-            raise UnknownTopic(
-                f"{topic!r} is not a topic. Dotted and lowercase, and never a "
-                "wildcard — wildcards are grant syntax, and an emitted event "
-                "names exactly one thing."
-            )
-        if not topic.startswith(NAMESPACE) and topic not in BY_TOPIC:
-            raise UnknownTopic(
-                f"{topic!r} is not in the published vocabulary and is not an "
-                "extension's own. Add it to VOCABULARY, which is a promise "
-                "under EXTENSIBILITY section 8."
-            )
-
+        self._check_topic(topic)
         heard_by: list[str] = []
         for extension_id in self._registry.ids():  # type: ignore[attr-defined]
             entry = self._registry.get(extension_id)  # type: ignore[attr-defined]
@@ -272,6 +275,36 @@ class EventRouter:
             ):
                 heard_by.append(extension_id)
         return heard_by
+
+    def emit_to(self, extension_id: str, topic: str, payload: dict[str, object]) -> bool:
+        """Tell one extension, if it is entitled. ``True`` if told.
+
+        For an event that is *about* somebody — ``extension.state-changed``
+        is one extension's health, and sending it to every extension
+        that granted the topic would tell them all about each other.
+        That is the isolation rule failing in the one place it is
+        easiest to miss: the grant was checked, and the audience was
+        still wrong.
+        """
+        self._check_topic(topic)
+        entry = self._registry.get(extension_id)  # type: ignore[attr-defined]
+        if entry is None:
+            return False
+        if not granted(
+            topic,
+            extension_id=extension_id,
+            grants=list(entry.manifest.permissions.events),
+        ):
+            return False
+        deliver = self._deliver.get(extension_id)
+        if deliver is None:
+            return False
+        try:
+            deliver(topic, payload)  # type: ignore[operator]
+        except Exception:
+            logger.exception("delivering %s to %s failed", topic, extension_id)
+            return False
+        return True
 
     def emit(self, topic: str, payload: dict[str, object]) -> list[str]:
         """Tell everyone entitled. Returns who was told.

@@ -263,3 +263,99 @@ describe("location from the frame", () => {
     ).not.toThrow();
   });
 });
+
+// ── Events ─────────────────────────────────────────────────────────
+
+describe("the event message", () => {
+  it("is accepted with a topic and a payload", () => {
+    expect(
+      isHostMessage({
+        igni: BRIDGE_VERSION,
+        kind: "event",
+        topic: "workspace.head-changed",
+        payload: { commit_sha: "abc" },
+      }),
+    ).toBe(true);
+  });
+
+  it("is refused without a topic", () => {
+    expect(
+      isHostMessage({ igni: BRIDGE_VERSION, kind: "event", payload: {} }),
+    ).toBe(false);
+  });
+
+  it("is refused when the payload is not an object", () => {
+    expect(
+      isHostMessage({
+        igni: BRIDGE_VERSION,
+        kind: "event",
+        topic: "a.b",
+        payload: "nope",
+      }),
+    ).toBe(false);
+  });
+});
+
+describe("events reaching a frame", () => {
+  it("posts one in, once the frame has been greeted", async () => {
+    const { posted, frame, rerender } = mountFrame();
+    frame?.dispatchEvent(new Event("load"));
+    await waitFor(() =>
+      expect((posted as Posted[]).some((m) => m.kind === "hello")).toBe(true),
+    );
+
+    rerender(
+      <ExtensionFrame
+        extensionId="acme.scanner"
+        origin="http://127.0.0.1:41234"
+        allow={[]}
+        onCall={() => Promise.resolve(null)}
+        events={{ topic: "workspace.head-changed", payload: { commit_sha: "a" }, n: 1 }}
+      />,
+    );
+
+    await waitFor(() => {
+      const sent = (posted as { kind: string; topic?: string }[]).filter(
+        (m) => m.kind === "event",
+      );
+      expect(sent).toHaveLength(1);
+      expect(sent[0].topic).toBe("workspace.head-changed");
+    });
+  });
+
+  it("sends nothing before the frame has been greeted", () => {
+    // A frame with no nonce has no listener, and an event posted
+    // into it is one the guest never sees.
+    const { posted } = mountFrame({
+      events: { topic: "workspace.head-changed", payload: {}, n: 1 },
+    });
+    expect((posted as Posted[]).filter((m) => m.kind === "event")).toHaveLength(0);
+  });
+
+  it("delivers the same event twice when it happens twice", async () => {
+    // Counted rather than compared: a guest waiting for "the file
+    // changed again" has to hear it again.
+    const { posted, frame, rerender } = mountFrame();
+    frame?.dispatchEvent(new Event("load"));
+    await waitFor(() =>
+      expect((posted as Posted[]).some((m) => m.kind === "hello")).toBe(true),
+    );
+
+    const send = (n: number) =>
+      rerender(
+        <ExtensionFrame
+          extensionId="acme.scanner"
+          origin="http://127.0.0.1:41234"
+          allow={[]}
+          onCall={() => Promise.resolve(null)}
+          events={{ topic: "workspace.files-changed", payload: { paths: [] }, n }}
+        />,
+      );
+
+    send(1);
+    send(2);
+    await waitFor(() =>
+      expect((posted as Posted[]).filter((m) => m.kind === "event")).toHaveLength(2),
+    );
+  });
+});

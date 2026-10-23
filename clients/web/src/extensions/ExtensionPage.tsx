@@ -62,6 +62,8 @@ export interface ExtensionPageProps {
   /** The frame asked to leave. */
   onClose?: () => void;
   onNavigate?: (to: string) => void;
+  /** Events the backend addressed to this extension. */
+  events?: { topic: string; payload: Record<string, unknown>; n: number };
   /** Launch parameters — the host's URL state for this extension. */
   params?: Record<string, unknown>;
   onLocation?: (state: Record<string, string>) => void;
@@ -82,6 +84,7 @@ export function ExtensionPage({
   theme,
   onClose,
   onNavigate,
+  events,
   params,
   onLocation,
 }: ExtensionPageProps) {
@@ -148,6 +151,7 @@ export function ExtensionPage({
       onClose={onClose}
       onNavigate={onNavigate}
       onLocation={onLocation}
+      events={events}
       params={params}
       theme={theme}
       title={page.label}

@@ -187,3 +187,68 @@ def test_a_grant_matching_nothing_is_reported_not_refused():
     early."""
     assert unknown_grants(["workspace.*"]) == []
     assert unknown_grants(["nope.thing"]) == ["nope.thing"]
+
+
+# ── The wire ───────────────────────────────────────────────────────
+
+
+def test_an_event_is_addressed_to_one_extension_on_the_wire():
+    """One channel for all of them, and the payload names the frame.
+
+    Addressed rather than broadcast: who was entitled was decided by
+    the router before this, so the client posts it into one frame
+    and nothing has to be filtered on the way.
+    """
+    from ember_code.protocol.schemas.push import push_extension_event
+
+    push = push_extension_event(
+        extension_id="acme.one",
+        topic=str(HostTopic.WORKSPACE_HEAD_CHANGED),
+        payload={"commit_sha": "abc"},
+    )
+    assert push.channel == "extension_event"
+    assert push.payload == {
+        "extension_id": "acme.one",
+        "topic": "workspace.head-changed",
+        "payload": {"commit_sha": "abc"},
+    }
+
+
+def test_an_extensions_own_state_change_reaches_only_itself():
+    """The bug this test was written badly enough to find.
+
+    `extension.state-changed` is *one* extension's health. The
+    first emitter broadcast it to everyone who had granted the
+    topic, which would have told every extension about every other
+    one — the isolation rule failing in the place it is easiest to
+    miss, because the grant *was* checked and the audience was
+    still wrong.
+
+    `emit_to` is the fix: an event that is about somebody goes to
+    that somebody.
+    """
+    one = manifest("acme.one", ["extension.state-changed"])
+    two = manifest("other.two", ["extension.state-changed"])
+    heard = router(one, two)
+
+    told: list[str] = []
+    heard.connect("acme.one", lambda t, _p: told.append(f"acme.one:{t}"))
+    heard.connect("other.two", lambda t, _p: told.append(f"other.two:{t}"))
+
+    # acme.one's health changed, so acme.one hears about it.
+    assert heard.emit_to("acme.one", HostTopic.EXTENSION_STATE_CHANGED, {"state": "FAILED"})
+    assert told == ["acme.one:extension.state-changed"]
+
+
+def test_a_targeted_event_still_needs_the_grant():
+    """Addressing is not authorisation. An extension that did not
+    ask to hear about itself is not told."""
+    one = manifest("acme.one", [])
+    heard = router(one)
+    heard.connect("acme.one", lambda _t, _p: None)
+    assert not heard.emit_to("acme.one", HostTopic.EXTENSION_STATE_CHANGED, {"state": "FAILED"})
+
+
+def test_a_targeted_event_to_an_uninstalled_extension_goes_nowhere():
+    heard = router()
+    assert not heard.emit_to("never.installed", HostTopic.EXTENSION_STATE_CHANGED, {})
