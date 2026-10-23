@@ -7,16 +7,16 @@ import { ArtifactGraphSearch } from "./ArtifactGraphSearch";
 import { ArtifactSearch } from "./ArtifactSearch";
 import { ArtifactShareDialog, type Anchor } from "./ArtifactShareDialog";
 import { ArtifactCompare } from "./ArtifactCompare";
-import { MenuIcon } from "../MenuIcon";
+import { MenuIcon } from "@igni/ui-react";
 import { DocumentPeople } from "./DocumentPeople";
 import { LockedDocument, type LockedState } from "./LockedDocument";
-import { hexOf } from "../Monogram";
+import { hexOf } from "@igni/ui-react";
 import { useDocumentRoom } from "./useDocumentRoom";
 import { useSharedDraft } from "./useSharedDraft";
 import { ArtifactStaleReview } from "./ArtifactStaleReview";
 import { Drawer } from "./Drawer";
-import { OverflowMenu } from "../OverflowMenu";
-import { MarkdownInline } from "../MarkdownInline";
+import { OverflowMenu } from "@igni/ui-react";
+import { MarkdownInline } from "@igni/ui-react";
 import { DocumentComment } from "./DocumentComment";
 import { ColumnHandle } from "./ColumnHandle";
 import { formatRelative } from "../../utils/when";
@@ -26,7 +26,7 @@ import { ExportBanner, type ExportOutcome } from "./ExportBanner";
 import { ProvenanceView, type CandidateOverlap, type Provenance } from "./ProvenanceView";
 import { DocumentCitations } from "./DocumentCitations";
 import { DocumentEditor } from "./DocumentEditor";
-import { MermaidBlock, SpecBlock, fenceInfo } from "../markdown/RichFences";
+import { MermaidBlock, SpecBlock, fenceInfo } from "@igni/ui-react";
 import { ArtifactTreeView } from "./ArtifactTreeView";
 
 /** Where the reader's preference about the comment rail is kept. */
@@ -80,7 +80,7 @@ const EXPORT_FORMATS: {
     title: "The same page as the HTML export, printed",
   },
 ];
-import { Skeleton } from "../Skeleton";
+import { Skeleton } from "@igni/ui-react";
 
 // ── Types ────────────────────────────────────────────────────────
 

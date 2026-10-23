@@ -23,7 +23,7 @@
 
 import { Component, useCallback, useMemo, useRef, useState, type ReactNode } from "react";
 import type { ChatItem } from "../chat/model";
-import { applyVisualizationDelta } from "../chat/visualizationStream";
+import { applyVisualizationDelta } from "@igni/ui-react";
 import { ChatItemView } from "../components/ChatItems";
 import { countOf } from "../lib/plural";
 

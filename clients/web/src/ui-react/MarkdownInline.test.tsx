@@ -11,7 +11,11 @@
 import { cleanup, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it } from "vitest";
 
-import { MarkdownInline, closeOpenMarks, dropEchoedTitle } from "./MarkdownInline";
+import {
+  MarkdownInline,
+  closeOpenMarks,
+  dropEchoedTitle,
+} from "./MarkdownInline";
 
 afterEach(cleanup);
 
@@ -42,13 +46,15 @@ describe("repairing markdown cut mid-syntax", () => {
 
 describe("dropping a title the row already shows", () => {
   it("removes a heading that is exactly the name", () => {
-    expect(dropEchoedTitle("# Session handling\n\nOverview", "Session handling")).toBe(
-      "Overview",
-    );
+    expect(
+      dropEchoedTitle("# Session handling\n\nOverview", "Session handling"),
+    ).toBe("Overview");
   });
 
   it("ignores case and leading blank lines", () => {
-    expect(dropEchoedTitle("\n\n## AUTH MODEL\n\nBody", "Auth model")).toBe("Body");
+    expect(dropEchoedTitle("\n\n## AUTH MODEL\n\nBody", "Auth model")).toBe(
+      "Body",
+    );
   });
 
   it("keeps a heading that merely starts with the name", () => {
@@ -61,7 +67,9 @@ describe("dropping a title the row already shows", () => {
   it("drops a plain first line that is the name, heading or not", () => {
     // The complaint this exists to answer is seeing the name twice.
     // Whether the echo was marked up as a heading is not the point.
-    expect(dropEchoedTitle("Session handling\n\nBody", "Session handling")).toBe("Body");
+    expect(
+      dropEchoedTitle("Session handling\n\nBody", "Session handling"),
+    ).toBe("Body");
   });
 
   it("keeps a first line that merely opens with the name", () => {
@@ -77,9 +85,19 @@ describe("dropping a title the row already shows", () => {
 describe("what reaches the DOM", () => {
   const blockChildren = (root: HTMLElement) =>
     Array.from(root.querySelectorAll("*")).filter((el) =>
-      ["P", "UL", "OL", "LI", "PRE", "TABLE", "TR", "TD", "BLOCKQUOTE", "H1", "H2"].includes(
-        el.tagName,
-      ),
+      [
+        "P",
+        "UL",
+        "OL",
+        "LI",
+        "PRE",
+        "TABLE",
+        "TR",
+        "TD",
+        "BLOCKQUOTE",
+        "H1",
+        "H2",
+      ].includes(el.tagName),
     );
 
   it("renders no block elements, which would break the two-line clamp", () => {
@@ -90,20 +108,26 @@ describe("what reaches the DOM", () => {
   });
 
   it("renders no links, which would be a click target inside a button", () => {
-    const { container } = render(<MarkdownInline text="see [the docs](https://x.test)" />);
+    const { container } = render(
+      <MarkdownInline text="see [the docs](https://x.test)" />,
+    );
     expect(container.querySelectorAll("a")).toHaveLength(0);
     expect(container.textContent).toContain("the docs");
   });
 
   it("drops images rather than loading one to show two lines of text", () => {
-    const { container } = render(<MarkdownInline text="![alt](https://x.test/a.png) after" />);
+    const { container } = render(
+      <MarkdownInline text="![alt](https://x.test/a.png) after" />,
+    );
     expect(container.querySelectorAll("img")).toHaveLength(0);
     expect(container.textContent).toContain("after");
   });
 
   it("strips the syntax that made the preview look like source", () => {
     const { container } = render(
-      <MarkdownInline text={"# Title\n\n**bold** and _italic_ and - a bullet"} />,
+      <MarkdownInline
+        text={"# Title\n\n**bold** and _italic_ and - a bullet"}
+      />,
     );
     const text = container.textContent ?? "";
     expect(text).not.toMatch(/\*\*/);
@@ -113,19 +137,27 @@ describe("what reaches the DOM", () => {
   });
 
   it("keeps a heading's emphasis without its size", () => {
-    const { container } = render(<MarkdownInline text={"## Overview\n\nBody"} />);
+    const { container } = render(
+      <MarkdownInline text={"## Overview\n\nBody"} />,
+    );
     const heading = container.querySelector(".mdi-heading");
     expect(heading?.tagName).toBe("STRONG");
     expect(heading?.textContent).toBe("Overview");
   });
 
   it("keeps code recognisable as code", () => {
-    const { container } = render(<MarkdownInline text={"run `igni login` first"} />);
-    expect(container.querySelector("code.mdi-code")?.textContent).toBe("igni login");
+    const { container } = render(
+      <MarkdownInline text={"run `igni login` first"} />,
+    );
+    expect(container.querySelector("code.mdi-code")?.textContent).toBe(
+      "igni login",
+    );
   });
 
   it("renders a fenced block inline rather than as a block", () => {
-    const { container } = render(<MarkdownInline text={"```sh\nigni login\n```"} />);
+    const { container } = render(
+      <MarkdownInline text={"```sh\nigni login\n```"} />,
+    );
     expect(container.querySelectorAll("pre")).toHaveLength(0);
     expect(container.textContent).toContain("igni login");
   });
@@ -134,7 +166,10 @@ describe("what reaches the DOM", () => {
 describe("length", () => {
   it("cuts back to a word boundary rather than mid-word", () => {
     const { container } = render(
-      <MarkdownInline text="alpha bravo charlie delta echo foxtrot" limit={20} />,
+      <MarkdownInline
+        text="alpha bravo charlie delta echo foxtrot"
+        limit={20}
+      />,
     );
     const text = container.textContent ?? "";
     expect(text).toMatch(/…$/);
@@ -154,7 +189,9 @@ describe("length", () => {
   it("renders nothing when the title was the whole preview", () => {
     // Dropping the echo can empty it. An empty box under the name
     // would read as a document with no content.
-    const { container } = render(<MarkdownInline text="# Auth model" name="Auth model" />);
+    const { container } = render(
+      <MarkdownInline text="# Auth model" name="Auth model" />,
+    );
     expect(container.firstChild).toBeNull();
   });
 });
@@ -164,7 +201,10 @@ describe("in a list row", () => {
     // The real use: the whole row is one click target.
     render(
       <button type="button">
-        <MarkdownInline text={"## Overview\n\n- one\n- two"} className="afs-row-snippet" />
+        <MarkdownInline
+          text={"## Overview\n\n- one\n- two"}
+          className="afs-row-snippet"
+        />
       </button>,
     );
     const button = screen.getByRole("button");

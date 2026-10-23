@@ -19,7 +19,7 @@
 import { useEffect, useRef } from "react";
 import { createPortal } from "react-dom";
 
-import { MenuIcon } from "../MenuIcon";
+import { MenuIcon } from "@igni/ui-react";
 import { lockAction, lockLabel, type MentionOptions, type Person } from "./mentions";
 
 /** Roughly how tall the list gets, for deciding above or below. */

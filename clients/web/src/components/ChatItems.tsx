@@ -2,7 +2,7 @@ import { Component, memo, useEffect, useRef, useState, isValidElement, type Reac
 import ReactMarkdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
 
-import { MermaidBlock } from "./markdown/RichFences";
+import { MermaidBlock } from "@igni/ui-react";
 import rehypeHighlight from "rehype-highlight";
 import "highlight.js/styles/github-dark-dimmed.css";
 import { formatStats, type AssistantInterrupted, ASSISTANT_INTERRUPTED_LABELS, type ChatItem } from "../chat/model";

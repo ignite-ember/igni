@@ -20,8 +20,8 @@
  * a second place to do everything, quietly disagreeing with the
  * first.
  */
-import { MenuIcon, type MenuIconName } from "./MenuIcon";
-import { Monogram } from "./Monogram";
+import { MenuIcon, type MenuIconName } from "@igni/ui-react";
+import { Monogram } from "@igni/ui-react";
 
 export interface Notification {
   id: string;

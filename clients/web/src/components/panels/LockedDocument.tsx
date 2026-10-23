@@ -19,7 +19,7 @@
  */
 import { useState } from "react";
 
-import { MenuIcon } from "../MenuIcon";
+import { MenuIcon } from "@igni/ui-react";
 
 export interface LockedState {
   open: boolean;

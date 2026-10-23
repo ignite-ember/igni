@@ -32,7 +32,9 @@ describe("hexOf", () => {
 
   it("agrees with the monogram's hue, so a caret matches its initials", () => {
     const hex = hexOf("maya@acme.test").slice(1);
-    const [r, g, b] = [0, 2, 4].map((at) => parseInt(hex.slice(at, at + 2), 16) / 255);
+    const [r, g, b] = [0, 2, 4].map(
+      (at) => parseInt(hex.slice(at, at + 2), 16) / 255,
+    );
     const max = Math.max(r, g, b);
     const min = Math.min(r, g, b);
     let hue = 0;

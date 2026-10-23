@@ -16,7 +16,7 @@
  * document could not reach it, which is the usual way two renderers
  * of the same thing start disagreeing about what it looks like.
  */
-import { parsePartialSpec } from "../../chat/visualizationStream";
+import { parsePartialSpec } from "./visualizationStream";
 import type { ReactNode } from "react";
 import { isValidElement, useEffect, useMemo, useRef, useState } from "react";
 
@@ -41,7 +41,9 @@ function mermaidTheme(): "default" | "dark" {
   if (explicit === "dark") return "dark";
   if (explicit === "light") return "default";
   if (typeof window !== "undefined" && window.matchMedia) {
-    return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "default";
+    return window.matchMedia("(prefers-color-scheme: dark)").matches
+      ? "dark"
+      : "default";
   }
   return "default";
 }
@@ -149,16 +151,23 @@ function CopySource({ source }: { source: string }) {
  */
 export function SpecBlock({ source }: { source: string }) {
   const spec = useMemo(() => parsePartialSpec(source), [source]);
-  const [View, setView] = useState<null | React.ComponentType<{ spec: unknown }>>(null);
+  const [View, setView] = useState<null | React.ComponentType<{
+    spec: unknown;
+  }>>(null);
 
   // Loaded on demand, like mermaid: a document with no view in it
   // should not pay for the renderer.
   useEffect(() => {
     if (!spec) return;
     let cancelled = false;
-    void import("../JsonRenderView").then((m) => {
+    void import("../components/JsonRenderView").then((m) => {
       if (!cancelled) {
-        setView(() => m.JsonRenderView as unknown as React.ComponentType<{ spec: unknown }>);
+        setView(
+          () =>
+            m.JsonRenderView as unknown as React.ComponentType<{
+              spec: unknown;
+            }>,
+        );
       }
     });
     return () => {
@@ -168,7 +177,10 @@ export function SpecBlock({ source }: { source: string }) {
 
   if (!spec) {
     return (
-      <pre className="mermaid-error" title="This is not a renderable json-render spec">
+      <pre
+        className="mermaid-error"
+        title="This is not a renderable json-render spec"
+      >
         {source}
       </pre>
     );
@@ -188,7 +200,9 @@ export function SpecBlock({ source }: { source: string }) {
  * ``className="language-mermaid"``; this reads that without
  * assuming any particular child shape survives a plugin.
  */
-export function fenceInfo(children: ReactNode): { lang: string; source: string } | null {
+export function fenceInfo(
+  children: ReactNode,
+): { lang: string; source: string } | null {
   const only = Array.isArray(children) ? children[0] : children;
   if (!isValidElement(only)) return null;
   const props = only.props as { className?: string; children?: ReactNode };

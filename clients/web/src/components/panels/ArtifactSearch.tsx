@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type React from "react";
-import { MarkdownInline } from "../MarkdownInline";
+import { MarkdownInline } from "@igni/ui-react";
 import type { IgniClient } from "../../protocol/client";
 
 /**

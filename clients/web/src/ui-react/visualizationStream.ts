@@ -14,8 +14,8 @@
 
 import type { Spec } from "@json-render/core";
 import { parse as parsePartialJson, Allow } from "partial-json";
-import type { ChatItem } from "./model";
-import { visualizationItem } from "./model";
+import type { ChatItem } from "../chat/model";
+import { visualizationItem } from "../chat/model";
 
 export interface VisualizationDeltaEvent {
   spec_id: string;
@@ -95,7 +95,10 @@ export function parsePartialSpec(json: string): Spec | null {
     safeElements[id] = children ? { ...el, children } : el;
   }
   if (!safeElements[root]) return null;
-  return { ...(partial as Record<string, unknown>), elements: safeElements } as Spec;
+  return {
+    ...(partial as Record<string, unknown>),
+    elements: safeElements,
+  } as Spec;
 }
 
 /** Fold one visualization_delta into the current items list.
@@ -115,16 +118,10 @@ export function applyVisualizationDelta(
     (it) => it.kind === "visualization" && it.specId === event.spec_id,
   );
   if (idx >= 0) {
-    const existing = items[idx] as Extract<
-      ChatItem,
-      { kind: "visualization" }
-    >;
+    const existing = items[idx] as Extract<ChatItem, { kind: "visualization" }>;
     const next = items.slice();
     next[idx] = { ...existing, spec };
     return next;
   }
-  return [
-    ...items,
-    visualizationItem(spec, "", "visualizer", event.spec_id),
-  ];
+  return [...items, visualizationItem(spec, "", "visualizer", event.spec_id)];
 }

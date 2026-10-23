@@ -16,7 +16,7 @@
  */
 import { useMemo } from "react";
 
-import { Tooltip } from "../Tooltip";
+import { Tooltip } from "@igni/ui-react";
 
 /** One person the document names. */
 export interface RosterPerson {

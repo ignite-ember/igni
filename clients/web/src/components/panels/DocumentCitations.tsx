@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 
 import type { IgniClient } from "../../protocol/client";
-import { MarkdownInline } from "../MarkdownInline";
+import { MarkdownInline } from "@igni/ui-react";
 import { findText } from "./DocumentComment";
 import { hueFor, type CandidateOverlap } from "./ProvenanceView";
 

@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type { IgniClient } from "../../protocol/client";
 import { Drawer } from "./Drawer";
-import { Skeleton } from "../Skeleton";
+import { Skeleton } from "@igni/ui-react";
 import { host } from "../../lib/host";
 
 // ── Types ────────────────────────────────────────────────────────

@@ -13,7 +13,13 @@
  * popups, while a keyboard user arriving at a control has asked for
  * the word by arriving.
  */
-import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
+import {
+  act,
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+} from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { Tooltip } from "./Tooltip";
@@ -147,7 +153,9 @@ describe("what it is, to a screen reader", () => {
     // must still hear "Show archived documents" as the button.
     iconButton();
 
-    expect(screen.getByRole("button", { name: "Show archived documents" })).toBeTruthy();
+    expect(
+      screen.getByRole("button", { name: "Show archived documents" }),
+    ).toBeTruthy();
   });
 });
 

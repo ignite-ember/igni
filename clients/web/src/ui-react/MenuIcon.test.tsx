@@ -66,7 +66,9 @@ describe("the set", () => {
     const seen = new Map<string, MenuIconName>();
     for (const name of ALL) {
       const d = drawing(name);
-      expect(seen.has(d), `${name} draws the same as ${seen.get(d)}`).toBe(false);
+      expect(seen.has(d), `${name} draws the same as ${seen.get(d)}`).toBe(
+        false,
+      );
       seen.set(d, name);
       cleanup();
     }
@@ -78,7 +80,9 @@ describe("the set", () => {
   });
 
   it("draws nothing rather than a broken box for a name it has not got", () => {
-    const { container } = render(<MenuIcon name={"nonesuch" as MenuIconName} />);
+    const { container } = render(
+      <MenuIcon name={"nonesuch" as MenuIconName} />,
+    );
 
     expect(container.firstChild).toBeNull();
   });
@@ -88,7 +92,9 @@ describe("how it is drawn", () => {
   it("is hidden from a screen reader, which has the label already", () => {
     const { container } = render(<MenuIcon name="archive" />);
 
-    expect(container.querySelector("svg")?.getAttribute("aria-hidden")).toBe("true");
+    expect(container.querySelector("svg")?.getAttribute("aria-hidden")).toBe(
+      "true",
+    );
   });
 
   it("takes the colour of the text it labels", () => {
@@ -107,7 +113,10 @@ describe("how it is drawn", () => {
     // heavier than its neighbours.
     for (const name of ALL) {
       const { container } = render(<MenuIcon name={name} />);
-      expect(container.querySelector("svg")?.getAttribute("viewBox"), name).toBe("0 0 16 16");
+      expect(
+        container.querySelector("svg")?.getAttribute("viewBox"),
+        name,
+      ).toBe("0 0 16 16");
       cleanup();
     }
   });

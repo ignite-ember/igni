@@ -26,7 +26,7 @@ import {
   type ChatItem,
   type OrchestrateEvent,
 } from "./chat/model";
-import { applyVisualizationDelta } from "./chat/visualizationStream";
+import { applyVisualizationDelta } from "@igni/ui-react";
 import { nextObserverBusyState } from "./chat/observerBusy";
 import { planSessionBinding } from "./chat/sessionBinding";
 import {
@@ -42,7 +42,7 @@ import {
 } from "./chat/pageStack";
 import { Contributions } from "./extensions/contributions";
 import { PageContext } from "./components/PageShell";
-import { Monogram } from "./components/Monogram";
+import { Monogram } from "@igni/ui-react";
 import { WorkflowsPage } from "./components/pages/WorkflowsPage";
 import { HelpPage } from "./components/pages/HelpPage";
 import { ContextPage } from "./components/pages/ContextPage";
@@ -79,7 +79,7 @@ import {
 } from "./components/Icons";
 // Aliased: ``Icons`` exports a ``MenuIcon`` too, and that one is the
 // hamburger. This is the glyph set the panels draw from.
-import { MenuIcon as Glyph } from "./components/MenuIcon";
+import { MenuIcon as Glyph } from "@igni/ui-react";
 import { NotificationsPanel } from "./components/NotificationsPanel";
 import { ScrollIndicator } from "./components/ScrollIndicator";
 import { PublicDocument } from "./components/PublicDocument";

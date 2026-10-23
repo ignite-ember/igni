@@ -82,9 +82,12 @@ export function Tooltip({ text, children }: TooltipProps) {
     [text, place],
   );
 
-  useEffect(() => () => {
-    if (timer.current !== null) window.clearTimeout(timer.current);
-  }, []);
+  useEffect(
+    () => () => {
+      if (timer.current !== null) window.clearTimeout(timer.current);
+    },
+    [],
+  );
 
   // Escape closes it, and so does anything that scrolls it away from
   // the control it belongs to.
@@ -112,7 +115,8 @@ export function Tooltip({ text, children }: TooltipProps) {
     const box = el.getBoundingClientRect();
     const over = box.right - (window.innerWidth - MARGIN);
     const under = MARGIN - box.left;
-    if (over > 0) el.style.transform = `translate(calc(-50% - ${over}px), ${at.below ? "0" : "-100%"})`;
+    if (over > 0)
+      el.style.transform = `translate(calc(-50% - ${over}px), ${at.below ? "0" : "-100%"})`;
     else if (under > 0)
       el.style.transform = `translate(calc(-50% + ${under}px), ${at.below ? "0" : "-100%"})`;
   }, [at]);
@@ -147,7 +151,11 @@ export function Tooltip({ text, children }: TooltipProps) {
 
   return (
     <>
-      <span ref={wrap} className="tip-anchor" aria-describedby={at ? id : undefined}>
+      <span
+        ref={wrap}
+        className="tip-anchor"
+        aria-describedby={at ? id : undefined}
+      >
         {children}
       </span>
       {at &&

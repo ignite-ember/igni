@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 
 import type { IgniClient } from "../../protocol/client";
-import { MenuIcon } from "../MenuIcon";
-import { Tooltip } from "../Tooltip";
+import { MenuIcon } from "@igni/ui-react";
+import { Tooltip } from "@igni/ui-react";
 import { TreeNotice } from "./TreeNotice";
 
 /**

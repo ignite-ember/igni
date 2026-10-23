@@ -42,12 +42,13 @@ export interface OverflowAction {
 }
 
 /** Direct children only — a submenu's own items belong to its list. */
-const OWN_ITEMS = ":scope > [role='menuitem'], :scope > .overflow-sub-wrap > [role='menuitem']";
+const OWN_ITEMS =
+  ":scope > [role='menuitem'], :scope > .overflow-sub-wrap > [role='menuitem']";
 
 function enabledItems(root: HTMLElement | null): HTMLButtonElement[] {
-  return Array.from(root?.querySelectorAll<HTMLButtonElement>(OWN_ITEMS) ?? []).filter(
-    (el) => !el.disabled,
-  );
+  return Array.from(
+    root?.querySelectorAll<HTMLButtonElement>(OWN_ITEMS) ?? [],
+  ).filter((el) => !el.disabled);
 }
 
 /** Up/down within one list, wrapping. Returns whether it handled the key. */
@@ -163,7 +164,13 @@ export function OverflowMenu({
   );
 }
 
-function Entry({ action, onDone }: { action: OverflowAction; onDone: () => void }) {
+function Entry({
+  action,
+  onDone,
+}: {
+  action: OverflowAction;
+  onDone: () => void;
+}) {
   return action.items?.length ? (
     <Submenu action={action} onDone={onDone} />
   ) : (
@@ -178,7 +185,13 @@ function Entry({ action, onDone }: { action: OverflowAction; onDone: () => void 
  * edge of what it hangs off, so a submenu flying out to the right —
  * the desktop default — would open past the window.
  */
-function Submenu({ action, onDone }: { action: OverflowAction; onDone: () => void }) {
+function Submenu({
+  action,
+  onDone,
+}: {
+  action: OverflowAction;
+  onDone: () => void;
+}) {
   const [open, setOpen] = useState(false);
   const item = useRef<HTMLButtonElement>(null);
   const list = useRef<HTMLDivElement>(null);
@@ -267,7 +280,12 @@ function Submenu({ action, onDone }: { action: OverflowAction; onDone: () => voi
           }}
         >
           {action.items?.map((child) => (
-            <Item key={child.key} action={child} onDone={onDone} parent={action.label} />
+            <Item
+              key={child.key}
+              action={child}
+              onDone={onDone}
+              parent={action.label}
+            />
           ))}
         </div>
       )}

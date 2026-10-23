@@ -1,3 +1,4 @@
+import { resolve as resolvePath } from "node:path";
 /// <reference types="vitest" />
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
@@ -5,6 +6,9 @@ import react from "@vitejs/plugin-react";
 // Relative base so the built assets load from file:// (Tauri),
 // vscode-webview:// and jbcefbrowser:// origins, not just http.
 export default defineConfig({
+  resolve: {
+    alias: { "@igni/ui-react": resolvePath(__dirname, "./src/ui-react/index.ts") },
+  },
   plugins: [react()],
   base: "./",
   // Pin to the port that ``clients/tauri/src-tauri/tauri.conf.json``

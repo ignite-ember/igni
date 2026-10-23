@@ -21,7 +21,7 @@
  */
 import type { Editor } from "@tiptap/core";
 
-import type { MenuIconName } from "../MenuIcon";
+import type { MenuIconName } from "@igni/ui-react";
 
 export interface EditorTool {
   key: string;

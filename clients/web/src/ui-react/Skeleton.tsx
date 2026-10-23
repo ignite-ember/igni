@@ -51,15 +51,11 @@ export const Skeleton = {
       />
     );
   },
-  Rows({
-    count = 4,
-    style,
-  }: {
-    count?: number;
-    style?: CSSProperties;
-  }) {
+  Rows({ count = 4, style }: { count?: number; style?: CSSProperties }) {
     return (
-      <div style={{ display: "flex", flexDirection: "column", gap: 12, ...style }}>
+      <div
+        style={{ display: "flex", flexDirection: "column", gap: 12, ...style }}
+      >
         {Array.from({ length: count }).map((_, i) => (
           <div key={i}>
             <Skeleton.Line width="40%" height={11} />

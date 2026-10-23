@@ -114,7 +114,10 @@ export function dropEchoedTitle(text: string, name: string): string {
   // Only when it *is* the title, not when it merely starts with it —
   // "Session handling in detail" is a different heading.
   if (heading.toLowerCase() !== title) return text;
-  return lines.slice(i + 1).join("\n").trimStart();
+  return lines
+    .slice(i + 1)
+    .join("\n")
+    .trimStart();
 }
 
 export function MarkdownInline({
@@ -136,7 +139,9 @@ export function MarkdownInline({
     // Cut back to a space so the preview does not end mid-word.
     const cut = body.slice(0, limit);
     const space = cut.lastIndexOf(" ");
-    return closeOpenMarks(space > limit * 0.6 ? cut.slice(0, space) : cut) + "…";
+    return (
+      closeOpenMarks(space > limit * 0.6 ? cut.slice(0, space) : cut) + "…"
+    );
   }, [text, name, limit]);
 
   if (!source.trim()) return null;

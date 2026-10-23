@@ -26,7 +26,8 @@ const actions = (over: Partial<OverflowAction>[] = []): OverflowAction[] => {
   return base.map((a, i) => ({ ...a, ...(over[i] ?? {}) }));
 };
 
-const open = () => fireEvent.click(screen.getByRole("button", { name: /actions/i }));
+const open = () =>
+  fireEvent.click(screen.getByRole("button", { name: /actions/i }));
 
 describe("the trigger", () => {
   it("says what it is to someone who cannot see three dots", () => {
@@ -85,7 +86,9 @@ describe("the menu", () => {
     render(<OverflowMenu actions={a} label="Document actions" />);
     open();
     expect(
-      screen.getByRole("menuitem", { name: "Done comparing" }).getAttribute("aria-current"),
+      screen
+        .getByRole("menuitem", { name: "Done comparing" })
+        .getAttribute("aria-current"),
     ).toBe("true");
   });
 });
@@ -182,7 +185,9 @@ describe("submenus", () => {
     open();
     openSub();
     expect(screen.getByRole("menuitem", { name: "Export HTML" })).toBeTruthy();
-    expect(screen.getByRole("menuitem", { name: "Export Markdown" })).toBeTruthy();
+    expect(
+      screen.getByRole("menuitem", { name: "Export Markdown" }),
+    ).toBeTruthy();
   });
 
   it("runs the chosen format and closes the whole menu", () => {
@@ -222,7 +227,9 @@ describe("the submenu keyboard", () => {
   ];
 
   it("steps in on the right arrow and lands on the first format", () => {
-    render(<OverflowMenu actions={actionsWithSub()} label="Document actions" />);
+    render(
+      <OverflowMenu actions={actionsWithSub()} label="Document actions" />,
+    );
     open();
     fireEvent.keyDown(screen.getByRole("menuitem", { name: "Export" }), {
       key: "ArrowRight",
@@ -231,7 +238,9 @@ describe("the submenu keyboard", () => {
   });
 
   it("steps back out on the left arrow, to the item that opened it", () => {
-    render(<OverflowMenu actions={actionsWithSub()} label="Document actions" />);
+    render(
+      <OverflowMenu actions={actionsWithSub()} label="Document actions" />,
+    );
     open();
     fireEvent.keyDown(screen.getByRole("menuitem", { name: "Export" }), {
       key: "ArrowRight",
@@ -245,7 +254,9 @@ describe("the submenu keyboard", () => {
   it("closes one level on Escape, not the whole menu", () => {
     // Escape inside a submenu that dropped the entire menu would make
     // backing out of a mis-click cost two reopens.
-    render(<OverflowMenu actions={actionsWithSub()} label="Document actions" />);
+    render(
+      <OverflowMenu actions={actionsWithSub()} label="Document actions" />,
+    );
     open();
     fireEvent.keyDown(screen.getByRole("menuitem", { name: "Export" }), {
       key: "ArrowRight",
@@ -259,7 +270,9 @@ describe("the submenu keyboard", () => {
   });
 
   it("arrows within the submenu, not the parent list", () => {
-    render(<OverflowMenu actions={actionsWithSub()} label="Document actions" />);
+    render(
+      <OverflowMenu actions={actionsWithSub()} label="Document actions" />,
+    );
     open();
     fireEvent.keyDown(screen.getByRole("menuitem", { name: "Export" }), {
       key: "ArrowRight",

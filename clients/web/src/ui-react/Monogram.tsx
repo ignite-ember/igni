@@ -47,7 +47,11 @@ export function hueOf(name: string): number {
  * Derived from the same hue as the monogram, so somebody's caret and
  * their initials are the same colour.
  */
-export function hexOf(name: string, saturation = 0.62, lightness = 0.52): string {
+export function hexOf(
+  name: string,
+  saturation = 0.62,
+  lightness = 0.52,
+): string {
   const hue = hueOf(name) / 360;
   const chroma = (1 - Math.abs(2 * lightness - 1)) * saturation;
   const second = chroma * (1 - Math.abs(((hue * 6) % 2) - 1));

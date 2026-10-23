@@ -13,7 +13,7 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 
 import type { IgniClient } from "../../protocol/client";
-import { MenuIcon } from "../MenuIcon";
+import { MenuIcon } from "@igni/ui-react";
 import { formatExact, formatRelative } from "../../utils/when";
 import { MentionMenu } from "./MentionMenu";
 import {

@@ -6,7 +6,7 @@ import rehypeRaw from "rehype-raw";
 import rehypeSanitize, { defaultSchema } from "rehype-sanitize";
 import type { IgniClient } from "../../protocol/client";
 import { Drawer } from "./Drawer";
-import { Skeleton } from "../Skeleton";
+import { Skeleton } from "@igni/ui-react";
 
 interface PluginRow {
   name?: string;

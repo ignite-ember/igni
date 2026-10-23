@@ -22,7 +22,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import type { IgniClient } from "../../protocol/client";
-import { MenuIcon } from "../MenuIcon";
+import { MenuIcon } from "@igni/ui-react";
 import { initials } from "./DocumentPeople";
 
 export interface Colleague {
