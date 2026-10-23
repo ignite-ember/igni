@@ -147,12 +147,28 @@ const PATHS: Record<MenuIconName, string> = {
 };
 
 export interface MenuIconProps {
-  name: MenuIconName;
+  /** One of igni's own icons. */
+  name?: MenuIconName;
+  /**
+   * An SVG path, for an icon igni does not have.
+   *
+   * Here because the alternative is a closed union, and an extension
+   * cannot add a member to one. `PageKind` had the same problem and
+   * was opened for the same reason: what exists is decided at install
+   * time by what an administrator put on the machine, not at compile
+   * time by us.
+   *
+   * Drawn on a 16×16 grid, stroked rather than filled, to match. A
+   * path that assumes a different viewBox will look like it belongs
+   * to a different application, which is the one thing this whole
+   * package exists to prevent.
+   */
+  path?: string;
   className?: string;
 }
 
-export function MenuIcon({ name, className }: MenuIconProps) {
-  const d = PATHS[name];
+export function MenuIcon({ name, path, className }: MenuIconProps) {
+  const d = path ?? (name ? PATHS[name] : undefined);
   // An unknown name draws nothing rather than a broken box. The
   // label is the thing that says what the item does; the icon is how
   // it is found again.

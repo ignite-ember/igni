@@ -26,6 +26,8 @@ import type {
   HTMLAttributes,
   InputHTMLAttributes,
   ReactNode,
+  SelectHTMLAttributes,
+  TextareaHTMLAttributes,
 } from "react";
 import { useCallback, useEffect, useRef } from "react";
 
@@ -254,4 +256,281 @@ export function Dialog({
       </div>
     </div>
   );
+}
+
+// ── Form controls ───────────────────────────────────────────────────
+
+export interface SelectProps extends SelectHTMLAttributes<HTMLSelectElement> {}
+
+export function Select({ className, ...rest }: SelectProps) {
+  return <select {...rest} className={cx("ui-select", className)} />;
+}
+
+export interface TextareaProps extends TextareaHTMLAttributes<HTMLTextAreaElement> {}
+
+export function Textarea({ className, ...rest }: TextareaProps) {
+  return <textarea {...rest} className={cx("ui-textarea", className)} />;
+}
+
+export interface CheckboxProps extends InputHTMLAttributes<HTMLInputElement> {
+  label: ReactNode;
+}
+
+/**
+ * A native checkbox, wrapped in its own label.
+ *
+ * Wrapped rather than associated by `id`, because an `id` an
+ * extension forgets to make unique is a label that checks somebody
+ * else's box — and nothing about the page looks wrong when it does.
+ */
+export function Checkbox({ label, className, ...rest }: CheckboxProps) {
+  return (
+    <label className={cx("ui-check", className)}>
+      <input type="checkbox" {...rest} />
+      <span>{label}</span>
+    </label>
+  );
+}
+
+export interface RadioProps extends InputHTMLAttributes<HTMLInputElement> {
+  label: ReactNode;
+}
+
+export function Radio({ label, className, ...rest }: RadioProps) {
+  return (
+    <label className={cx("ui-check", className)}>
+      <input type="radio" {...rest} />
+      <span>{label}</span>
+    </label>
+  );
+}
+
+export interface SwitchProps extends Omit<
+  ButtonHTMLAttributes<HTMLButtonElement>,
+  "onChange"
+> {
+  checked: boolean;
+  onChange: (next: boolean) => void;
+  /** Required: a switch with no name is unusable without sight. */
+  label: string;
+}
+
+/**
+ * A switch, which is a button rather than a checkbox.
+ *
+ * The difference is not cosmetic. A checkbox is a value you submit; a
+ * switch takes effect the moment it moves. `role="switch"` is what
+ * tells a screen reader which of those it is looking at.
+ */
+export function Switch({
+  checked,
+  onChange,
+  label,
+  className,
+  ...rest
+}: SwitchProps) {
+  return (
+    <button
+      type="button"
+      role="switch"
+      aria-checked={checked}
+      aria-label={label}
+      onClick={() => onChange(!checked)}
+      {...rest}
+      className={cx("ui-switch", className)}
+    />
+  );
+}
+
+/**
+ * A label, a control, and room for the reason it is wrong.
+ *
+ * The error slot is the part that gets left out, and a form that
+ * rejects input without saying why is the one people abandon. When
+ * `error` is set it is wired to the control through
+ * `aria-describedby`, so it is announced rather than merely shown.
+ */
+export function Field({
+  label,
+  hint,
+  error,
+  htmlFor,
+  children,
+  className,
+  ...rest
+}: HTMLAttributes<HTMLDivElement> & {
+  label: ReactNode;
+  hint?: ReactNode;
+  error?: ReactNode;
+  /** The id of the control, so the label points at it. */
+  htmlFor?: string;
+}) {
+  const describedBy = htmlFor ? `${htmlFor}-note` : undefined;
+  return (
+    <div {...rest} className={cx("ui-field", className)}>
+      <label className="ui-label" htmlFor={htmlFor}>
+        {label}
+      </label>
+      {children}
+      {error ? (
+        <span className="ui-error" id={describedBy} role="alert">
+          {error}
+        </span>
+      ) : hint ? (
+        <span className="ui-hint" id={describedBy}>
+          {hint}
+        </span>
+      ) : null}
+    </div>
+  );
+}
+
+// ── Feedback ────────────────────────────────────────────────────────
+
+/** Work whose duration is unknown. `Skeleton` is for known shapes. */
+export function Spinner({
+  className,
+  ...rest
+}: HTMLAttributes<HTMLSpanElement>) {
+  return (
+    <span
+      {...rest}
+      role="status"
+      aria-live="polite"
+      className={cx("ui-spinner", className)}
+    />
+  );
+}
+
+export interface ProgressProps extends HTMLAttributes<HTMLDivElement> {
+  /** 0–1. Omit for indeterminate, which slides rather than sits. */
+  value?: number;
+  label: string;
+}
+
+export function Progress({ value, label, className, ...rest }: ProgressProps) {
+  const determinate = typeof value === "number";
+  const pct = determinate ? Math.max(0, Math.min(1, value)) * 100 : undefined;
+  return (
+    <div
+      {...rest}
+      className={cx("ui-progress", className)}
+      role="progressbar"
+      aria-label={label}
+      aria-valuenow={determinate ? Math.round(pct as number) : undefined}
+      aria-valuemin={0}
+      aria-valuemax={100}
+      data-indeterminate={!determinate}
+    >
+      <div
+        className="ui-progress-fill"
+        style={determinate ? { width: `${pct}%` } : undefined}
+      />
+    </div>
+  );
+}
+
+// ── Tabs ────────────────────────────────────────────────────────────
+
+export interface TabsProps extends Omit<
+  HTMLAttributes<HTMLDivElement>,
+  "onChange"
+> {
+  tabs: { id: string; label: ReactNode }[];
+  active: string;
+  onChange: (id: string) => void;
+  label: string;
+}
+
+/**
+ * Tabs with the arrow keys wired, because a tab strip that only
+ * responds to clicks is a tab strip half the people cannot use.
+ */
+export function Tabs({
+  tabs,
+  active,
+  onChange,
+  label,
+  className,
+  ...rest
+}: TabsProps) {
+  const onKeyDown = (event: React.KeyboardEvent) => {
+    const step =
+      event.key === "ArrowRight" ? 1 : event.key === "ArrowLeft" ? -1 : 0;
+    if (step === 0) return;
+    event.preventDefault();
+    const i = tabs.findIndex((t) => t.id === active);
+    onChange(tabs[(i + step + tabs.length) % tabs.length].id);
+  };
+  return (
+    <div
+      {...rest}
+      role="tablist"
+      aria-label={label}
+      className={cx("ui-tabs", className)}
+      onKeyDown={onKeyDown}
+    >
+      {tabs.map((tab) => (
+        <button
+          key={tab.id}
+          type="button"
+          role="tab"
+          aria-selected={tab.id === active}
+          tabIndex={tab.id === active ? 0 : -1}
+          className="ui-tab"
+          onClick={() => onChange(tab.id)}
+        >
+          {tab.label}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+// ── Text ────────────────────────────────────────────────────────────
+
+export function Divider({ className, ...rest }: HTMLAttributes<HTMLHRElement>) {
+  return <hr {...rest} className={cx("ui-divider", className)} />;
+}
+
+export interface HeadingProps extends HTMLAttributes<HTMLHeadingElement> {
+  /** The outline level. Also picks the size, so they cannot disagree. */
+  level?: 1 | 2 | 3 | 4;
+}
+
+const HEADING_SIZE = {
+  1: "var(--text-2xl)",
+  2: "var(--text-xl)",
+  3: "var(--text-lg)",
+  4: "var(--text-sm)",
+} as const;
+
+export function Heading({
+  level = 2,
+  className,
+  style,
+  ...rest
+}: HeadingProps) {
+  const Tag = `h${level}` as "h1" | "h2" | "h3" | "h4";
+  return (
+    <Tag
+      {...rest}
+      className={cx("ui-heading", className)}
+      style={{ fontSize: HEADING_SIZE[level], ...style }}
+    />
+  );
+}
+
+export function Text({
+  tone = "default",
+  className,
+  ...rest
+}: HTMLAttributes<HTMLParagraphElement> & {
+  tone?: "default" | "muted" | "faint";
+}) {
+  return <p {...rest} data-tone={tone} className={cx("ui-text", className)} />;
+}
+
+export function Code({ className, ...rest }: HTMLAttributes<HTMLElement>) {
+  return <code {...rest} className={cx("ui-code", className)} />;
 }

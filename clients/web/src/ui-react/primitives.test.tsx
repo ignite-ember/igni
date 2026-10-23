@@ -12,6 +12,7 @@
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+import { MenuIcon } from "./MenuIcon";
 import {
   Actions,
   Badge,
@@ -23,8 +24,20 @@ import {
   Input,
   Item,
   List,
+  Checkbox,
+  Code,
+  Divider,
+  Field,
+  Heading,
+  Progress,
   Row,
+  Select,
+  Spinner,
+  Switch,
   Table,
+  Tabs,
+  Text,
+  Textarea,
   Toolbar,
 } from "./primitives";
 
@@ -199,5 +212,170 @@ describe("Dialog does the things an extension would get wrong", () => {
 
     expect(document.activeElement).toBe(opener);
     opener.remove();
+  });
+});
+
+describe("the controls a floor has to have", () => {
+  it("styles a select and a textarea as fields", () => {
+    const { container } = render(
+      <>
+        <Select>
+          <option>a</option>
+        </Select>
+        <Textarea />
+      </>,
+    );
+    expect(container.querySelector("select")?.className).toBe("ui-select");
+    expect(container.querySelector("textarea")?.className).toBe("ui-textarea");
+  });
+
+  it("wraps a checkbox in its own label rather than matching an id", () => {
+    // An id an extension forgets to make unique is a label that
+    // checks somebody else's box, and nothing looks wrong when it does.
+    render(<Checkbox label="Index on save" />);
+    const box = screen.getByLabelText("Index on save");
+    expect(box.getAttribute("type")).toBe("checkbox");
+    expect(box.closest("label")).not.toBeNull();
+  });
+
+  it("makes a switch a switch, not a checkbox", () => {
+    const onChange = vi.fn();
+    render(<Switch checked={false} onChange={onChange} label="Live sync" />);
+    const sw = screen.getByRole("switch", { name: "Live sync" });
+
+    // The distinction a screen reader announces: a checkbox is a
+    // value you submit, a switch takes effect now.
+    expect(sw.getAttribute("aria-checked")).toBe("false");
+    fireEvent.click(sw);
+    expect(onChange).toHaveBeenCalledWith(true);
+  });
+
+  it("announces a field's error rather than only showing it", () => {
+    render(
+      <Field label="Name" htmlFor="n" error="Already taken.">
+        <Input id="n" />
+      </Field>,
+    );
+    const err = screen.getByRole("alert");
+    expect(err.textContent).toBe("Already taken.");
+    expect(err.id).toBe("n-note");
+  });
+
+  it("prefers the error over the hint, because one of them is urgent", () => {
+    render(
+      <Field label="Name" htmlFor="n" hint="Lowercase." error="Already taken.">
+        <Input id="n" />
+      </Field>,
+    );
+    expect(screen.queryByText("Lowercase.")).toBeNull();
+  });
+
+  it("reports progress as a value, and as sliding when it has none", () => {
+    const { container, rerender } = render(
+      <Progress value={0.42} label="Indexing" />,
+    );
+    const bar = screen.getByRole("progressbar", { name: "Indexing" });
+    expect(bar.getAttribute("aria-valuenow")).toBe("42");
+    expect(
+      container.querySelector<HTMLElement>(".ui-progress-fill")?.style.width,
+    ).toBe("42%");
+
+    rerender(<Progress label="Indexing" />);
+    // No number is honest about not knowing, rather than sitting at a
+    // fixed width and reading as stuck.
+    expect(
+      screen.getByRole("progressbar").getAttribute("aria-valuenow"),
+    ).toBeNull();
+    expect(
+      screen.getByRole("progressbar").getAttribute("data-indeterminate"),
+    ).toBe("true");
+  });
+
+  it("clamps a progress value rather than overflowing the bar", () => {
+    const { container } = render(<Progress value={3} label="x" />);
+    expect(
+      container.querySelector<HTMLElement>(".ui-progress-fill")?.style.width,
+    ).toBe("100%");
+  });
+
+  it("moves tabs with the arrow keys", () => {
+    const onChange = vi.fn();
+    render(
+      <Tabs
+        label="Views"
+        active="a"
+        onChange={onChange}
+        tabs={[
+          { id: "a", label: "Browse" },
+          { id: "b", label: "Search" },
+        ]}
+      />,
+    );
+    // A tab strip that answers only to clicks is one half the people
+    // cannot use.
+    fireEvent.keyDown(screen.getByRole("tablist"), { key: "ArrowRight" });
+    expect(onChange).toHaveBeenCalledWith("b");
+  });
+
+  it("wraps around at the ends", () => {
+    const onChange = vi.fn();
+    render(
+      <Tabs
+        label="Views"
+        active="a"
+        onChange={onChange}
+        tabs={[
+          { id: "a", label: "Browse" },
+          { id: "b", label: "Search" },
+        ]}
+      />,
+    );
+    fireEvent.keyDown(screen.getByRole("tablist"), { key: "ArrowLeft" });
+    expect(onChange).toHaveBeenCalledWith("b");
+  });
+
+  it("ties a heading's size to its outline level", () => {
+    // So the two cannot disagree — an h3 that looks like an h1 is a
+    // document that reads differently to a screen reader than to an eye.
+    const { container } = render(<Heading level={3}>Lineage</Heading>);
+    const h = container.querySelector("h3");
+    expect(h?.className).toBe("ui-heading");
+    expect(h?.style.fontSize).toBe("var(--text-lg)");
+  });
+
+  it("gives a spinner a live region, so it is announced not just seen", () => {
+    const { container } = render(<Spinner />);
+    const s = container.querySelector(".ui-spinner");
+    expect(s?.getAttribute("role")).toBe("status");
+    expect(s?.getAttribute("aria-live")).toBe("polite");
+  });
+
+  it("renders text tones as data, and a divider as an hr", () => {
+    const { container } = render(
+      <>
+        <Text tone="muted">quiet</Text>
+        <Divider />
+        <Code>npm</Code>
+      </>,
+    );
+    expect(container.querySelector("p")?.getAttribute("data-tone")).toBe(
+      "muted",
+    );
+    expect(container.querySelector("hr")?.className).toBe("ui-divider");
+    expect(container.querySelector("code")?.className).toBe("ui-code");
+  });
+});
+
+describe("an extension can bring its own icon", () => {
+  it("draws a path it was given", () => {
+    const { container } = render(<MenuIcon path="M1 1 L15 15" />);
+    expect(container.querySelector("path")?.getAttribute("d")).toBe(
+      "M1 1 L15 15",
+    );
+  });
+
+  it("still draws nothing for a name nobody has", () => {
+    const { container } = render(<MenuIcon name={"nope" as never} />);
+    expect(container.querySelector("svg")).toBeNull();
   });
 });
