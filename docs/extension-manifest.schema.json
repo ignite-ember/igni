@@ -187,7 +187,7 @@
         },
         "secrets": {
           "type": "array",
-          "description": "Named grants resolved by the deployment's broker. Your code receives a handle, never a value.",
+          "description": "Named grants the deployment resolves. A name not declared here is never resolved, and the resolver is the deployment's — never anything the bundle supplies. The value reaches your service in its environment as `IGNI_SECRET_<NAME>`; an earlier version of this said you receive a handle rather than a value, which described an exchange step that does not exist.",
           "items": { "type": "string" },
           "default": []
         },

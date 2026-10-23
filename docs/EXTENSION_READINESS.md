@@ -9,13 +9,14 @@ dangerous category: a permission an author believes they granted and
 nobody checks is worse than one that does not exist, because the
 manifest reads as if it is protecting something.
 
-**Today's one-line summary: one extension runs end to end, and the
-permissions around it are mostly unenforced.** A bundle installs,
+**Today's one-line summary: one extension runs end to end, and four
+of six permissions are enforced completely with two enforced at
+igni's boundary rather than the extension's.** A bundle installs,
 starts, serves its UI on its own origin, draws in a frame and answers
 `ext.<id>.*` calls that are authorised against its manifest — proven
-by a test that runs a real MCP server as a subprocess. What is still
-missing is a CLI to install with, and five of the six declared
-permissions.
+by a test that runs a real MCP server as a subprocess. What is still missing
+is a CLI to install with, and OS-level confinement of a service's own
+network and filesystem.
 
 ---
 
@@ -64,20 +65,28 @@ The manifest models all of these and the schema validates them.
 **Nothing reads any of them.** This is the gate that decides whether
 the extension boundary is a security boundary or a comment.
 
-| # | Declared | Enforced by | Done when |
+| # | Declared | Enforced at | How far |
 |---|---|---|---|
-| B1 | `permissions.rpc` | ✅ `ExtensionRegistry.authorise` | — shipped |
-| B2 | `permissions.egress` | **nobody** | `connect-src` is widened from the manifest instead of hardcoded, and a sidecar's network is confined to the declared hosts. `origin.py`'s own docstring already promises the first half. |
-| B3 | `permissions.secrets` | **nobody** | A handle resolves through a broker and the value never reaches the extension's process image or logs. |
-| B4 | `permissions.workspace` / `workspacePaths` | **nobody** | A read outside the declared globs is refused, and `write` without the grant is refused. |
-| B5 | `permissions.tools` | **nobody** | An MCP tool the manifest did not declare is not registered with the agent. |
-| B6 | `signature` | **nobody** | Install verifies the detached signature against the deployment's trust store, offline, and refuses `unsigned` unless the deployment opted in. |
+| B1 | `permissions.rpc` | `ExtensionRegistry.authorise` | ✅ complete |
+| B2 | `permissions.egress` | the page's `connect-src`, written from the manifest; and the endpoint host igni dials | ⚠️ **UI complete, service not.** Confining a sidecar's own sockets needs an OS network namespace. |
+| B3 | `permissions.secrets` | resolution — an undeclared name is never looked up, and the resolver is the deployment's | ⚠️ **value, not handle.** It reaches the service's environment as `IGNI_SECRET_<NAME>`. |
+| B4 | `permissions.workspace` / `workspacePaths` | what igni *tells* a service | ⚠️ **told, not confined.** An ungranted extension is not told where the project is; one that goes looking is not stopped. |
+| B5 | `permissions.tools` | tool registration, which is igni's | ✅ complete |
+| B6 | `signature` | install, offline, Ed25519, against keys an administrator added | ✅ complete. The digest covers every file plus the manifest without its own signature, so widening a permission after signing breaks it. |
 
-B2–B6 are the difference between "an extension is sandboxed" and
-"an extension is sandboxed in the README". A partner pilot can run
-with them open *if the partner is trusted and it is written down*.
-They cannot ship to a regulated customer that way — undeclared egress
-is the one failure that costs an accreditation.
+**The two partial ones are the same gap twice**: `egress` and
+`workspace` are enforced where igni decides, not where the extension
+acts. Closing them means running a sidecar under a network namespace
+and a mount namespace — the same work as container supervision, and
+not started. For a regulated deployment that is the honest sentence
+to put in front of an assessor, and it is better than the previous
+one, which was that none of it was enforced at all.
+
+**Secrets became values rather than handles**, and the contract was
+corrected rather than the other way round. A handle needs an exchange
+step and an extension's service is an MCP server igni *calls*, so
+there is no channel for it to call back on. The cost: a secret sits
+in the service's process environment.
 
 ---
 
@@ -149,13 +158,15 @@ smallest honest deliverable: they can build, install, run, call their
 own service and see it fail legibly. Gate B stays open and is written
 into the agreement rather than the code.
 
-**To let an untrusted third party build** — Gate B in full. Nothing
-else on this page matters as much, because every item in it is a
-permission that currently protects nothing.
+**To let an untrusted third party build** — Gate B is done except
+for the OS sandbox that `egress` and `workspace` need to bind on the
+extension's side rather than igni's. That is the remaining honest
+caveat, and it is one sentence rather than five.
 
 **To call it rich** — Gate E, and Gate D4 to prove it, since a second
 differently-shaped extension is the only thing that has ever found a
 real gap in this floor.
 
-**To sell it into a regulated deployment** — B2 and B6 are the two
-that get asked about by name in an accreditation review.
+**To sell it into a regulated deployment** — B6 is done. B2 is the
+one left that gets asked about by name, and the answer today is "the
+UI cannot reach an undeclared host; the service is trusted not to".

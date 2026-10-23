@@ -241,7 +241,22 @@ The threat model is not a hostile stranger on a marketplace. It is **a trusted a
 
 ### Permissions
 
-Declared, admin-granted, base-enforced, deny by default: `workspace` (none/read/write, path-scoped), `egress` (explicit hosts, empty by default), `secrets` (named grants resolved by a broker — a handle, never a value), `tools` (MCP tool names it may register with the agent), `rpc` (backend methods its UI may call over the bridge — exact names, or a `*`-suffixed prefix, because this list is read by whoever approves the install).
+Declared, admin-granted, base-enforced, deny by default: `workspace` (none/read/write, path-scoped), `egress` (explicit hosts, empty by default), `secrets` (named grants the deployment resolves), `tools` (MCP tool names it may register with the agent), `rpc` (backend methods its UI may call over the bridge — exact names, or a `*`-suffixed prefix, because this list is read by whoever approves the install).
+
+**Where each one is enforced, and how far.** This list was written before any of it was, and for a while the only enforced permission was `rpc` — which made the rest a list of restrictions that restricted nothing.
+
+| Permission | Enforced at | How far it goes |
+|---|---|---|
+| `rpc` | `ExtensionRegistry.authorise`, on every call | Complete. |
+| `tools` | tool registration, which is igni's | Complete. A service may expose what it likes; what reaches the model is this list. |
+| `egress` | the page's `connect-src`, written from the manifest; and the endpoint host igni itself dials | **The UI, completely. Not the service's own process** — confining that needs an OS sandbox igni does not apply. A sidecar can still open its own sockets. |
+| `workspace` | what igni *tells* a service, as `IGNI_WORKSPACE*` | An extension that was never granted the workspace is not told where it is. A service that goes looking anyway is not stopped — same OS-sandbox gap. |
+| `secrets` | resolution: an undeclared name is never looked up, and the resolver is the deployment's | The value arrives in the service's environment as `IGNI_SECRET_<NAME>`. **Not a handle** — see below. |
+| `signature` | install, offline, against keys an administrator added | Complete for Ed25519. The digest covers every file and the manifest with its own signature removed, so widening a permission after signing breaks it. |
+
+**Secrets are values, not handles.** This section said "a handle, never a value" for as long as nothing implemented it. A handle needs an exchange step, and an extension's service is an MCP server igni *calls* — there is no channel for it to call back on. So the honest statement is the one above, and the handle exchange joins the list of things not built. What that costs: a secret is in the service's process environment, visible to anything that can read it there.
+
+**The two gaps worth naming to a customer** are the same one twice: `egress` and `workspace` are enforced where igni decides, not where the extension acts. Closing them means running a sidecar under an OS sandbox — a network namespace and a mount namespace — which is the same work as container supervision and is not started.
 
 A capability that asks for more on upgrade **does not get it silently**; it stays at its old grants until an admin accepts. Permission drift is how extension ecosystems rot.
 

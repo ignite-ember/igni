@@ -60,6 +60,10 @@ dependencies = [
     "tiktoken~=0.13.0",
     "ripgrep~=15.1.0",
     "beautifulsoup4~=4.15.0",
+    # Ed25519 verification of extension bundle signatures
+    # (``extensions/signature.py``). It was already importable as a
+    # transitive dependency, which a security control may not rely on.
+    "cryptography~=50.0",
     # ``~=6.16`` not ``~=6.16.1``: the tighter form caps the next patch and
     # this pin has now capped a security fix twice — PYSEC-2026-3910/3911
     # need 6.16.1 and 3913 needs 6.16.0, all of them out of reach of

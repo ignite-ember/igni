@@ -191,6 +191,7 @@ class ExtensionOrigin:
         root: Path,
         *,
         frame_ancestors: Iterable[str] = (),
+        connect_src: str = "'self'",
         host: str = LOOPBACK,
     ) -> None:
         """
@@ -212,6 +213,7 @@ class ExtensionOrigin:
         self._extension_id = extension_id
         self._root = root.resolve()
         self._frame_ancestors = tuple(frame_ancestors)
+        self._connect_src = connect_src
         self._host = host
         self._server: asyncio.AbstractServer | None = None
         self._port = 0
@@ -224,6 +226,12 @@ class ExtensionOrigin:
     def root(self) -> Path:
         """The directory being served, fully resolved."""
         return self._root
+
+    @property
+    def connect_src(self) -> str:
+        """The ``connect-src`` this origin serves, for comparison on
+        re-serve."""
+        return self._connect_src
 
     @property
     def port(self) -> int:
@@ -496,12 +504,19 @@ class ExtensionOrigin:
     def _csp(self) -> str:
         """What the extension's page may do.
 
-        Itself, and nothing else. No egress: an extension talks to the
+        Itself, and whatever ``permissions.egress`` declared. The
+        default is itself and nothing else: an extension talks to the
         backend through the bridge, so a page that can open its own
-        connections is a page that can leave with whatever it was shown.
-        Declared egress, when there is such a thing, is granted by the
-        manifest and widens ``connect-src`` here rather than anywhere
-        else.
+        connections is a page that can leave with whatever it was
+        shown.
+
+        That default used to be the only option — this said declared
+        egress "widens ``connect-src`` here" while taking no egress
+        argument, so the allowlist in every manifest was enforced by
+        nobody. It is written from the manifest now, by
+        :class:`~ember_code.extensions.permissions.Egress`, which
+        also decides that a declared host is reachable over
+        ``https:`` and not over any scheme that happens to match.
         """
         ancestors = " ".join(self._frame_ancestors) if self._frame_ancestors else "'none'"
         return "; ".join(
@@ -514,7 +529,7 @@ class ExtensionOrigin:
                 "style-src 'self' 'unsafe-inline'",
                 "img-src 'self' data: blob:",
                 "font-src 'self'",
-                "connect-src 'self'",
+                f"connect-src {self._connect_src}",
                 "object-src 'none'",
                 "base-uri 'none'",
                 "form-action 'none'",
@@ -551,7 +566,9 @@ class ExtensionOrigins:
     def __len__(self) -> int:
         return len(self._origins)
 
-    async def serve(self, extension_id: str, root: Path) -> ExtensionOrigin:
+    async def serve(
+        self, extension_id: str, root: Path, *, connect_src: str = "'self'"
+    ) -> ExtensionOrigin:
         """Start an origin for one extension, or return the running one.
 
         Serving a second root under an id already in use replaces the
@@ -562,11 +579,20 @@ class ExtensionOrigins:
         async with self._lock:
             existing = self._origins.get(extension_id)
             if existing is not None:
-                if existing.root == root.resolve():
+                if existing.root == root.resolve() and existing.connect_src == connect_src:
                     return existing
+                # A changed root *or* a changed policy. Reusing a
+                # listener whose CSP came from the previous manifest
+                # would mean a reinstall that narrowed egress left the
+                # old allowance answering.
                 await self._drop_locked(extension_id)
 
-            origin = ExtensionOrigin(extension_id, root, frame_ancestors=self._frame_ancestors)
+            origin = ExtensionOrigin(
+                extension_id,
+                root,
+                frame_ancestors=self._frame_ancestors,
+                connect_src=connect_src,
+            )
             await origin.start()
             self._origins[extension_id] = origin
             return origin

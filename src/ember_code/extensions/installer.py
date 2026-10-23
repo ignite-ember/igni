@@ -31,12 +31,14 @@ needs a container runtime this does not have yet and fails saying so.
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
 from ember_code.core.mcp.config import MCPServerConfig, MCPTransport
 from ember_code.extensions.manifest import ExtensionManifest, Trust
 from ember_code.extensions.origin import ExtensionOrigins
+from ember_code.extensions.permissions import PermissionDenied, Permissions
 from ember_code.extensions.registry import (
     ExtensionRegistry,
     ExtensionState,
@@ -44,6 +46,7 @@ from ember_code.extensions.registry import (
 )
 from ember_code.extensions.rpc import ExtensionRpc
 from ember_code.extensions.service import McpExtensionService
+from ember_code.extensions.signature import SignatureError, TrustStore, verify_bundle
 
 logger = logging.getLogger(__name__)
 
@@ -81,6 +84,9 @@ class ExtensionInstaller:
         rpc: ExtensionRpc,
         mcp: Any,
         origins: ExtensionOrigins | None = None,
+        trust_store: TrustStore | None = None,
+        project_dir: Path | None = None,
+        secret_resolver: Callable[[str], str | None] | None = None,
         allow_unsigned: bool = False,
     ) -> None:
         """
@@ -96,6 +102,14 @@ class ExtensionInstaller:
                 and script each other's frames. Optional: an
                 extension that contributes no pages needs none, and
                 neither does a headless deployment.
+            trust_store: The public keys this deployment accepts a
+                bundle from. Never populated from the bundle being
+                installed, which would make a signature a formality
+                any bundle could satisfy by bringing its own key.
+            project_dir: The user's project. Told to a service only
+                when ``permissions.workspace`` grants it.
+            secret_resolver: The deployment's secret source. A name
+                the manifest did not declare is never passed to it.
             allow_unsigned: Whether ``trust: unsigned`` may be
                 installed. False everywhere but development, because
                 the easiest way to ship must not be the one with no
@@ -105,6 +119,9 @@ class ExtensionInstaller:
         self._rpc = rpc
         self._mcp = mcp
         self._origins = origins
+        self._trust = trust_store if trust_store is not None else TrustStore()
+        self._project_dir = project_dir
+        self._secret_resolver = secret_resolver
         self._allow_unsigned = allow_unsigned
 
     async def install(self, bundle: Path) -> InstalledExtension:
@@ -119,7 +136,7 @@ class ExtensionInstaller:
                 manifest, refused trust, or an id already installed.
         """
         manifest = self._read(bundle)
-        self._check_trust(manifest)
+        self._check_trust(manifest, bundle)
 
         if self._registry.get(manifest.id) is not None:
             raise InstallError(
@@ -134,9 +151,11 @@ class ExtensionInstaller:
             reason="starting its service",
         )
 
+        permissions = Permissions(manifest, secret_resolver=self._secret_resolver)
+
         try:
-            config = self._service_config(manifest, bundle)
-        except InstallError as exc:
+            config = self._service_config(manifest, bundle, permissions)
+        except (InstallError, PermissionDenied) as exc:
             # Packaging we cannot honour. Recorded rather than raised:
             # the extension is installed and not runnable here, which
             # is exactly what an administrator needs to be shown.
@@ -147,6 +166,8 @@ class ExtensionInstaller:
         if reason is not None:
             self._registry.set_state(manifest.id, ExtensionState.FAILED, reason)
             return entry
+
+        self._restrict_tools(manifest, config.name, permissions)
 
         self._rpc.bind(
             manifest.id,
@@ -186,7 +207,9 @@ class ExtensionInstaller:
                 f"directory at {root}, so there is nothing to serve."
             )
         try:
-            await self._origins.serve(manifest.id, root)
+            await self._origins.serve(
+                manifest.id, root, connect_src=self._egress_connect_src(manifest)
+            )
         except Exception as exc:
             logger.error("serving %s UI failed", manifest.id, exc_info=True)
             return f"its UI could not be served: {exc}"
@@ -225,35 +248,50 @@ class ExtensionInstaller:
         except ValueError as exc:
             raise InstallError(f"{path} is not a valid manifest: {exc}") from exc
 
-    def _check_trust(self, manifest: ExtensionManifest) -> None:
-        if manifest.trust is Trust.UNSIGNED and not self._allow_unsigned:
-            raise InstallError(
-                f"{manifest.id} is unsigned and this deployment does not accept "
-                "unsigned extensions. Sign it, or enable development mode."
-            )
-        if manifest.trust is not Trust.UNSIGNED:
-            # Stated rather than skipped silently. A signature that is
-            # required by the model, carried in the file and checked
-            # by nobody is the kind of gap that reads as a feature.
-            logger.warning(
-                "extension %s declares trust %s; signature verification is not "
-                "implemented, so this install is trusting the bundle's source",
-                manifest.id,
-                manifest.trust.value,
-            )
+    def _check_trust(self, manifest: ExtensionManifest, bundle: Path) -> None:
+        """Provenance, before anything is registered or started.
 
-    def _service_config(self, manifest: ExtensionManifest, bundle: Path) -> MCPServerConfig:
-        """How to reach this extension's service."""
+        An unsigned bundle is refused outright unless the deployment
+        opted in. A signed one has its signature checked against the
+        keys an administrator added — offline, because an air-gapped
+        customer is the normal case and a check that needs the
+        network is a check that gets skipped.
+        """
+        if manifest.trust is Trust.UNSIGNED:
+            if not self._allow_unsigned:
+                raise InstallError(
+                    f"{manifest.id} is unsigned and this deployment does not accept "
+                    "unsigned extensions. Sign it, or enable development mode."
+                )
+            logger.warning("extension %s is unsigned; this deployment allows that", manifest.id)
+            return
+
+        try:
+            key = verify_bundle(bundle, manifest, self._trust)
+        except SignatureError as exc:
+            raise InstallError(f"{manifest.id}: {exc}") from exc
+        logger.info("extension %s signed by %s", manifest.id, key.owner)
+
+    def _service_config(
+        self, manifest: ExtensionManifest, bundle: Path, permissions: Permissions
+    ) -> MCPServerConfig:
+        """How to reach this extension's service, within its grants."""
         name = server_name(manifest.id)
 
         if manifest.dev is not None:
             cwd = bundle if manifest.dev.cwd is None else bundle / manifest.dev.cwd
+            # The manifest's own `env` first, so a grant cannot be
+            # shadowed by a literal the bundle shipped — an extension
+            # setting `IGNI_WORKSPACE` itself must not be how it gets
+            # one.
+            env = dict(manifest.dev.env)
+            env.update(permissions.service_environment(self._project_dir))
             return MCPServerConfig(
                 name=name,
                 type=MCPTransport.stdio,
                 command=manifest.dev.command[0],
                 args=list(manifest.dev.command[1:]),
-                env=dict(manifest.dev.env),
+                env=env,
                 # Its command is relative to the bundle, which is not
                 # where the backend happens to be running.
                 cwd=str(cwd),
@@ -261,6 +299,9 @@ class ExtensionInstaller:
             )
 
         if manifest.endpoint is not None:
+            # igni makes this connection itself, so igni can refuse a
+            # destination the manifest never declared.
+            permissions.egress.check_endpoint(manifest.endpoint.url)
             return MCPServerConfig(
                 name=name,
                 type=MCPTransport.sse,
@@ -274,6 +315,39 @@ class ExtensionInstaller:
             "starting container images is not implemented yet. Use 'endpoint' "
             "to register a service you run, or 'dev' to run a command locally."
         )
+
+    @staticmethod
+    def _egress_connect_src(manifest: ExtensionManifest) -> str:
+        return Permissions(manifest).egress.csp_connect_src()
+
+    def _restrict_tools(
+        self, manifest: ExtensionManifest, server: str, permissions: Permissions
+    ) -> None:
+        """Keep undeclared tools away from the agent.
+
+        Complete enforcement, unlike most of this file: registration
+        is igni's, so an extension's service may expose whatever it
+        likes and what reaches the model is the manifest's list.
+
+        Done through the same filter a user's own disabling uses,
+        because the end state is identical — a tool the agent is not
+        offered — and a second mechanism would be a second thing to
+        keep in step.
+        """
+        client = self._mcp.get_client(server)
+        if client is None:
+            return
+        offered = self._mcp.get_tools(server)
+        refused = permissions.tools.refused(offered)
+        for tool in refused:
+            self._mcp.set_tool_enabled(server, tool, False)
+        if refused:
+            logger.info(
+                "extension %s offered %d tools its manifest does not declare; not registering %s",
+                manifest.id,
+                len(refused),
+                refused,
+            )
 
     async def _start(self, config: MCPServerConfig) -> str | None:
         """Connect to the service. Returns a reason on failure."""
