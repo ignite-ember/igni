@@ -1,0 +1,27 @@
+{
+  "id": "acme.scanner",
+  "version": "1.0.0",
+  "contract": ">=1.0 <2",
+
+  "trust": "partner",
+  "signature": "<detached, verified against a key this deployment trusts>",
+
+  "sidecar": {
+    "mcp": { "transport": "stdio" },
+    "requires": [{ "capability": "graph-db", "constraint": ">=5", "mode": "shared" }]
+  },
+
+  "permissions": {
+    "workspace": "read",
+    "egress": [],
+    "secrets": [],
+    "rpc": ["ext.acme.scanner.*"]
+  },
+
+  "contributes": {
+    "pages": [{ "kind": "acme.scan", "label": "Compliance", "sidebar": true }],
+    "promptFragments": [{ "anchor": "ACME_POLICY_SUMMARY" }],
+    "promptVariants": ["acme-scan"],
+    "commands": [{ "label": "Compliance", "command": "/compliance", "desc": "policy violations" }]
+  }
+}

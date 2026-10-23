@@ -274,7 +274,8 @@ This replaces a line that read "the React component tree, CSS class names, any t
 
 ## 9. Developing one
 
-- **`igni ext init`** will scaffold something that runs on first launch, and a reference extension will live in-tree. Neither exists yet — `src/ember_code/extensions/` holds the origin server and nothing else. Stated as future because an author who goes looking for the reference extension does not find one.
+- **The reference extension is `examples/reference-extension/`** — a compliance scanner, around 200 lines, written against the published surface and nothing else. It is the answer to "what does an extension look like", and a standing check on this contract: anything it has to hand-roll is something the floor is missing, and its README keeps that list.
+- **`igni ext init`** will scaffold one that runs on first launch. It does not exist yet.
 - **Dev mode** runs from localhost, unsigned, with a persistent banner and hot reload. The only place `trust: unsigned` is accepted.
 - **`igni ext doctor`** checks manifest schema, contract range, permissions, collisions, deprecations, the MCP round-trip and the phones-home scan. **If doctor passes, it loads** — that equivalence is the promise.
 - **Errors carry fixes**, because the reader is often a partner's L2 engineer with no internet.

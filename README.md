@@ -256,6 +256,7 @@ Agents can pause execution to request confirmation or user input before proceedi
 - [Hooks](docs/HOOKS.md) — Pre/post tool execution hooks
 - [Extensibility Floor](docs/EXTENSIBILITY.md) — The contract extensions build against, and what it guarantees them
 - [Platform Plan](docs/PLATFORM_PLAN.md) — What has to be built for the single-user and shared backends, in order
+- [UI package](clients/ui/README.md) — The tokens, classes and components an extension builds against
 - [Design System](docs/DESIGN_SYSTEM.md) — The scales, the primitives, and what still needs a human eye
 - [Build Plan](docs/BUILD_PLAN.md) — The same work as ordered items, with the files they touch and how each one is verified
 - [Migration](docs/MIGRATION.md) — Coming from Claude Code or Codex
