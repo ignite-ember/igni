@@ -110,6 +110,13 @@ carries a real button — named `Review {rule}`, because twelve buttons
 all called "Review" are twelve identical entries in a screen reader's
 button list with no way to tell which row any of them belongs to.
 
+## It is one shape — see `examples/release-notes` for the other
+
+That one is a two-pane browser over editable documents, built to find
+what this shape hides. It found a published pair that could not be
+used as a pair: `Tabs` generated its own id prefix and `TabPanel`
+required one, with no way for a caller to learn it.
+
 ## It is one shape, and a forgiving one
 
 A single view, mostly reading, one pane, no prose. Each of those avoids

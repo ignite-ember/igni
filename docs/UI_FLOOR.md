@@ -63,7 +63,7 @@ extension writes the same six lines, differently.
 |---|---|---|
 | `AppShell` | ✅ | Header/body/footer rows, `height: 100%`, `box-sizing` reset. The six lines everybody writes. |
 | `Scroll` | ✅ | A scroll container with `min-height: 0` — the flexbox trap that makes a pane grow instead of scroll. |
-| `Split` | 🔧 `ColumnHandle.tsx`, 180 lines | Pointer capture, clamping, persisted width, a keyboard-operable `separator` with `aria-valuenow`. Wanted by every two-pane surface. Pure behaviour. |
+| `Split` | 🔧 `ColumnHandle.tsx`, 180 lines | Pointer capture, clamping, persisted width, a keyboard-operable `separator` with `aria-valuenow`. Pure behaviour. **Measured, not reasoned**: `examples/release-notes` hand-rolls it, and it is the biggest single gap for a two-pane shape. |
 | `Stack` / `Inline` | ❌ | Gap on the scale, so spacing cannot drift off it. |
 | `Grid` | ❌ | Responsive columns against the space scale. |
 | `Row` | ✅ | |
@@ -126,7 +126,7 @@ Strongest area already.
 | `NumberInput` | ❌ | Step buttons, clamping, `inputMode`. |
 | `SearchInput` | ❌ | `type="search"`, clear button, debounce, announced result count. |
 | `PasswordInput` | ❌ | Reveal toggle with correct labelling. |
-| `Combobox` | ❌ | **Hardest and most-wanted.** `aria-autocomplete`, active-descendant, announced option count. Nobody gets this right by hand. |
+| `Combobox` | ❌ | The hardest to hand-roll correctly: `aria-autocomplete`, active-descendant, announced option count. Listed from reasoning rather than from use — neither extension built so far has wanted one, which is worth knowing before it is built. |
 | `MultiSelect` / `TokenInput` | ❌ | Removable tokens, backspace semantics. |
 | `DatePicker` / `TimePicker` | ❌ | Tier 2; text input with a parser gets most of the value. |
 | `Slider` | ❌ | Keyboard stepping, `aria-valuetext`. |
@@ -203,7 +203,10 @@ The reference extension consumes all of it: its live region, its error boundary 
 
 **Tier 1 — breadth**
 
-`Split`, `Combobox`, `Popover`, `Drawer`, `Form`, `Fieldset`,
+Ordered by what the two built extensions actually reached for:
+`Split` and block `Markdown` first, since `examples/release-notes`
+hand-rolls both. The rest —
+`Combobox`, `Popover`, `Drawer`, `Form`, `Fieldset`,
 `SearchInput`, `NumberInput`, `DescriptionList`, `Accordion`,
 `CodeBlock`, `Markdown`, `ConfirmDialog`, `StatusDot`, `Breadcrumbs`,
 `NavList`, `Link`, `Kbd`, `CopyButton`.
