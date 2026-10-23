@@ -247,10 +247,25 @@ Every call into a capability carries a **deadline and a cancellation token** —
 - **A mismatch fails loudly and legibly**, naming the version needed.
 - **Installed capabilities and versions appear in the diagnostic bundle**, so L2 escalation starts from versions, not customer content.
 
+### The UI half of the floor
+
+Three published things, and nothing else about how igni is drawn:
+
+| | Where it is declared |
+|---|---|
+| **Design tokens** | `PUBLISHED_TOKENS` in `clients/web/src/extensions/tokens.ts` — colours, the spacing scale, the type scale, shape. Pushed live over the bridge, so an extension follows dark mode, light mode and a group's branding without asking. |
+| **CSS classes** | The classes defined in `clients/ui/igni-ui.css` — `btn`, `chip`, `ui-card`, `ui-row` and the rest. Named deliberately the same as igni's own, so a change lands in both. |
+| **React components** | The exports of `@igni/ui-react`. What the first two extensions actually import, plus the primitives any extension would need. |
+
+These three are a promise. **Everything else about igni's appearance is not**, and the distinction is what keeps restyling the app possible: `theme.css` holds about two thousand classes and three dozen of them are published.
+
+This replaces a line that read "the React component tree, CSS class names, any token not published as a theme variable" — written before there was a package, when no class name was published and the sentence was true. It stopped being true the moment `igni-ui.css` shipped, and a floor that contradicts what we hand people is worse than one that promises too much.
+
 ## Not in the floor
 
 - Importing anything from `ember_code.*` — the contributions are the interface, not the package.
-- The React component tree, CSS class names, any token not published as a theme variable.
+- **Any CSS class not defined in `igni-ui.css`**, any component not exported from `@igni/ui-react`, any token not in `PUBLISHED_TOKENS`. Naming a class is not the same as publishing it: an extension that reaches for `.kb-row` because it saw it in the DOM has taken a dependency we never offered.
+- The markup those classes are applied to — which element, which nesting. The class is the contract; the tree under it is ours.
 - `RpcMethod` members not namespaced to a capability.
 - Database schemas, Neo4j labels, on-disk layouts.
 - Base prompt text and base agent definitions.
