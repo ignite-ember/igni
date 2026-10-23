@@ -137,6 +137,31 @@
       }
     },
 
+    "dev": {
+      "type": "object",
+      "description": "Packaging C: a command igni runs on this machine, speaking MCP over stdio. Development only, and the schema refuses it on anything but `trust: unsigned` — it is an arbitrary command out of a text file, which is exactly what a signature exists to prevent. It exists because the other two packagings both need something an author does not have on their laptop: a container registry, or a deployed service.",
+      "required": ["command"],
+      "additionalProperties": false,
+      "properties": {
+        "command": {
+          "type": "array",
+          "description": "argv, not a shell string. A shell string would be parsed by a shell, and the quoting rules of whichever shell that turns out to be are not a thing a manifest should depend on.",
+          "items": { "type": "string" },
+          "minItems": 1,
+          "examples": [["node", "./server.js"]]
+        },
+        "cwd": {
+          "type": "string",
+          "description": "Working directory, relative to the bundle. Defaults to the bundle root."
+        },
+        "env": {
+          "type": "object",
+          "description": "Extra environment for the command. Values are literals — a secret belongs in `permissions.secrets`, which resolves to a handle rather than putting the credential in a file somebody commits.",
+          "additionalProperties": { "type": "string" }
+        }
+      }
+    },
+
     "permissions": {
       "type": "object",
       "description": "Declared here, granted by an administrator, enforced by the base, denied by default. An extension that asks for more on upgrade stays at its old grants until an administrator accepts — permission drift is how extension ecosystems rot.",
@@ -299,11 +324,37 @@
   },
 
   "oneOf": [
-    { "required": ["sidecar"], "not": { "required": ["endpoint"] } },
-    { "required": ["endpoint"], "not": { "required": ["sidecar"] } }
+    {
+      "required": ["sidecar"],
+      "allOf": [
+        { "not": { "required": ["endpoint"] } },
+        { "not": { "required": ["dev"] } }
+      ]
+    },
+    {
+      "required": ["endpoint"],
+      "allOf": [
+        { "not": { "required": ["sidecar"] } },
+        { "not": { "required": ["dev"] } }
+      ]
+    },
+    {
+      "required": ["dev"],
+      "allOf": [
+        { "not": { "required": ["sidecar"] } },
+        { "not": { "required": ["endpoint"] } }
+      ]
+    }
   ],
 
   "allOf": [
+    {
+      "if": { "required": ["dev"] },
+      "then": {
+        "properties": { "trust": { "const": "unsigned" } },
+        "description": "A dev command is an arbitrary executable named in a text file. Allowing it on a signed manifest would mean a signature attested to something that then ran whatever it liked."
+      }
+    },
     {
       "if": { "properties": { "trust": { "enum": ["first-party", "partner"] } } },
       "then": {

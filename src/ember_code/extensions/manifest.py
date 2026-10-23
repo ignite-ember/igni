@@ -144,6 +144,28 @@ class Endpoint(Strict):
     auth: EndpointAuth | None = None
 
 
+class DevCommand(Strict):
+    """Packaging C: a command igni runs here, speaking MCP over stdio.
+
+    Development only. The other two packagings each need something an
+    author does not have on their laptop — a container registry, or a
+    service somebody already deployed — so without this there is no
+    way to run an extension while writing it.
+
+    Refused on anything but ``unsigned``: this is an arbitrary
+    executable named in a text file, and allowing it on a signed
+    manifest would mean a signature attested to something that then
+    ran whatever it liked.
+    """
+
+    #: argv, not a shell string. A shell string would be parsed by a
+    #: shell, and which shell that turns out to be is not something a
+    #: manifest should depend on.
+    command: list[str] = Field(min_length=1)
+    cwd: str | None = None
+    env: dict[str, str] = Field(default_factory=dict)
+
+
 class Workspace(StrEnum):
     NONE = "none"
     READ = "read"
@@ -259,6 +281,7 @@ class ExtensionManifest(Strict):
 
     sidecar: Sidecar | None = None
     endpoint: Endpoint | None = None
+    dev: DevCommand | None = None
 
     permissions: Permissions = Field(default_factory=Permissions)
     contributes: Contributes = Field(default_factory=Contributes)
@@ -271,10 +294,32 @@ class ExtensionManifest(Strict):
 
     @model_validator(mode="after")
     def _one_packaging(self) -> ExtensionManifest:
-        if (self.sidecar is None) == (self.endpoint is None):
+        chosen = [
+            name
+            for name, value in (
+                ("sidecar", self.sidecar),
+                ("endpoint", self.endpoint),
+                ("dev", self.dev),
+            )
+            if value is not None
+        ]
+        if len(chosen) != 1:
+            found = ", ".join(chosen) if chosen else "none"
             raise ValueError(
-                f"{self.id}: exactly one of 'sidecar' and 'endpoint' is required — "
-                "packaging is a property of the extension, not a runtime choice"
+                f"{self.id}: exactly one of 'sidecar', 'endpoint' and 'dev' is "
+                f"required and {found} was given — packaging is a property of "
+                "the extension, not a runtime choice"
+            )
+        return self
+
+    @model_validator(mode="after")
+    def _dev_is_unsigned(self) -> ExtensionManifest:
+        if self.dev is not None and self.trust is not Trust.UNSIGNED:
+            raise ValueError(
+                f"{self.id}: a 'dev' command needs trust 'unsigned', not "
+                f"{self.trust.value!r}. It names an arbitrary executable, so a "
+                "signature over it would attest to something that then ran "
+                "whatever it liked."
             )
         return self
 

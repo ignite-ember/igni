@@ -10,7 +10,7 @@ import { ArtifactCompare } from "./ArtifactCompare";
 import { MenuIcon } from "@igni/ui-react";
 import { DocumentPeople } from "./DocumentPeople";
 import { LockedDocument, type LockedState } from "./LockedDocument";
-import { hexOf } from "../../ui-react/Monogram";
+import { hexOf } from "@igni/ui-react/Monogram";
 import { useDocumentRoom } from "./useDocumentRoom";
 import { useSharedDraft } from "./useSharedDraft";
 import { ArtifactStaleReview } from "./ArtifactStaleReview";

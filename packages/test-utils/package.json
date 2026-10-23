@@ -1,0 +1,8 @@
+{
+  "name": "@igni/test-utils",
+  "version": "0.1.0",
+  "description": "Source-scanning helpers for the floor's own guards. Not published.",
+  "license": "Apache-2.0",
+  "type": "module",
+  "private": true
+}

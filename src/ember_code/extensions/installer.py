@@ -1,0 +1,242 @@
+"""Turning a bundle on disk into something that answers.
+
+This is the keystone the rest of the extension system was waiting
+on. The manifest was modelled, the namespace was routed and
+authorised, the frame was built and the floor was published — and
+nothing anywhere called ``ExtensionRegistry.install``, so every one
+of those was reachable only from a test.
+
+What an install does, in order, and why that order:
+
+1. **Read and validate the manifest.** Anything wrong here is wrong
+   before we have touched the machine.
+2. **Check trust.** An unsigned bundle is refused unless the
+   deployment opted in. This is the point at which a signature would
+   be verified; it is not verified yet, and
+   :meth:`ExtensionInstaller.install` says so out loud rather than
+   implying otherwise by succeeding.
+3. **Register as PREPARING.** From here on a failure is *recorded*
+   rather than raised away: an extension that failed to start is a
+   state an administrator needs to see, with the reason and the fix,
+   not an exception in a log nobody reads.
+4. **Start or reach the service**, then bind it.
+5. **READY**, which is what makes it callable — the registry refuses
+   anything else.
+
+Three packagings, one per manifest. ``dev`` runs a command here,
+``endpoint`` reaches a service somebody else runs, and ``sidecar``
+needs a container runtime this does not have yet and fails saying so.
+"""
+
+from __future__ import annotations
+
+import logging
+from pathlib import Path
+from typing import Any
+
+from ember_code.core.mcp.config import MCPServerConfig, MCPTransport
+from ember_code.extensions.manifest import ExtensionManifest, Trust
+from ember_code.extensions.registry import (
+    ExtensionRegistry,
+    ExtensionState,
+    InstalledExtension,
+)
+from ember_code.extensions.rpc import ExtensionRpc
+from ember_code.extensions.service import McpExtensionService
+
+logger = logging.getLogger(__name__)
+
+#: What an extension's MCP server is called inside the MCP manager.
+#:
+#: Prefixed so an extension cannot shadow a server the user declared
+#: in their own ``.mcp.json`` — the id alone would let an install
+#: silently take over ``github``.
+SERVER_PREFIX = "ext:"
+
+
+class InstallError(Exception):
+    """The bundle will not be installed, and why.
+
+    Raised for everything decided *before* the extension is
+    registered. After that point a failure is recorded as
+    :attr:`~ember_code.extensions.registry.ExtensionState.FAILED`
+    instead, because an extension that exists and is broken is a
+    different thing from one that was never accepted.
+    """
+
+
+def server_name(extension_id: str) -> str:
+    """The MCP server name for an extension."""
+    return f"{SERVER_PREFIX}{extension_id}"
+
+
+class ExtensionInstaller:
+    """Installs, starts and removes extensions."""
+
+    def __init__(
+        self,
+        *,
+        registry: ExtensionRegistry,
+        rpc: ExtensionRpc,
+        mcp: Any,
+        allow_unsigned: bool = False,
+    ) -> None:
+        """
+        Args:
+            mcp: The :class:`~ember_code.core.mcp.client.MCPClientManager`.
+                Untyped to keep this module importable without the
+                optional ``mcp`` extra, which a headless deployment
+                may not have installed.
+            allow_unsigned: Whether ``trust: unsigned`` may be
+                installed. False everywhere but development, because
+                the easiest way to ship must not be the one with no
+                provenance.
+        """
+        self._registry = registry
+        self._rpc = rpc
+        self._mcp = mcp
+        self._allow_unsigned = allow_unsigned
+
+    async def install(self, bundle: Path) -> InstalledExtension:
+        """Install the bundle at ``bundle`` and try to start it.
+
+        Returns the registry entry either way. A started extension is
+        ``READY``; one that could not start is ``FAILED`` with a
+        reason, which is a state, not an error.
+
+        Raises:
+            InstallError: The bundle is not installable at all — bad
+                manifest, refused trust, or an id already installed.
+        """
+        manifest = self._read(bundle)
+        self._check_trust(manifest)
+
+        if self._registry.get(manifest.id) is not None:
+            raise InstallError(
+                f"{manifest.id} is already installed. Remove it first — "
+                "an upgrade keeps the old grants until an administrator "
+                "accepts the new ones, and that is a separate decision."
+            )
+
+        entry = self._registry.install(
+            manifest,
+            state=ExtensionState.PREPARING,
+            reason="starting its service",
+        )
+
+        try:
+            config = self._service_config(manifest, bundle)
+        except InstallError as exc:
+            # Packaging we cannot honour. Recorded rather than raised:
+            # the extension is installed and not runnable here, which
+            # is exactly what an administrator needs to be shown.
+            self._registry.set_state(manifest.id, ExtensionState.FAILED, str(exc))
+            return entry
+
+        reason = await self._start(config)
+        if reason is not None:
+            self._registry.set_state(manifest.id, ExtensionState.FAILED, reason)
+            return entry
+
+        self._rpc.bind(
+            manifest.id,
+            McpExtensionService(manager=self._mcp, server_name=config.name),
+        )
+        self._registry.set_state(manifest.id, ExtensionState.READY)
+        logger.info("extension %s is READY", manifest.id)
+        return entry
+
+    async def uninstall(self, extension_id: str) -> bool:
+        """Stop and forget an extension. ``True`` if there was one.
+
+        Order matters here too, in reverse: unbind first so nothing
+        new is routed, then stop the service, then forget it. Doing
+        it the other way leaves a window where a call is authorised
+        against a registry entry whose service has already gone.
+        """
+        if self._registry.get(extension_id) is None:
+            return False
+        self._rpc.unbind(extension_id)
+        try:
+            await self._mcp.disconnect_one(server_name(extension_id))
+        except Exception as exc:  # pragma: no cover — best effort
+            logger.warning("stopping %s failed: %s", extension_id, exc)
+        self._registry.remove(extension_id)
+        logger.info("extension %s removed", extension_id)
+        return True
+
+    # ── The steps ──────────────────────────────────────────────────
+
+    @staticmethod
+    def _read(bundle: Path) -> ExtensionManifest:
+        path = bundle / "manifest.json"
+        if not path.is_file():
+            raise InstallError(f"{bundle} has no manifest.json, so there is nothing to install.")
+        try:
+            return ExtensionManifest.load(path)
+        except ValueError as exc:
+            raise InstallError(f"{path} is not a valid manifest: {exc}") from exc
+
+    def _check_trust(self, manifest: ExtensionManifest) -> None:
+        if manifest.trust is Trust.UNSIGNED and not self._allow_unsigned:
+            raise InstallError(
+                f"{manifest.id} is unsigned and this deployment does not accept "
+                "unsigned extensions. Sign it, or enable development mode."
+            )
+        if manifest.trust is not Trust.UNSIGNED:
+            # Stated rather than skipped silently. A signature that is
+            # required by the model, carried in the file and checked
+            # by nobody is the kind of gap that reads as a feature.
+            logger.warning(
+                "extension %s declares trust %s; signature verification is not "
+                "implemented, so this install is trusting the bundle's source",
+                manifest.id,
+                manifest.trust.value,
+            )
+
+    def _service_config(self, manifest: ExtensionManifest, bundle: Path) -> MCPServerConfig:
+        """How to reach this extension's service."""
+        name = server_name(manifest.id)
+
+        if manifest.dev is not None:
+            cwd = bundle if manifest.dev.cwd is None else bundle / manifest.dev.cwd
+            return MCPServerConfig(
+                name=name,
+                type=MCPTransport.stdio,
+                command=manifest.dev.command[0],
+                args=list(manifest.dev.command[1:]),
+                env=dict(manifest.dev.env),
+                # Its command is relative to the bundle, which is not
+                # where the backend happens to be running.
+                cwd=str(cwd),
+                source="extension",
+            )
+
+        if manifest.endpoint is not None:
+            return MCPServerConfig(
+                name=name,
+                type=MCPTransport.sse,
+                url=manifest.endpoint.url,
+                source="extension",
+            )
+
+        raise InstallError(
+            f"{manifest.id} is packaged as a sidecar image "
+            f"({manifest.sidecar.image if manifest.sidecar else '?'}), and "
+            "starting container images is not implemented yet. Use 'endpoint' "
+            "to register a service you run, or 'dev' to run a command locally."
+        )
+
+    async def _start(self, config: MCPServerConfig) -> str | None:
+        """Connect to the service. Returns a reason on failure."""
+        try:
+            self._mcp.configs[config.name] = config
+            result = await self._mcp.connect(config.name)
+        except Exception as exc:
+            logger.error("extension service %s failed to start", config.name, exc_info=True)
+            return f"its service could not be started: {exc}"
+
+        if not getattr(result, "ok", False):
+            reason = getattr(result, "reason", "") or "no reason given"
+            return f"its service did not start: {reason}"
+        return None

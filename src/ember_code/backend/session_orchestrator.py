@@ -48,6 +48,8 @@ from ember_code.backend.subsystem_status import ARTIFACTS, SubsystemState
 from ember_code.core.paths import DEFAULT_DATA_DIR
 from ember_code.core.session.client_state import ClientStateStore
 from ember_code.core.session.session_directories import SessionDirectoryStore
+from ember_code.extensions.registry import ExtensionRegistry
+from ember_code.extensions.rpc import ExtensionRpc
 from ember_code.protocol import messages as msg
 from ember_code.protocol.rpc import RpcMethod
 
@@ -165,6 +167,11 @@ class SessionOrchestrator:
         self._additional_dirs = additional_dirs
         self._push_bridge = push_bridge
         self._login = login
+        # The extension namespace, shared by every dispatcher this
+        # orchestrator builds. One registry per backend, not one per
+        # session: an extension is installed into a deployment, and a
+        # second session must not see a different set of them.
+        self._extensions = ExtensionRpc(ExtensionRegistry())
         self._queue = queue
         self._boot_rpc_table = rpc_table
         # Constructed in ``setup_pool``. Kept on self so
@@ -188,6 +195,17 @@ class SessionOrchestrator:
         # construction itself is cheap (path resolution only).
         self._neo4j_runtime: Any = None
         self._neo4j_attach_task: asyncio.Task | None = None
+
+    @property
+    def extensions(self) -> ExtensionRpc:
+        """The extension namespace, for whoever installs into it.
+
+        Exposed because the installer is constructed elsewhere and
+        has to reach the same registry every dispatcher reads. A
+        second registry would authorise against one set of manifests
+        while the router served another.
+        """
+        return self._extensions
 
     # ── Setup ────────────────────────────────────────────────────
 
@@ -216,6 +234,7 @@ class SessionOrchestrator:
             rpc_table=default_runtime.rpc_table,
             queue=default_runtime.queue,
             login=self._login,
+            extensions=self._extensions,
         )
         # Attach runtime ref so the dispatcher's auto-name spawner
         # can park tasks on the runtime instead of a module global.
@@ -645,6 +664,7 @@ class SessionOrchestrator:
             rpc_table=rt.rpc_table,
             queue=rt.queue,
             login=self._login,
+            extensions=self._extensions,
         )
         await dispatcher.dispatch(message)
 

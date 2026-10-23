@@ -123,7 +123,22 @@ class MCPClientManager:
             logger.warning("MCP '%s' blocked by managed policy (not allowed)", name)
             return f"Server '{name}' is not in the allowed list"
 
-        if not self._approval.check_approval(name, config.source_path):
+        # An extension's own service is approved by the install, not
+        # by this prompt. The prompt exists for a threat this is not:
+        # ``.mcp.json`` is a file anyone can commit to a public repo
+        # or ship in a plugin, so cloning a repo must not be enough to
+        # spawn a command. An extension arrives through
+        # ``ExtensionInstaller``, which is an explicit administrative
+        # act against a validated manifest.
+        #
+        # Asking twice would also mean extensions could never start
+        # anywhere without a terminal: ``check_approval`` fails closed
+        # when there is nobody to ask, and a shared backend is exactly
+        # that. Managed policy above still applies, so an
+        # administrator can still block one by name.
+        if config.source != "extension" and not self._approval.check_approval(
+            name, config.source_path
+        ):
             logger.info("MCP '%s' denied by user approval prompt", name)
             return "User denied MCP server connection"
 

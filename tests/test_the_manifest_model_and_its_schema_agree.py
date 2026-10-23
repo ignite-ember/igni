@@ -39,6 +39,7 @@ from pydantic import BaseModel, ValidationError
 from ember_code.extensions.manifest import (
     CommandContribution,
     Contributes,
+    DevCommand,
     Endpoint,
     EndpointAuth,
     ExtensionManifest,
@@ -68,6 +69,7 @@ PAIRS: list[tuple[str, type[BaseModel]]] = [
     ("sidecar", Sidecar),
     ("sidecar.mcp", McpBinding),
     ("sidecar.requires[]", Requirement),
+    ("dev", DevCommand),
     ("endpoint", Endpoint),
     ("endpoint.auth", EndpointAuth),
     ("permissions", Permissions),

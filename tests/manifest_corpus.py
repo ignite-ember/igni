@@ -115,6 +115,29 @@ REFUSALS: list[tuple[str, dict[str, Any], str]] = [
         "contributes/settings/0",
     ),
     (
+        "a dev command on a signed manifest",
+        {
+            **{k: v for k, v in BASE.items() if k != "sidecar"},
+            "trust": "partner",
+            "signature": "detached",
+            "dev": {"command": ["node", "./server.js"]},
+        },
+        "trust",
+    ),
+    (
+        "a dev command alongside a sidecar",
+        with_(dev={"command": ["node", "./server.js"]}),
+        "",
+    ),
+    (
+        "a dev command with nothing to run",
+        {
+            **{k: v for k, v in BASE.items() if k != "sidecar"},
+            "dev": {"command": []},
+        },
+        "dev/command",
+    ),
+    (
         "a workspace grant that is not one of the three",
         with_(permissions={"workspace": "admin"}),
         "permissions/workspace",

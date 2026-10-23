@@ -164,7 +164,7 @@ Joining them would make a transparent wrapper grow a surface. The rule used thro
 
 **The app does not use the primitives in markup.** Feature classes are grouped into the primitive's selector in CSS, which deduplicates without touching 64 `.tsx` files. Moving markup to `class="ui-card"` is the tidier end state and is not required for extensions, which is what this was for.
 
-**A React package exists**, at `clients/web/src/ui-react/`, imported as `@igni/ui-react`.
+**A React package exists**, at `packages/ui-react/src/`, imported as `@igni/ui-react`.
 
 Its contents were measured, not guessed. CodeIndex imports nothing from the app but a type. Artifacts is 7,737 lines and imports exactly seven components — `MenuIcon`, `Tooltip`, `MarkdownInline`, `Monogram`, `RichFences`, `Skeleton`, `OverflowMenu`. Those moved into the package and the app now imports them from it, so there is one copy.
 

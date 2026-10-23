@@ -102,6 +102,7 @@ class StdioMCPBinding:
             command=config.command,
             args=config.args or [],
             env=config.env if config.env else None,
+            cwd=config.cwd or None,
         )
 
         mcp_tools = MCPTools(

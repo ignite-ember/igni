@@ -315,10 +315,29 @@ class _Result:
         self.isError = error
 
 
-def test_structured_content_wins_when_a_server_sends_it() -> None:
-    assert McpExtensionService.unwrap(_Result([_Block("ignored")], structured={"rows": 2})) == {
-        "rows": 2
-    }
+def test_text_wins_over_structured_content() -> None:
+    """The opposite of what this pinned first, and a real server is why.
+
+    The spec says a tool returning structured content should *also*
+    return the serialised JSON as text, so text is always present and
+    always canonical. Meanwhile a FastMCP tool annotated ``-> str``
+    gets a synthesised output schema of ``{"result": string}``, so
+    its ``structuredContent`` is a wrapper around the answer rather
+    than the answer. Preferring it handed every such extension an
+    envelope to unpick.
+
+    This stub could not have caught that — it was written from an
+    assumption about what servers send, and agreed with the code for
+    the same reason. ``test_an_extension_installs_and_answers.py``
+    runs a real server, and found it on the first call.
+    """
+    assert McpExtensionService.unwrap(
+        _Result([_Block('{"rows": 2}')], structured={"result": '{"rows": 2}'})
+    ) == {"rows": 2}
+
+
+def test_structured_content_is_used_when_there_is_no_text() -> None:
+    assert McpExtensionService.unwrap(_Result([], structured={"rows": 2})) == {"rows": 2}
 
 
 def test_json_text_is_parsed_because_that_is_what_a_ui_server_sends() -> None:

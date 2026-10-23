@@ -90,32 +90,44 @@ class McpExtensionService:
     def unwrap(result: Any) -> Any:
         """A tool result as a value a UI can use.
 
-        MCP answers with a content list built for a model to read, and
-        a UI wants data. ``structuredContent`` is the right answer
-        when a server sends it. Otherwise the text blocks are joined,
-        and parsed as JSON when they are JSON — which is what a server
-        written for a UI sends, and refusing to parse it would hand
-        every extension the same three lines to write.
+        MCP answers with a content list built for a model to read,
+        and a UI wants data. The text block is the payload: the spec
+        says a tool returning structured content should *also* return
+        the serialised JSON as text, for callers that predate
+        ``structuredContent``. So text is always present and always
+        canonical, and it is parsed as JSON when it is JSON — which
+        is what a server written for a UI sends, and refusing to
+        parse it would hand every extension the same three lines.
+
+        ``structuredContent`` is the fallback, not the preference,
+        and that is the opposite of what this did first. The reason
+        is a real server: a FastMCP tool annotated ``-> str`` gets a
+        synthesised output schema of ``{"result": string}``, so its
+        ``structuredContent`` is ``{"result": "<the json>"}`` — a
+        wrapper around the answer rather than the answer. Preferring
+        it handed every such extension an envelope to unpick. The
+        first version of this was written against an assumption about
+        what servers send; it took running one to find out.
 
         Text that is not JSON comes back as text rather than as an
         error: a tool that returns a sentence is a tool, not a fault.
         """
+        blocks = getattr(result, "content", None) or []
+        texts = [block.text for block in blocks if getattr(block, "type", None) == "text"]
+        if texts:
+            joined = "\n".join(texts)
+            try:
+                return json.loads(joined)
+            except json.JSONDecodeError:
+                return joined
+
         structured = getattr(result, "structuredContent", None)
         if structured is not None:
             return structured
 
-        blocks = getattr(result, "content", None) or []
-        texts = [block.text for block in blocks if getattr(block, "type", None) == "text"]
-        if not texts:
-            # Image or resource blocks only. Nothing a UI can be handed
-            # as a value, and silently returning None would look like a
-            # successful empty answer.
-            raise ExtensionServiceError(
-                "the service answered with no text content, which a UI cannot use"
-            )
-
-        joined = "\n".join(texts)
-        try:
-            return json.loads(joined)
-        except json.JSONDecodeError:
-            return joined
+        # Image or resource blocks only. Nothing a UI can be handed as
+        # a value, and silently returning None would look like a
+        # successful empty answer.
+        raise ExtensionServiceError(
+            "the service answered with no text content, which a UI cannot use"
+        )

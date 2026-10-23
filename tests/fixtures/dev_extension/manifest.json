@@ -1,0 +1,13 @@
+{
+  "$schema": "https://igni.sh/schema/extension-manifest-1.json",
+  "id": "acme.scanner",
+  "version": "1.0.0",
+  "contract": ">=1.0 <2",
+  "name": "Compliance Scanner (dev)",
+  "trust": "unsigned",
+  "dev": { "command": ["python", "server.py"] },
+  "permissions": { "rpc": ["ext.acme.scanner.*"] },
+  "contributes": {
+    "pages": [{ "kind": "acme.scan", "label": "Compliance", "sidebar": true }]
+  }
+}

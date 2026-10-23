@@ -1,0 +1,16 @@
+{
+  "name": "@igni/ui-css",
+  "version": "0.1.0",
+  "description": "The stylesheet an igni extension bundles. Classes match igni's own, values are tokens the host pushes live.",
+  "license": "Apache-2.0",
+  "type": "module",
+  "files": ["igni-ui.css", "README.md"],
+  "exports": {
+    ".": "./igni-ui.css",
+    "./igni-ui.css": "./igni-ui.css"
+  },
+  "sideEffects": ["*.css"],
+  "publishConfig": {
+    "access": "public"
+  }
+}

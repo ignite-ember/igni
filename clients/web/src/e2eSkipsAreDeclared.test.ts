@@ -19,7 +19,7 @@
 
 import { describe, expect, it } from "vitest";
 
-import { withoutComments } from "./test-utils/sourceScan";
+import { withoutComments } from "@igni/test-utils/sourceScan";
 import { readdirSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";

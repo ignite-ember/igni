@@ -29,10 +29,10 @@ import { fileURLToPath } from "node:url";
 
 import { describe, expect, it } from "vitest";
 
-import { withoutComments } from "../test-utils/sourceScan";
+import { withoutComments } from "../../test-utils/sourceScan";
 
 const here = dirname(fileURLToPath(import.meta.url));
-const PUBLISHED_CSS = join(here, "..", "..", "..", "ui", "igni-ui.css");
+const PUBLISHED_CSS = join(here, "..", "..", "..", "clients", "ui", "igni-ui.css");
 
 /** Class names a stylesheet defines, comments stripped. */
 function definedIn(path: string): Set<string> {
@@ -153,7 +153,7 @@ describe("the published fallbacks are igni's values", () => {
    * does not look broken, and it means the thing an author tunes
    * their layout against is not the thing their users see.
    */
-  const theme = fallbacksIn(join(here, "..", "theme.css")).declared;
+  const theme = fallbacksIn(join(here, "..", "..", "..", "clients", "web", "src", "theme.css")).declared;
   const published = fallbacksIn(PUBLISHED_CSS);
 
   it("declares nothing igni does not", () => {

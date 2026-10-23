@@ -23,26 +23,31 @@ import { fileURLToPath } from "node:url";
 
 import { describe, expect, it } from "vitest";
 
-import { withoutComments } from "../test-utils/sourceScan";
+import { withoutComments } from "../../test-utils/sourceScan";
 
 const here = dirname(fileURLToPath(import.meta.url));
 
 /**
  * What an extension's own `node_modules` is expected to hold.
  *
- * Each of these is a real cost to an author, so the list is short and
+ * Read from `package.json` rather than listed here. The two were
+ * separate lists for about an hour and that is exactly long enough
+ * to disagree: a peer added to the manifest and not to the test
+ * would be unenforced, and one added here and not to the manifest
+ * would be an import that resolves in this repository and nowhere
+ * else — which is the failure this whole file exists to catch.
+ *
+ * Each peer is a real cost to an author, so the list is short and
  * adding to it is a decision. `mermaid` is optional — `Mermaid.tsx`
- * loads it on demand and only a diagram pays for it — but it is still
- * a dependency they have to install, and that belongs in the README
- * rather than in a surprise at runtime.
+ * loads it on demand and only a diagram pays for it — but it is
+ * still something they have to install.
  */
-const PEER_DEPENDENCIES = [
-  "react",
-  "react-dom",
-  "react-markdown",
-  "remark-gfm",
-  "mermaid",
-];
+
+const MANIFEST = JSON.parse(
+  readFileSync(join(here, "..", "package.json"), "utf8"),
+) as { peerDependencies?: Record<string, string> };
+
+const PEER_DEPENDENCIES = Object.keys(MANIFEST.peerDependencies ?? {});
 
 function isAllowed(spec: string): boolean {
   if (spec.startsWith("./")) return !spec.slice(2).includes("/");

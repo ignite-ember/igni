@@ -465,7 +465,7 @@ describe("a typed prop that does nothing is worse than no prop", () => {
   // `<Badge tone="success">` rendered identically, because nothing
   // styled the tone. The prop existed, autocompleted, and lied.
   const css = readFileSync(
-    join(dirname(fileURLToPath(import.meta.url)), "../../../ui/igni-ui.css"),
+    join(dirname(fileURLToPath(import.meta.url)), "../../../clients/ui/igni-ui.css"),
     "utf8",
   );
 

@@ -2,19 +2,35 @@
   "compilerOptions": {
     "baseUrl": ".",
     "paths": {
-      "@igni/ui-react": ["./src/ui-react/index.ts"],
+      "@igni/ui-react": ["../../packages/ui-react/src/index.ts"],
+      "@igni/ui-react/*": ["../../packages/ui-react/src/*"],
+      "@igni/test-utils/*": ["../../packages/test-utils/*"],
       "@igni/extension-bridge": ["./src/extensions/bridge.ts"],
       "@igni/ui-css": ["../ui/igni-ui.css"],
       /*
-       * ``examples/`` sits outside this package, so Node resolution
-       * walking up from it never reaches these. An extension author
-       * has them in their own node_modules; here they have to be
-       * pointed at, or the example cannot be type-checked at all.
+       * ``examples/`` and ``packages/`` sit outside this directory,
+       * so Node resolution walking up from them never reaches our
+       * ``node_modules``. An extension author has these in their
+       * own; here they have to be pointed at, or neither the example
+       * nor the published floor can be type-checked at all.
+       *
+       * Listed one by one rather than with a `"*"` catch-all. The
+       * catch-all is shorter and wrong: it wins over normal
+       * resolution for every unmatched specifier, so it resolved
+       * `react` to the untyped `index.js` instead of `@types/react`,
+       * and bypassed the `types` field of packages that ship their
+       * own. These are the floor's peers and the two test
+       * libraries, which is the whole list.
        */
       "react": ["./node_modules/@types/react"],
       "react/*": ["./node_modules/@types/react/*"],
       "react-dom": ["./node_modules/@types/react-dom"],
-      "react-dom/*": ["./node_modules/@types/react-dom/*"]
+      "react-dom/*": ["./node_modules/@types/react-dom/*"],
+      "react-markdown": ["./node_modules/react-markdown"],
+      "remark-gfm": ["./node_modules/remark-gfm"],
+      "mermaid": ["./node_modules/mermaid"],
+      "vitest": ["./node_modules/vitest"],
+      "@testing-library/react": ["./node_modules/@testing-library/react"]
     },
     "target": "ES2022",
     "lib": ["ES2022", "DOM", "DOM.Iterable"],
@@ -51,5 +67,5 @@
    * ever read. It imported an alias that did not exist and a stylesheet
    * that was not there, and nothing said so.
    */
-  "include": ["src", "e2e", "scripts", "../../examples"]
+  "include": ["src", "e2e", "scripts", "../../examples", "../../packages"]
 }
