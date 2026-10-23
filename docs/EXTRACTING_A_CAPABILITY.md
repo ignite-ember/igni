@@ -143,6 +143,27 @@ Cutting them is small, and it is the first thing.
 
 ---
 
+## 5b. Where CodeIndex has got to
+
+`igni__code-index/extension/` exists and installs.
+`tests/test_the_codeindex_extension_runs_on_the_floor.py` drives the
+real bundle — not an example — and it is skipped when that repository
+is not checked out beside this one.
+
+What arrives from its manifest, each replacing something hardcoded
+here: the page, the menu entry, `/codeindex`, the status chip,
+`{{CODEINDEX_GRAPH_SCHEMA}}` and the `.codeindex` agent variant. Its
+`classify()` moved with it, which is the point — 90 of that
+component's 127 lines were CodeIndex's opinion about its own states.
+
+What has **not** moved is the local index, and with it
+`codeindex_cypher` and six of the seven RPCs. They are not declared
+in the manifest rather than stubbed. So igni still answers Cypher
+queries itself, and the extension contributes everything else.
+
+That is also why the import edges in §5 still matter: the index
+cannot move while `tool_spec.py` imports it unconditionally.
+
 ## 6. The order
 
 1. **Cut the two import edges**, with a test that blocks the subtrees
