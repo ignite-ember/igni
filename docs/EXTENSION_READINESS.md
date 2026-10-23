@@ -106,11 +106,11 @@ The manifest can declare these. None of them reach the app.
 
 ## Gate D — somebody outside this repo can build one
 
-| # | Missing | Done when |
+| # | State | Note |
 |---|---|---|
-| D1 | `igni ext init` | Scaffolds an extension that builds and runs on first launch. |
-| D2 | `igni ext doctor` | Prints the deployment's contract version and what is wrong with a bundle, in the author's words. |
-| D3 | Dev mode | Runs unsigned from localhost with a persistent banner and reload — the only place `trust: unsigned` is accepted. |
+| D1 | ✅ | `igni ext init` scaffolds a bundle that installs and runs as written — manifest, MCP server, framed page with an inlined bridge, README. `install`, `list` and `remove` work against the store rather than a running backend, so an install outlives the process that made it. |
+| D2 | ✅ | `igni ext doctor` prints the contract this igni implements and what is wrong with a bundle. It separates *problems* from *notes*, which it did not at first — an unsigned development bundle was reported as a problem, so `doctor` failed on the output of `init`. |
+| D3 | ⚠️ partial | `trust: unsigned` is accepted only when `IGNI_DEV_EXTENSIONS=1`, which is outside the bundle and cannot be turned on by one. No persistent banner and no hot reload. |
 | D4 | A second reference extension | The current one is single-view, read-mostly, one-pane and prose-free. Each of those avoids a known gap, so it cannot be the check it claims to be. A document-shaped one would exercise `setLocation`, dirty state, a split and block markdown. |
 
 ---
@@ -152,8 +152,10 @@ shipping without it costs nothing.
 
 ## What to do in what order
 
-**To hand one trusted partner a thing that works** — Gate A and F1
-are done, which leaves D1/D2: a CLI to install with. That is the
+**To hand one trusted partner a thing that works** — done. They can
+scaffold, check, install, run, call their own service and see it fail
+legibly, without writing Python. Gate B is enforced except for the OS
+sandbox, and that caveat goes in the agreement. That is the
 smallest honest deliverable: they can build, install, run, call their
 own service and see it fail legibly. Gate B stays open and is written
 into the agreement rather than the code.

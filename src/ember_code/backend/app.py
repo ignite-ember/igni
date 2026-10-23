@@ -20,6 +20,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
 from pathlib import Path
 from typing import Any
 
@@ -32,9 +33,11 @@ from ember_code.backend.session_orchestrator import SessionOrchestrator
 from ember_code.backend.supervisor import BackendSupervisor
 from ember_code.core.config.settings import Settings, load_settings
 from ember_code.extensions.health import ExtensionHealth
+from ember_code.extensions.installer import ExtensionInstaller
 from ember_code.extensions.origin import ExtensionOrigins
-from ember_code.extensions.registry import ExtensionRegistry
+from ember_code.extensions.registry import ExtensionRegistry, ExtensionState
 from ember_code.extensions.rpc import ExtensionRpc
+from ember_code.extensions.store import ExtensionStore
 
 logger = logging.getLogger(__name__)
 
@@ -353,9 +356,10 @@ class BackendApp:
                 await self._transport.wait_for_connection(timeout=None)
             else:
                 await self._transport.wait_for_connection()
+            await self._start_extensions()
             # Probing starts once there is a loop to run it on, and
-            # not before: nothing is installed at construction, so an
-            # earlier start would be a timer over an empty registry.
+            # after the installs above, so the first sweep has
+            # something to sweep.
             self._extension_health.start()
             logger.info("FE connected, processing messages")
             await self._orchestrator.serve(self._supervisor.shutdown_event)
@@ -365,6 +369,44 @@ class BackendApp:
             await self._extension_health.stop()
             await self._origins.stop_all()
             await self._supervisor.teardown()
+
+    async def _start_extensions(self) -> None:
+        """Start everything ``igni ext install`` put in the store.
+
+        An install is a decision that outlives a process — the CLI
+        copies a bundle under ``<data>/extensions/<id>/`` and this is
+        the half that reads it back. Without this, ``igni ext
+        install`` would write a directory nobody looked at.
+
+        Failures are logged and skipped. One extension that will not
+        start must not stop the backend, and the registry records why
+        so the UI can say it rather than the user finding out by
+        opening a blank page.
+        """
+        store = ExtensionStore()
+        bundles = store.installed()
+        if not bundles:
+            return
+
+        installer = ExtensionInstaller(
+            registry=self._extensions.registry,
+            rpc=self._extensions,
+            mcp=self._backend.mcp_manager,
+            origins=self._origins,
+            project_dir=self._project_dir,
+            allow_unsigned=_dev_extensions_allowed(),
+        )
+        for bundle in bundles:
+            try:
+                entry = await installer.install(bundle)
+            except Exception as exc:
+                # Refused before registration — a bad manifest, an
+                # untrusted signature. There is no registry entry to
+                # carry the reason, so the log is the only record.
+                logger.error("extension at %s was not installed: %s", bundle, exc)
+                continue
+            if entry.state is not ExtensionState.READY:
+                logger.warning("extension %s is %s: %s", entry.id, entry.state.value, entry.reason)
 
     def _emit_ready_line(self) -> None:
         """Write the "ready" JSON line to stdout so the parent
@@ -389,3 +431,19 @@ class BackendApp:
         # didn't set are omitted rather than serialised as null.
         payload = json.loads(ready.model_dump_json(exclude_none=True))
         print(json.dumps(payload), flush=True)
+
+
+def _dev_extensions_allowed() -> bool:
+    """Whether this deployment accepts ``trust: unsigned``.
+
+    An environment variable rather than a setting, for now, and
+    deliberately not something a manifest or a bundle can turn on:
+    the whole point of the trust tier is that the easiest way to ship
+    is not the one with no provenance. A deployment that wants to
+    develop extensions opts in once, visibly, outside the bundle.
+    """
+    return os.environ.get("IGNI_DEV_EXTENSIONS", "").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+    }

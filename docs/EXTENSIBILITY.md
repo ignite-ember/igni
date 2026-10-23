@@ -335,8 +335,9 @@ This replaces a line that read "the React component tree, CSS class names, any t
 ## 9. Developing one
 
 - **The reference extension is `examples/reference-extension/`** — a compliance scanner, around 200 lines, written against the published surface and nothing else. It is the answer to "what does an extension look like", and a standing check on this contract: anything it has to hand-roll is something the floor is missing, and its README keeps that list.
-- **`igni ext init`** will scaffold one that runs on first launch. It does not exist yet.
-- **Dev mode** runs from localhost, unsigned, with a persistent banner and hot reload. The only place `trust: unsigned` is accepted.
+- **`igni ext init <dir>`** scaffolds one that runs as written — manifest, an MCP server, a framed page with the bridge inlined so there is no build step, and a README. `igni ext doctor` checks a bundle and prints the contract version this igni implements; `igni ext install` copies it into `<data>/extensions/<id>/`, prints the permissions it is being granted, and the backend starts it at its next boot. `list` and `remove` do what they say.
+- **An install outlives the process that made it**, which is why the CLI writes to a store rather than talking to a running backend: a CLI that needed one could install nothing before it started, and nothing would survive it stopping.
+- **Dev mode** is `IGNI_DEV_EXTENSIONS=1`, the only thing that makes `trust: unsigned` installable. An environment variable and not a setting a bundle can reach, because the point of the trust tier is that the easiest way to ship is not the one with no provenance. The persistent banner and hot reload do not exist yet.
 - **`igni ext doctor`** checks manifest schema, contract range, permissions, collisions, deprecations, the MCP round-trip and the phones-home scan. **If doctor passes, it loads** — that equivalence is the promise.
 - **Errors carry fixes**, because the reader is often a partner's L2 engineer with no internet.
 - **Observability**: logs in the Watcher panel, state in the subsystem view, versions in the diagnostic bundle.
