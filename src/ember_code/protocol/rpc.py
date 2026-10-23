@@ -363,6 +363,7 @@ class RpcMethod(StrEnum):
     # routed by prefix instead — see
     # :mod:`ember_code.extensions.rpc`.
     LIST_EXTENSIONS = "list_extensions"
+    SET_EXTENSION_SETTINGS = "set_extension_settings"
 
 
 def validate_rpc_table(registered_keys: Iterable[str]) -> None:

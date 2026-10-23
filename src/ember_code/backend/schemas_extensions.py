@@ -13,9 +13,15 @@ it is in, where its UI lives, and what it contributes.
 
 from __future__ import annotations
 
+from typing import Any
+
 from pydantic import BaseModel, Field
 
-from ember_code.extensions.manifest import MenuContribution, PageContribution
+from ember_code.extensions.manifest import (
+    MenuContribution,
+    PageContribution,
+    Setting,
+)
 from ember_code.extensions.registry import InstalledExtension
 
 
@@ -32,6 +38,16 @@ class ExtensionMenuEntry(BaseModel):
     label: str
     command: str
     desc: str
+
+
+class ExtensionSetting(BaseModel):
+    """One configurable value, as the host's settings surface needs it."""
+
+    key: str
+    type: str
+    label: str
+    default: Any = None
+    options: list[str] = Field(default_factory=list)
 
 
 class ExtensionSummary(BaseModel):
@@ -51,9 +67,20 @@ class ExtensionSummary(BaseModel):
     allow: list[str] = Field(default_factory=list)
     pages: list[ExtensionPage] = Field(default_factory=list)
     menu: list[ExtensionMenuEntry] = Field(default_factory=list)
+    #: What this extension can be configured with, for the host to
+    #: render. The shape only — the values are in `settings`.
+    settings: list[ExtensionSetting] = Field(default_factory=list)
+    #: The configured values, which reach the frame as launch params.
+    #: Defaults filled in, undeclared keys dropped.
+    values: dict[str, Any] = Field(default_factory=dict)
 
     @classmethod
-    def of(cls, entry: InstalledExtension, origin: str | None) -> ExtensionSummary:
+    def of(
+        cls,
+        entry: InstalledExtension,
+        origin: str | None,
+        values: dict[str, Any] | None = None,
+    ) -> ExtensionSummary:
         manifest = entry.manifest
         return cls(
             id=manifest.id,
@@ -65,6 +92,8 @@ class ExtensionSummary(BaseModel):
             allow=list(manifest.permissions.rpc),
             pages=[_page(p) for p in manifest.contributes.pages],
             menu=[_menu(m) for m in manifest.contributes.menu],
+            settings=[_setting(s) for s in manifest.contributes.settings],
+            values=dict(values or {}),
         )
 
 
@@ -80,3 +109,13 @@ class ExtensionListResult(BaseModel):
     """Every installed extension, in a stable order."""
 
     extensions: list[ExtensionSummary] = Field(default_factory=list)
+
+
+def _setting(setting: Setting) -> ExtensionSetting:
+    return ExtensionSetting(
+        key=setting.key,
+        type=setting.type,
+        label=setting.label,
+        default=setting.default,
+        options=list(setting.options),
+    )

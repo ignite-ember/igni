@@ -121,6 +121,14 @@ async def test_the_manifest_itself_does_not_go_to_the_browser(wired, tmp_path):
         "allow",
         "pages",
         "menu",
+        # The settings *shape*, so the host can render a form, and
+        # the configured *values*, which become the frame's launch
+        # parameters. Neither is sensitive by contract: a secret is
+        # declared in `permissions.secrets` and resolved by the
+        # deployment, never typed into a setting — `Setting.type` has
+        # no password among its four.
+        "settings",
+        "values",
     }
 
 

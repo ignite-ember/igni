@@ -44,12 +44,16 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import Any
 
 from ember_code.core.agents.variants import VariantRegistry
 from ember_code.core.agents.variants import variants as default_variants
+from ember_code.core.contributed_commands import ContributedCommands
+from ember_code.core.contributed_commands import (
+    contributed_commands as default_commands,
+)
 from ember_code.core.prompts.fragments import PromptFragments
 from ember_code.core.prompts.fragments import fragments as default_fragments
 from ember_code.extensions.manifest import ExtensionManifest, FragmentSource
@@ -77,6 +81,7 @@ class ExtensionContributions:
         bundles: dict[str, Path] | None = None,
         fragments: PromptFragments | None = None,
         variants: VariantRegistry | None = None,
+        commands: ContributedCommands | None = None,
     ) -> None:
         """
         Args:
@@ -91,6 +96,7 @@ class ExtensionContributions:
         self._bundles = bundles if bundles is not None else {}
         self._fragments = fragments if fragments is not None else default_fragments
         self._variants = variants if variants is not None else default_variants
+        self._commands = commands if commands is not None else default_commands
         self._pending: set[asyncio.Task] = set()
 
     def attach(self) -> None:
@@ -116,11 +122,16 @@ class ExtensionContributions:
             # cannot answer.
             self._fragments.remove_owner(extension_id)
             self._variants.deactivate(extension_id)
+            # A command whose extension cannot answer is worse than
+            # one that was never offered: it is in the completion
+            # list, the user picks it, and it fails.
+            self._commands.remove_owner(extension_id)
 
     def withdraw(self, extension_id: str) -> None:
         """Uninstalled. Forget it entirely."""
         self._fragments.remove_owner(extension_id)
         self._variants.remove_owner(extension_id)
+        self._commands.remove_owner(extension_id)
 
     def _schedule(self, entry: InstalledExtension) -> None:
         """Fold in, off the caller's thread of control.
@@ -136,6 +147,7 @@ class ExtensionContributions:
             # free; the fragments need one and are skipped with a
             # note rather than silently dropped.
             self._apply_variants(entry.manifest)
+            self._apply_commands(entry.manifest)
             if entry.manifest.contributes.promptFragments:
                 logger.debug(
                     "extension %s has prompt fragments and there is no event loop to fetch them on",
@@ -152,6 +164,7 @@ class ExtensionContributions:
     async def apply(self, manifest: ExtensionManifest) -> None:
         """Register everything this extension contributes."""
         self._apply_variants(manifest)
+        self._apply_commands(manifest)
         for fragment in manifest.contributes.promptFragments:
             text = await self._fetch(manifest, fragment.anchor, fragment.source, fragment.from_)
             if text is None:
@@ -169,6 +182,24 @@ class ExtensionContributions:
             return
         self._variants.declare(manifest.id, names)
         self._variants.activate(manifest.id)
+
+    def _apply_commands(self, manifest: ExtensionManifest) -> None:
+        """Offer this extension's slash commands.
+
+        The invoker is a closure over the router rather than a name
+        the dispatcher resolves later, so there is nothing for
+        ``core`` to import back.
+        """
+        for entry in manifest.contributes.commands:
+            bare = entry.command.lstrip("/")
+            refusal = self._commands.register(
+                bare,
+                owner=manifest.id,
+                description=entry.desc,
+                invoke=_invoker(self._rpc, manifest.id, bare),
+            )
+            if refusal is not None:
+                logger.warning("extension %s: %s", manifest.id, refusal)
 
     async def _fetch(
         self,
@@ -253,3 +284,18 @@ def _supplier(text: str) -> Callable[[], str]:
         return text
 
     return supply
+
+
+def _invoker(rpc: Any, extension_id: str, command: str) -> Callable[[str], Awaitable[str]]:
+    """What running one contributed command does.
+
+    A named factory rather than a lambda in the loop, for the same
+    reason :func:`_supplier` is one: a closure over a loop variable
+    is the bug this shape is one edit away from.
+    """
+
+    async def invoke(text: str) -> str:
+        answer = await rpc.invoke_command(extension_id, command, text)
+        return answer if isinstance(answer, str) else str(answer)
+
+    return invoke

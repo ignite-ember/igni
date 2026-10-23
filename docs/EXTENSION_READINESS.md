@@ -98,9 +98,9 @@ The manifest can declare these. None of them reach the app.
 |---|---|---|---|
 | C1 | `contributes.pages` | FE `ContributionRegistry` exists and is read by `App.tsx`; **nothing ever calls `install()`** | An installed manifest adds a sidebar entry and a page kind. |
 | C2 | `contributes.menu` | same registry, same gap | The entry appears in the header menu and runs its command. |
-| C3 | `contributes.commands` | not wired | The slash command is offered and dispatches to the extension. |
+| C3 | ✅ | Offered in the catalog as a fourth source and dispatched as a fourth tier — after built-ins so an extension cannot shadow `/clear`, before the skill fallback because that tier is the catch-all and is exactly where a contributed command used to end up. `contributes.commands` is its own grant: a tool the service exposes and the manifest does not offer will not run as a command. |
 | C4 | ✅ | `ExtensionContributions` follows the registry: a READY extension's anchors are registered and its variants made live, and both are withdrawn when it stops being READY. Tied to the *state*, not the install — an extension whose service died must stop telling the model about data it can no longer fetch. A variant stays *known* while down, so a `<agent>.<variant>.md` sibling is still recognised and skipped rather than loaded as an agent whose name contains a dot. |
-| C5 | `contributes.settings` | modelled, never rendered | Settings appear in igni's own settings surface and arrive as launch params. |
+| C5 | ⚠️ mostly | Stored per deployment beside the bundle (not inside it — the bundle is what was signed), with undeclared keys and out-of-range enums refused, defaults filled in, and keys a manifest no longer declares dropped. `list_extensions` carries both the shape and the values, and `set_extension_settings` writes them. **The host does not render the form yet**, so an administrator sets them through the RPC rather than through a settings page. |
 
 ---
 

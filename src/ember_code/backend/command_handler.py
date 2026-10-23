@@ -37,6 +37,7 @@ from ember_code.backend.skill_command_dispatcher import SkillCommandDispatcher
 from ember_code.core.auth.credentials import (  # noqa: F401 — mock.patch target
     CredentialsStore,
 )
+from ember_code.core.contributed_commands import contributed_commands
 from ember_code.core.plugins.installer import (  # noqa: F401 — deprecated re-export
     PluginError,
     PluginInstaller,
@@ -106,8 +107,14 @@ class CommandHandler:
     async def handle(self, command: str) -> CommandResult:
         """Dispatch a slash command and return its result.
 
-        Three tiers, in order: built-in registry, markdown fallback,
-        skill fallback.
+        Four tiers, in order: built-in registry, markdown fallback,
+        installed extensions, skill fallback.
+
+        Extensions go third on purpose. Before the built-ins would
+        mean an extension could shadow ``/clear``, and after the skill
+        fallback would mean never, because that tier is the catch-all
+        — which is exactly where ``contributes.commands`` used to end
+        up, and why declaring one did nothing.
         """
         stripped = command.strip()
         cmd = stripped.split()[0].lower()
@@ -121,7 +128,30 @@ class CommandHandler:
         if md_result is not None:
             return md_result
 
+        extension = await self._try_extension(cmd, args)
+        if extension is not None:
+            return extension
+
         return await self._skill_dispatcher.match_and_render(stripped)
+
+    async def _try_extension(self, cmd: str, args: str) -> CommandResult | None:
+        """Run a command an installed extension answers, or ``None``.
+
+        ``None`` means "not ours" and falls through to the next tier.
+        A *failure* is a result rather than a fall-through: once the
+        command is known to belong to an extension, dropping to the
+        skill fallback would answer a user's ``/compliance`` with
+        whatever a fuzzy skill match turned up, which is a stranger
+        outcome than being told what went wrong.
+        """
+        found = contributed_commands.get(cmd)
+        if found is None:
+            return None
+        try:
+            return CommandResult.markdown(await found.invoke(args))
+        except Exception as exc:
+            logger.info("extension command %s failed: %s", cmd, exc)
+            return CommandResult.error(str(exc))
 
     async def _handle_markdown_command(self, cmd: str, args: str) -> CommandResult | None:
         """Delegate to :meth:`MarkdownCommandDispatcher.try_render`."""

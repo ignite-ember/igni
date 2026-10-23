@@ -33,6 +33,32 @@
     ],
     "promptVariants": [
       "acme-scan"
+    ],
+    "commands": [
+      {
+        "command": "/compliance",
+        "desc": "policy violations in this repository"
+      }
+    ],
+    "settings": [
+      {
+        "key": "failOn",
+        "type": "enum",
+        "label": "Fail a scan at or above",
+        "default": "high",
+        "options": [
+          "critical",
+          "high",
+          "medium",
+          "low"
+        ]
+      },
+      {
+        "key": "notify",
+        "type": "boolean",
+        "label": "Notify on new findings",
+        "default": true
+      }
     ]
   }
 }

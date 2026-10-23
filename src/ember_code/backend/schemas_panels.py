@@ -31,6 +31,8 @@ from typing import TYPE_CHECKING, Annotated, Literal
 
 from pydantic import BaseModel, Field
 
+from ember_code.core.contributed_commands import ContributedCommand
+
 if TYPE_CHECKING:
     from ember_code.core.hooks.schemas import HookDefinition
     from ember_code.core.skills.parser import SkillEntry
@@ -141,15 +143,41 @@ class SkillSlashCommand(BaseModel):
         )
 
 
+class ExtensionSlashCommand(BaseModel):
+    """A slash command an installed extension answers.
+
+    Carries ``owner`` because a command that fails should be
+    attributable: "/compliance did not answer" is a support ticket,
+    and "acme.scanner did not answer /compliance" is a thing an
+    administrator can act on.
+    """
+
+    source: Literal["extension"] = "extension"
+    name: str
+    description: str = ""
+    argument_hint: str = ""
+    #: The extension id that answers it.
+    owner: str = ""
+
+    @classmethod
+    def from_contributed(cls, command: ContributedCommand) -> ExtensionSlashCommand:
+        return cls(
+            name=command.name,
+            description=command.description,
+            owner=command.owner,
+        )
+
+
 SlashCommandEntry = Annotated[
-    BuiltinSlashCommand | MarkdownSlashCommand | SkillSlashCommand,
+    BuiltinSlashCommand | MarkdownSlashCommand | SkillSlashCommand | ExtensionSlashCommand,
     Field(discriminator="source"),
 ]
 """Discriminated union — the ``source`` string picks the variant.
 
-Kept as a bare-string discriminator (``'builtin'|'markdown'|'skill'``)
-rather than an Enum so IDE-plugin JSON consumers see plain string
-literals in the wire payload.
+Kept as a bare-string discriminator
+(``'builtin'|'markdown'|'skill'|'extension'``) rather than an Enum so
+IDE-plugin JSON consumers see plain string literals in the wire
+payload.
 """
 
 

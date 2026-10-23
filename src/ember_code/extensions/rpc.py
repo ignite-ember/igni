@@ -28,6 +28,7 @@ from ember_code.extensions.registry import (
     NAMESPACE,
     ExtensionRefused,
     ExtensionRegistry,
+    ExtensionState,
 )
 from ember_code.extensions.service import ExtensionService, ExtensionServiceError
 
@@ -77,6 +78,58 @@ class ExtensionRpc:
         whole gap for as long as it did.
         """
         return method.startswith(NAMESPACE)
+
+    async def invoke_command(self, extension_id: str, command: str, text: str) -> Any:
+        """Run a slash command an extension declared.
+
+        **A different grant from `permissions.rpc`**, and deliberately
+        so. That list is what an extension's own *UI* may call, and
+        this is the *user* typing a command igni offered them —
+        igni is the caller, not a frame, so there is no frame to
+        authenticate. What authorises it is that the command appears
+        in `contributes.commands` on a manifest an administrator
+        installed.
+
+        The state check is the same one every call gets: a command
+        belonging to an extension that is not READY is refused with
+        its reason rather than hanging on a dead service.
+        """
+        entry = self._registry.get(extension_id)
+        if entry is None:
+            raise ExtensionRefused(f"no extension '{extension_id}' is installed.")
+        if entry.state is not ExtensionState.READY:
+            detail = f" {entry.reason}" if entry.reason else ""
+            slash = f"/{command.lstrip('/')}"
+            raise ExtensionRefused(
+                f"'{extension_id}' is {entry.state.value}, not READY, so "
+                f"'{slash}' cannot run.{detail}"
+            )
+
+        bare = command.lstrip("/").strip().lower()
+        declared = {
+            entry_command.command.lstrip("/").lower()
+            for entry_command in entry.manifest.contributes.commands
+        }
+        if bare not in declared:
+            raise ExtensionRefused(
+                f"'{extension_id}' does not declare '/{bare}'. Add it to "
+                "contributes.commands in the manifest and reinstall."
+            )
+
+        service = self._services.get(extension_id)
+        if service is None:
+            raise ExtensionRefused(
+                f"'{extension_id}' is installed but has no service bound, so igni cannot reach it."
+            )
+        try:
+            # The command is the tool name, so `/compliance` runs the
+            # tool `compliance`. One rule, and it is the same one
+            # `ext.<id>.<method>` already uses.
+            return await service.call(bare, {"args": text})
+        except ExtensionServiceError as exc:
+            if self._on_failure is not None:
+                self._on_failure(extension_id)
+            raise ExtensionRefused(str(exc)) from exc
 
     async def dispatch(self, *, caller: str | None, method: str, args: dict[str, Any]) -> Any:
         """Serve one call, or raise with a sentence naming the fix."""

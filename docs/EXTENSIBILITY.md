@@ -42,8 +42,8 @@ Everything below is a key under `contributes` in the manifest, and the list is e
 |---|---|---|
 | `promptFragments` | text injected at a named anchor in a system prompt, from a tool call or a bundled file | replaces the hardcoded `{{CODEINDEX_GRAPH_SCHEMA}}` placeholder. Fetched when the extension becomes `READY` and cached, because a supplier runs during prompt assembly and that is not an async context — so a fragment changes when its extension restarts, not when its data does. |
 | `promptVariants` | which agents switch to a variant while this extension is `READY` | generalises the `.codeindex.md` suffix. *Known* and *live* are separate: a variant whose extension is installed but down stays known, so its agent file is recognised and skipped rather than loaded as an agent whose name happens to contain a dot. |
-| `settings` | config the host renders into its own settings surface, stored per deployment and delivered through launch params | — |
-| `commands` | slash commands the extension answers | — |
+| `settings` | config the host renders into its own settings surface, stored per deployment and delivered through launch params | — . Stored *beside* the bundle rather than inside it: the bundle is what was signed, and a value an administrator typed is not part of what a vendor attested to. Never a secret — those are `permissions.secrets`, resolved by the deployment. |
+| `commands` | slash commands the extension answers | — . Dispatched to the tool with the command's own name, the rest of the line arriving as `args`. Declaring one *is* the grant, separately from `permissions.rpc`: that list is what the extension's UI may call, and a slash command is the user invoking something igni offered them. |
 | `menu` | entries in the header tools menu | — |
 | `pages` | **optional** UI — a surface the extension renders in its own frame | MCP has no UI concept |
 

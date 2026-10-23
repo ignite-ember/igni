@@ -21,6 +21,7 @@ pointed at rather than with the thing we made from it.
 
 from __future__ import annotations
 
+import json
 import logging
 import shutil
 from pathlib import Path
@@ -125,11 +126,83 @@ class ExtensionStore:
         logger.info("stored extension %s at %s", manifest.id, target)
         return target
 
+    # ── Settings ───────────────────────────────────────────────────
+    #
+    # `contributes.settings` describes configuration the host renders
+    # and the deployment stores. Beside the bundle rather than inside
+    # it: the bundle is what was signed, and a value an administrator
+    # typed is not part of what a vendor attested to.
+
+    def settings_path(self, extension_id: str) -> Path:
+        return self._root / f"{extension_id}.settings.json"
+
+    def settings(self, manifest: ExtensionManifest) -> dict[str, object]:
+        """This extension's settings, defaults filled in.
+
+        A key the manifest no longer declares is dropped rather than
+        passed through: an extension that removed a setting should
+        stop being handed it, and a stored value for a key nobody
+        declares is how a stale option survives three upgrades.
+        """
+        declared = {setting.key: setting for setting in manifest.contributes.settings}
+        if not declared:
+            return {}
+
+        stored: dict[str, object] = {}
+        path = self.settings_path(manifest.id)
+        if path.is_file():
+            try:
+                raw = json.loads(path.read_text(encoding="utf-8"))
+                if isinstance(raw, dict):
+                    stored = raw
+            except (OSError, json.JSONDecodeError) as exc:
+                # A corrupt settings file must not stop the extension
+                # starting; defaults are a working configuration.
+                logger.warning("ignoring %s: %s", path, exc)
+
+        return {
+            key: stored.get(key, setting.default)
+            for key, setting in declared.items()
+            if stored.get(key, setting.default) is not None
+        }
+
+    def save_settings(
+        self, manifest: ExtensionManifest, values: dict[str, object]
+    ) -> dict[str, object]:
+        """Store values for the keys this extension declares.
+
+        Undeclared keys are refused rather than ignored. A settings
+        write is an administrator acting on what the host showed
+        them, so a key that was not on that form did not come from
+        there.
+        """
+        declared = {setting.key: setting for setting in manifest.contributes.settings}
+        unknown = sorted(set(values) - set(declared))
+        if unknown:
+            raise StoreError(
+                f"{manifest.id} does not declare {unknown}. Its settings are "
+                f"{sorted(declared) or 'none'}."
+            )
+        for key, setting in declared.items():
+            if key in values and setting.type == "enum" and values[key] not in setting.options:
+                raise StoreError(f"{manifest.id}: {key!r} must be one of {setting.options}")
+
+        merged = {**self.settings(manifest), **values}
+        self._root.mkdir(parents=True, exist_ok=True)
+        self.settings_path(manifest.id).write_text(
+            json.dumps(merged, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+        )
+        return merged
+
     def remove(self, extension_id: str) -> bool:
         """Delete a stored bundle. ``True`` if there was one."""
         target = self.path_for(extension_id)
         if not target.is_dir():
             return False
         shutil.rmtree(target)
+        # Its settings go with it. Leaving them would mean
+        # reinstalling an extension silently inherited whatever the
+        # last administrator had configured.
+        self.settings_path(extension_id).unlink(missing_ok=True)
         logger.info("removed extension %s", extension_id)
         return True

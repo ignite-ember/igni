@@ -60,6 +60,17 @@ def policy_summary() -> str:
 
 
 @server.tool()
+def compliance(args: str = "") -> str:
+    """What ``/compliance`` runs.
+
+    A slash command is dispatched to the tool with the command's own
+    name, and the rest of the line arrives as ``args``. One rule, and
+    the same one ``ext.<id>.<method>`` already uses.
+    """
+    return f"Compliance report{f' for {args}' if args else ''}: 1 open violation."
+
+
+@server.tool()
 def explode() -> str:
     """Always fails, so the failure path is covered too."""
     raise RuntimeError("the scanner fell over")

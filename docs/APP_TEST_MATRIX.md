@@ -238,6 +238,7 @@ real bundle and calls it over a real subprocess.
 | Method | How it is driven | Sweep |
 |---|---|---|
 | `list_extensions` | `tests/test_the_frontend_can_draw_an_extension.py`. Offline, read-only — returns the installed set with each one's state, reason and origin, including the FAILED ones, because "why is it missing" is better answered by a row than by an absence. | `answers` |
+| `set_extension_settings` | `tests/test_an_extension_contributes_commands_and_settings.py`. Offline, mutating — writes values for the keys a manifest declares and refuses every other key. Returns the whole list, since the caller has just invalidated its view of all of it. | `answers` |
 
 ## Skills & commands
 
