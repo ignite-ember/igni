@@ -63,7 +63,7 @@ export interface ExtensionPageProps {
   onClose?: () => void;
   onNavigate?: (to: string) => void;
   /** Events the backend addressed to this extension. */
-  events?: { topic: string; payload: Record<string, unknown>; n: number };
+  events?: { topic: string; payload: Record<string, unknown>; n: number }[];
   /** Launch parameters — the host's URL state for this extension. */
   params?: Record<string, unknown>;
   onLocation?: (state: Record<string, string>) => void;

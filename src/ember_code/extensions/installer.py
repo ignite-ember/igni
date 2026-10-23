@@ -42,6 +42,7 @@ from ember_code.extensions.capabilities import (
     UnresolvedRequirement,
     check_dimensions_agree,
 )
+from ember_code.extensions.events import unknown_grants
 from ember_code.extensions.manifest import ExtensionManifest, Trust, Workspace
 from ember_code.extensions.origin import ExtensionOrigins
 from ember_code.extensions.permissions import PermissionDenied, Permissions
@@ -157,6 +158,7 @@ class ExtensionInstaller:
         self._check_trust(manifest, bundle)
         self._check_profile(manifest)
         self._check_deliverable(manifest)
+        self._check_events(manifest)
 
         if self._registry.get(manifest.id) is not None:
             raise InstallError(
@@ -321,6 +323,48 @@ class ExtensionInstaller:
                 "the user, and a shared backend has no such app — the pages "
                 "would be served and never shown."
             )
+
+    @staticmethod
+    def _check_events(manifest: ExtensionManifest) -> None:
+        """Say which event grants will never deliver anything.
+
+        Noted, never refused. A manifest asking for an event igni
+        does not have is usually one written against a newer igni,
+        and refusing over it would make every added topic a
+        breaking change for everybody who guessed early.
+
+        The second note is the one worth having. A ``workspace.*``
+        grant without a ``workspace`` permission reads like a
+        subscription and behaves like silence: the topic is granted
+        and every payload is filtered to nothing, because the
+        content rule in :class:`~ember_code.backend.host_events.HostEvents`
+        asks both questions. Without this line the author's only
+        evidence is an event that never arrives.
+        """
+        stray = unknown_grants(list(manifest.permissions.events))
+        if stray:
+            logger.warning(
+                "extension %s asks for events igni does not publish: %s. "
+                "They will never fire; check the spelling, or the version "
+                "of igni this manifest was written against.",
+                manifest.id,
+                ", ".join(stray),
+            )
+        if manifest.permissions.workspace is Workspace.NONE:
+            workspace_topics = [
+                grant
+                for grant in manifest.permissions.events
+                if grant.startswith("workspace.") or grant == "workspace.*"
+            ]
+            if workspace_topics:
+                logger.warning(
+                    "extension %s asks for %s and was not granted the "
+                    "workspace. A workspace event carries workspace "
+                    "information, so it will be addressed to nobody. Add "
+                    "'workspace: read' or drop the event grant.",
+                    manifest.id,
+                    ", ".join(workspace_topics),
+                )
 
     @staticmethod
     def _check_deliverable(manifest: ExtensionManifest) -> None:

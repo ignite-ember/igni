@@ -156,6 +156,15 @@ interface UpdateInfo {
  * it: places, not conversations. Three and not thirteen — the rest
  * keep their place in `TOOLS_MENU` below, and these are the ones you
  * go back to while working rather than configure once. */
+/** How many undelivered events we hold per extension.
+ *
+ * A frame that is closed still accumulates — reopening it skips
+ * the backlog rather than replaying it, so this only bounds the
+ * memory, not what anybody sees. Deep enough that a burst during
+ * one React batch survives, shallow enough that a producer nobody
+ * listens to costs nothing worth measuring. */
+const EXTENSION_EVENT_BACKLOG = 32;
+
 const BASE_SIDEBAR_LINKS: { kind: PageKind; label: string }[] = [
   { kind: "plugins", label: "Plugins" },
   { kind: "mcp", label: "MCPs" },
@@ -291,7 +300,10 @@ export default function App() {
    * waiting for "the file changed again" has to hear it again.
    */
   const [extensionEvents, setExtensionEvents] = useState<
-    Record<string, { topic: string; payload: Record<string, unknown>; n: number }>
+    Record<
+      string,
+      { topic: string; payload: Record<string, unknown>; n: number }[]
+    >
   >({});
   const [composerSeed, setComposerSeed] = useState<{
     text: string;
@@ -1696,21 +1708,31 @@ export default function App() {
         topic?: unknown;
         payload?: unknown;
       };
-      if (typeof body.extension_id !== "string" || typeof body.topic !== "string") {
+      if (
+        typeof body.extension_id !== "string" ||
+        typeof body.topic !== "string"
+      ) {
         return;
       }
       const payload =
         typeof body.payload === "object" && body.payload !== null
           ? (body.payload as Record<string, unknown>)
           : {};
-      setExtensionEvents((current) => ({
-        ...current,
-        [body.extension_id as string]: {
+      setExtensionEvents((current) => {
+        const id = body.extension_id as string;
+        const queue = current[id] ?? [];
+        const next = {
           topic: body.topic as string,
           payload,
-          n: (current[body.extension_id as string]?.n ?? 0) + 1,
-        },
-      }));
+          n: (queue[queue.length - 1]?.n ?? 0) + 1,
+        };
+        // Bounded: a frame that is closed, or slow, must not turn
+        // a chatty producer into a growing array nobody reads.
+        return {
+          ...current,
+          [id]: [...queue, next].slice(-EXTENSION_EVENT_BACKLOG),
+        };
+      });
     });
   }, [client, conn]);
 
@@ -1746,9 +1768,7 @@ export default function App() {
           });
           owners.push(extension.id);
           for (const refusal of refusals) {
-            console.warn(
-              `[extensions] ${refusal.owner}: ${refusal.reason}`,
-            );
+            console.warn(`[extensions] ${refusal.owner}: ${refusal.reason}`);
           }
         }
       })

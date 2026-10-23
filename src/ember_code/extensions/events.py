@@ -39,10 +39,11 @@ from __future__ import annotations
 
 import logging
 import re
+from collections.abc import Callable
 from dataclasses import dataclass
 from enum import StrEnum
 
-from ember_code.extensions.registry import NAMESPACE
+from ember_code.extensions.registry import NAMESPACE, InstalledExtension
 
 logger = logging.getLogger(__name__)
 
@@ -101,18 +102,23 @@ VOCABULARY: tuple[HostEvent, ...] = (
     HostEvent(
         topic=HostTopic.WORKSPACE_HEAD_CHANGED,
         description=(
-            "The project's git HEAD moved. What CodeIndex watches for, and "
-            "the reason it polls today."
+            "The project's git HEAD moved. The event CodeIndex exists to "
+            "wait for, so it does not poll `git rev-parse` itself. Requires "
+            "`workspace` as well as the topic: a branch name is workspace "
+            "information."
         ),
         payload="{ commit_sha, branch }",
     ),
     HostEvent(
         topic=HostTopic.WORKSPACE_FILES_CHANGED,
         description=(
-            "Files under the granted workspace paths changed. Coalesced by "
-            "the host, so a build does not become ten thousand events."
+            "Files changed, as git sees them — so never an ignored file, and "
+            "never at all outside a repository. Filtered to your "
+            "`workspacePaths` and coalesced by the host, so a build does not "
+            "become ten thousand events. `truncated` means the list was "
+            "capped and you should rescan rather than trust it."
         ),
-        payload="{ paths }",
+        payload="{ paths, truncated }",
     ),
     HostEvent(
         topic=HostTopic.EXTENSION_STATE_CHANGED,
@@ -254,16 +260,18 @@ class EventRouter:
     def disconnect(self, extension_id: str) -> None:
         self._deliver.pop(extension_id, None)
 
-    def audience(self, topic: str) -> list[str]:
-        """Which installed extensions may be told about ``topic``.
+    def audience_entries(self, topic: str) -> list[tuple[str, InstalledExtension]]:
+        """The audience with each one's registry entry.
 
-        Separate from :meth:`emit` so that "who would hear this" is
-        answerable without sending anything — which is what an
-        administrator asking "why did my extension not see that"
-        needs, and what the tests assert against.
+        A producer deciding *what* to send often needs the
+        manifest — ``workspace.files-changed`` has to know which
+        paths each extension was granted before it can address
+        anybody. Reading the registry here rather than handing it
+        to every producer keeps one object answering "who is
+        installed", which is the object that also checks the grant.
         """
         self._check_topic(topic)
-        heard_by: list[str] = []
+        heard_by: list[tuple[str, InstalledExtension]] = []
         for extension_id in self._registry.ids():  # type: ignore[attr-defined]
             entry = self._registry.get(extension_id)  # type: ignore[attr-defined]
             if entry is None:
@@ -273,8 +281,18 @@ class EventRouter:
                 extension_id=extension_id,
                 grants=list(entry.manifest.permissions.events),
             ):
-                heard_by.append(extension_id)
+                heard_by.append((extension_id, entry))
         return heard_by
+
+    def audience(self, topic: str) -> list[str]:
+        """Which installed extensions may be told about ``topic``.
+
+        Separate from :meth:`emit` so that "who would hear this" is
+        answerable without sending anything — which is what an
+        administrator asking "why did my extension not see that"
+        needs, and what the tests assert against.
+        """
+        return [extension_id for extension_id, _ in self.audience_entries(topic)]
 
     def emit_to(self, extension_id: str, topic: str, payload: dict[str, object]) -> bool:
         """Tell one extension, if it is entitled. ``True`` if told.
@@ -305,6 +323,42 @@ class EventRouter:
             logger.exception("delivering %s to %s failed", topic, extension_id)
             return False
         return True
+
+    def emit_each(
+        self,
+        topic: str,
+        payload_for: Callable[[InstalledExtension], dict[str, object] | None],
+    ) -> list[str]:
+        """Tell everyone entitled, each a payload of its own.
+
+        For a topic whose *content* is not the same for every
+        listener. ``workspace.files-changed`` is the case that
+        forced it: two extensions can both be granted the topic
+        and be entitled to see different parts of the tree, so one
+        payload for both hands each of them the other's. The grant
+        says whether you may be told; it does not say what.
+
+        ``payload_for`` returns ``None`` for "nothing this one may
+        see", which skips rather than sending an empty event — an
+        extension granted ``docs/**`` should not be woken every
+        time ``src/`` is touched, and an event it has to ignore is
+        still an event it had to be given.
+        """
+        told: list[str] = []
+        for extension_id, entry in self.audience_entries(topic):
+            deliver = self._deliver.get(extension_id)
+            if deliver is None:
+                continue
+            payload = payload_for(entry)
+            if payload is None:
+                continue
+            try:
+                deliver(topic, payload)  # type: ignore[operator]
+            except Exception:
+                logger.exception("delivering %s to %s failed", topic, extension_id)
+                continue
+            told.append(extension_id)
+        return told
 
     def emit(self, topic: str, payload: dict[str, object]) -> list[str]:
         """Tell everyone entitled. Returns who was told.

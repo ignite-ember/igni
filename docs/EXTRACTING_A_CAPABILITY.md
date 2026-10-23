@@ -103,9 +103,17 @@ happens at dispatch rather than delivery, because a host that posted
 everything and asked each frame to discard what was not its own
 would be trusting the frame to discard it.
 
+All four host topics now have producers: a git watcher behind the
+two `workspace.*` ones, the pool's `attach_session` behind
+`session.switched`, the registry behind `extension.state-changed`.
+Each listener gets its own payload, so a `workspace.files-changed`
+is filtered to that extension's `workspacePaths` before it is sent.
+
 What Artifacts still needs is its *own* events relayed from its
 service to its frame — the `ext.<id>.` half — which the envelope
-carries and nothing yet produces.
+carries and nothing yet produces. And delivery ends at an iframe,
+so an extension with no page hears nothing at all; a service is
+told about the host by being called.
 
 ### 3.4 Cross-user realtime
 

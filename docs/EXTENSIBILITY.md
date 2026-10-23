@@ -71,16 +71,53 @@ the same reason `RpcMethod` is one: the value is what travels, and
 an emitter naming a renamed member fails at import rather than
 delivering to nobody.
 
-| Topic | When |
-|---|---|
-| `session.switched` | the user moved to a different session |
-| `workspace.head-changed` | the project's git HEAD moved — what CodeIndex watches for, and the reason it polls today |
-| `workspace.files-changed` | files under the granted workspace paths changed, coalesced so a build is not ten thousand events |
-| `extension.state-changed` | *this* extension's own health moved |
+| Topic | Payload | When |
+|---|---|---|
+| `session.switched` | `{ session_id }` | the user moved to a different session |
+| `workspace.head-changed` | `{ commit_sha, branch }` | the project's git HEAD moved — the event CodeIndex exists to wait for, so it does not poll `git rev-parse` itself |
+| `workspace.files-changed` | `{ paths, truncated }` | files changed, as git sees them, filtered to your `workspacePaths` and coalesced so a build is not ten thousand events. `truncated` means the list was capped — rescan rather than trust it |
+| `extension.state-changed` | `{ state, reason }` | *this* extension's own health moved |
 
 Short on purpose. A missing event costs an extension a poll; a wrong
 one costs igni a shape it can never change. Additive is never
 breaking, so it grows on demand.
+
+**The grant is not the content.** `permissions.events` decides
+whether you are addressed. It does not decide what you are handed,
+and for the two `workspace.*` topics the second question has a
+second answer: they also require `permissions.workspace`, and
+`workspace.files-changed` is filtered to your `workspacePaths`
+before it is sent. An extension granted `docs/**` that was handed
+the unfiltered list would have just been told every path in the
+repository — with the grant check passing, so nothing would have
+looked wrong. An extension with `workspace: none` hears neither
+topic however they were granted: a branch name is something the
+repository knows about itself.
+
+A manifest that asks for a `workspace.*` event without the workspace
+is **warned about at install, not refused** — a grant that reads like
+a subscription and behaves like silence is the worst shape a
+permission can have, and the author's only other evidence would be
+an event that never arrives.
+
+**What the two workspace events can and cannot see.** They are built
+on `git`, polled: `git rev-parse` at 1 Hz and `git status` at half
+that, both skipped entirely while no installed extension is entitled
+to the result. So an ignored file is invisible, and a project that is
+not a repository produces no workspace events at all. The alternative
+was a filesystem watcher that would have had to learn `.gitignore`
+before it was usable, and would have reported every write inside
+`node_modules` until it did.
+
+**A first observation is not a change.** The watcher learns where
+HEAD is without announcing it, and forgets again when the last
+listener goes away — otherwise a freshly installed extension is told
+HEAD "moved" to where it has been since before it existed.
+
+**Events reach frames, not services.** Delivery is push → client →
+the one iframe it was addressed to, so an extension that contributes
+no page receives nothing. A service learns about the host by being
+called, which is the direction MCP runs in.
 
 **Subscription is a grant, not a filter.** The check happens where
 an event is dispatched, never where it is received — anything that

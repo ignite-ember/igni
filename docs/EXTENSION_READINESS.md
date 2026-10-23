@@ -147,7 +147,9 @@ shipping without it costs nothing.
 | H2 | ✅ | `permissions.events`, checked at dispatch and never at delivery. An extension's own `ext.<id>.` topics need no grant; another's are unreachable. |
 | H3 | ✅ | An `event` envelope kind and `bridge.onEvent`, additive like `params` and `location`. |
 | H4 | ✅ | Delivery: `EventRouter` → `extension_event` push → the one frame it was addressed to. `emit_to` for events that are *about* an extension. |
-| H5 | ⚠️ | Only `extension.state-changed` is emitted. `workspace.head-changed` and `workspace.files-changed` need a watcher wired to them, and `session.switched` needs the orchestrator to call it. The transport is done; the producers are not. |
+| H5 | ✅ | Producers. `WorkspaceWatcher` polls `git rev-parse` at 1 Hz and `git status` at half that — and does neither while nobody is entitled to the result. `session.switched` fires from the pool's `attach_session`, deduped, because a page reload is not a switch. |
+| H6 | ✅ | The content rule. `HostEvents.emit_each` gives each listener its own payload: `workspace.*` requires `permissions.workspace` as well as the topic, and `files-changed` is filtered to each extension's `workspacePaths`. The grant says whether you are addressed; it does not say what you are handed. |
+| H7 | ⚠️ | **Events reach frames, not services.** Delivery ends at an iframe, so an extension that contributes no page receives nothing — and CodeIndex's 30-second indicator poll is host→service, so it is the panel that can become event-driven, not the probe. Closing this means the host calling a reserved tool on the service when an event fires, which is a contract decision, not a wiring one. |
 
 ## Gate G — more than one person
 

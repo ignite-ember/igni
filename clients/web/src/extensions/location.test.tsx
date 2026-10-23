@@ -30,7 +30,11 @@ afterEach(cleanup);
 describe("the params message", () => {
   it("is accepted by the guest", () => {
     expect(
-      isHostMessage({ igni: BRIDGE_VERSION, kind: "params", params: { id: "7" } }),
+      isHostMessage({
+        igni: BRIDGE_VERSION,
+        kind: "params",
+        params: { id: "7" },
+      }),
     ).toBe(true);
   });
 
@@ -88,7 +92,12 @@ describe("the location message", () => {
 
   it("accepts empty state, which is how a page says 'nowhere in particular'", () => {
     expect(
-      isGuestMessage({ igni: BRIDGE_VERSION, kind: "location", nonce, state: {} }),
+      isGuestMessage({
+        igni: BRIDGE_VERSION,
+        kind: "location",
+        nonce,
+        state: {},
+      }),
     ).toBe(true);
   });
 });
@@ -140,7 +149,9 @@ describe("params under a mounted frame", () => {
         params={{ id: "2" }}
       />,
     );
-    expect((posted as Posted[]).filter((m) => m.kind === "params")).toHaveLength(0);
+    expect(
+      (posted as Posted[]).filter((m) => m.kind === "params"),
+    ).toHaveLength(0);
   });
 
   it("sends them when they change after the handshake", async () => {
@@ -189,7 +200,9 @@ describe("params under a mounted frame", () => {
       );
     }
 
-    expect((posted as Posted[]).filter((m) => m.kind === "params")).toHaveLength(0);
+    expect(
+      (posted as Posted[]).filter((m) => m.kind === "params"),
+    ).toHaveLength(0);
   });
 });
 
@@ -200,7 +213,7 @@ describe("location from the frame", () => {
     const { frame } = mountFrame({ onLocation, onNavigate });
 
     // Replay what the guest posts, with the nonce the frame issued.
-    const hello = (frame?.contentWindow?.postMessage as unknown) as {
+    const hello = frame?.contentWindow?.postMessage as unknown as {
       mock: { calls: unknown[][] };
     };
     frame?.dispatchEvent(new Event("load"));
@@ -310,7 +323,13 @@ describe("events reaching a frame", () => {
         origin="http://127.0.0.1:41234"
         allow={[]}
         onCall={() => Promise.resolve(null)}
-        events={{ topic: "workspace.head-changed", payload: { commit_sha: "a" }, n: 1 }}
+        events={[
+          {
+            topic: "workspace.head-changed",
+            payload: { commit_sha: "a" },
+            n: 1,
+          },
+        ]}
       />,
     );
 
@@ -327,9 +346,11 @@ describe("events reaching a frame", () => {
     // A frame with no nonce has no listener, and an event posted
     // into it is one the guest never sees.
     const { posted } = mountFrame({
-      events: { topic: "workspace.head-changed", payload: {}, n: 1 },
+      events: [{ topic: "workspace.head-changed", payload: {}, n: 1 }],
     });
-    expect((posted as Posted[]).filter((m) => m.kind === "event")).toHaveLength(0);
+    expect((posted as Posted[]).filter((m) => m.kind === "event")).toHaveLength(
+      0,
+    );
   });
 
   it("delivers the same event twice when it happens twice", async () => {
@@ -348,14 +369,112 @@ describe("events reaching a frame", () => {
           origin="http://127.0.0.1:41234"
           allow={[]}
           onCall={() => Promise.resolve(null)}
-          events={{ topic: "workspace.files-changed", payload: { paths: [] }, n }}
+          events={[
+            { topic: "workspace.files-changed", payload: { paths: [] }, n },
+          ]}
         />,
       );
 
     send(1);
     send(2);
     await waitFor(() =>
-      expect((posted as Posted[]).filter((m) => m.kind === "event")).toHaveLength(2),
+      expect(
+        (posted as Posted[]).filter((m) => m.kind === "event"),
+      ).toHaveLength(2),
     );
+  });
+
+  it("delivers both when two arrive in one render", async () => {
+    // React batches, so two pushes that land in the same tick are
+    // one re-render. A single-slot prop would show only the second
+    // and the first would be gone — which a commit makes real,
+    // because it moves HEAD and changes the dirty set at once.
+    const { posted, frame, rerender } = mountFrame();
+    frame?.dispatchEvent(new Event("load"));
+    await waitFor(() =>
+      expect((posted as Posted[]).some((m) => m.kind === "hello")).toBe(true),
+    );
+
+    rerender(
+      <ExtensionFrame
+        extensionId="acme.scanner"
+        origin="http://127.0.0.1:41234"
+        allow={[]}
+        onCall={() => Promise.resolve(null)}
+        events={[
+          { topic: "workspace.files-changed", payload: { paths: ["a"] }, n: 1 },
+          {
+            topic: "workspace.head-changed",
+            payload: { commit_sha: "b" },
+            n: 2,
+          },
+        ]}
+      />,
+    );
+
+    await waitFor(() => {
+      const sent = (posted as { kind: string; topic?: string }[]).filter(
+        (m) => m.kind === "event",
+      );
+      expect(sent.map((m) => m.topic)).toEqual([
+        "workspace.files-changed",
+        "workspace.head-changed",
+      ]);
+    });
+  });
+
+  it("does not replay the backlog to a frame that just opened", async () => {
+    // A panel the user closed and reopened is not owed what it
+    // missed. It is about to read the current state itself, and
+    // three-minute-old events arriving as news is the same mistake
+    // the host's watcher avoids by never announcing its first
+    // observation.
+    const { posted, frame, rerender } = mountFrame({
+      events: [
+        { topic: "workspace.head-changed", payload: { commit_sha: "a" }, n: 1 },
+        { topic: "workspace.head-changed", payload: { commit_sha: "b" }, n: 2 },
+      ],
+    });
+    frame?.dispatchEvent(new Event("load"));
+    await waitFor(() =>
+      expect((posted as Posted[]).some((m) => m.kind === "hello")).toBe(true),
+    );
+    expect((posted as Posted[]).filter((m) => m.kind === "event")).toHaveLength(
+      0,
+    );
+
+    rerender(
+      <ExtensionFrame
+        extensionId="acme.scanner"
+        origin="http://127.0.0.1:41234"
+        allow={[]}
+        onCall={() => Promise.resolve(null)}
+        events={[
+          {
+            topic: "workspace.head-changed",
+            payload: { commit_sha: "a" },
+            n: 1,
+          },
+          {
+            topic: "workspace.head-changed",
+            payload: { commit_sha: "b" },
+            n: 2,
+          },
+          {
+            topic: "workspace.head-changed",
+            payload: { commit_sha: "c" },
+            n: 3,
+          },
+        ]}
+      />,
+    );
+
+    await waitFor(() => {
+      const sent = (
+        posted as { kind: string; payload?: { commit_sha?: string } }[]
+      ).filter((m) => m.kind === "event");
+      expect(sent).toHaveLength(1);
+      expect(sent[0].payload?.commit_sha).toBe("c");
+    });
   });
 });

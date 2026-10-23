@@ -199,7 +199,7 @@
         },
         "events": {
           "type": "array",
-          "description": "Host events this extension may be told about — an exact topic, or a `*`-suffixed prefix. Only topics igni publishes: its own events, under `ext.<your-id>.`, need no grant, and another extension's cannot be granted at all, not by a wildcard and not by naming it. The check happens where an event is dispatched, never where it is received, because a host that broadcast everything and asked each frame to discard what was not its own would be trusting the frame to discard it.",
+          "description": "Host events this extension may be told about — an exact topic, or a `*`-suffixed prefix. Only topics igni publishes: its own events, under `ext.<your-id>.`, need no grant, and another extension's cannot be granted at all, not by a wildcard and not by naming it. The check happens where an event is dispatched, never where it is received, because a host that broadcast everything and asked each frame to discard what was not its own would be trusting the frame to discard it. Granting a topic does not decide what you are handed: the two `workspace.*` topics also require `permissions.workspace`, and `workspace.files-changed` is filtered to your `workspacePaths` before it is sent. Asking for one without the workspace is warned about at install, never refused — but it will be addressed to nobody.",
           "items": { "type": "string", "pattern": "^[a-z][a-z0-9.-]*\\*?$" },
           "default": [],
           "examples": [["workspace.head-changed"], ["workspace.*"]]

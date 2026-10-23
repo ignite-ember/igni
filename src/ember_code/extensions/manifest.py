@@ -204,6 +204,12 @@ class Permissions(Strict):
     #: published vocabulary. Its *own* events need no grant and
     #: another extension's cannot be granted at all — see
     #: :mod:`ember_code.extensions.events`.
+    #:
+    #: Granting a topic does not decide the *content*: the two
+    #: ``workspace.*`` topics also require ``workspace``, and
+    #: ``workspace.files-changed`` is filtered to ``workspacePaths``
+    #: before it is sent. See
+    #: :class:`~ember_code.backend.host_events.HostEvents`.
     events: list[Annotated[str, Field(pattern=EVENT_GRANT.pattern)]] = Field(default_factory=list)
 
 

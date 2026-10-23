@@ -25,6 +25,7 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
+from ember_code.backend.host_events import HostEvents
 from ember_code.backend.login_coordinator import LoginCoordinator
 from ember_code.backend.push_bridge import PushNotificationBridge
 from ember_code.backend.rpc_router import RpcRouter
@@ -34,7 +35,7 @@ from ember_code.backend.session_orchestrator import SessionOrchestrator
 from ember_code.backend.supervisor import BackendSupervisor
 from ember_code.core.config.settings import Settings, load_settings
 from ember_code.extensions.contributions import ExtensionContributions
-from ember_code.extensions.events import EventRouter, HostTopic
+from ember_code.extensions.events import EventRouter
 from ember_code.extensions.health import ExtensionHealth
 from ember_code.extensions.installer import ExtensionInstaller
 from ember_code.extensions.origin import ExtensionOrigins
@@ -262,6 +263,10 @@ class BackendApp:
         # and the client posts each event into one frame — so an
         # extension never receives another's even in transit.
         self._extension_events = EventRouter(self._extensions.registry)
+        # What igni knows, said in the published vocabulary. Owns
+        # the workspace poll, which does no git work until some
+        # extension is actually entitled to hear the result.
+        self._host_events = HostEvents(router=self._extension_events, project_dir=self._project_dir)
         self._wire_extension_events()
         self._rpc_router = RpcRouter(
             backend=self._backend,
@@ -306,6 +311,7 @@ class BackendApp:
             queue=self._queue,
             extensions=self._extensions,
             origins=self._origins,
+            host_events=self._host_events,
         )
         pool = self._orchestrator.setup_pool()
         self._supervisor.set_pool(pool)
@@ -378,11 +384,16 @@ class BackendApp:
             # after the installs above, so the first sweep has
             # something to sweep.
             self._extension_health.start()
+            # After the installs, for the same reason health is:
+            # the first poll asks "is anyone listening", and before
+            # this point the answer is always no.
+            await self._host_events.start()
             logger.info("FE connected, processing messages")
             await self._orchestrator.serve(self._supervisor.shutdown_event)
         except Exception as exc:
             logger.error("Backend error: %s", exc, exc_info=True)
         finally:
+            await self._host_events.stop()
             await self._extension_health.stop()
             await self._origins.stop_all()
             await self._supervisor.teardown()
@@ -411,16 +422,8 @@ class BackendApp:
                 router.disconnect(extension_id)
                 return
             router.connect(extension_id, deliver(extension_id))
-            # To *that* extension, not to everyone who granted the
-            # topic. This is one extension's health, and broadcasting
-            # it would tell every other extension about it — the
-            # isolation rule failing in the place it is easiest to
-            # miss, because the grant would have been checked and the
-            # audience would still be wrong.
-            router.emit_to(
-                extension_id,
-                HostTopic.EXTENSION_STATE_CHANGED,
-                {"state": entry.state.value, "reason": entry.reason},
+            self._host_events.extension_state_changed(
+                extension_id, state=entry.state.value, reason=entry.reason
             )
 
         self._extensions.registry.watch(on_change)

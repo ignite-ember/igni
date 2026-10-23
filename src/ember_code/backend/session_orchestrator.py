@@ -160,6 +160,7 @@ class SessionOrchestrator:
         login: LoginCoordinator,
         extensions: ExtensionRpc | None = None,
         origins: Any = None,
+        host_events: Any = None,
         queue: list[str],
     ) -> None:
         self._backend = backend
@@ -184,6 +185,12 @@ class SessionOrchestrator:
             extensions if extensions is not None else ExtensionRpc(ExtensionRegistry())
         )
         self._origins = origins
+        # :class:`~ember_code.backend.host_events.HostEvents`, when
+        # there is one. Defaulted for the same reason ``extensions``
+        # is: the tests that build an orchestrator directly want a
+        # pool, not an extension platform, and a session switch that
+        # nobody is listening to is not an error.
+        self._host_events = host_events
         self._queue = queue
         self._boot_rpc_table = rpc_table
         # Constructed in ``setup_pool``. Kept on self so
@@ -586,6 +593,12 @@ class SessionOrchestrator:
             session_id = str(uuid.uuid4())[:8]
         assert self._pool is not None
         rt = await self._pool.get_or_create(session_id)
+        if self._host_events is not None:
+            # The pool-level "the user is now looking at this one".
+            # Fires on reconnect too, so ``HostEvents`` drops a
+            # repeat of the same id rather than every extension
+            # having to learn that a page reload is not a switch.
+            self._host_events.session_switched(rt.backend.session_id)
         result = AttachSessionResult(
             session_id=rt.backend.session_id,
             project_dir=str(rt.backend.project_dir),

@@ -55,7 +55,8 @@ function sameParams(
   const keys = Object.keys(a);
   if (keys.length !== Object.keys(b).length) return false;
   return keys.every(
-    (key) => Object.prototype.hasOwnProperty.call(b, key) && Object.is(a[key], b[key]),
+    (key) =>
+      Object.prototype.hasOwnProperty.call(b, key) && Object.is(a[key], b[key]),
   );
 }
 
@@ -101,7 +102,17 @@ export interface ExtensionFrameProps {
    * had posted somebody else's event into this frame and trusted
    * the frame not to read it.
    */
-  events?: { topic: string; payload: Record<string, unknown>; n: number };
+  /**
+   * Events waiting for this frame, oldest first, each with a
+   * monotonic `n`.
+   *
+   * A queue rather than "the latest one", because two pushes that
+   * land in the same React batch collapse into one render — so a
+   * single slot silently drops whichever arrived first. With three
+   * producers that is no longer theoretical: a commit moves HEAD
+   * and changes the dirty set at the same moment.
+   */
+  events?: { topic: string; payload: Record<string, unknown>; n: number }[];
   /** Launch parameters, passed through on `hello`. */
   params?: Record<string, unknown>;
   /** Followed by the frame. */
@@ -247,11 +258,30 @@ export function ExtensionFrame({
    */
   const delivered = useRef<Record<string, unknown> | null>(null);
 
+  /**
+   * The highest `n` this frame has been given, or `null` before
+   * `hello`.
+   *
+   * Set at the greeting from whatever is already queued, and not
+   * posted: a panel the user has just opened is not owed the
+   * backlog it missed while it was closed. The same rule the
+   * host's own watcher follows — a first observation is not a
+   * change.
+   */
+  const deliveredUpTo = useRef<number | null>(null);
+  // Mirrored so `onLoad` can read the queue without taking it as a
+  // dependency and rebuilding the greeting on every event.
+  const queued = useRef<NonNullable<ExtensionFrameProps["events"]>>([]);
+  queued.current = events ?? [];
+
   // The frame cannot be spoken to until it has loaded, and it cannot
   // do anything until it has the nonce, so `hello` goes on load.
   const onLoad = useCallback(() => {
     const sent = params ?? {};
     delivered.current = sent;
+    const waiting = queued.current;
+    deliveredUpTo.current =
+      waiting.length === 0 ? 0 : waiting[waiting.length - 1].n;
     post({
       igni: BRIDGE_VERSION,
       kind: "hello",
@@ -288,7 +318,7 @@ export function ExtensionFrame({
   }, [params, post]);
 
   /*
-    One event into the frame, when a new one arrives.
+    Everything the frame has not been given yet, in order.
 
     Keyed on `n` rather than on the payload: two identical events
     are two events, and a guest waiting for "the file changed
@@ -296,13 +326,19 @@ export function ExtensionFrame({
     frame that has not been greeted has no nonce and no listener.
   */
   useEffect(() => {
-    if (events === undefined || delivered.current === null) return;
-    post({
-      igni: BRIDGE_VERSION,
-      kind: "event",
-      topic: events.topic,
-      payload: events.payload,
-    });
+    const upTo = deliveredUpTo.current;
+    if (events === undefined || upTo === null) return;
+    const pending = events.filter((one) => one.n > upTo);
+    if (pending.length === 0) return;
+    deliveredUpTo.current = pending[pending.length - 1].n;
+    for (const one of pending) {
+      post({
+        igni: BRIDGE_VERSION,
+        kind: "event",
+        topic: one.topic,
+        payload: one.payload,
+      });
+    }
   }, [events, post]);
 
   // Theme changes after the handshake are their own message rather
