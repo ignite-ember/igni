@@ -36,14 +36,20 @@ An **extension** is a capability with a service behind it. It arrives one of two
 
 This is the whole justification for a contract. MCP carries tools. It does not carry any of the following, and CodeIndex needs all of them.
 
+Everything below is a key under `contributes` in the manifest, and the list is exactly what `docs/extension-manifest.schema.json` accepts there. If this table and that file disagree, the file is right and this table is a bug.
+
 | Contribution | What it does | Why MCP can't |
 |---|---|---|
-| `promptFragments` | text injected at a named anchor in a system prompt | replaces the hardcoded `{{CODEINDEX_GRAPH_SCHEMA}}` placeholder |
+| `promptFragments` | text injected at a named anchor in a system prompt, from a tool call or a bundled file | replaces the hardcoded `{{CODEINDEX_GRAPH_SCHEMA}}` placeholder |
 | `promptVariants` | which agents switch to a variant while this extension is `READY` | generalises the `.codeindex.md` suffix |
-| `health` | `READY` / `PREPARING` / `DISABLED` / `FAILED`, **always with a reason and a fix** | MCP reports connectivity, not "licence expired, install the renewed key" |
-| `settings` | a config-schema fragment the host renders | — |
-| `commands` | slash commands | — |
-| `pages`, `indicators`, `chatRenderers` | **optional** UI — a surface, a status chip, inline result rendering | MCP has no UI concept |
+| `settings` | config the host renders into its own settings surface, stored per deployment and delivered through launch params | — |
+| `commands` | slash commands the extension answers | — |
+| `menu` | entries in the header tools menu | — |
+| `pages` | **optional** UI — a surface the extension renders in its own frame | MCP has no UI concept |
+
+`menu` rather than `tools`, because `permissions.tools` already means the MCP tool names an extension may register with the agent. See §2.
+
+**`health` is not in this table**, though it is a contribution in every sense: `READY` / `PREPARING` / `DISABLED` / `FAILED`, always with a reason and a fix, because MCP reports connectivity and not "licence expired, install the renewed key". It is runtime state the extension reports, not something a manifest declares, and listing it beside keys that *are* declared is how it ended up being written into one.
 
 UI is a contribution some extensions have, not what makes something an extension. A headless extension is normal.
 
@@ -53,7 +59,11 @@ Everything is namespaced by extension id. A collision with a base name is a vali
 
 ### Not in v1
 
-Keybindings, context menus, custom editors, theme overrides, i18n. Additive changes are never breaking, so omitting is cheap and premature inclusion is forever.
+Keybindings, context menus, custom editors, theme overrides, i18n.
+
+Also **`indicators`** (a status chip beside the extension's name) and **`chatRenderers`** (inline rendering of an extension's tool results in the chat transcript). Both were in this table before anything implemented or specified them, which made them look declarable. `chatRenderers` is unlikely ever to arrive: a tool result that wants a rich view emits a `json-render` spec, which the chat already renders, and a second mechanism for the same job would be a second thing to keep in step.
+
+Additive changes are never breaking, so omitting is cheap and premature inclusion is forever.
 
 ---
 
@@ -61,15 +71,21 @@ Keybindings, context menus, custom editors, theme overrides, i18n. Additive chan
 
 ```jsonc
 {
+  "$schema": "https://igni.sh/schema/extension-manifest-1.json",
+
   "id": "igni.codeindex",             // reverse-DNS, immutable, namespaces everything
   "version": "1.4.0",
   "contract": ">=1.0 <2",             // the only compatibility axis
 
+  "name": "CodeIndex",                // what an admin sees in an install list
+  "vendor": "Ignite Ember",           // shown beside the trust tier
+
   "signature": "…",                   // detached; verified against a key this deployment trusts
   "trust": "first-party",             // first-party | partner | unsigned (dev only)
 
-  // ── one of these two, by packaging ──
+  // ── one of these two, by packaging. Never both, never neither ──
   "sidecar": {
+    "image": "igni__code-index:1.4.0", // in the bundle; never pulled at install
     "mcp": { "transport": "stdio" },
     "requires": [                     // infra WE resolve, because there is no vendor service
       { "capability": "graph-db", "constraint": ">=5", "mode": "shared" }
@@ -77,20 +93,45 @@ Keybindings, context menus, custom editors, theme overrides, i18n. Additive chan
   },
   "endpoint": {                       // the remote form
     "url": "https://artifacts.internal/mcp",
-    "auth": "…"
+    "auth": { "kind": "bearer", "secret": "artifacts-token" }
   },
 
-  "permissions": { "workspace": "read", "egress": [], "secrets": [] },
+  "permissions": {
+    "workspace": "read",
+    "egress": [],
+    "secrets": [],
+    "tools": ["igni.codeindex.search"], // MCP tools it may register with the agent
+    "rpc": ["ext.igni.codeindex.*"]     // backend methods its own UI may call
+  },
 
   "contributes": { /* §1 */ }
 }
 ```
 
+**`docs/extension-manifest.schema.json` is the authority**, not this
+excerpt. Point an editor at it with the `$schema` line above and it
+completes and checks as you type;
+`tests/test_a_manifest_is_checked_against_its_schema.py` validates
+every example manifest in the repository against it on every run. That
+test exists because the first manifest written against this section
+broke it in three places — a sidecar with no `image`, a `menu` entry
+misfiled as a `command`, and a prompt fragment with an anchor and no
+text — none of which prose alone had caught.
+
+**`tools` and `rpc` are different lists.** `permissions.tools` is MCP
+tool names the extension may register with the *agent*.
+`permissions.rpc` is backend methods its own *UI* may call over the
+bridge. They are granted by the same administrator and enforced in
+different places, and an extension commonly wants one and not the
+other: a headless extension has no `rpc`, and a UI-only extension has
+no `tools`. For the same reason the header-menu contributions in §1
+are `contributes.menu` and not `contributes.tools`.
+
 **Installed once.** One `id`, one install. No second copy, no per-project instance. Everything the extension needs to do, it does — two indexes is configuration inside the extension, not two installs.
 
 **One version axis.** An extension declares a `contract` range and never names a product version. The deployment advertises one contract version, the lower of what the backend and the installed client implement.
 
-**Sidecar requirements resolve offline.** Declare capability *kinds* (`graph-db`, `vector-store`, `relational-db`) — never a product name; a regulated customer often has a sanctioned Postgres you must use. The resolver binds to a running instance or provisions one from the bundle. Nothing is fetched at resolve time. Unsatisfiable requirements fail **at install**, naming the fix.
+**Sidecar requirements resolve offline.** Declare capability *kinds* (`graph-db`, `vector-store`, `relational-db`, `object-store`) — never a product name; a regulated customer often has a sanctioned Postgres you must use, and a manifest naming `postgres` cannot express "or whatever they have". `mode` picks how hard to try: `shared` uses the deployment's instance and provisions one if absent, `dedicated` always provisions its own, and `bind-only` uses an existing instance and fails at install if there is none — which is what a sanctioned database requires, and what you want when provisioning would breach a customer's change control. The resolver binds to a running instance or provisions one from the bundle. Nothing is fetched at resolve time. Unsatisfiable requirements fail **at install**, naming the fix.
 
 **A sidecar is a single instance, and that is the trade.** If it dies, one user is blocked. That is the correct blast radius for a laptop, and the reason none of a remote service's HA machinery belongs here.
 
@@ -196,7 +237,7 @@ The threat model is not a hostile stranger on a marketplace. It is **a trusted a
 
 ### Permissions
 
-Declared, admin-granted, base-enforced, deny by default: `workspace` (none/read/write, path-scoped), `egress` (explicit hosts, empty by default), `secrets` (named grants resolved by a broker — a handle, never a value), `tools` (names it may register).
+Declared, admin-granted, base-enforced, deny by default: `workspace` (none/read/write, path-scoped), `egress` (explicit hosts, empty by default), `secrets` (named grants resolved by a broker — a handle, never a value), `tools` (MCP tool names it may register with the agent), `rpc` (backend methods its UI may call over the bridge — exact names, or a `*`-suffixed prefix, because this list is read by whoever approves the install).
 
 A capability that asks for more on upgrade **does not get it silently**; it stays at its old grants until an admin accepts. Permission drift is how extension ecosystems rot.
 

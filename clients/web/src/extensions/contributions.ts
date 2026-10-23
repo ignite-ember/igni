@@ -39,12 +39,28 @@ export interface ToolsEntry {
   owner?: string | null;
 }
 
-/** One extension's UI contributions, as its manifest declares them. */
+/**
+ * One extension's UI contributions, as its manifest declares them.
+ *
+ * Field names match `docs/extension-manifest.schema.json` exactly,
+ * because this is that object after `JSON.parse`. Where they would
+ * drift, the schema wins.
+ */
 export interface UiContribution {
   /** Pages it adds, by kind. */
   pages?: { kind: string; label: string; sidebar?: boolean }[];
-  /** Tools-menu entries it adds. */
-  tools?: { label: string; command: string; desc: string }[];
+  /**
+   * Header-menu entries it adds.
+   *
+   * `menu`, not `tools`. A manifest already uses `tools` for the MCP
+   * tool names an extension may register — a different list, granted
+   * by a different person, enforced in a different place — and one
+   * word meaning two things in one file is how a manifest gets
+   * written wrong. The surface these land on is still called the
+   * tools menu in the app, which is why {@link ToolsEntry} keeps its
+   * name: that one is ours, and nobody writes it into a manifest.
+   */
+  menu?: { label: string; command: string; desc: string }[];
 }
 
 /** What went wrong with one contributed entry, and whose it was. */
@@ -102,7 +118,7 @@ export class Contributions {
         sidebar.push({ kind: page.kind, label: page.label, owner });
     }
 
-    for (const entry of contribution.tools ?? []) {
+    for (const entry of contribution.menu ?? []) {
       const clash = this.toolsLabelOwner(entry.label);
       if (clash !== null) {
         refusals.push({

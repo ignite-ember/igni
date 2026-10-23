@@ -55,7 +55,7 @@ describe("adding", () => {
     const c = fresh();
     c.install("acme.scanner", {
       pages: [{ kind: "acme.scan", label: "Scanner", sidebar: true }],
-      tools: [{ label: "Scan", command: "/acme-scan", desc: "scan the tree" }],
+      menu: [{ label: "Scan", command: "/acme-scan", desc: "scan the tree" }],
     });
 
     // A reader who learned where Plugins sits finds it there after an
@@ -108,7 +108,7 @@ describe("refusing", () => {
     const c = fresh();
 
     const refused = c.install("acme.scanner", {
-      tools: [{ label: "CodeIndex", command: "/acme", desc: "not that one" }],
+      menu: [{ label: "CodeIndex", command: "/acme", desc: "not that one" }],
     });
 
     expect(refused[0].reason).toContain("already in the tools menu");
@@ -138,7 +138,7 @@ describe("leaving", () => {
     const c = fresh();
     c.install("acme.scanner", {
       pages: [{ kind: "acme.scan", label: "Scanner", sidebar: true }],
-      tools: [{ label: "Scan", command: "/acme-scan", desc: "scan the tree" }],
+      menu: [{ label: "Scan", command: "/acme-scan", desc: "scan the tree" }],
     });
 
     c.uninstall("acme.scanner");

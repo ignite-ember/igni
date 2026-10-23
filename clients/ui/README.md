@@ -42,7 +42,18 @@ Buttons (`btn`, with `-primary`, `-danger`, `-sm`, `-xs`, `-quiet`), chips, pane
 
 These are the same class names igni itself uses, so a surface built here reads as part of the app rather than beside it.
 
-**They are copies, not one file.** `theme.css` and `igni-ui.css` each carry their own rules, and nothing yet holds them to each other — the first drift was `btn-warn`, which existed in the app and not here, so a typed `variant="warn"` rendered as a plain button inside a frame. Generating this file from `theme.css` is the fix and is not done. Until it is, treat a difference as a bug and report it.
+**They are copies, not one file**, and two tests now hold them to each other.
+
+`ui-react/styled.test.ts` reads every `className=` expression in the published package and fails on the first name this file does not define. It also checks every fallback value here, `:root` and inline, against `theme.css`. Generating this file from `theme.css` is still the better fix and is still not done; until it is, these are what stop a difference being invisible.
+
+They were written after finding two, neither of which was drift in the sense of a value slowly diverging:
+
+- **Seven components were never covered at all.** `OverflowMenu`, `Tooltip`, `Skeleton`, `Monogram`, `MarkdownInline`, `MenuIcon` and the mermaid block named thirty-two classes between them that only `theme.css` defined. Inside the app they looked right — the one environment they are promised for is the one nobody rendered them in. The reference extension did not catch it either, because it happens to import only from `primitives`, which was the covered half.
+- **Eighteen of fifty token fallbacks were a different value from the theme they claim to copy.** Radii at 6/10/14 against the app's 8/12/18, every semantic colour a different hue, a different UI font stack. Standalone is how an extension author develops before they ever mount the thing, so that is what they were tuning against.
+
+`btn-warn` — a typed `variant="warn"` rendering as a plain button because the class existed in the app and not here — is the case the scanner cannot see by reading source, since no line contains the string `btn-warn`; it only exists as `btn-${variant}` at runtime. Those names are enumerated explicitly in the test for that reason.
+
+Treat a difference as a bug and report it.
 
 ## The spacing scale
 

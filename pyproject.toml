@@ -109,6 +109,11 @@ dev = [
     "ruff~=0.15.6",
     "mypy~=1.19.1",
     "python-dotenv~=1.2.2",
+    # Validates ``docs/extension-manifest.schema.json`` and the example
+    # manifests against it. It was already importable here as a
+    # transitive dependency of something else, which is not a thing a
+    # CI gate may rely on.
+    "jsonschema~=4.26.0",
 ]
 mcp = [
     # ``~=1.28.1`` capped CVE-2026-59951, whose fix is 1.30.0. This pin

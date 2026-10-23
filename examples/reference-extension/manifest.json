@@ -1,27 +1,60 @@
 {
+  "$schema": "https://igni.sh/schema/extension-manifest-1.json",
+
   "id": "acme.scanner",
   "version": "1.0.0",
   "contract": ">=1.0 <2",
+
+  "name": "Compliance Scanner",
+  "description": "Finds policy violations in a repository and records who accepted which.",
+  "vendor": "Acme Corp <platform@acme.test>",
 
   "trust": "partner",
   "signature": "<detached, verified against a key this deployment trusts>",
 
   "sidecar": {
+    "image": "acme__scanner:1.0.0",
     "mcp": { "transport": "stdio" },
-    "requires": [{ "capability": "graph-db", "constraint": ">=5", "mode": "shared" }]
+    "requires": [
+      { "capability": "graph-db", "constraint": ">=5", "mode": "shared" }
+    ]
   },
 
   "permissions": {
     "workspace": "read",
+    "workspacePaths": ["src/**", "*.toml"],
     "egress": [],
     "secrets": [],
+    "tools": ["acme.scanner.list_violations", "acme.scanner.explain_rule"],
     "rpc": ["ext.acme.scanner.*"]
   },
 
   "contributes": {
     "pages": [{ "kind": "acme.scan", "label": "Compliance", "sidebar": true }],
-    "promptFragments": [{ "anchor": "ACME_POLICY_SUMMARY" }],
+    "menu": [
+      {
+        "label": "Compliance",
+        "command": "/compliance",
+        "desc": "policy violations"
+      }
+    ],
+    "commands": [{ "command": "/compliance", "desc": "policy violations" }],
+    "promptFragments": [
+      {
+        "anchor": "ACME_POLICY_SUMMARY",
+        "source": "tool",
+        "from": "acme.scanner.explain_rule"
+      }
+    ],
     "promptVariants": ["acme-scan"],
-    "commands": [{ "label": "Compliance", "command": "/compliance", "desc": "policy violations" }]
+    "settings": [
+      {
+        "key": "failOn",
+        "type": "enum",
+        "label": "Fail a scan at or above",
+        "default": "high",
+        "options": ["critical", "high", "medium", "low"]
+      }
+    ]
   }
 }
