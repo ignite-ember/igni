@@ -82,6 +82,19 @@ export function Input({ className, ...rest }: InputProps) {
 
 export type Tone = "neutral" | "success" | "warning" | "danger";
 
+/**
+ * A tag the reader can scan past.
+ *
+ * Bordered, pill-shaped, muted, `--text-sm`. Use it for a filter, a
+ * label, a piece of metadata — something that describes the row it
+ * sits on.
+ *
+ * `Chip` and `Badge` take the same props and are not
+ * interchangeable. If the thing you are showing is a *state* that
+ * changes — ready, failed, three unread — it is a {@link Badge},
+ * which is filled by tone and bold so it is noticed. If it is a fact
+ * about the thing, it is a `Chip`.
+ */
 export interface ChipProps extends HTMLAttributes<HTMLSpanElement> {
   tone?: Tone;
 }
@@ -90,6 +103,17 @@ export function Chip({ tone = "neutral", className, ...rest }: ChipProps) {
   return <span {...rest} data-tone={tone} className={cx("chip", className)} />;
 }
 
+/**
+ * A state the reader is meant to notice.
+ *
+ * Filled by tone, bold, `--text-xs`, no border. See {@link ChipProps}
+ * for which of the two to reach for.
+ *
+ * The tone is colour, and colour alone is not a message: put the
+ * state in the text too. "Failed" in a danger badge survives being
+ * read aloud and being looked at by somebody who cannot tell it from
+ * the success one; an empty red badge does not.
+ */
 export interface BadgeProps extends HTMLAttributes<HTMLSpanElement> {
   tone?: Tone;
 }
@@ -161,12 +185,12 @@ export function Table({
  * panel wastes the one moment it had the reader's attention. The
  * `action` slot is a nudge to say what to do next.
  */
-export function Empty({
-  children,
-  action,
-  className,
-  ...rest
-}: HTMLAttributes<HTMLDivElement> & { action?: ReactNode }) {
+export interface EmptyProps extends HTMLAttributes<HTMLDivElement> {
+  /** A button, usually: the one thing to do about being empty. */
+  action?: ReactNode;
+}
+
+export function Empty({ children, action, className, ...rest }: EmptyProps) {
   return (
     <div {...rest} className={cx("ui-empty", className)}>
       {children}
@@ -419,6 +443,14 @@ export function Switch({
  * `error` is set it is wired to the control through
  * `aria-describedby`, so it is announced rather than merely shown.
  */
+export interface FieldProps extends HTMLAttributes<HTMLDivElement> {
+  label: ReactNode;
+  hint?: ReactNode;
+  error?: ReactNode;
+  /** The id of the control, so the label points at it. */
+  htmlFor?: string;
+}
+
 export function Field({
   label,
   hint,
@@ -427,13 +459,7 @@ export function Field({
   children,
   className,
   ...rest
-}: HTMLAttributes<HTMLDivElement> & {
-  label: ReactNode;
-  hint?: ReactNode;
-  error?: ReactNode;
-  /** The id of the control, so the label points at it. */
-  htmlFor?: string;
-}) {
+}: FieldProps) {
   const describedBy = htmlFor ? `${htmlFor}-note` : undefined;
   // Cloned, not merely rendered beside. The first version put the id
   // on the note and stopped, while the docstring claimed the control
@@ -477,11 +503,12 @@ export function Field({
  * to say, so a screen reader got silence while a sighted user
  * watched something spin.
  */
-export function Spinner({
-  label,
-  className,
-  ...rest
-}: HTMLAttributes<HTMLSpanElement> & { label: string }) {
+export interface SpinnerProps extends HTMLAttributes<HTMLSpanElement> {
+  /** Required: a spinner with no name is a live region with nothing in it. */
+  label: string;
+}
+
+export function Spinner({ label, className, ...rest }: SpinnerProps) {
   return (
     <span
       {...rest}
@@ -634,6 +661,15 @@ export function Tabs({
  * strip announced that it controlled something and there was nothing
  * for it to control.
  */
+export interface TabPanelProps extends HTMLAttributes<HTMLDivElement> {
+  /** The id prefix shared with its {@link Tabs}, so the two agree. */
+  base: string;
+  /** Which tab this panel belongs to. */
+  id: string;
+  /** Which tab is showing. The panel renders only when they match. */
+  active: string;
+}
+
 export function TabPanel({
   base,
   id,
@@ -641,11 +677,7 @@ export function TabPanel({
   children,
   className,
   ...rest
-}: HTMLAttributes<HTMLDivElement> & {
-  base: string;
-  id: string;
-  active: string;
-}) {
+}: TabPanelProps) {
   if (id !== active) return null;
   return (
     <div
@@ -695,13 +727,14 @@ export function Heading({
   );
 }
 
-export function Text({
-  tone = "default",
-  className,
-  ...rest
-}: HTMLAttributes<HTMLParagraphElement> & {
-  tone?: "default" | "muted" | "faint";
-}) {
+/** How loud. Not {@link Tone}: this is emphasis, not status. */
+export type TextTone = "default" | "muted" | "faint";
+
+export interface TextProps extends HTMLAttributes<HTMLParagraphElement> {
+  tone?: TextTone;
+}
+
+export function Text({ tone = "default", className, ...rest }: TextProps) {
   return <p {...rest} data-tone={tone} className={cx("ui-text", className)} />;
 }
 
