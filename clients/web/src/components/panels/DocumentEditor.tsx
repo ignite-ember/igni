@@ -40,7 +40,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import type { Editor } from "@tiptap/core";
 
 import { MenuIcon } from "@igni/ui-react";
-import { initialsOf } from "@igni/ui-react";
+import { initialsOf } from "../../ui-react/Monogram";
 import { Tooltip } from "@igni/ui-react";
 import { DOCUMENT_EXTENSIONS, markdownOf, preserveWrapping } from "./documentMarkdown";
 import { SELECTION_TOOLS, TOOL_GROUPS, type EditorTool } from "./editorTools";

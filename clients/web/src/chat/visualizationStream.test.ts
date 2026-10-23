@@ -12,7 +12,7 @@
  */
 
 import { describe, expect, it } from "vitest";
-import type { ChatItem } from "../chat/model";
+import type { ChatItem } from "./model";
 import {
   applyVisualizationDelta,
   parsePartialSpec,

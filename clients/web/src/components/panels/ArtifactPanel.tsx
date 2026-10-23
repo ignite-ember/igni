@@ -10,7 +10,7 @@ import { ArtifactCompare } from "./ArtifactCompare";
 import { MenuIcon } from "@igni/ui-react";
 import { DocumentPeople } from "./DocumentPeople";
 import { LockedDocument, type LockedState } from "./LockedDocument";
-import { hexOf } from "@igni/ui-react";
+import { hexOf } from "../../ui-react/Monogram";
 import { useDocumentRoom } from "./useDocumentRoom";
 import { useSharedDraft } from "./useSharedDraft";
 import { ArtifactStaleReview } from "./ArtifactStaleReview";
@@ -26,7 +26,8 @@ import { ExportBanner, type ExportOutcome } from "./ExportBanner";
 import { ProvenanceView, type CandidateOverlap, type Provenance } from "./ProvenanceView";
 import { DocumentCitations } from "./DocumentCitations";
 import { DocumentEditor } from "./DocumentEditor";
-import { MermaidBlock, SpecBlock, fenceInfo } from "@igni/ui-react";
+import { MermaidBlock, fenceInfo } from "@igni/ui-react";
+import { SpecBlock } from "../SpecBlock";
 import { ArtifactTreeView } from "./ArtifactTreeView";
 
 /** Where the reader's preference about the comment rail is kept. */

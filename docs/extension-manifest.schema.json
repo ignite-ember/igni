@@ -1,0 +1,311 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://igni.sh/schema/extension-manifest-1.json",
+  "title": "igni extension manifest",
+  "description": "Everything an extension declares about itself. One manifest per extension; packaging decides which of `sidecar` and `endpoint` applies. The contract this describes is docs/EXTENSIBILITY.md — read §2 for the reasoning and this file for the shape. Point your editor at it with \"$schema\": \"https://igni.sh/schema/extension-manifest-1.json\" and it will complete and check as you type.",
+  "type": "object",
+  "required": ["id", "version", "contract", "trust"],
+  "additionalProperties": false,
+
+  "properties": {
+    "$schema": { "type": "string" },
+
+    "id": {
+      "type": "string",
+      "description": "Reverse-DNS, immutable, and the namespace for everything this extension contributes. Changing it is a new extension, not a new version.",
+      "pattern": "^[a-z][a-z0-9]*(\\.[a-z][a-z0-9-]*)+$",
+      "examples": ["acme.scanner", "com.acme.ledgersync"]
+    },
+
+    "version": {
+      "type": "string",
+      "description": "The extension's own version. Semver. Independent of the contract version and of igni's.",
+      "pattern": "^\\d+\\.\\d+\\.\\d+(-[0-9A-Za-z.-]+)?$"
+    },
+
+    "contract": {
+      "type": "string",
+      "description": "The range of contract versions this extension works against — the only compatibility axis. Never name an igni version. A deployment advertises one contract version, the lower of what its backend and its installed client implement; `igni ext doctor` prints it.",
+      "examples": [">=1.0 <2"]
+    },
+
+    "name": {
+      "type": "string",
+      "description": "What an administrator sees in an install list. Defaults to `id` when absent, which reads badly.",
+      "maxLength": 60
+    },
+
+    "description": {
+      "type": "string",
+      "description": "One sentence, for the same install list.",
+      "maxLength": 200
+    },
+
+    "vendor": {
+      "type": "string",
+      "description": "Who to contact. Shown beside the trust tier, because 'partner' only means something if the administrator knows which partner."
+    },
+
+    "trust": {
+      "enum": ["first-party", "partner", "unsigned"],
+      "description": "first-party: signed by igni's key, compiled into the base. partner: signed by a key this deployment's administrator added to its trust store — the SI's, or the customer's own. unsigned: development only, never production, and the install refuses unless the deployment has explicitly allowed it."
+    },
+
+    "signature": {
+      "type": "string",
+      "description": "Detached signature over the bundle, verified locally against a key this deployment trusts. No network, so it survives an air-gap. Required unless `trust` is `unsigned`."
+    },
+
+    "sidecar": {
+      "type": "object",
+      "description": "Packaging A: a signed image igni installs and supervises. Single-user backends only — a sidecar is one process, so on a shared backend it would be one instance shared by every principal on it.",
+      "required": ["image", "mcp"],
+      "additionalProperties": false,
+      "properties": {
+        "image": {
+          "type": "string",
+          "description": "The container image, with a tag. Present in the bundle; never pulled at install, because an air-gapped deployment has no registry to pull from.",
+          "examples": ["acme__ledger-sync:1.0.0"]
+        },
+        "mcp": {
+          "type": "object",
+          "required": ["transport"],
+          "additionalProperties": false,
+          "properties": {
+            "transport": {
+              "enum": ["stdio"],
+              "description": "A sidecar speaks MCP over stdio. An endpoint speaks it over SSE; that is the difference between the two packagings, not a choice you make here."
+            }
+          }
+        },
+        "requires": {
+          "type": "array",
+          "description": "Infrastructure igni resolves on this extension's behalf, because there is no vendor service to run it. Resolved offline: the resolver binds to a running instance or provisions one from the bundle, and an unsatisfiable requirement fails at install naming the fix.",
+          "items": {
+            "type": "object",
+            "required": ["capability", "constraint"],
+            "additionalProperties": false,
+            "properties": {
+              "capability": {
+                "enum": ["graph-db", "vector-store", "relational-db", "object-store"],
+                "description": "A kind, never a product. A regulated customer often has a sanctioned Postgres you must use, and a manifest naming 'postgres' cannot express 'or whatever they have'."
+              },
+              "constraint": {
+                "type": "string",
+                "description": "A semver range over the major version of whatever satisfies the capability. `>=14` against a relational-db means Postgres 14 or later if that is what the deployment has.",
+                "examples": [">=5", ">=14"]
+              },
+              "mode": {
+                "enum": ["shared", "dedicated", "bind-only"],
+                "default": "shared",
+                "description": "shared: use the deployment's instance, provisioning one if absent. dedicated: always provision a separate instance. bind-only: use an existing instance and fail at install if there is none — which is what a customer's sanctioned database requires, and what you want when provisioning would breach their change control."
+              }
+            }
+          }
+        }
+      }
+    },
+
+    "endpoint": {
+      "type": "object",
+      "description": "Packaging B: a service someone else runs, registered rather than installed. Its availability, scaling and failover are its own. Always inside the customer's network — igni hosts nothing.",
+      "required": ["url"],
+      "additionalProperties": false,
+      "properties": {
+        "url": {
+          "type": "string",
+          "format": "uri",
+          "description": "Where its MCP endpoint answers, over SSE.",
+          "examples": ["https://artifacts.internal/mcp"]
+        },
+        "auth": {
+          "type": "object",
+          "description": "How igni authenticates to it.",
+          "required": ["kind"],
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "enum": ["none", "bearer", "mtls"],
+              "description": "none is only defensible on a network segment the customer treats as trusted."
+            },
+            "secret": {
+              "type": "string",
+              "description": "The name of a secret grant that resolves to the credential. A name, never the credential itself."
+            }
+          }
+        }
+      }
+    },
+
+    "permissions": {
+      "type": "object",
+      "description": "Declared here, granted by an administrator, enforced by the base, denied by default. An extension that asks for more on upgrade stays at its old grants until an administrator accepts — permission drift is how extension ecosystems rot.",
+      "additionalProperties": false,
+      "properties": {
+        "workspace": {
+          "enum": ["none", "read", "write"],
+          "default": "none",
+          "description": "Access to the user's project directory."
+        },
+        "workspacePaths": {
+          "type": "array",
+          "description": "Globs the workspace grant is scoped to, relative to the project root. Absent means the whole project, which is rarely what you need.",
+          "items": { "type": "string" },
+          "examples": [["src/**", "*.toml"]]
+        },
+        "egress": {
+          "type": "array",
+          "description": "Hosts this extension may reach, as `host` or `host:port`. Empty by default, and empty is the right answer for most extensions. Undeclared egress is a contract violation rather than a bug: it is the one failure that costs a customer their accreditation.",
+          "items": { "type": "string", "pattern": "^[a-z0-9.-]+(:\\d{1,5})?$" },
+          "default": [],
+          "examples": [["ledger.internal", "vault.internal:8200"]]
+        },
+        "secrets": {
+          "type": "array",
+          "description": "Named grants resolved by the deployment's broker. Your code receives a handle, never a value.",
+          "items": { "type": "string" },
+          "default": []
+        },
+        "tools": {
+          "type": "array",
+          "description": "MCP tool names this extension may register with the agent. Namespaced by `id`, so a tool cannot shadow a base tool or another extension's. This is about the *agent's* tools — see `rpc` for what the extension's own UI may call.",
+          "items": { "type": "string" },
+          "examples": [["acme.ledgersync.lookup_account"]]
+        },
+        "rpc": {
+          "type": "array",
+          "description": "Backend RPC methods this extension's UI may call over the bridge. Exact names, or a `*`-suffixed prefix — no other patterns, because this list is read by whoever approves the install. An extension's own service answers under `ext.<id>.*`; naming a base method here requests access to igni's own data.",
+          "items": { "type": "string", "pattern": "^[a-z0-9_.]+\\*?$" },
+          "default": [],
+          "examples": [["ext.acme.scanner.*", "codeindex_status"]]
+        }
+      }
+    },
+
+    "contributes": {
+      "type": "object",
+      "description": "What this extension adds beyond tools. MCP carries tools; none of the below travels over it.",
+      "additionalProperties": false,
+      "properties": {
+        "pages": {
+          "type": "array",
+          "description": "Surfaces the extension renders, in its own frame. A headless extension contributes none, which is normal.",
+          "items": {
+            "type": "object",
+            "required": ["kind", "label"],
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "type": "string",
+                "description": "Namespaced by `id`. A collision with a base page or another extension's is a validation error at install, not a surprise at runtime.",
+                "pattern": "^[a-z][a-z0-9]*(\\.[a-z][a-z0-9-]*)+$"
+              },
+              "label": { "type": "string", "maxLength": 24 },
+              "sidebar": {
+                "type": "boolean",
+                "default": false,
+                "description": "Whether it also gets a left-sidebar link. igni's own links keep their order and come first."
+              },
+              "entry": {
+                "type": "string",
+                "default": "index.html",
+                "description": "The page igni frames, relative to the bundle's `ui/` directory."
+              }
+            }
+          }
+        },
+        "menu": {
+          "type": "array",
+          "description": "Entries in the header tools menu. Named `menu` rather than `tools`: `permissions.tools` already means MCP tool names, and one word meaning two things in one file is how a manifest gets written wrong.",
+          "items": {
+            "type": "object",
+            "required": ["label", "command", "desc"],
+            "additionalProperties": false,
+            "properties": {
+              "label": { "type": "string", "maxLength": 24 },
+              "command": { "type": "string", "pattern": "^/[a-z][a-z0-9-]*$" },
+              "desc": { "type": "string", "maxLength": 60 }
+            }
+          }
+        },
+        "commands": {
+          "type": "array",
+          "description": "Slash commands the extension answers.",
+          "items": {
+            "type": "object",
+            "required": ["command", "desc"],
+            "additionalProperties": false,
+            "properties": {
+              "command": { "type": "string", "pattern": "^/[a-z][a-z0-9-]*$" },
+              "desc": { "type": "string", "maxLength": 60 }
+            }
+          }
+        },
+        "promptFragments": {
+          "type": "array",
+          "description": "Text this extension supplies at a named anchor in a system prompt. The anchor must already appear in a prompt that is in scope — base prompt text is not in the floor, so in practice an extension's anchors land in prompts it also contributes through `promptVariants`.",
+          "items": {
+            "type": "object",
+            "required": ["anchor", "source"],
+            "additionalProperties": false,
+            "properties": {
+              "anchor": {
+                "type": "string",
+                "description": "Upper snake case, starting with a letter — the spelling `{{THIS}}` takes inside a prompt. Namespaced by convention: prefix it with your extension's short name.",
+                "pattern": "^[A-Z][A-Z0-9_]*$"
+              },
+              "source": {
+                "enum": ["tool", "file"],
+                "description": "Where the text comes from. `tool`: igni calls the named MCP tool and uses what it returns, so the text can change as the extension's data does. `file`: a static file in the bundle. Required, because a fragment that declares only an anchor has no text and nothing to substitute."
+              },
+              "from": {
+                "type": "string",
+                "description": "The tool name, or the bundle-relative file path, depending on `source`."
+              }
+            }
+          }
+        },
+        "promptVariants": {
+          "type": "array",
+          "description": "Variant names this extension makes live while it is READY. An agent file named `<agent>.<variant>.md` takes over from the plain `<agent>.md` whenever the variant is live. Namespace these: a bare word can collide with an agent whose own name contains a dot.",
+          "items": { "type": "string", "pattern": "^[a-z][a-z0-9-]*$" }
+        },
+        "settings": {
+          "type": "array",
+          "description": "Configuration the host renders into its own settings surface. Values are stored per deployment and reach the extension through its launch params.",
+          "items": {
+            "type": "object",
+            "required": ["key", "type", "label"],
+            "additionalProperties": false,
+            "properties": {
+              "key": { "type": "string", "pattern": "^[a-z][a-zA-Z0-9_]*$" },
+              "type": { "enum": ["string", "number", "boolean", "enum"] },
+              "label": { "type": "string" },
+              "default": {},
+              "options": {
+                "type": "array",
+                "items": { "type": "string" },
+                "description": "Required when `type` is `enum`."
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+
+  "oneOf": [
+    { "required": ["sidecar"], "not": { "required": ["endpoint"] } },
+    { "required": ["endpoint"], "not": { "required": ["sidecar"] } }
+  ],
+
+  "allOf": [
+    {
+      "if": { "properties": { "trust": { "enum": ["first-party", "partner"] } } },
+      "then": {
+        "required": ["signature"],
+        "description": "Anything but a development build carries a signature."
+      }
+    }
+  ]
+}

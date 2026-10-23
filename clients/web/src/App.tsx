@@ -26,7 +26,7 @@ import {
   type ChatItem,
   type OrchestrateEvent,
 } from "./chat/model";
-import { applyVisualizationDelta } from "@igni/ui-react";
+import { applyVisualizationDelta } from "./chat/visualizationStream";
 import { nextObserverBusyState } from "./chat/observerBusy";
 import { planSessionBinding } from "./chat/sessionBinding";
 import {

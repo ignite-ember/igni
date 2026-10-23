@@ -14,8 +14,8 @@
 
 import type { Spec } from "@json-render/core";
 import { parse as parsePartialJson, Allow } from "partial-json";
-import type { ChatItem } from "../chat/model";
-import { visualizationItem } from "../chat/model";
+import type { ChatItem } from "./model";
+import { visualizationItem } from "./model";
 
 export interface VisualizationDeltaEvent {
   spec_id: string;

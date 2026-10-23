@@ -1,7 +1,21 @@
 {
   "compilerOptions": {
     "baseUrl": ".",
-    "paths": { "@igni/ui-react": ["./src/ui-react/index.ts"] },
+    "paths": {
+      "@igni/ui-react": ["./src/ui-react/index.ts"],
+      "@igni/extension-bridge": ["./src/extensions/bridge.ts"],
+      "@igni/ui-css": ["../ui/igni-ui.css"],
+      /*
+       * ``examples/`` sits outside this package, so Node resolution
+       * walking up from it never reaches these. An extension author
+       * has them in their own node_modules; here they have to be
+       * pointed at, or the example cannot be type-checked at all.
+       */
+      "react": ["./node_modules/@types/react"],
+      "react/*": ["./node_modules/@types/react/*"],
+      "react-dom": ["./node_modules/@types/react-dom"],
+      "react-dom/*": ["./node_modules/@types/react-dom/*"]
+    },
     "target": "ES2022",
     "lib": ["ES2022", "DOM", "DOM.Iterable"],
     "module": "ESNext",
@@ -30,5 +44,12 @@
    * projects instead. Not worth the restructuring here while this
    * client's config is one flat project.
    */
-  "include": ["src", "e2e"]
+  /*
+   * ``../../examples`` for the same reason ``e2e`` is here, and it had
+   * already happened again: the reference extension shipped with a
+   * docstring claiming "this compiles", against a file no compiler had
+   * ever read. It imported an alias that did not exist and a stylesheet
+   * that was not there, and nothing said so.
+   */
+  "include": ["src", "e2e", "../../examples"]
 }

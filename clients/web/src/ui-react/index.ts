@@ -33,6 +33,35 @@
  * breaking change under EXTENSIBILITY.md §8. Anything in the app
  * that is not exported here stays ours to change — which is why this
  * file is short and should be argued over before it grows.
+ *
+ * ## The two rules an export has to pass
+ *
+ * **It must render outside this repository.** A component whose CSS
+ * lives only in ``theme.css`` is unstyled in the one place it is
+ * promised for, because an extension runs on its own origin under
+ * ``default-src 'self'`` and cannot link ours. ``styled.test.ts``
+ * checks every class named here against ``clients/ui/igni-ui.css``
+ * and fails on the first one that is missing. This was not a
+ * hypothetical: seven components shipped under the floor naming
+ * thirty-two classes that no published stylesheet defined, and the
+ * reference extension did not catch it because it happens to import
+ * only from ``primitives``, which is the half that was covered.
+ *
+ * **It must not drag the app behind it.** ``boundary.test.ts``
+ * fails on an import — static or dynamic — that leaves this
+ * directory for anywhere but ``react`` and the published
+ * dependencies. ``SpecBlock`` left the floor for this reason: it
+ * loaded ``../components/JsonRenderView``, a path that does not
+ * exist in a published package, through a dynamic import that no
+ * compiler would flag. ``visualizationStream`` left for the same
+ * reason — it types its return as the app's ``ChatItem``, which
+ * would have put the chat model under the floor by transitivity.
+ *
+ * Helpers that only their own tests imported — ``closeOpenMarks``,
+ * ``dropEchoedTitle``, ``hexOf``, ``hueOf``, ``initialsOf`` — are
+ * gone from here too. They were exported to be tested, and tests in
+ * this repository can import them from their own module. Putting
+ * them here promised them to extensions for two releases.
  */
 
 export {
@@ -79,19 +108,10 @@ export {
   Toolbar,
 } from "./primitives";
 
-export {
-  MarkdownInline,
-  closeOpenMarks,
-  dropEchoedTitle,
-} from "./MarkdownInline";
+export { MarkdownInline } from "./MarkdownInline";
 export { MenuIcon, type MenuIconName, type MenuIconProps } from "./MenuIcon";
-export { Monogram, hexOf, hueOf, initialsOf } from "./Monogram";
+export { Monogram } from "./Monogram";
 export { OverflowMenu, type OverflowAction } from "./OverflowMenu";
-export { MermaidBlock, SpecBlock, fenceInfo, loadMermaid } from "./RichFences";
+export { MermaidBlock, fenceInfo, loadMermaid } from "./Mermaid";
 export { Skeleton } from "./Skeleton";
 export { Tooltip, type TooltipProps } from "./Tooltip";
-export {
-  applyVisualizationDelta,
-  parsePartialSpec,
-  type VisualizationDeltaEvent,
-} from "./visualizationStream";

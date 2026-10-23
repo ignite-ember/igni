@@ -1,24 +1,32 @@
 /**
- * Fenced blocks that are more than code.
+ * Mermaid diagrams, and the helper that spots a fenced block.
  *
- * ```mermaid``` becomes a diagram and ```json-render``` becomes a
- * rendered view, in a document exactly as they already do in chat.
+ * ```mermaid``` becomes a diagram, in a document exactly as it
+ * already does in chat.
  *
  * **A fence, deliberately.** This is what lets a document carry a
- * diagram or a chart while staying markdown: the source is a code
- * block, so it diffs a line at a time, chunks for search, survives
- * the editor's round trip untouched, and reads as its own source in
- * any other markdown tool. The alternative — embedding HTML, or a
- * bespoke node type — would cost every one of those.
+ * diagram while staying markdown: the source is a code block, so it
+ * diffs a line at a time, chunks for search, survives the editor's
+ * round trip untouched, and reads as its own source in any other
+ * markdown tool. The alternative — embedding HTML, or a bespoke
+ * node type — would cost every one of those.
  *
  * Shared by the chat and the document view rather than copied.
  * There was one mermaid renderer living inside ``ChatItems`` and a
  * document could not reach it, which is the usual way two renderers
  * of the same thing start disagreeing about what it looks like.
+ *
+ * **`mermaid` is a peer dependency**, loaded on demand. An
+ * extension that never renders a diagram never downloads it; one
+ * that does must have it installed. This is the only export under
+ * the floor that asks anything of your package.json.
+ *
+ * ``SpecBlock`` used to live here and does not any more: it reaches
+ * into the app for the ``json-render`` renderer, so it could not be
+ * published without publishing that too. It is app code now.
  */
-import { parsePartialSpec } from "./visualizationStream";
 import type { ReactNode } from "react";
-import { isValidElement, useEffect, useMemo, useRef, useState } from "react";
+import { isValidElement, useEffect, useRef, useState } from "react";
 
 type MermaidLib = {
   initialize: (opts: Record<string, unknown>) => void;
@@ -137,59 +145,6 @@ function CopySource({ source }: { source: string }) {
     >
       {copied ? "✓" : "⧉"}
     </button>
-  );
-}
-
-/**
- * A ``json-render`` spec, drawn.
- *
- * Checked before it is drawn, with the same guard the streaming
- * path uses: the renderer throws when a spec's root or children do
- * not resolve, and a throw inside a document takes the page with
- * it. A document can arrive from a colleague, so "this spec is
- * well-formed" is not an assumption available here.
- */
-export function SpecBlock({ source }: { source: string }) {
-  const spec = useMemo(() => parsePartialSpec(source), [source]);
-  const [View, setView] = useState<null | React.ComponentType<{
-    spec: unknown;
-  }>>(null);
-
-  // Loaded on demand, like mermaid: a document with no view in it
-  // should not pay for the renderer.
-  useEffect(() => {
-    if (!spec) return;
-    let cancelled = false;
-    void import("../components/JsonRenderView").then((m) => {
-      if (!cancelled) {
-        setView(
-          () =>
-            m.JsonRenderView as unknown as React.ComponentType<{
-              spec: unknown;
-            }>,
-        );
-      }
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, [spec]);
-
-  if (!spec) {
-    return (
-      <pre
-        className="mermaid-error"
-        title="This is not a renderable json-render spec"
-      >
-        {source}
-      </pre>
-    );
-  }
-  if (!View) return <pre className="doc-spec-loading">{source}</pre>;
-  return (
-    <div className="doc-spec">
-      <View spec={spec} />
-    </div>
   );
 }
 

@@ -18,6 +18,8 @@
  */
 
 import { describe, expect, it } from "vitest";
+
+import { withoutComments } from "./test-utils/sourceScan";
 import { readdirSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -117,8 +119,9 @@ describe("the e2e suite cannot skip quietly", () => {
     // a listener typed against the wrong event. A spec that skips *and*
     // is unchecked is invisible twice over.
     const cfg = readFileSync(join(E2E_DIR, "..", "tsconfig.json"), "utf8");
-    const include = JSON.parse(cfg.replace(/\/\*[\s\S]*?\*\//g, ""))
-      .include as string[];
+    const include = (
+      JSON.parse(withoutComments(cfg)) as { include: string[] }
+    ).include;
     expect(include).toContain("e2e");
     expect(include).toContain("src");
   });

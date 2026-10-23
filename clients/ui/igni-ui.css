@@ -15,13 +15,20 @@
  * Class names match igni's own, and that is the point: a control
  * here is the control there. When one changes, both change.
  *
- * What this covers is what igni has as a shared control today —
- * buttons, chips, dialogs, panels, fields. It does not yet cover
- * tables, badges, empty states or spinners, because igni does not
- * have those as shared controls either: they exist eleven times over
- * inside feature stylesheets. Those are being generalised; until
- * they are, writing your own is the honest answer, and these tokens
- * are what to write it against.
+ * What this covers is every class a `@igni/ui-react` component can
+ * render — checked, not asserted. `ui-react/styled.test.ts` reads
+ * each component's `className=` expressions and fails on the first
+ * name this file does not define, and the fallback values below are
+ * checked against `theme.css` rather than copied by hand. Both exist
+ * because both had already gone wrong: seven components named
+ * thirty-two classes nothing here defined, and eighteen of these
+ * fallbacks were a different value from the theme they claim to
+ * match.
+ *
+ * What it does not cover is layout. There is no page shell, no
+ * split pane, no scroll container: those are shapes, and a shape is
+ * cheap to write and expensive to promise. Write them yourself,
+ * against the tokens below.
  */
 
 /* ── The tokens, as fallbacks ──────────────────────────────────────
@@ -36,16 +43,16 @@
 
   --fg: #f0efea;
   --fg-muted: #b8b5ad;
-  --fg-faint: #8c8a83;
+  --fg-faint: #a5a49e;
 
-  --border: #45453f;
-  --border-soft: #3a3a35;
+  --border: #4a4a45;
+  --border-soft: #3d3d39;
 
-  --success: #4ade80;
-  --warning: #fbbf24;
-  --danger: #f87171;
-  --danger-text: #fca5a5;
-  --accent-blue: #60a5fa;
+  --success: #4cb05c;
+  --warning: #d9a644;
+  --danger: #ef6a5a;
+  --danger-text: #f28376;
+  --accent-blue: #6aa3f7;
 
   --ember-orange: #f97316;
   --ember-red: #dc2626;
@@ -63,16 +70,16 @@
   --space-12: 24px;
   --space-16: 32px;
 
-  --accent-blue-text: #9ec5fe;
-  --accent-green-text: #86efac;
-  --accent-orange-text: #fdba74;
-  --accent-red-text: #fca5a5;
+  --accent-blue-text: #8eb9f9;
+  --accent-green-text: #7cc57f;
+  --accent-orange-text: #fb9c5a;
+  --accent-red-text: #f09393;
   --ember-orange-hover: #fb923c;
-  --shadow-pop: 0 10px 30px rgba(0, 0, 0, 0.35);
+  --shadow-pop: 0 12px 40px rgba(0, 0, 0, 0.45);
 
-  --radius-sm: 6px;
-  --radius: 10px;
-  --radius-lg: 14px;
+  --radius-sm: 8px;
+  --radius: 12px;
+  --radius-lg: 18px;
   --radius-pill: 999px;
   --radius-circle: 50%;
 
@@ -85,9 +92,8 @@
   --text-2xl: 20px;
   --text-3xl: 30px;
   --text-4xl: 42px;
-  --font-ui:
-    ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
-  --font-mono: ui-monospace, SFMono-Regular, Menlo, monospace;
+  --font-ui: -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans", Helvetica, Arial, sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
 }
 
 /* ── The page ──────────────────────────────────────────────────── */
@@ -699,4 +705,455 @@
 .panel-input:focus-visible {
   outline: 2px solid var(--accent-blue);
   outline-offset: 2px;
+}
+
+/* ── The components that are not primitives ────────────────────────
+   `primitives.tsx` is a typed wrapper over classes above. The seven
+   components below are real behaviour — positioning, a focus loop, a
+   markdown pipeline — and they shipped under the compatibility floor
+   for a while with every rule they need living only in igni's own
+   `theme.css`. Inside the app they looked right. In an extension,
+   which is the one place they are promised, they rendered as
+   unstyled DOM.
+
+   `styled.test.ts` fails on the next class that goes missing. */
+
+/* ── Tooltip ───────────────────────────────────────────────────────
+   Portalled to `document.body`, positioned with an inline transform
+   rather than a class, so there is nothing here about above/below. */
+.tip-anchor {
+  /* `display: contents` — the wrapper must not become a box in a
+     flex row, or every toolbar it is used in silently gains a layer
+     of spacing nobody designed. */
+  display: contents;
+}
+
+.tip {
+  position: fixed;
+  z-index: 80;
+  max-width: 17rem;
+  padding: 5px 8px;
+  font-size: var(--text-sm, 12px);
+  line-height: 1.45;
+  color: var(--fg, #f0efea);
+  background: var(--bg-raised, #3a3a37);
+  border: 1px solid var(--border-soft, #3d3d39);
+  border-radius: var(--radius-sm, 8px);
+  box-shadow: 0 6px 18px rgb(0 0 0 / 30%);
+  /* It explains the thing under the pointer; it must never be the
+     thing under the pointer. */
+  pointer-events: none;
+}
+
+/* ── Monogram ──────────────────────────────────────────────────────
+   Two letters standing in for a face. The colour comes from the
+   component as an inline style, derived from the name — see
+   Monogram.tsx for why this is not an avatar. */
+.monogram {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  border-radius: var(--radius-circle, 50%);
+  color: #fff;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  line-height: 1;
+  user-select: none;
+}
+
+/* ── Skeleton ──────────────────────────────────────────────────────
+   A shape where content will be, shimmering so it reads as pending
+   rather than as an empty box somebody forgot to fill. */
+.skeleton {
+  display: block;
+  background: linear-gradient(
+    90deg,
+    var(--bg-raised, #3a3a37) 0%,
+    color-mix(
+        in srgb,
+        var(--bg-raised, #3a3a37) 60%,
+        var(--fg-faint, #a5a49e) 8%
+      )
+      50%,
+    var(--bg-raised, #3a3a37) 100%
+  );
+  background-size: 200% 100%;
+  border-radius: var(--radius-sm, 8px);
+  animation: skeleton-shimmer 1.4s linear infinite;
+}
+
+.skeleton-text {
+  height: 12px;
+  margin: 4px 0;
+}
+
+.skeleton-block {
+  height: 64px;
+  border-radius: var(--radius, 12px);
+}
+
+.skeleton-circle {
+  border-radius: var(--radius-circle, 50%);
+}
+
+@keyframes skeleton-shimmer {
+  0% {
+    background-position: 200% 0;
+  }
+
+  100% {
+    background-position: -200% 0;
+  }
+}
+
+/* A shimmer is decoration on a wait. Somebody who has asked not to
+   see motion has asked not to see this. */
+@media (prefers-reduced-motion: reduce) {
+  .skeleton {
+    animation: none;
+  }
+}
+
+/* ── MenuIcon ──────────────────────────────────────────────────────
+   A stroked 14px glyph that inherits its colour, so it darkens and
+   lightens with whatever row it sits in. */
+.menu-icon {
+  flex: none;
+  width: 14px;
+  height: 14px;
+  fill: none;
+  stroke: currentcolor;
+  stroke-width: 1.3;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  /* Quieter than the word it labels. The label says what the item
+     does; the icon is how it is found again. */
+  opacity: 0.72;
+}
+
+/* ── OverflowMenu ──────────────────────────────────────────────────
+   A row of secondary actions behind one button. Opens downward and
+   aligns to its right edge, because it hangs off the end of a header
+   row — aligning left would push it out past the window. */
+.overflow-menu {
+  position: relative;
+  display: inline-flex;
+}
+
+/* Catches the click that dismisses the menu. Fixed rather than
+   absolute so it covers the window and not just the header. Below
+   the list, above everything else. */
+.overflow-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 39;
+}
+
+.overflow-list {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  z-index: 40;
+  min-width: 180px;
+  display: flex;
+  flex-direction: column;
+  padding: 5px;
+  background: var(--bg-surface, #30302e);
+  border: 1px solid var(--border, #4a4a45);
+  border-radius: var(--radius, 12px);
+  box-shadow: var(--shadow-pop, 0 10px 30px rgb(0 0 0 / 35%));
+  animation: menu-pop 0.14s cubic-bezier(0.2, 0.9, 0.3, 1.1);
+  transform-origin: top right;
+}
+
+@keyframes menu-pop {
+  from {
+    opacity: 0;
+    transform: scale(0.97) translateY(4px);
+  }
+
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .overflow-list {
+    animation: none;
+  }
+}
+
+/* A `button` wearing `.popup-item`, which was written for divs:
+   these undo what the user agent gives buttons and nothing else, so
+   the items match every other menu in the app. */
+.overflow-item {
+  appearance: none;
+  border: 0;
+  background: none;
+  width: 100%;
+  text-align: left;
+  font: inherit;
+  font-size: var(--text-md, 13px);
+  color: var(--fg, #f0efea);
+  white-space: nowrap;
+}
+
+/* The row itself. Shared with the app's command palette, which is
+   why the name is `popup-item` and not `overflow-row`. */
+.popup-item {
+  display: flex;
+  gap: var(--space-5, 10px);
+  align-items: baseline;
+  padding: 7px 11px;
+  border-radius: var(--radius-sm, 8px);
+  cursor: pointer;
+  font-size: var(--text-md, 13px);
+}
+
+.popup-item.active,
+.popup-item:hover {
+  background: var(--bg-raised, #3a3a37);
+}
+
+/* The items are a flex row already for the chevron's sake; this is
+   what puts a gap between the glyph and the word. */
+.overflow-item,
+.popup-item {
+  gap: 9px;
+}
+
+.overflow-item:hover .menu-icon,
+.overflow-item:focus-visible .menu-icon,
+.popup-item:hover .menu-icon {
+  opacity: 1;
+}
+
+.overflow-item:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.overflow-item:disabled:hover {
+  background: none;
+}
+
+.overflow-item:disabled .menu-icon {
+  opacity: 0.4;
+}
+
+/* Focus is how this menu is operated from the keyboard, so it is
+   drawn, not left to the browser's default outline on a transparent
+   button. */
+.overflow-item:focus-visible {
+  outline: 2px solid var(--accent-blue, #6aa3f7);
+  outline-offset: -2px;
+}
+
+/* The toggle that is currently on. `.popup-item.active` already
+   tints the row; the tick is what says *which* state without relying
+   on the tint being noticed. */
+.overflow-item.active::after {
+  content: "✓";
+  margin-left: auto;
+  padding-left: var(--space-6, 12px);
+  color: var(--fg-muted, #b8b5ad);
+}
+
+.overflow-item-danger {
+  color: var(--danger-text, #f28376);
+}
+
+.overflow-sep {
+  height: 1px;
+  margin: 4px 6px;
+  background: var(--border-soft, #3d3d39);
+}
+
+/* A submenu inside the overflow menu. Three export formats behind
+   one Export item, so the menu stays a list of things you can do
+   rather than a list of every combination of them. */
+.overflow-sub-wrap {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+}
+
+/* The chevron sits at the far edge, away from the label, so the row
+   reads as "Export … onwards" rather than as a two-word label. */
+.overflow-item-parent .overflow-chevron {
+  margin-left: auto;
+  padding-left: var(--space-6, 12px);
+  color: var(--fg-faint, #a5a49e);
+}
+
+/* Opens leftward. The parent list is already pinned to the right
+   edge of whatever it hangs off, so a submenu flying out to the
+   right — the desktop default — would open past the window. */
+.overflow-sub {
+  top: -5px;
+  right: calc(100% + 4px);
+  left: auto;
+  transform-origin: top right;
+}
+
+/* Keep the parent row lit while its submenu is open: without it the
+   submenu looks unattached to anything. */
+.overflow-sub-wrap:hover > .overflow-item-parent,
+.overflow-item-parent[aria-expanded="true"] {
+  background: var(--bg-raised, #3a3a37);
+}
+
+/* A bordered square that holds one `MenuIcon`. Used for the actions
+   that sit beside a menu rather than inside it. */
+.kb-icon-btn {
+  appearance: none;
+  background: transparent;
+  border: 1px solid var(--border-soft, #3d3d39);
+  color: var(--fg-muted, #b8b5ad);
+  width: 23px;
+  height: 23px;
+  border-radius: var(--radius-sm, 8px);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  cursor: pointer;
+  transition:
+    border-color 0.12s,
+    color 0.12s,
+    background 0.12s;
+}
+
+.kb-icon-btn:hover:not(:disabled) {
+  color: var(--fg, #f0efea);
+  border-color: var(--border, #4a4a45);
+  background: var(--bg-raised, #3a3a37);
+}
+
+.kb-icon-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+/* ── MarkdownInline ────────────────────────────────────────────────
+   Rendered markdown flattened to one run of text, for previews.
+   Every rule here exists to keep the content *inline*: the row that
+   holds it clamps to two lines, and a single block-level child
+   inside that breaks the clamp — the preview grows to the document's
+   full height and the list stops being a list. */
+.mdi,
+.mdi > *,
+.mdi-block,
+.mdi-item,
+.mdi-cell {
+  display: inline;
+}
+
+/* Blocks become inline runs with a space after, so two paragraphs
+   read as two sentences rather than as one run-on word. */
+.mdi-block::after {
+  content: " ";
+}
+
+/* A heading keeps its emphasis and loses its size. At preview scale
+   a heading rendered as a heading is just large text in a small
+   row. */
+.mdi-heading {
+  font-weight: 600;
+  color: var(--fg, #f0efea);
+}
+
+.mdi-heading::after {
+  content: " · ";
+  font-weight: 400;
+  color: var(--fg-faint, #a5a49e);
+}
+
+/* List items separated rather than laid out: four bullets would be
+   four lines where the row has room for two. */
+.mdi-item + .mdi-item::before,
+.mdi-cell + .mdi-cell::before {
+  content: " · ";
+  color: var(--fg-faint, #a5a49e);
+}
+
+/* Code keeps its face, because the point of code in a preview is
+   that it is code — but not its block, which would break the
+   clamp. */
+.mdi-code {
+  display: inline;
+  padding: 0 3px;
+  border-radius: 3px;
+  background: var(--bg-raised, #3a3a37);
+  font-family: var(--font-mono, ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace);
+  font-size: 0.92em;
+  white-space: pre-wrap;
+}
+
+/* ── MermaidBlock ──────────────────────────────────────────────────
+   Mermaid produces its own SVG with embedded styles tuned for a
+   light background — we frame it with the standard inset surface and
+   clip overly wide diagrams with horizontal scroll.
+
+   `mermaid` is a peer dependency, imported on demand: a page with no
+   diagram in it never downloads the 700KB. */
+.mermaid-diagram {
+  position: relative;
+  margin: 12px 0;
+  padding: var(--space-8, 16px);
+  background: var(--bg-inset, #1f1f1d);
+  border: 1px solid var(--border-soft, #3d3d39);
+  border-radius: var(--radius, 12px);
+  display: flex;
+  justify-content: center;
+  overflow-x: auto;
+}
+
+.mermaid-diagram svg {
+  max-width: 100%;
+  height: auto;
+}
+
+/* Copies the fenced source, not the rendered SVG. */
+.diagram-copy {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--space-2, 4px) var(--space-3, 6px);
+  border: 1px solid var(--border-soft, #3d3d39);
+  border-radius: var(--radius-sm, 8px);
+  background: var(--bg-inset, #1f1f1d);
+  color: var(--fg-muted, #b8b5ad);
+  cursor: pointer;
+  z-index: 1;
+  transition:
+    background 0.15s,
+    color 0.15s,
+    border-color 0.15s;
+}
+
+.diagram-copy:hover,
+.diagram-copy:focus-visible {
+  color: var(--fg, #f0efea);
+  border-color: var(--border, #4a4a45);
+}
+
+/* The source, not a blank box. A diagram that does not parse is
+   usually a diagram somebody is halfway through writing, and hiding
+   what they wrote is the least helpful response to that. */
+.mermaid-error {
+  margin: 12px 0;
+  padding: var(--space-7, 14px);
+  background: var(--bg-inset, #1f1f1d);
+  border: 1px solid var(--danger, #ef6a5a);
+  border-radius: var(--radius, 12px);
+  overflow-x: auto;
+  font-family: var(--font-mono, ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace);
+  font-size: var(--text-md, 13px);
+  color: var(--fg, #f0efea);
 }

@@ -40,7 +40,6 @@ const PUBLISHED = [
   "Row",
   "Select",
   "Skeleton",
-  "SpecBlock",
   "Spinner",
   "Switch",
   "TabPanel",
@@ -50,15 +49,8 @@ const PUBLISHED = [
   "Textarea",
   "Toolbar",
   "Tooltip",
-  "applyVisualizationDelta",
-  "closeOpenMarks",
-  "dropEchoedTitle",
   "fenceInfo",
-  "hexOf",
-  "hueOf",
-  "initialsOf",
   "loadMermaid",
-  "parsePartialSpec",
 ];
 
 describe("the published surface", () => {

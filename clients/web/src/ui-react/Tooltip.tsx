@@ -164,7 +164,7 @@ export function Tooltip({ text, children }: TooltipProps) {
             ref={bubble}
             id={id}
             role="tooltip"
-            className={`tip ${at.below ? "tip-below" : "tip-above"}`}
+            className="tip"
             style={{
               left: at.left,
               top: at.top,

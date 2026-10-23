@@ -7,7 +7,11 @@ import react from "@vitejs/plugin-react";
 // vscode-webview:// and jbcefbrowser:// origins, not just http.
 export default defineConfig({
   resolve: {
-    alias: { "@igni/ui-react": resolvePath(__dirname, "./src/ui-react/index.ts") },
+    alias: {
+      "@igni/ui-react": resolvePath(__dirname, "./src/ui-react/index.ts"),
+      "@igni/extension-bridge": resolvePath(__dirname, "./src/extensions/bridge.ts"),
+      "@igni/ui-css": resolvePath(__dirname, "../ui/igni-ui.css"),
+    },
   },
   plugins: [react()],
   base: "./",
