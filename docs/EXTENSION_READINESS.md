@@ -99,7 +99,7 @@ The manifest can declare these. None of them reach the app.
 | C1 | `contributes.pages` | FE `ContributionRegistry` exists and is read by `App.tsx`; **nothing ever calls `install()`** | An installed manifest adds a sidebar entry and a page kind. |
 | C2 | `contributes.menu` | same registry, same gap | The entry appears in the header menu and runs its command. |
 | C3 | `contributes.commands` | not wired | The slash command is offered and dispatches to the extension. |
-| C4 | `contributes.promptFragments` / `promptVariants` | `PromptFragments` exists and works, but only first-party CodeIndex registers; no manifest path | An extension's anchor is substituted into a prompt while it is `READY`, and withdrawn when it is not. |
+| C4 | ✅ | `ExtensionContributions` follows the registry: a READY extension's anchors are registered and its variants made live, and both are withdrawn when it stops being READY. Tied to the *state*, not the install — an extension whose service died must stop telling the model about data it can no longer fetch. A variant stays *known* while down, so a `<agent>.<variant>.md` sibling is still recognised and skipped rather than loaded as an agent whose name contains a dot. |
 | C5 | `contributes.settings` | modelled, never rendered | Settings appear in igni's own settings surface and arrive as launch params. |
 
 ---

@@ -32,6 +32,7 @@ from ember_code.backend.server import BackendServer
 from ember_code.backend.session_orchestrator import SessionOrchestrator
 from ember_code.backend.supervisor import BackendSupervisor
 from ember_code.core.config.settings import Settings, load_settings
+from ember_code.extensions.contributions import ExtensionContributions
 from ember_code.extensions.health import ExtensionHealth
 from ember_code.extensions.installer import ExtensionInstaller
 from ember_code.extensions.origin import ExtensionOrigins
@@ -246,6 +247,14 @@ class BackendApp:
             mcp=self._backend.mcp_manager,
         )
         self._extensions.watch(self._extension_health.on_call_failed)
+        # What an extension adds to the *agent* — prompt anchors and
+        # agent variants. Tied to READY rather than to being
+        # installed: an extension whose service has died must stop
+        # telling the model about data it can no longer fetch.
+        self._extension_contributions = ExtensionContributions(
+            registry=self._extensions.registry, rpc=self._extensions
+        )
+        self._extension_contributions.attach()
         self._rpc_router = RpcRouter(
             backend=self._backend,
             transport=self._transport,
@@ -398,6 +407,11 @@ class BackendApp:
         )
         for bundle in bundles:
             try:
+                # Where it came from, for a `source: file` fragment.
+                # Recorded before the install so a fragment resolved
+                # during it can find the bundle.
+                manifest_id = store.read(bundle).id
+                self._extension_contributions.note_bundle(manifest_id, bundle)
                 entry = await installer.install(bundle)
             except Exception as exc:
                 # Refused before registration — a bad manifest, an

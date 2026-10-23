@@ -27,6 +27,7 @@ support ticket.
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable
 from dataclasses import dataclass
 from enum import StrEnum
 
@@ -112,6 +113,30 @@ class ExtensionRegistry:
 
     def __init__(self) -> None:
         self._installed: dict[str, InstalledExtension] = {}
+        self._watchers: list[Callable[[InstalledExtension | None, str], None]] = []
+
+    def watch(self, callback: Callable[[InstalledExtension | None, str], None]) -> None:
+        """Be told whenever an extension appears, changes state or goes.
+
+        ``callback(entry, extension_id)``, with ``entry`` ``None`` for
+        a removal. Called for every transition, which is the point:
+        prompt fragments and agent variants have to follow an
+        extension *down* as well as up, and the thing that takes one
+        down is usually the health monitor rather than whoever
+        installed it.
+
+        A watcher that raises is logged and skipped — one listener
+        must not stop the state being recorded.
+        """
+        self._watchers.append(callback)
+
+    def _announce(self, extension_id: str) -> None:
+        entry = self._installed.get(extension_id)
+        for watcher in self._watchers:
+            try:
+                watcher(entry, extension_id)
+            except Exception:
+                logger.exception("a registry watcher failed for %s", extension_id)
 
     def install(
         self,
@@ -130,11 +155,15 @@ class ExtensionRegistry:
         entry = InstalledExtension(manifest=manifest, state=state, reason=reason)
         self._installed[manifest.id] = entry
         logger.info("extension %s installed (%s)", manifest.id, state.value)
+        self._announce(manifest.id)
         return entry
 
     def remove(self, extension_id: str) -> bool:
         """Forget an extension. ``True`` if there was one."""
-        return self._installed.pop(extension_id, None) is not None
+        existed = self._installed.pop(extension_id, None) is not None
+        if existed:
+            self._announce(extension_id)
+        return existed
 
     def get(self, extension_id: str) -> InstalledExtension | None:
         return self._installed.get(extension_id)
@@ -146,8 +175,14 @@ class ExtensionRegistry:
         entry = self._installed.get(extension_id)
         if entry is None:
             return
+        if entry.state is state and entry.reason == reason:
+            # Nothing moved. Announcing anyway would mean every probe
+            # of a healthy extension re-ran whatever its watchers do,
+            # which for prompt fragments is a tool call.
+            return
         entry.state = state
         entry.reason = reason
+        self._announce(extension_id)
 
     def authorise(self, *, caller: str | None, method: str) -> ExtensionMethod:
         """Decide whether ``caller`` may call ``method``.

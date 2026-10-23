@@ -31,6 +31,7 @@ from ember_code.core.agents.schemas import (
     LoadError,
     LoadReport,
 )
+from ember_code.core.agents.variants import variants as variant_registry
 from ember_code.core.paths import CONFIG_DIR
 
 if TYPE_CHECKING:
@@ -82,13 +83,21 @@ class AgentDefinitionLoader:
         self._codeindex_available = codeindex_available
         self._policy = restriction_policy
         self._group_dir = group_dir
+        # The defaults used to be a literal ``{"codeindex"}``, and
+        # nothing anywhere passed these arguments — so an extension's
+        # variants reached no loader and the generalisation stopped
+        # one layer short of working. The registry is what anyone with
+        # variants registers into; CodeIndex stays in the default
+        # because it is in-tree and does not register.
         self._known_variants = frozenset(
-            known_variants if known_variants is not None else {"codeindex"}
+            known_variants
+            if known_variants is not None
+            else {"codeindex"} | variant_registry.known()
         )
         self._active_variants = frozenset(
             active_variants
             if active_variants is not None
-            else ({"codeindex"} if codeindex_available else ())
+            else ({"codeindex"} if codeindex_available else frozenset()) | variant_registry.active()
         )
 
     def load(self) -> LoadReport:

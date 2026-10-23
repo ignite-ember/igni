@@ -40,8 +40,8 @@ Everything below is a key under `contributes` in the manifest, and the list is e
 
 | Contribution | What it does | Why MCP can't |
 |---|---|---|
-| `promptFragments` | text injected at a named anchor in a system prompt, from a tool call or a bundled file | replaces the hardcoded `{{CODEINDEX_GRAPH_SCHEMA}}` placeholder |
-| `promptVariants` | which agents switch to a variant while this extension is `READY` | generalises the `.codeindex.md` suffix |
+| `promptFragments` | text injected at a named anchor in a system prompt, from a tool call or a bundled file | replaces the hardcoded `{{CODEINDEX_GRAPH_SCHEMA}}` placeholder. Fetched when the extension becomes `READY` and cached, because a supplier runs during prompt assembly and that is not an async context — so a fragment changes when its extension restarts, not when its data does. |
+| `promptVariants` | which agents switch to a variant while this extension is `READY` | generalises the `.codeindex.md` suffix. *Known* and *live* are separate: a variant whose extension is installed but down stays known, so its agent file is recognised and skipped rather than loaded as an agent whose name happens to contain a dot. |
 | `settings` | config the host renders into its own settings surface, stored per deployment and delivered through launch params | — |
 | `commands` | slash commands the extension answers | — |
 | `menu` | entries in the header tools menu | — |

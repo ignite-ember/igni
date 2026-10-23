@@ -49,6 +49,17 @@ def status() -> str:
 
 
 @server.tool()
+def policy_summary() -> str:
+    """The text that fills ``{{ACME_POLICY_SUMMARY}}`` in a prompt.
+
+    A plain string, not JSON: a prompt fragment is prose for a model
+    to read, and wrapping it in a structure would only mean unwrapping
+    it before substitution.
+    """
+    return "Acme policy: no plaintext secrets; all egress declared."
+
+
+@server.tool()
 def explode() -> str:
     """Always fails, so the failure path is covered too."""
     raise RuntimeError("the scanner fell over")
