@@ -579,6 +579,17 @@ export interface TabsProps extends Omit<
   active: string;
   onChange: (id: string) => void;
   label: string;
+  /**
+   * The id prefix shared with this strip's {@link TabPanel}s.
+   *
+   * Optional, and generated when it is absent — but a `TabPanel`
+   * *requires* one, and for as long as this did not accept it there
+   * was no way for a caller to learn what was generated. The two were
+   * published as a pair that could not be used as a pair, and nothing
+   * noticed because each is unit-tested on its own and neither had a
+   * consumer. Found by building a second extension against them.
+   */
+  base?: string;
 }
 
 /**
@@ -590,10 +601,14 @@ export function Tabs({
   active,
   onChange,
   label,
+  base: givenBase,
   className,
   ...rest
 }: TabsProps) {
-  const base = useId();
+  // Hooks run unconditionally; the generated id is simply unused
+  // when a caller supplied one.
+  const generated = useId();
+  const base = givenBase ?? generated;
   const strip = useRef<HTMLDivElement | null>(null);
 
   // Focus follows selection, which the ARIA practices require and

@@ -111,7 +111,7 @@ The manifest can declare these. None of them reach the app.
 | D1 | ✅ | `igni ext init` scaffolds a bundle that installs and runs as written — manifest, MCP server, framed page with an inlined bridge, README. `install`, `list` and `remove` work against the store rather than a running backend, so an install outlives the process that made it. |
 | D2 | ✅ | `igni ext doctor` prints the contract this igni implements and what is wrong with a bundle. It separates *problems* from *notes*, which it did not at first — an unsigned development bundle was reported as a problem, so `doctor` failed on the output of `init`. |
 | D3 | ⚠️ partial | `trust: unsigned` is accepted only when `IGNI_DEV_EXTENSIONS=1`, which is outside the bundle and cannot be turned on by one. No persistent banner and no hot reload. |
-| D4 | A second reference extension | The current one is single-view, read-mostly, one-pane and prose-free. Each of those avoids a known gap, so it cannot be the check it claims to be. A document-shaped one would exercise `setLocation`, dirty state, a split and block markdown. |
+| D4 | ✅ | `examples/release-notes` is the opposite of all four — a two-pane browser over editable documents with comments. It found a published pair that could not be used as a pair (`Tabs` generated its own id prefix, `TabPanel` required one, nothing let a caller learn it), and its README carries what it still had to hand-roll: the split, block markdown, and an editor that fills its pane. |
 
 ---
 
@@ -165,9 +165,11 @@ for the OS sandbox that `egress` and `workspace` need to bind on the
 extension's side rather than igni's. That is the remaining honest
 caveat, and it is one sentence rather than five.
 
-**To call it rich** — Gate E, and Gate D4 to prove it, since a second
-differently-shaped extension is the only thing that has ever found a
-real gap in this floor.
+**To call it rich** — Gate E. D4 is done and sharpened the list: the
+split is the biggest single gap for a two-pane shape, block markdown
+the biggest for a document, and neither `Combobox` nor `Popover` came
+up once in building it. That ordering was a guess before; it is a
+measurement now.
 
 **To sell it into a regulated deployment** — B6 is done. B2 is the
 one left that gets asked about by name, and the answer today is "the

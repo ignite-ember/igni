@@ -1,0 +1,37 @@
+{
+  "$schema": "https://igni.sh/schema/extension-manifest-1.json",
+
+  "id": "acme.notes",
+  "version": "1.0.0",
+  "contract": ">=1.0 <2",
+
+  "name": "Release Notes",
+  "description": "Draft, review and publish release notes alongside the code they describe.",
+  "vendor": "Acme Corp <platform@acme.test>",
+
+  "trust": "unsigned",
+
+  "dev": { "command": ["python", "server.py"] },
+
+  "permissions": {
+    "workspace": "read",
+    "workspacePaths": ["CHANGELOG.md", "docs/**"],
+    "egress": [],
+    "secrets": [],
+    "rpc": ["ext.acme.notes.*"]
+  },
+
+  "contributes": {
+    "pages": [
+      { "kind": "acme.notes", "label": "Release notes", "sidebar": true }
+    ],
+    "promptVariants": ["acme-notes"],
+    "promptFragments": [
+      {
+        "anchor": "ACME_NOTES_STYLE",
+        "source": "file",
+        "from": "prompts/style.md"
+      }
+    ]
+  }
+}

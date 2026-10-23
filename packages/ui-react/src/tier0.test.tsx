@@ -25,6 +25,7 @@ import { SortableTh, Status } from "./DataTable";
 import { ErrorBoundary } from "./ErrorBoundary";
 import { LiveRegion, useAnnounce } from "./LiveRegion";
 import { AppShell, Scroll } from "./Shell";
+import { TabPanel, Tabs } from "./primitives";
 import { Banner, ToastHost, useToast } from "./Toast";
 
 afterEach(cleanup);
@@ -462,5 +463,53 @@ describe("Status", () => {
     render(<Status state="FAILED">Licence expired</Status>);
     const el = screen.getByText("Licence expired");
     expect(el.getAttribute("data-state")).toBe("FAILED");
+  });
+});
+
+// ── Tabs and TabPanel, as a pair ───────────────────────────────────
+
+describe("Tabs with TabPanel", () => {
+  it("can share an id prefix, which is the only way they work together", () => {
+    // `Tabs` generated its own `base` with `useId` and `TabPanel`
+    // required one, with no way for a caller to learn what was
+    // generated — so the two were published as a pair that could not
+    // be used as a pair. Neither unit test noticed, because each
+    // tests one of them alone, and nothing in the app used either.
+    // Found by building a second extension against them.
+    render(
+      <>
+        <Tabs
+          base="notes"
+          label="Notes"
+          active="write"
+          onChange={() => {}}
+          tabs={[
+            { id: "write", label: "Write" },
+            { id: "preview", label: "Preview" },
+          ]}
+        />
+        <TabPanel base="notes" id="write" active="write">
+          the editor
+        </TabPanel>
+      </>,
+    );
+
+    const tab = screen.getByRole("tab", { name: "Write" });
+    const panel = screen.getByRole("tabpanel");
+    // The strip says it controls the panel, and the panel agrees.
+    expect(tab.getAttribute("aria-controls")).toBe(panel.getAttribute("id"));
+    expect(panel.getAttribute("aria-labelledby")).toBe(tab.getAttribute("id"));
+  });
+
+  it("still generates a prefix when nobody supplies one", () => {
+    render(
+      <Tabs
+        label="Notes"
+        active="a"
+        onChange={() => {}}
+        tabs={[{ id: "a", label: "A" }]}
+      />,
+    );
+    expect(screen.getByRole("tab").getAttribute("aria-controls")).toBeTruthy();
   });
 });
