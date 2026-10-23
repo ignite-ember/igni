@@ -41,6 +41,11 @@ import {
   type PageRoute,
 } from "./chat/pageStack";
 import { Contributions } from "./extensions/contributions";
+import {
+  ExtensionPage,
+  type ExtensionSummary,
+} from "./extensions/ExtensionPage";
+import { useDocumentTheme } from "./extensions/useDocumentTheme";
 import { PageContext } from "./components/PageShell";
 import { Monogram } from "@igni/ui-react";
 import { WorkflowsPage } from "./components/pages/WorkflowsPage";
@@ -200,9 +205,9 @@ const BASE_TOOLS_MENU: { label: string; command: string; desc: string }[] = [
  *
  * Module scope, because it outlives any one render and because the
  * two lists above were module scope for the same reason. What is
- * contributed to it comes from the extensions the backend reports;
- * until that wiring exists (A6 registers them), this holds exactly
- * the base entries and behaves as the two constants did.
+ * contributed to it comes from the extensions the backend reports —
+ * see the ``list_extensions`` effect below, which folds each one in
+ * as it arrives and takes it back out when it goes.
  */
 const contributions = new Contributions(
   BASE_SIDEBAR_LINKS,
@@ -264,6 +269,18 @@ export default function App() {
   // Where this window is. Empty means the chat is showing. Persisted
   // per window under PAGE_KEY — see the hydrate block below.
   const [pages, setPages] = useState<PageRoute[]>([]);
+  /**
+   * The installed extensions, as the backend reports them.
+   *
+   * Held in state as well as folded into {@link contributions}
+   * because the nav only needs the labels and a page needs the rest
+   * — the origin to frame, the grant list, the state and its reason.
+   */
+  const [extensions, setExtensions] = useState<ExtensionSummary[]>([]);
+  // Followed rather than read once: the app keeps its theme on the
+  // document, so without this an extension frame would be told the
+  // theme at mount and never again.
+  const frameTheme = useDocumentTheme();
   const [composerSeed, setComposerSeed] = useState<{
     text: string;
     n: number;
@@ -1650,6 +1667,58 @@ export default function App() {
     const t = setInterval(refreshStatus, 5_000);
     return () => clearInterval(t);
   }, [conn, refreshStatus]);
+
+  /**
+   * What is installed, and its contributions folded into the nav.
+   *
+   * Runs on connect rather than once on mount: extensions live in the
+   * backend, so a reconnect to a backend that has installed or
+   * removed one has to be noticed. The registry is module scope and
+   * outlives this effect, which is why the cleanup uninstalls —
+   * without it a reconnect would fold the same pages in twice and
+   * every one of them would be refused as a collision with itself.
+   */
+  useEffect(() => {
+    if (conn !== "connected") return;
+    let alive = true;
+    const owners: string[] = [];
+
+    void client
+      .rpc<{ extensions: ExtensionSummary[] }>("list_extensions")
+      .then((result) => {
+        if (!alive) return;
+        setExtensions(result.extensions);
+        for (const extension of result.extensions) {
+          // A FAILED extension still contributes its sidebar entry.
+          // The page it opens says what went wrong, which is the
+          // thing an administrator is looking for — an entry that
+          // silently vanishes is a worse answer than one that
+          // explains itself.
+          const refusals = contributions.install(extension.id, {
+            pages: extension.pages,
+            menu: extension.menu,
+          });
+          owners.push(extension.id);
+          for (const refusal of refusals) {
+            console.warn(
+              `[extensions] ${refusal.owner}: ${refusal.reason}`,
+            );
+          }
+        }
+      })
+      .catch((error: unknown) => {
+        // A backend without extension support, or an older one that
+        // has never heard of the method. Not worth a banner: the
+        // absence of extensions is indistinguishable from none being
+        // installed, which is the common case.
+        console.info("[extensions] not listed:", error);
+      });
+
+    return () => {
+      alive = false;
+      for (const owner of owners) contributions.uninstall(owner);
+    };
+  }, [client, conn]);
 
   // Navigation. Every mutation goes through these so the persisted
   // copy cannot drift from the rendered one — the same reason
@@ -3415,6 +3484,37 @@ export default function App() {
                 }}
               />
             )}
+            {/*
+              An extension's page.
+
+              Matched last and by *ownership* rather than by name: a
+              base page kind is a literal in one of the branches
+              above, and an extension's is whatever its manifest
+              said. Asking the registry who owns the kind is what
+              keeps the two sets from having to know about each
+              other.
+            */}
+            {(() => {
+              const owner = contributions.pages.ownerOf(page.kind);
+              if (owner === null || owner === "igni") return null;
+              const extension = extensions.find((e) => e.id === owner);
+              if (extension === undefined) return null;
+              return (
+                <ExtensionPage
+                  extension={extension}
+                  kind={page.kind}
+                  theme={frameTheme}
+                  onClose={goChat}
+                  // Every call carries its caller, which is what lets
+                  // the backend enforce this extension's
+                  // `permissions.rpc` rather than trusting this
+                  // process to have done it.
+                  onCall={(method, args) =>
+                    client.asExtension(extension.id).rpc(method, args)
+                  }
+                />
+              );
+            })()}
             {page.kind === "mcp" && (
               <McpPanel
                 client={client}

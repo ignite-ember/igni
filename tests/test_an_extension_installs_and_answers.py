@@ -33,6 +33,7 @@ from ember_code.extensions.installer import (
     InstallError,
     server_name,
 )
+from ember_code.extensions.origin import ExtensionOrigins
 from ember_code.extensions.registry import (
     ExtensionRefused,
     ExtensionRegistry,
@@ -63,14 +64,17 @@ class Wired:
         self.registry = ExtensionRegistry()
         self.rpc = ExtensionRpc(self.registry)
         self.mcp = MCPClientManager(project_dir=tmp_path)
+        self.origins = ExtensionOrigins()
         self.installer = ExtensionInstaller(
             registry=self.registry,
             rpc=self.rpc,
             mcp=self.mcp,
+            origins=self.origins,
             allow_unsigned=allow_unsigned,
         )
 
     async def close(self) -> None:
+        await self.origins.stop_all()
         await self.mcp.disconnect_all()
 
 
@@ -174,6 +178,73 @@ async def test_a_sidecar_says_what_is_not_implemented(wired, tmp_path):
     assert entry.state is ExtensionState.FAILED
     assert "not implemented yet" in entry.reason
     assert "acme__scanner:1.0.0" in entry.reason
+
+
+# ── The UI ─────────────────────────────────────────────────────────
+
+
+async def test_a_page_contributing_extension_gets_its_own_origin(wired, tmp_path):
+    """One loopback port each.
+
+    A port is part of an origin and a path prefix is not, so two
+    extensions sharing one origin could read each other's storage and
+    script each other's frames.
+    """
+    await wired.installer.install(bundle_at(tmp_path))
+    url = wired.origins.url_for("acme.scanner")
+    assert url is not None
+    assert url.startswith("http://127.0.0.1:")
+
+
+async def test_pages_with_no_ui_directory_is_FAILED_not_READY(wired, tmp_path):
+    """A sidebar entry that opens on nothing is worse than no entry."""
+    bundle = bundle_at(tmp_path)
+    shutil.rmtree(bundle / "ui")
+
+    entry = await wired.installer.install(bundle)
+    assert entry.state is ExtensionState.FAILED
+    assert "no 'ui' directory" in entry.reason
+
+    # And the service is unbound, so the half-installed thing cannot
+    # be called either.
+    with pytest.raises(ExtensionRefused, match="not READY"):
+        await wired.rpc.dispatch(caller="acme.scanner", method="ext.acme.scanner.list", args={})
+
+
+async def test_a_headless_backend_says_so_rather_than_half_installing(tmp_path):
+    w = Wired(tmp_path)
+    w.installer = ExtensionInstaller(
+        registry=w.registry,
+        rpc=w.rpc,
+        mcp=w.mcp,
+        origins=None,
+        allow_unsigned=True,
+    )
+    try:
+        entry = await w.installer.install(bundle_at(tmp_path))
+        assert entry.state is ExtensionState.FAILED
+        assert "serves no extension UI" in entry.reason
+    finally:
+        await w.close()
+
+
+async def test_a_headless_extension_needs_no_origin(wired, tmp_path):
+    """Contributing no pages is normal, not a degraded install."""
+    bundle = bundle_at(tmp_path)
+    manifest = json.loads((bundle / "manifest.json").read_text())
+    del manifest["contributes"]
+    (bundle / "manifest.json").write_text(json.dumps(manifest))
+
+    entry = await wired.installer.install(bundle)
+    assert entry.state is ExtensionState.READY, entry.reason
+    assert wired.origins.url_for("acme.scanner") is None
+
+
+async def test_uninstall_releases_the_port(wired, tmp_path):
+    await wired.installer.install(bundle_at(tmp_path))
+    assert "acme.scanner" in wired.origins
+    await wired.installer.uninstall("acme.scanner")
+    assert "acme.scanner" not in wired.origins
 
 
 # ── Refusals, before anything is registered ────────────────────────

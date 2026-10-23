@@ -13,6 +13,7 @@ from ember_code.backend.rpc_handlers.artifacts import ArtifactRpcHandler
 from ember_code.backend.rpc_handlers.auth import AuthRpcHandler
 from ember_code.backend.rpc_handlers.base import RpcHandler, RpcHandlerContext, rpc
 from ember_code.backend.rpc_handlers.codeindex import CodeIndexRpcHandler
+from ember_code.backend.rpc_handlers.extensions import ExtensionsRpcHandler
 from ember_code.backend.rpc_handlers.hooks import HooksRpcHandler
 from ember_code.backend.rpc_handlers.loop import LoopRpcHandler
 from ember_code.backend.rpc_handlers.mcp import McpRpcHandler
@@ -34,6 +35,7 @@ __all__ = [
     "POOL_LEVEL_RPCS",
     "AuthRpcHandler",
     "CodeIndexRpcHandler",
+    "ExtensionsRpcHandler",
     "HooksRpcHandler",
     "ArtifactRpcHandler",
     "LoopRpcHandler",

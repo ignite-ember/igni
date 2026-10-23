@@ -31,6 +31,9 @@ from ember_code.backend.server import BackendServer
 from ember_code.backend.session_orchestrator import SessionOrchestrator
 from ember_code.backend.supervisor import BackendSupervisor
 from ember_code.core.config.settings import Settings, load_settings
+from ember_code.extensions.origin import ExtensionOrigins
+from ember_code.extensions.registry import ExtensionRegistry
+from ember_code.extensions.rpc import ExtensionRpc
 
 logger = logging.getLogger(__name__)
 
@@ -220,11 +223,20 @@ class BackendApp:
         self._push_bridge.wire_all(self._backend)
 
         self._login = LoginCoordinator(backend=self._backend, push_bridge=self._push_bridge)
+        # Process-level, not per-session. An extension is installed
+        # into a deployment, so a second session must not see a
+        # different set of them — and the boot RPC table is built
+        # here, before the orchestrator exists, so this is the level
+        # that can hand the same objects to both.
+        self._extensions = ExtensionRpc(ExtensionRegistry())
+        self._origins = ExtensionOrigins()
         self._rpc_router = RpcRouter(
             backend=self._backend,
             transport=self._transport,
             login=self._login,
             push=self._push_bridge,
+            extensions=self._extensions,
+            origins=self._origins,
         )
         rpc_table = self._rpc_router.build_table()
 
@@ -259,6 +271,8 @@ class BackendApp:
             push_bridge=self._push_bridge,
             login=self._login,
             queue=self._queue,
+            extensions=self._extensions,
+            origins=self._origins,
         )
         pool = self._orchestrator.setup_pool()
         self._supervisor.set_pool(pool)

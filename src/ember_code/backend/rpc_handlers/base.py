@@ -61,6 +61,13 @@ class RpcHandlerContext:
     # them; others ignore them.
     file_completion: Any = None
     shell_runner: Any = None
+    # The extension surfaces. ``extensions`` is the shared
+    # :class:`~ember_code.extensions.rpc.ExtensionRpc`, which owns the
+    # registry every dispatcher authorises against; ``origins`` knows
+    # which loopback port each extension's UI is on. Both optional —
+    # a headless deployment installs no UI and a test builds neither.
+    extensions: Any = None
+    origins: Any = None
 
 
 class RpcHandler:

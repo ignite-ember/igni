@@ -9,10 +9,13 @@ dangerous category: a permission an author believes they granted and
 nobody checks is worse than one that does not exist, because the
 manifest reads as if it is protecting something.
 
-**Today's one-line summary: the foundation is sound and nothing is
-standing on it.** The contract, its enforcement and the component
-floor are real; no code path installs, mounts or runs an extension,
-so all of it is reachable only from tests.
+**Today's one-line summary: one extension runs end to end, and the
+permissions around it are mostly unenforced.** A bundle installs,
+starts, serves its UI on its own origin, draws in a frame and answers
+`ext.<id>.*` calls that are authorised against its manifest — proven
+by a test that runs a real MCP server as a subprocess. What is still
+missing is a CLI to install with, and five of the six declared
+permissions.
 
 ---
 
@@ -20,15 +23,38 @@ so all of it is reachable only from tests.
 
 Nothing here is hard. All of it is missing.
 
-| # | Missing | Done when |
+| # | State | Note |
 |---|---|---|
-| A1 | `@igni/ui-react`, `@igni/ui-css`, `@igni/extension-bridge` have no `package.json`. They are a tsconfig alias inside `clients/web`. | `npm install @igni/ui-react` works from an empty directory — or, for air-gapped, a tarball in the bundle does. |
-| A2 | Nothing renders `ExtensionFrame`. Verified: no `<ExtensionFrame` outside tests. | Opening a `contributes.pages` entry mounts the frame and the extension paints. |
-| A3 | Nothing constructs `ExtensionRpc`. All three `MessageDispatcher` sites omit it, so a real `ext.*` call hits the "this backend has no extension support" branch. | A call from a mounted frame reaches a service and the value comes back. |
-| A4 | Nothing populates `ExtensionRegistry`. No sidecar is started, no endpoint registered. | `igni ext install ./my-extension` leaves it `READY` and visible in the UI. |
+| A1 | ✅ mostly | `@igni/ui-react` and `@igni/ui-css` are packages that pack — 16 files, 31 kB, tests excluded. Not pushed to a registry; for an air-gapped deployment the tarball in the bundle is the delivery anyway. `@igni/extension-bridge` is still a `clients/web` alias. |
+| A2 | ✅ | `list_extensions` tells the client what is installed, its state, its grant list and which loopback port its UI is on; `ExtensionPage` mounts `ExtensionFrame` for a page whose kind the registry says an extension owns. |
+| A3 | ✅ | `ExtensionRpc` is constructed in `BackendApp` and shared by the boot router and every per-session one, so one registry serves the whole backend. |
+| A4 | ✅ | `ExtensionInstaller` validates, checks trust, registers `PREPARING`, starts or reaches the service, serves the UI on its own origin, binds and marks `READY`. Failures after registration are `FAILED` with a reason. |
 
-**A4 is the keystone.** Until it exists, A2 and A3 have nothing to
-show and every other gate is untestable end to end.
+**What is not done in A4:** there is no CLI, so installing means
+calling `ExtensionInstaller.install` rather than
+`igni ext install ./my-extension` — that is D1/D2. Sidecar images
+fail saying container supervision is not implemented; `endpoint` and
+the new development packaging both work.
+
+**A third packaging, `dev`,** was added because neither of the other
+two can be run by an author on a laptop: one needs a container
+registry and the other needs a deployed service. It is argv, runs
+over stdio, and the schema refuses it on anything but
+`trust: unsigned`.
+
+Three things only a real subprocess found, each of which a stub had
+agreed with:
+
+- **The MCP first-use prompt blocked every extension.** It exists for
+  a `.mcp.json` anyone can commit to a repo; an administrative
+  install is not that, and the prompt fails closed when there is
+  nobody to ask — so no extension could ever have started on a
+  headless or shared backend.
+- **`structuredContent` was the wrong preference.** A FastMCP tool
+  annotated `-> str` wraps its answer as `{"result": …}`, so every
+  such extension would have unpicked an envelope.
+- **`cwd` never reached a stdio server**, and an extension's command
+  is relative to the bundle it was installed from.
 
 ---
 
@@ -117,10 +143,11 @@ shipping without it costs nothing.
 
 ## What to do in what order
 
-**To hand one trusted partner a thing that works** — Gate A, plus
-F1. That is the smallest honest deliverable: they can build, install,
-run, call their own service and see it fail legibly. Gate B stays
-open and is written into the agreement rather than the code.
+**To hand one trusted partner a thing that works** — Gate A is done,
+which leaves D1/D2 (a CLI to install with) and F1. That is the
+smallest honest deliverable: they can build, install, run, call their
+own service and see it fail legibly. Gate B stays open and is written
+into the agreement rather than the code.
 
 **To let an untrusted third party build** — Gate B in full. Nothing
 else on this page matters as much, because every item in it is a

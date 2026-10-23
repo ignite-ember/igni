@@ -353,6 +353,17 @@ class RpcMethod(StrEnum):
     REMOVE_MARKETPLACE = "remove_marketplace"
     REFRESH_MARKETPLACES = "refresh_marketplaces"
 
+    # ── Extensions ────────────────────────────────────────────────
+    #
+    # Only the *base* side of the extension surface lives in this
+    # enum. An extension's own methods are ``ext.<id>.<method>`` and
+    # are deliberately not members: they arrive with a manifest
+    # rather than at import time, and making them members would give
+    # up the exhaustiveness guarantee this enum exists for. They are
+    # routed by prefix instead — see
+    # :mod:`ember_code.extensions.rpc`.
+    LIST_EXTENSIONS = "list_extensions"
+
 
 def validate_rpc_table(registered_keys: Iterable[str]) -> None:
     """Raise if any :class:`RpcMethod` member is missing from the

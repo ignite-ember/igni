@@ -158,6 +158,8 @@ class SessionOrchestrator:
         rpc_table: dict[str, Any],
         push_bridge: PushNotificationBridge,
         login: LoginCoordinator,
+        extensions: ExtensionRpc | None = None,
+        origins: Any = None,
         queue: list[str],
     ) -> None:
         self._backend = backend
@@ -168,10 +170,20 @@ class SessionOrchestrator:
         self._push_bridge = push_bridge
         self._login = login
         # The extension namespace, shared by every dispatcher this
-        # orchestrator builds. One registry per backend, not one per
+        # orchestrator builds and by the boot RPC table that
+        # :class:`~ember_code.backend.app.BackendApp` built before
+        # this existed. One registry per backend, not one per
         # session: an extension is installed into a deployment, and a
         # second session must not see a different set of them.
-        self._extensions = ExtensionRpc(ExtensionRegistry())
+        #
+        # Defaulted rather than required because several tests and
+        # the legacy ``_handle_message`` path construct an
+        # orchestrator directly; without extensions those sessions
+        # simply have none, which is what they had before.
+        self._extensions = (
+            extensions if extensions is not None else ExtensionRpc(ExtensionRegistry())
+        )
+        self._origins = origins
         self._queue = queue
         self._boot_rpc_table = rpc_table
         # Constructed in ``setup_pool``. Kept on self so
@@ -507,6 +519,8 @@ class SessionOrchestrator:
             transport=stamped,
             login=self._login,
             push=rt_bridge,
+            extensions=self._extensions,
+            origins=self._origins,
         )
         rt_table = rt_router.build_table()
         self._dir_registry.set_dir(rt_backend.session_id, rt_backend.project_dir)

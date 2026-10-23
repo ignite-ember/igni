@@ -226,6 +226,19 @@ Third-party tools and extensions.
 | `remove_marketplace` | Removing one that plugins came from. Sweep: **answers** (`--mutating`). | `answers` |
 | `refresh_marketplaces` | Offline. Sweep: **answers** (`--mutating`). | `answers` |
 
+## Extensions
+
+An extension's *own* methods are not listed here and never will be:
+they are `ext.<id>.<method>`, they arrive with a manifest rather than
+at import time, and they are routed by prefix rather than through the
+dispatch table. What they are driven by is
+`tests/test_an_extension_installs_and_answers.py`, which installs a
+real bundle and calls it over a real subprocess.
+
+| Method | How it is driven | Sweep |
+|---|---|---|
+| `list_extensions` | `tests/test_the_frontend_can_draw_an_extension.py`. Offline, read-only — returns the installed set with each one's state, reason and origin, including the FAILED ones, because "why is it missing" is better answered by a row than by an absence. | `answers` |
+
 ## Skills & commands
 
 Reusable recipes and the slash surface.

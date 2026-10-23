@@ -36,6 +36,7 @@ from typing import Any
 
 from ember_code.core.mcp.config import MCPServerConfig, MCPTransport
 from ember_code.extensions.manifest import ExtensionManifest, Trust
+from ember_code.extensions.origin import ExtensionOrigins
 from ember_code.extensions.registry import (
     ExtensionRegistry,
     ExtensionState,
@@ -79,6 +80,7 @@ class ExtensionInstaller:
         registry: ExtensionRegistry,
         rpc: ExtensionRpc,
         mcp: Any,
+        origins: ExtensionOrigins | None = None,
         allow_unsigned: bool = False,
     ) -> None:
         """
@@ -87,6 +89,13 @@ class ExtensionInstaller:
                 Untyped to keep this module importable without the
                 optional ``mcp`` extra, which a headless deployment
                 may not have installed.
+            origins: Where an extension's UI is served from. Each
+                gets its own loopback port, because a port is part of
+                an origin and a path prefix is not — two extensions
+                sharing one origin could read each other's storage
+                and script each other's frames. Optional: an
+                extension that contributes no pages needs none, and
+                neither does a headless deployment.
             allow_unsigned: Whether ``trust: unsigned`` may be
                 installed. False everywhere but development, because
                 the easiest way to ship must not be the one with no
@@ -95,6 +104,7 @@ class ExtensionInstaller:
         self._registry = registry
         self._rpc = rpc
         self._mcp = mcp
+        self._origins = origins
         self._allow_unsigned = allow_unsigned
 
     async def install(self, bundle: Path) -> InstalledExtension:
@@ -142,9 +152,45 @@ class ExtensionInstaller:
             manifest.id,
             McpExtensionService(manager=self._mcp, server_name=config.name),
         )
+
+        ui_reason = await self._serve_ui(manifest, bundle)
+        if ui_reason is not None:
+            # The service works and the UI cannot be shown. FAILED
+            # rather than READY: a page in the sidebar that opens on
+            # nothing is worse than one that is not offered.
+            self._rpc.unbind(manifest.id)
+            self._registry.set_state(manifest.id, ExtensionState.FAILED, ui_reason)
+            return entry
+
         self._registry.set_state(manifest.id, ExtensionState.READY)
         logger.info("extension %s is READY", manifest.id)
         return entry
+
+    async def _serve_ui(self, manifest: ExtensionManifest, bundle: Path) -> str | None:
+        """Put this extension's pages on their own origin.
+
+        Returns a reason on failure, or ``None`` when there was
+        nothing to serve or it was served.
+        """
+        if not manifest.contributes.pages:
+            return None
+        if self._origins is None:
+            return (
+                f"{manifest.id} contributes pages and this backend serves no "
+                "extension UI, so they could not be shown."
+            )
+        root = bundle / "ui"
+        if not root.is_dir():
+            return (
+                f"{manifest.id} contributes pages but the bundle has no 'ui' "
+                f"directory at {root}, so there is nothing to serve."
+            )
+        try:
+            await self._origins.serve(manifest.id, root)
+        except Exception as exc:
+            logger.error("serving %s UI failed", manifest.id, exc_info=True)
+            return f"its UI could not be served: {exc}"
+        return None
 
     async def uninstall(self, extension_id: str) -> bool:
         """Stop and forget an extension. ``True`` if there was one.
@@ -157,6 +203,8 @@ class ExtensionInstaller:
         if self._registry.get(extension_id) is None:
             return False
         self._rpc.unbind(extension_id)
+        if self._origins is not None:
+            await self._origins.drop(extension_id)
         try:
             await self._mcp.disconnect_one(server_name(extension_id))
         except Exception as exc:  # pragma: no cover — best effort
