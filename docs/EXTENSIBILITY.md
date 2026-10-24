@@ -512,6 +512,8 @@ Optional, and packaging-independent *within a single-user backend*: the client i
 
   `notify` means a message in *igni's* chrome. An extension's own toasts, inside its own frame, are published as `ToastHost`/`useToast` — the two are not interchangeable, and only something the user must see after navigating away belongs to the host.
 
+  `notify` is not a bridge call and will not be one: notifications are the floor's (igni server's service identity document, §10). An extension's *service* tells other people through igni server (`POST /v1/service-notifications`); an extension's *process* tells the person at this machine with the MCP notification `notifications/igni/notify` on its stdio connection — `{kind, title, body, target: {page, params}, event_key}`, `target.page` one of its own pages, kept on this machine once per `event_key` and never sent to igni server. igni shows both in one notifications panel, opens a row by going to `target.page` with `target.params` as launch params, and puts the unread count per extension on its sidebar entry and chips. An extension does not compute a badge of its own (`src/ember_code/notifications/`).
+
   `storage` stays missing, but it is no longer the only way to keep a place. Each extension gets an ephemeral port, a port is part of an origin, so `localStorage` is wiped whenever the backend restarts. `setLocation` is the supported way to be restorable: the guest says where it is, the host folds that into its own URL and replays it in the next `hello`. Strings only, and small — it ends up in an address bar.
 
 **A capability UI never holds a credential and never opens a socket.** Every privileged call goes through the backend, where credentials already live.

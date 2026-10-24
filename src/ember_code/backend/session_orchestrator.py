@@ -105,6 +105,7 @@ class SessionOrchestrator:
         extensions: ExtensionRpc | None = None,
         origins: Any = None,
         host_events: Any = None,
+        notifications: Any = None,
         queue: list[str],
     ) -> None:
         self._backend = backend
@@ -129,6 +130,10 @@ class SessionOrchestrator:
             extensions if extensions is not None else ExtensionRpc(ExtensionRegistry())
         )
         self._origins = origins
+        # The floor's notification center, handed to every per-runtime
+        # router so each session answers ``notifications_*`` from the
+        # same one.
+        self._notifications = notifications
         # :class:`~ember_code.backend.host_events.HostEvents`, when
         # there is one. Defaulted for the same reason ``extensions``
         # is: the tests that build an orchestrator directly want a
@@ -367,6 +372,7 @@ class SessionOrchestrator:
             push=rt_bridge,
             extensions=self._extensions,
             origins=self._origins,
+            notifications=self._notifications,
         )
         rt_table = rt_router.build_table()
         self._dir_registry.set_dir(rt_backend.session_id, rt_backend.project_dir)

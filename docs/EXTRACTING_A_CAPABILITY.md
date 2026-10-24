@@ -82,6 +82,19 @@ not this — a toast is inside the extension's own frame, and this is
 the host telling somebody that a colleague commented on a document
 they are not looking at.
 
+**Shipped, as the floor's.** igni server's service identity
+document, §10 settles it: telling people things is the floor's job, not an
+extension's. A service posts to igni server, which resolves who and
+records delivery and read state; an extension's own process tells this
+machine with the MCP notification `notifications/igni/notify`, kept
+locally. `src/ember_code/notifications/` merges both, follows igni
+server's stream (no timer), and answers `notifications_list`,
+`notifications_counts` and `notifications_mark_read`; the
+`notifications_changed` push feeds the bell and the per-extension
+badge on each sidebar entry and chip. `artifact_notifications` and
+`artifact_mark_seen` are gone, and no extension computes a "waiting"
+count.
+
 ### 3.3 Push — `artifact_waiting` — **closed**
 
 `server_artifacts.py:3126` broadcasts on channel `artifact_waiting`;

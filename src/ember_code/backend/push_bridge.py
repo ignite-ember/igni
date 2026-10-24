@@ -37,6 +37,7 @@ from ember_code.core.tools.edit import (
     FileEditNotifier,
     default_file_edit_notifier,
 )
+from ember_code.notifications.schemas import NotificationCounts, NotificationsChanged
 from ember_code.protocol import messages as msg
 from ember_code.protocol.schemas.enums import PushChannel
 
@@ -334,6 +335,13 @@ class PushNotificationBridge:
         self._schedule_push(
             PushChannel.EXTENSION_EVENT,
             {"extension_id": extension_id, "topic": topic, "payload": payload},
+        )
+
+    def notifications_changed(self, counts: NotificationCounts) -> None:
+        """The floor's unread counts, after either path moved them."""
+        self._schedule_push(
+            PushChannel.NOTIFICATIONS_CHANGED,
+            NotificationsChanged(counts=counts).model_dump(),
         )
 
     # ── Private helpers ─────────────────────────────────────────

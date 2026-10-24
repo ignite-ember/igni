@@ -416,6 +416,18 @@
       "tools",
       "unknown_tools"
     ],
+    "floor_notification": [
+      "actor",
+      "body",
+      "created_at",
+      "id",
+      "kind",
+      "origin",
+      "read",
+      "source",
+      "target",
+      "title"
+    ],
     "loop_status": [
       "active",
       "announced_total",
@@ -436,6 +448,19 @@
       "tool_names",
       "tools_disabled",
       "transport"
+    ],
+    "notification_counts": [
+      "by_source",
+      "unread"
+    ],
+    "notification_target": [
+      "page",
+      "params"
+    ],
+    "notifications_list": [
+      "counts",
+      "notifications",
+      "server_error"
     ],
     "pending_message": [
       "content",

@@ -68,6 +68,10 @@ class RpcHandlerContext:
     # a headless deployment installs no UI and a test builds neither.
     extensions: Any = None
     origins: Any = None
+    # The floor's :class:`~ember_code.notifications.center.NotificationCenter`.
+    # Process-level, like ``extensions``: one person, one set of
+    # notifications, whichever session asks.
+    notifications: Any = None
 
 
 class RpcHandler:

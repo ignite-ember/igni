@@ -177,7 +177,7 @@ async def test_a_declared_tool_actually_reaches_the_agent(wired, tmp_path):
     await wired.installer.install(bundle)
     server = server_name("acme.scanner")
     disabled = {bare_tool_name(server, name) for name in wired.mcp.get_disabled_tools(server)}
-    assert disabled == {EVENT_SINK_TOOL, "policy_summary", "compliance", "explode"}
+    assert disabled == {EVENT_SINK_TOOL, "policy_summary", "compliance", "explode", "notify_me"}
 
 
 @pytest.mark.asyncio

@@ -61,6 +61,12 @@ def _rpc_payload_fields() -> dict[str, list[str]]:
     from ember_code.backend.schemas_context import PendingMessage
     from ember_code.backend.schemas_loop import LoopStatusSnapshot
     from ember_code.backend.schemas_mcp import MCPServerSnapshot
+    from ember_code.notifications.schemas import (
+        FloorNotification,
+        NotificationCounts,
+        NotificationsListResult,
+        NotificationTarget,
+    )
 
     return {
         # backend/server.py::loop_status
@@ -69,6 +75,11 @@ def _rpc_payload_fields() -> dict[str, list[str]]:
         "pending_message": list(PendingMessage.model_fields),
         # backend/server.py::get_mcp_server_details
         "mcp_server": list(MCPServerSnapshot.model_fields),
+        # backend/rpc_handlers/notifications.py
+        "notifications_list": list(NotificationsListResult.model_fields),
+        "floor_notification": list(FloorNotification.model_fields),
+        "notification_target": list(NotificationTarget.model_fields),
+        "notification_counts": list(NotificationCounts.model_fields),
     }
 
 

@@ -303,8 +303,6 @@ class RpcMethod(StrEnum):
     ARTIFACT_GRANT_VIEW = "artifact_grant_view"
     ARTIFACT_SYNC_COMMENTS = "artifact_sync_comments"
     ARTIFACT_WATCH_COMMENTS = "artifact_watch_comments"
-    ARTIFACT_NOTIFICATIONS = "artifact_notifications"
-    ARTIFACT_MARK_SEEN = "artifact_mark_seen"
     ARTIFACT_ASK = "artifact_ask"
     ARTIFACT_RUN_CYPHER = "artifact_run_cypher"
 
@@ -364,6 +362,16 @@ class RpcMethod(StrEnum):
     # :mod:`ember_code.extensions.rpc`.
     LIST_EXTENSIONS = "list_extensions"
     SET_EXTENSION_SETTINGS = "set_extension_settings"
+
+    # ── Notifications ─────────────────────────────────────────────
+    #
+    # The floor's, not any extension's (igni server's
+    # ``docs/service-identity.md`` §10): what igni server delivered to
+    # whoever is signed in, merged with what extensions on this
+    # machine told the host. See :mod:`ember_code.notifications`.
+    NOTIFICATIONS_LIST = "notifications_list"
+    NOTIFICATIONS_COUNTS = "notifications_counts"
+    NOTIFICATIONS_MARK_READ = "notifications_mark_read"
 
 
 def validate_rpc_table(registered_keys: Iterable[str]) -> None:

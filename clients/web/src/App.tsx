@@ -88,6 +88,7 @@ import {
 // hamburger. This is the glyph set the panels draw from.
 import { MenuIcon as Glyph } from "@igni/ui-react";
 import { NotificationsPanel } from "./components/NotificationsPanel";
+import { unreadFor, useNotificationCounts } from "./notifications/model";
 import { ScrollIndicator } from "./components/ScrollIndicator";
 import { PublicDocument } from "./components/PublicDocument";
 import { SignInWall } from "./components/SignInWall";
@@ -700,62 +701,35 @@ export default function App() {
 
   // ── What is waiting on you ──────────────────────────────────────
   //
-  // Comments colleagues left on documents this account published,
-  // counted here so the answer is on screen before anybody goes
-  // looking for it. A queue you have to open to discover is empty is
-  // a queue you stop opening.
-  //
-  // Pushed, not polled. The backend follows the server's comment
-  // channel for as long as it runs and says so when something
-  // lands; this asks once, to start that and to learn where the
-  // count stands, and after that the news arrives on its own.
-  //
-  // A timer was the first version and it was wrong in both
-  // directions at once: two minutes is far too long to learn that
-  // somebody is waiting on you, and far too often to ask when
-  // nobody is.
-  const [waiting, setWaiting] = useState(0);
-  const [notifyNonce, setNotifyNonce] = useState(0);
+  // The floor's notifications (igni server's
+  // ``docs/service-identity.md`` §10): what igni server delivered to
+  // whoever is signed in, and what extensions on this machine told the
+  // backend, counted per extension. The bell is the total; each
+  // extension's sidebar entry and chip carry its own share. No
+  // extension computes a count of its own any more, and neither does
+  // this — the backend pushes ``notifications_changed`` whenever
+  // either path moves, and this only listens.
+  const [notificationCounts, setNotificationCounts] = useNotificationCounts(
+    client,
+    conn === "connected",
+  );
+  const waiting = notificationCounts.unread;
   /** Bumped whenever a page is asked for from outside it — the
    *  sidebar, a link. A panel showing one of its own sub-views takes
    *  it as "back to your top level". */
   const [pageHome, setPageHome] = useState(0);
-  /** A document a notification asked to open, named by its slug —
-   *  the same door a shared link comes through. */
-  const [arrivingSlug, setArrivingSlug] = useState("");
 
+  // Artifacts keeps a document's comments in step by following its
+  // service's comment stream, which starts here once somebody is
+  // signed in. Comments only: what is waiting is counted above.
   useEffect(() => {
-    if (!status?.cloud_connected) {
-      setWaiting(0);
-      return;
-    }
-    let dropped = false;
-    void client
-      .rpc<{ waiting?: number }>("artifact_watch_comments")
-      .then((answer) => {
-        if (!dropped) setWaiting(answer?.waiting ?? 0);
-      })
-      .catch(() => {
-        // Offline, or no artifacts. Neither is news worth a badge:
-        // the count stays where it was rather than dropping to zero
-        // and reading as "nothing is waiting".
-      });
-    return () => {
-      dropped = true;
-    };
-  }, [client, status?.cloud_connected, notifyNonce]);
-
-  // And the news itself, whenever the server has some.
-  useEffect(() => {
-    return client.onEvent((message) => {
-      const push = message as unknown as {
-        channel?: string;
-        payload?: { waiting?: number };
-      };
-      if (push.channel !== "artifact_waiting") return;
-      setWaiting(push.payload?.waiting ?? 0);
+    if (!status?.cloud_connected) return;
+    void client.rpc("artifact_watch_comments").catch(() => {
+      // Offline, or Artifacts is not installed. Comments then refresh
+      // when a document is opened, which is what they did before.
     });
-  }, [client]);
+  }, [client, status?.cloud_connected]);
+
   // Live draft from another attached view (mirroring).
   // The directory this session is locked to (tools + shell cwd).
   const [projectDir, setProjectDir] = useState("");
@@ -2985,6 +2959,17 @@ export default function App() {
         currentId={sessionId}
         links={contributions.sidebar()}
         activeLink={page?.kind}
+        // Each entry an extension contributed carries that extension's
+        // unread count — the floor's, igni server's and this machine's
+        // together.
+        badges={Object.fromEntries(
+          contributions
+            .sidebar()
+            .map((link) => [
+              link.kind,
+              unreadFor(notificationCounts, contributions.pages.ownerOf(link.kind)),
+            ]),
+        )}
         onLink={(kind) => {
           const link = contributions.sidebar().find((l) => l.kind === kind);
           if (link) goPage({ kind: link.kind, label: link.label });
@@ -3137,14 +3122,14 @@ export default function App() {
               </span>
             </button>
           )}
-          {status?.cloud_connected && (
+          {(status?.cloud_connected || waiting > 0) && (
             <button
               className={
                 waiting ? "chip chip-bell has-waiting" : "chip chip-bell"
               }
               title={
                 waiting
-                  ? `${waiting} ${waiting === 1 ? "comment is" : "comments are"} waiting on you`
+                  ? `${waiting} unread ${waiting === 1 ? "notification" : "notifications"}`
                   : "Nothing is waiting on you"
               }
               aria-label="Notifications"
@@ -3495,10 +3480,10 @@ export default function App() {
                 client={client}
                 onClose={goChat}
                 goHome={pageHome}
-                /* A link that opened this window, or a notification
-                   pressed in it. Both name a document the same way —
-                   by the server's slug — so they come in one door. */
-                openSlug={arrivingSlug || sharedSlug}
+                /* A link that opened this window, naming a document
+                   by the server's slug. A notification opens the
+                   extension's own page instead, with its params. */
+                openSlug={sharedSlug}
                 /* Whose caret to draw in a shared draft. The same
                    name and colour the header shows, so the person
                    typing is recognisable as themselves. */
@@ -3590,6 +3575,9 @@ export default function App() {
                 <ExtensionPage
                   extension={extension}
                   kind={page.kind}
+                  // Launch params — a notification's target.params,
+                  // when one is what opened it.
+                  params={page.params}
                   theme={frameTheme}
                   events={extensionEvents[extension.id]}
                   onClose={goChat}
@@ -3757,6 +3745,7 @@ export default function App() {
                     key={indicator.id}
                     extensionId={extension.id}
                     indicator={indicator}
+                    unread={unreadFor(notificationCounts, extension.id)}
                     onCall={(method, args) =>
                       client.asExtension(extension.id).rpc(method, args)
                     }
@@ -3809,26 +3798,29 @@ export default function App() {
       {panel.kind === "notifications" && (
         <NotificationsPanel
           client={client}
-          // The bell is fed by the server's pushes, and the server
-          // pushes nothing when you deal with something yourself —
-          // it has nothing to tell you that you did not just do. So
-          // the panel reports what it read, and marking everything
-          // seen empties the bell as well as the list.
-          onWaitingChanged={setWaiting}
-          onOpenSlug={(slug) => {
-            // By slug, which is what the server names a document in a
-            // notification — the local id is this machine's word for
-            // it and the server has never heard of it.
-            goPage({ kind: "artifacts", label: "Artifacts" });
-            setArrivingSlug(slug);
+          sourceName={(source) =>
+            extensions.find((e) => e.id === source)?.name ?? source
+          }
+          canOpen={(kind) => contributions.pages.has(kind)}
+          // Marking something read moves every badge, and the push
+          // that says so may land after the panel has already read
+          // the new counts — so it reports what it read too.
+          onCountsChanged={setNotificationCounts}
+          onOpenTarget={(target) => {
+            // The extension's own page, with the params the
+            // notification carries: the same route its sidebar entry
+            // opens, so the page arrives through the door it always
+            // does and reads where to go from its launch params.
+            const owner = contributions.pages.ownerOf(target.page);
+            const extension = extensions.find((e) => e.id === owner);
+            const label =
+              extension?.pages.find((p) => p.kind === target.page)?.label ??
+              contributions.sidebar().find((l) => l.kind === target.page)
+                ?.label ??
+              target.page;
+            goPage({ kind: target.page, label, params: target.params });
           }}
-          onClose={() => {
-            setPanel({ kind: "none" });
-            // Whatever was resolved while it was open should leave
-            // the count. Asked once on the way out rather than on a
-            // timer, because this is the moment it can have changed.
-            setNotifyNonce((n) => n + 1);
-          }}
+          onClose={() => setPanel({ kind: "none" })}
         />
       )}
       {panel.kind === "login" && (

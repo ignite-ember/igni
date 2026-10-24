@@ -333,6 +333,11 @@ class PushChannel(StrEnum):
     #: :class:`~ember_code.extensions.events.EventRouter`, and the
     #: payload names which extension it is for.
     EXTENSION_EVENT = "extension_event"
+    #: The floor's unread counts moved — igni server's notifications,
+    #: an extension's local notice, or something marked read. Every
+    #: badge reads this; the list is fetched again only by whoever is
+    #: showing it.
+    NOTIFICATIONS_CHANGED = "notifications_changed"
     PROCESS_STARTED = "process_started"
     PROCESS_LINE = "process_line"
     PROCESS_EXITED = "process_exited"

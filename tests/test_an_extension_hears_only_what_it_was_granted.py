@@ -2,8 +2,8 @@
 
 An extension could call and could be told nothing: the bridge was
 `hello | theme | params | result`, so following anything meant
-polling. Artifacts broadcasts `artifact_waiting` today and two host
-components subscribe — an extension has no such thing.
+polling. Artifacts broadcast `artifact_waiting` and two host
+components subscribed — an extension had no such thing.
 
 The rule that shapes the whole design: **subscription is a grant,
 not a filter.** The check happens where an event is dispatched,

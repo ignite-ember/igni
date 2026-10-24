@@ -44,6 +44,7 @@ except ImportError:  # pragma: no cover — exercised by test_connect_import_err
 from ember_code.core.mcp.approval import MCPApprovalManager
 from ember_code.core.mcp.config import MCPConfigLoader, MCPPolicy, MCPServerConfig
 from ember_code.core.mcp.naming import tool_name_prefix
+from ember_code.core.mcp.notification_tap import McpNotificationRouter
 from ember_code.core.mcp.schemas import (
     MCPConnectResult,
     MCPPrompt,
@@ -103,6 +104,10 @@ class MCPClientManager:
         self._stdio_binding = stdio_binding or StdioMCPBinding(
             StdioMCPBinding.default_errlog_path()
         )
+        #: Notification methods outside the MCP specification, and who
+        #: takes them — ``notifications/igni/notify`` from an extension
+        #: is the first. Applied to every stdio connection opened here.
+        self.notifications = McpNotificationRouter()
 
     # ── Connection gate ───────────────────────────────────────────
 
@@ -234,7 +239,7 @@ class MCPClientManager:
             await mcp_tools.__aenter__()
             return mcp_tools
         if transport == "stdio":
-            return await self._stdio_binding.open(name, config)
+            return await self._stdio_binding.open(name, config, notifications=self.notifications)
         return None
 
     async def disconnect_all(self) -> None:

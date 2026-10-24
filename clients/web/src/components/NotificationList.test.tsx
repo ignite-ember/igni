@@ -1,95 +1,106 @@
 // @vitest-environment jsdom
 /**
- * Reading a notification.
+ * Reading a notification, whichever extension it is from.
  *
- * The queue used to be a list of comments, so every row said the one
- * thing a comment says. Each row is a verb now, and the two ways to
- * get that wrong are both tested here: a verb rendered as the wrong
- * words, and a verb this build has never heard of rendered as
- * nothing at all — which is a notification the reader never learns
- * about, and worse than a plain line saying something happened.
+ * The list used to know Artifacts' verbs. Notifications are the
+ * floor's now (igni server's `docs/service-identity.md` §10) and every
+ * extension has its own kinds, so a row says what the notification
+ * says — which extension, its title, its body, who, and when — and the
+ * two ways to get that wrong are tested here: a row that loses one of
+ * those, and a row that can be opened when there is nowhere to go.
  */
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 
-import { NotificationList, when, type Notification } from "./NotificationList";
+import { NotificationList, when, type FloorNotification } from "./NotificationList";
 
 afterEach(cleanup);
 
-function row(over: Partial<Notification> = {}): Notification {
+function row(over: Partial<FloorNotification> = {}): FloorNotification {
   return {
     id: "n1",
+    origin: "server",
+    source: "igni.artifacts",
     kind: "comment",
-    actor_email: "sam@acme.test",
-    slug: "abc123",
-    title: "Session handling",
-    body: "This contradicts the JWT decision.",
+    title: "Runbook",
+    body: "Ada: can we drop step 3?",
+    actor: "ada@acme.com",
+    target: { page: "igni.artifacts", params: { slug: "runbook", comment: "c1" } },
     created_at: new Date().toISOString(),
     read: false,
     ...over,
   };
 }
 
-describe("what each verb says", () => {
-  it("names the person, the act and the document", () => {
-    render(<NotificationList rows={[row()]} />);
+const NAMES: Record<string, string> = { "igni.artifacts": "Artifacts" };
+const nameOf = (id: string) => NAMES[id] ?? id;
 
-    const line = screen.getByText(/commented on/).textContent ?? "";
-    expect(line).toContain("sam@acme.test");
-    expect(line).toContain("Session handling");
+describe("what a row says", () => {
+  it("names its extension, its title, its body, who and when", () => {
+    render(<NotificationList rows={[row()]} sourceName={nameOf} />);
+
+    expect(screen.getByText("Artifacts")).toBeTruthy();
+    expect(screen.getByText("Runbook")).toBeTruthy();
+    expect(screen.getByText("Ada: can we drop step 3?")).toBeTruthy();
+    expect(screen.getByText("ada@acme.com")).toBeTruthy();
+    expect(screen.getByText(/just now/)).toBeTruthy();
   });
 
-  it("says asked to read for an access request", () => {
-    // The row that could not exist at all while this was a list of
-    // comments.
-    render(<NotificationList rows={[row({ kind: "access_requested" })]} />);
+  it("names an extension it has no name for by its id", () => {
+    render(<NotificationList rows={[row({ source: "acme.scanner" })]} sourceName={nameOf} />);
 
-    expect(screen.getByText(/asked to read/)).toBeTruthy();
+    expect(screen.getByText("acme.scanner")).toBeTruthy();
   });
 
-  it("says mentioned you, which is not the same as commented", () => {
-    render(<NotificationList rows={[row({ kind: "mention" })]} />);
+  it("draws a notice about your own work without an actor", () => {
+    // An extension's local notice — "your export is ready" — has
+    // nobody who did it.
+    render(
+      <NotificationList
+        rows={[row({ origin: "local", actor: "", title: "Runbook.pdf", body: "Your export is ready" })]}
+        sourceName={nameOf}
+      />,
+    );
 
-    expect(screen.getByText(/mentioned you in/)).toBeTruthy();
+    expect(screen.getByText("Runbook.pdf")).toBeTruthy();
+    expect(screen.queryByText("ada@acme.com")).toBeNull();
   });
 
-  it("still says something for a verb it has never heard of", () => {
-    // A deployment one version ahead sends kinds that did not exist
-    // when this shipped.
-    render(<NotificationList rows={[row({ kind: "someone_did_a_new_thing" })]} />);
+  it("puts a server row and a local row with the same id side by side", () => {
+    const { container } = render(
+      <NotificationList rows={[row(), row({ origin: "local" })]} sourceName={nameOf} />,
+    );
 
-    expect(screen.getByText(/did something on/)).toBeTruthy();
-  });
-
-  it("has a name for a document it was not given one for", () => {
-    render(<NotificationList rows={[row({ title: "" })]} />);
-
-    expect(screen.getByText(/a document/)).toBeTruthy();
+    expect(container.querySelectorAll(".notify-row").length).toBe(2);
   });
 });
 
 describe("opening one", () => {
-  it("hands back the slug and the notification", () => {
+  it("hands back the whole notification", () => {
     const opened = vi.fn();
     render(<NotificationList rows={[row()]} onOpen={opened} />);
 
     fireEvent.click(screen.getByRole("button"));
 
-    expect(opened).toHaveBeenCalledWith("abc123", "n1");
+    expect(opened).toHaveBeenCalledWith(expect.objectContaining({ id: "n1", target: row().target }));
   });
 
-  it("cannot be opened when the document is gone", () => {
-    // ``CASCADE`` removes notifications with their document, but a
-    // row read a moment before that happened is still on screen.
+  it("cannot be opened when its page is not here", () => {
+    // The extension it is from is not installed on this machine.
     const opened = vi.fn();
-    render(<NotificationList rows={[row({ slug: "" })]} onOpen={opened} />);
+    render(<NotificationList rows={[row()]} canOpen={() => false} onOpen={opened} />);
 
-    // ``toBeDisabled`` is jest-dom's; this suite runs on plain
-    // vitest matchers.
     const button = screen.getByRole("button") as HTMLButtonElement;
     expect(button.disabled).toBe(true);
     fireEvent.click(button);
     expect(opened).not.toHaveBeenCalled();
+  });
+
+  it("cannot be opened when it names no page", () => {
+    const opened = vi.fn();
+    render(<NotificationList rows={[row({ target: null })]} onOpen={opened} />);
+
+    expect((screen.getByRole("button") as HTMLButtonElement).disabled).toBe(true);
   });
 });
 
@@ -100,13 +111,11 @@ describe("what it looks like when there is nothing", () => {
     expect(screen.getByText("Nothing is waiting on you.")).toBeTruthy();
   });
 
-  it("marks what has been seen without hiding it", () => {
-    // "What did I look at yesterday" is a question, and a queue that
-    // empties itself cannot answer it.
+  it("marks what has been read without hiding it", () => {
     const { container } = render(<NotificationList rows={[row({ read: true })]} />);
 
     expect(container.querySelector(".notify-row.is-read")).toBeTruthy();
-    expect(screen.getByText(/commented on/)).toBeTruthy();
+    expect(screen.getByText("Runbook")).toBeTruthy();
   });
 });
 
@@ -125,5 +134,6 @@ describe("when it happened", () => {
   it("says nothing rather than NaN for a timestamp it cannot read", () => {
     expect(when("not a date")).toBe("");
     expect(when("")).toBe("");
+    expect(when(null)).toBe("");
   });
 });

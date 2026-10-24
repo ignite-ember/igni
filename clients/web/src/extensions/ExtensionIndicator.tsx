@@ -24,6 +24,8 @@ import { useEffect, useRef, useState } from "react";
 
 import { Status, Tooltip } from "@igni/ui-react";
 
+import { badgeText } from "../notifications/model";
+
 /** The four the design system publishes, and nothing else. */
 const TONES = ["neutral", "success", "warning", "danger"] as const;
 
@@ -61,6 +63,12 @@ export interface ExtensionIndicatorProps {
   onCall: (method: string, args: Record<string, unknown>) => Promise<unknown>;
   /** The user clicked it. Absent when the manifest named no page. */
   onOpen?: (pageKind: string) => void;
+  /**
+   * Unread notifications from this extension — the floor's count, not
+   * the extension's. igni server's and this machine's together; the
+   * extension does not compute it and cannot change it.
+   */
+  unread?: number;
 }
 
 /** Is this what an indicator source is supposed to answer with? */
@@ -79,6 +87,7 @@ export function ExtensionIndicator({
   indicator,
   onCall,
   onOpen,
+  unread = 0,
 }: ExtensionIndicatorProps) {
   const [state, setState] = useState<IndicatorState | null>(null);
   const call = useRef(onCall);
@@ -119,14 +128,42 @@ export function ExtensionIndicator({
     };
   }, [extensionId, indicator.source, indicator.intervalSeconds]);
 
+  const badge =
+    unread > 0 ? (
+      <span className="extension-badge" aria-label={`${unread} unread`}>
+        {badgeText(unread)}
+      </span>
+    ) : null;
+
   // Nothing to say yet, or the source answered with something that
   // is not an indicator state. An absent chip is better than a
-  // wrong one.
-  if (state === null) return null;
+  // wrong one — unless something is unread: that count is the
+  // floor's, and it does not wait for the extension to answer.
+  if (state === null) {
+    if (badge === null) return null;
+    const label = (
+      <span className="extension-indicator-unread">
+        {indicator.label}
+        {badge}
+      </span>
+    );
+    if (!indicator.opens || onOpen === undefined) return label;
+    return (
+      <button
+        type="button"
+        className="btn btn-quiet btn-xs"
+        aria-label={`${indicator.label}: ${unread} unread. Open.`}
+        onClick={() => onOpen(indicator.opens)}
+      >
+        {label}
+      </button>
+    );
+  }
 
   const chip = (
     <Status state={STATE_FOR[state.tone]}>
       {state.label || indicator.label}
+      {badge}
     </Status>
   );
 
@@ -139,7 +176,7 @@ export function ExtensionIndicator({
       type="button"
       className="btn btn-quiet btn-xs"
       // The label is the state; the name says what clicking does.
-      aria-label={`${indicator.label}: ${state.label}. Open.`}
+      aria-label={`${indicator.label}: ${state.label}${unread > 0 ? `, ${unread} unread` : ""}. Open.`}
       onClick={() => onOpen(indicator.opens)}
     >
       {chip}

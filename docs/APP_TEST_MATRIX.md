@@ -240,6 +240,16 @@ real bundle and calls it over a real subprocess.
 | `list_extensions` | `tests/test_the_frontend_can_draw_an_extension.py`. Offline, read-only — returns the installed set with each one's state, reason and origin, including the FAILED ones, because "why is it missing" is better answered by a row than by an absence. | `answers` |
 | `set_extension_settings` | `tests/test_an_extension_contributes_commands_and_settings.py`. Offline, mutating — writes values for the keys a manifest declares and refuses every other key. Returns the whole list, since the caller has just invalidated its view of all of it. | `answers` |
 
+Notifications are the floor's, not an extension's: one list and one
+count per extension, merging what igni server delivered to whoever is
+signed in with what an extension on this machine told the host.
+
+| Method | How it is driven | Sweep |
+|---|---|---|
+| `notifications_list` | `tests/test_notifications_are_the_floors.py`. Both paths newest first; igni server unreachable mid-read, which must keep the rows last read and say why rather than read as "nothing waiting"; nobody signed in, which returns the local half alone. Sweep: **answers** (default run). | `answers` |
+| `notifications_counts` | `tests/test_notifications_are_the_floors.py`. Merged unread per source — igni server's `by_source` plus local unread — answered from what was last read, asking nobody. Sweep: **answers** (default run). | `answers` |
+| `notifications_mark_read` | `tests/test_notifications_are_the_floors.py`. By ids (local ids marked here, the rest on igni server, nothing local ever sent), by source, and everything. Sweep: **answers** (`--mutating`). | `answers` |
+
 ## Skills & commands
 
 Reusable recipes and the slash surface.
@@ -317,9 +327,7 @@ What the agent is told to remember.
 | `artifact_rename_folder` | An empty name; a folder that is not there. Sweep: **answers** (`--mutating`). | `answers` |
 | `artifact_comment` | A comment on a document whose thread already holds web comments, which must reach the agent as context and never as work; an empty body; a quote selected outside the document. Sweep: **answers** (`--mutating`). | `answers` |
 | `artifact_resolve_comment` | Accepting with edited text rather than the original suggestion; declining, which must write no version; the version written but the server unreachable, which must report rather than read as success. Sweep: **answers** (default run). | `answers` |
-| `artifact_notifications` | A session with no cloud account, which has nothing waiting rather than an error; a server that cannot be reached mid-read, which must not empty the list on screen. Sweep: **answers** (default run). | `answers` |
-| `artifact_mark_seen` | One notification, and all of them; a session with no account. Sweep: **answers** (`--mutating`). | `answers` |
-| `artifact_watch_comments` | A session with no cloud account, which has nobody to be commented at and must not report a broken stream; a second call, which must not start a second stream; signing in as somebody else, which must stop following the first account's comments. Sweep: **answers** (default run). | `answers` |
+| `artifact_watch_comments` | A session with no cloud account, which has nobody to be commented at and must not report a broken stream; a second call, which must not start a second stream; signing in as somebody else, which must stop following the first account's comments. Answers `{ok}` — it keeps comments in step and counts nothing; the unread count is the floor's (`notifications_counts`). Sweep: **answers** (default run). | `answers` |
 | `artifact_sync_comments` | Signed out, so there is nothing to pull; a comment naming a version this machine has not fetched, which is skipped without consuming the cursor. Sweep: **answers** (default run). | `answers` |
 | `artifact_revise` | A revision written from a version that is no longer the head, which must refuse rather than silently fork the chain; an empty first push, where there is no head to diverge from; the server unreachable after the local write. Sweep: **answers** (`--mutating`). | `answers` |
 | `artifact_mentions` | A document never shared, which has nobody to mention rather than an error; a colleague outside the document's audience, who must be offered *and* marked as unable to read it; a query matching nobody. The access half must be the server's own rule — a second implementation of it drifts towards saying somebody has access when they do not. Sweep: **answers** (default run). | `answers` |

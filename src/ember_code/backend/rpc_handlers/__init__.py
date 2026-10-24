@@ -18,6 +18,7 @@ from ember_code.backend.rpc_handlers.hooks import HooksRpcHandler
 from ember_code.backend.rpc_handlers.loop import LoopRpcHandler
 from ember_code.backend.rpc_handlers.mcp import McpRpcHandler
 from ember_code.backend.rpc_handlers.models import ModelsRpcHandler
+from ember_code.backend.rpc_handlers.notifications import NotificationsRpcHandler
 from ember_code.backend.rpc_handlers.panels import PanelRpcHandler
 from ember_code.backend.rpc_handlers.plan import PlanRpcHandler
 from ember_code.backend.rpc_handlers.plugins import PluginsRpcHandler
@@ -41,6 +42,7 @@ __all__ = [
     "LoopRpcHandler",
     "McpRpcHandler",
     "ModelsRpcHandler",
+    "NotificationsRpcHandler",
     "PanelRpcHandler",
     "PlanRpcHandler",
     "PluginsRpcHandler",

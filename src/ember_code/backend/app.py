@@ -52,6 +52,10 @@ from ember_code.extensions.service_token import (
     ServiceTokenExchange,
 )
 from ember_code.extensions.store import ExtensionStore
+from ember_code.notifications.center import NotificationCenter
+from ember_code.notifications.extension_notices import ExtensionNoticeReceiver
+from ember_code.notifications.local_store import LocalNotificationStore
+from ember_code.notifications.server_client import SignedInServer
 
 logger = logging.getLogger(__name__)
 
@@ -137,6 +141,7 @@ class BackendApp:
         # to start extensions with.
         self._distribution: ExtensionDistribution | None = None
         self._service_tokens: ServiceTokenEndpoint | None = None
+        self._notifications: NotificationCenter | None = None
 
     def _start_wake_detector(self) -> None:
         """Notice sleep, and drop the cloud state it invalidated.
@@ -285,6 +290,8 @@ class BackendApp:
         # by being called — which is the only direction MCP runs.
         self._service_events = ServiceEvents(rpc=self._extensions)
         self._wire_extension_events()
+        notifications = self._build_notifications(settings)
+        self._notifications = notifications
         self._rpc_router = RpcRouter(
             backend=self._backend,
             transport=self._transport,
@@ -292,6 +299,7 @@ class BackendApp:
             push=self._push_bridge,
             extensions=self._extensions,
             origins=self._origins,
+            notifications=self._notifications,
         )
         rpc_table = self._rpc_router.build_table()
 
@@ -329,6 +337,7 @@ class BackendApp:
             extensions=self._extensions,
             origins=self._origins,
             host_events=self._host_events,
+            notifications=self._notifications,
         )
         pool = self._orchestrator.setup_pool()
         self._supervisor.set_pool(pool)
@@ -388,6 +397,10 @@ class BackendApp:
             else:
                 await self._transport.wait_for_connection()
             await self._start_extensions()
+            # Read igni server's notifications and follow its stream;
+            # after the client is connected, so the counts this pushes
+            # have somebody to reach.
+            notifications.start()
             # Probing starts once there is a loop to run it on, and
             # after the installs above, so the first sweep has
             # something to sweep.
@@ -401,6 +414,7 @@ class BackendApp:
         except Exception as exc:
             logger.error("Backend error: %s", exc, exc_info=True)
         finally:
+            await notifications.stop()
             await self._service_events.stop()
             await self._host_events.stop()
             await self._extension_health.stop()
@@ -410,6 +424,33 @@ class BackendApp:
                 await self._service_tokens.stop()
             await self._origins.stop_all()
             await self._supervisor.teardown()
+
+    def _build_notifications(self, settings: Settings) -> NotificationCenter:
+        """The floor's notifications, both paths (igni server's ``docs/service-identity.md`` §10).
+
+        igni server's half follows the signed-in person, so it starts
+        again on every sign-in. The local half is whatever an extension's
+        process says with ``notifications/igni/notify`` on its own MCP
+        connection — taken out of every stdio connection the manager
+        opens, and accepted only as coming from the extension that
+        connection belongs to.
+        """
+        assert self._push_bridge is not None and self._backend is not None
+        center = NotificationCenter(
+            server=SignedInServer(
+                api_url=self._igni_api_url,
+                session=CredentialsSession(settings.auth.credentials_file),
+            ),
+            local=LocalNotificationStore.from_data_dir(settings.storage.data_dir),
+            announce=self._push_bridge.notifications_changed,
+        )
+        receiver = ExtensionNoticeReceiver(registry=self._extensions.registry, sink=center)
+        router = getattr(self._backend.mcp_manager, "notifications", None)
+        if router is not None:
+            router.handle(ExtensionNoticeReceiver.METHOD, receiver)
+        if self._login is not None:
+            self._login.on_signed_in(center.schedule_signed_in)
+        return center
 
     def _wire_extension_events(self) -> None:
         """Deliver events, and emit the one igni always knows.

@@ -17,7 +17,8 @@ import os
 import sys
 from pathlib import Path
 
-from mcp.server.fastmcp import FastMCP
+from mcp.server.fastmcp import Context, FastMCP
+from pydantic import BaseModel
 
 server = FastMCP("acme-scanner")
 
@@ -85,6 +86,28 @@ def igni_on_event(topic: str, payload: dict) -> str:
     with Path("events.jsonl").open("a") as handle:
         handle.write(json.dumps({"topic": topic, "payload": payload}) + "\n")
     return json.dumps({"ok": True})
+
+
+class IgniNotify(BaseModel):
+    """``notifications/igni/notify``, which the MCP SDK has no type for.
+
+    ``send_notification`` only dumps what it is given, so a model with
+    the method and the params is all it takes to send one.
+    """
+
+    method: str = "notifications/igni/notify"
+    params: dict
+
+
+@server.tool()
+async def notify_me(ctx: Context, params: dict) -> str:
+    """Tell the host something, exactly as an extension's ``app.notify`` would.
+
+    The params are the test's, unchecked, so a test can send a notice
+    the host must refuse as easily as one it must keep.
+    """
+    await ctx.session.send_notification(IgniNotify(params=params))  # type: ignore[arg-type]
+    return json.dumps({"sent": True})
 
 
 @server.tool()

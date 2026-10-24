@@ -55,6 +55,23 @@ const RPC_READS: Record<string, string[]> = {
   ],
   agent_info: ["name", "description", "model", "is_ephemeral", "can_orchestrate"],
   scheduled_task: ["id", "description", "scheduled_at", "status", "recurrence"],
+  // components/NotificationsPanel.tsx, components/NotificationList.tsx,
+  // notifications/model.ts
+  notifications_list: ["notifications", "counts", "server_error"],
+  floor_notification: [
+    "id",
+    "origin",
+    "source",
+    "kind",
+    "title",
+    "body",
+    "actor",
+    "target",
+    "created_at",
+    "read",
+  ],
+  notification_target: ["page", "params"],
+  notification_counts: ["unread", "by_source"],
 };
 
 describe("wire contract", () => {

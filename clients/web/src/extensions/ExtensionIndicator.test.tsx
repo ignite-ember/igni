@@ -165,3 +165,49 @@ describe("polling", () => {
     expect(onCall.mock.calls.length).toBe(afterFirst);
   });
 });
+
+describe("the floor's unread count on the chip", () => {
+  // The extension no longer computes a "waiting" badge. The count is
+  // the floor's — igni server's and this machine's together — and the
+  // host draws it beside whatever the extension said.
+  it("is drawn beside the extension's own state", async () => {
+    const onCall = vi.fn().mockResolvedValue({ label: "fresh", tone: "success", detail: "" });
+    render(
+      <ExtensionIndicator
+        extensionId="igni.codeindex"
+        indicator={INDICATOR}
+        onCall={onCall}
+        onOpen={() => {}}
+        unread={4}
+      />,
+    );
+
+    expect(await screen.findByText("4")).not.toBeNull();
+    expect(screen.getByRole("button", { name: /4 unread/ })).not.toBeNull();
+  });
+
+  it("does not wait for the extension to answer", async () => {
+    const onCall = vi.fn().mockRejectedValue(new Error("not started"));
+    const onOpen = vi.fn();
+    render(
+      <ExtensionIndicator
+        extensionId="igni.codeindex"
+        indicator={INDICATOR}
+        onCall={onCall}
+        onOpen={onOpen}
+        unread={2}
+      />,
+    );
+
+    const button = await screen.findByRole("button", { name: /2 unread/ });
+    fireEvent.click(button);
+    expect(onOpen).toHaveBeenCalledWith("igni.codeindex");
+  });
+
+  it("draws nothing for nothing unread", async () => {
+    const { container } = draw({ label: "fresh", tone: "success", detail: "" });
+    await screen.findByText("fresh");
+
+    expect(container.querySelector(".extension-badge")).toBeNull();
+  });
+});

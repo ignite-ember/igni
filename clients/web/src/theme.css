@@ -5328,9 +5328,8 @@ button {
   opacity: 0.6;
 }
 
-/* The monogram with the verb's glyph on its corner: who, and what
-   they did, in one object — so a queue of eight is read by shape
-   before any of it is read as words. */
+/* Who it is about: the actor's monogram, or the extension's when
+   nobody did anything — a notice about your own export. */
 .notify-face {
   position: relative;
   flex: none;
@@ -5338,23 +5337,14 @@ button {
   height: 22px;
 }
 
-.notify-verb-icon {
-  position: absolute;
-  right: -4px;
-  bottom: -4px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 14px;
-  height: 14px;
-  border-radius: var(--radius-circle);
-  background: var(--bg-surface);
+/* Which extension it is from. Above the title, small, because the
+   list mixes every extension and this is how a row is placed before
+   it is read. */
+.notify-source {
+  font-size: var(--text-xs);
   color: var(--fg-muted);
-}
-
-.notify-verb-icon svg {
-  width: 9px;
-  height: 9px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
 }
 
 .notify-said {
@@ -12631,6 +12621,26 @@ button {
    coloured is a bell nobody looks at. */
 .chip-bell.has-waiting {
   color: var(--accent-orange-text);
+}
+
+/* An extension's unread count, on its sidebar entry and its chip.
+   The floor's number (igni server's and this machine's together), not
+   one the extension keeps. */
+.extension-badge {
+  display: inline-block;
+  min-width: 16px;
+  height: 16px;
+  margin-left: 6px;
+  padding: 0 4px;
+  border-radius: var(--radius-pill);
+  background: var(--ember-gradient);
+  color: #fff;
+  font-size: var(--text-2xs);
+  font-weight: 700;
+  line-height: 16px;
+  text-align: center;
+  vertical-align: middle;
+  font-variant-numeric: tabular-nums;
 }
 
 .chip-bell-count {

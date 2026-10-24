@@ -262,3 +262,28 @@ describe("Sidebar — backdrop / mobile dismissal", () => {
     expect(backdrop).toBeFalsy();
   });
 });
+
+describe("Sidebar — an extension's unread count", () => {
+  // The floor's count for the extension that contributed the entry:
+  // igni server's notifications and this machine's together. The
+  // extension computes none of it.
+  it("is drawn on the entry it belongs to", () => {
+    render(<Sidebar {...defaultProps({ badges: { artifacts: 3, plugins: 0 } })} />);
+
+    const entry = screen.getByRole("button", { name: /Artifacts, 3 unread/ });
+    expect(entry.querySelector(".extension-badge")?.textContent).toBe("3");
+    expect(screen.getByRole("button", { name: "Plugins" }).querySelector(".extension-badge")).toBeNull();
+  });
+
+  it("draws nothing when nobody passed counts", () => {
+    const { container } = render(<Sidebar {...defaultProps()} />);
+
+    expect(container.querySelector(".extension-badge")).toBeNull();
+  });
+
+  it("caps a large count", () => {
+    render(<Sidebar {...defaultProps({ badges: { artifacts: 250 } })} />);
+
+    expect(screen.getByText("99+")).toBeTruthy();
+  });
+});

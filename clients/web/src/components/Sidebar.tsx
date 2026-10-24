@@ -2,6 +2,7 @@ import { useEffect, useRef } from "react";
 import { ScrollIndicator } from "./ScrollIndicator";
 import { ThemeToggle } from "./ThemeToggle";
 import { host } from "../lib/host";
+import { badgeText } from "../notifications/model";
 
 export interface SessionEntry {
   session_id: string;
@@ -20,6 +21,7 @@ export function Sidebar({
   currentId,
   links,
   activeLink,
+  badges = {},
   onLink,
   onNewChat,
   onPick,
@@ -34,6 +36,9 @@ export function Sidebar({
   links: SidebarLink[];
   /** Which one is open, if any. */
   activeLink?: string;
+  /** Unread notifications per link kind — the floor's count for the
+   *  extension that contributed the page. Absent or zero draws nothing. */
+  badges?: Record<string, number>;
   onLink: (kind: string) => void;
   onNewChat: () => void;
   onPick: (id: string) => void;
@@ -117,8 +122,18 @@ export function Sidebar({
                   className={`sidebar-link${activeLink === link.kind ? " active" : ""}`}
                   aria-current={activeLink === link.kind ? "page" : undefined}
                   onClick={() => onLink(link.kind)}
+                  aria-label={
+                    badges[link.kind]
+                      ? `${link.label}, ${badges[link.kind]} unread`
+                      : undefined
+                  }
                 >
                   {link.label}
+                  {!!badges[link.kind] && (
+                    <span className="extension-badge" aria-hidden="true">
+                      {badgeText(badges[link.kind])}
+                    </span>
+                  )}
                 </button>
               ))}
             </nav>

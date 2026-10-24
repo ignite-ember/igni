@@ -20,8 +20,13 @@ class AuthRpcHandler(RpcHandler):
         return self._ctx.backend.reload_cloud_credentials()
 
     @rpc(RpcMethod.CLEAR_CLOUD_CREDENTIALS)
-    def clear_creds(self, args: dict) -> Any:
-        return self._ctx.backend.clear_cloud_credentials()
+    async def clear_creds(self, args: dict) -> Any:
+        status = self._ctx.backend.clear_cloud_credentials()
+        # Signed out: the last person's notifications stop arriving and
+        # leave the badges.
+        if self._ctx.notifications is not None:
+            await self._ctx.notifications.signed_out()
+        return status
 
     @rpc(RpcMethod.DISCOVER_SERVER)
     async def discover_server(self, args: dict) -> Any:

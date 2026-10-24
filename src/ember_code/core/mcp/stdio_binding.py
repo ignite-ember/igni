@@ -39,6 +39,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from ember_code.core.mcp.naming import tool_name_prefix
+from ember_code.core.mcp.notification_tap import McpNotificationRouter
 
 try:
     from agno.tools.mcp import MCPTools
@@ -83,7 +84,13 @@ class StdioMCPBinding:
         instance without touching module globals."""
         return Path(tempfile.gettempdir()) / "ember_mcp_stderr.log"
 
-    async def open(self, name: str, config: MCPServerConfig) -> MCPTools:
+    async def open(
+        self,
+        name: str,
+        config: MCPServerConfig,
+        *,
+        notifications: McpNotificationRouter | None = None,
+    ) -> MCPTools:
         """Open a stdio-backed :class:`MCPTools` handle with
         ``errlog`` redirected to :attr:`errlog_path`.
 
@@ -96,6 +103,10 @@ class StdioMCPBinding:
         The returned :class:`MCPTools` owns the file handle
         (via ``mcp_tools._errlog``) — Agno's :meth:`__aexit__`
         closes it during shutdown.
+
+        ``notifications`` takes the methods it routes out of the
+        read stream before the SDK sees them — see
+        :mod:`ember_code.core.mcp.notification_tap`.
         """
         # Must stay open for MCP session lifetime; ownership
         # transfers to MCPTools via ``_errlog`` below.
@@ -119,6 +130,8 @@ class StdioMCPBinding:
         session_params = await mcp_tools._context.__aenter__()
         mcp_tools._active_contexts = [mcp_tools._context]
         read, write = session_params[0:2]
+        if notifications is not None:
+            read = notifications.tap(name, read)
 
         timeout = getattr(mcp_tools, "timeout_seconds", 30) or 30
         mcp_tools._session_context = ClientSession(  # type: ignore[assignment]

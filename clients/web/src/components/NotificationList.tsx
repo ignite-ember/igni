@@ -1,61 +1,27 @@
 /**
- * What is waiting on you, whatever kind of thing it is.
+ * Notifications, whichever extension they are from.
  *
- * This used to be the comment queue with a new title. It read well
- * enough — a comment is the commonest thing to be waiting on — and
- * it could say nothing else: somebody asking to be let into a
- * document is exactly as much waiting on you, and there was no line
- * for it.
+ * This was the Artifacts comment queue with a verb table: it knew what
+ * "access_requested" meant and how to say it. It cannot know that any
+ * more — notifications are the floor's (igni server's
+ * `docs/service-identity.md` §10), every extension has its own kinds,
+ * and a host that kept a vocabulary for each would be a host that has
+ * to ship whenever an extension does. So each row says what the
+ * notification itself says: which extension it is from, its title, its
+ * line of body, who did it, and when.
  *
- * So each row is a **verb** and the things it happened to. The verb
- * decides the wording, which is the whole reason the server sends
- * one rather than a rendered sentence: "asked to read" and "left a
- * comment on" are the same shape and want different words, and a
- * server writing English would be a server that has to be redeployed
- * to change a preposition.
- *
- * **Reading is not doing.** Opening the document is what this offers;
- * answering the comment or granting the access happens there, next
- * to the thing it is about. A queue that also did the work would be
- * a second place to do everything, quietly disagreeing with the
- * first.
+ * **Reading is not doing.** Opening a row goes to the extension page it
+ * names, where the thing can be answered. A queue that also did the
+ * work would be a second place to do everything, quietly disagreeing
+ * with the first.
  */
-import { MenuIcon, type MenuIconName } from "@igni/ui-react";
 import { Monogram } from "@igni/ui-react";
 
-export interface Notification {
-  id: string;
-  kind: string;
-  actor_email?: string;
-  slug?: string;
-  title?: string;
-  subject_id?: string;
-  body?: string;
-  created_at?: string;
-  read?: boolean;
-}
+import type { FloorNotification } from "../notifications/model";
 
-/** How each verb reads, and what it is drawn with. */
-const VERBS: Record<string, { says: string; icon: MenuIconName }> = {
-  comment: { says: "commented on", icon: "quote" },
-  reply: { says: "replied in", icon: "quote" },
-  mention: { says: "mentioned you in", icon: "quote" },
-  access_requested: { says: "asked to read", icon: "lock" },
-  access_granted: { says: "let you into", icon: "unlock" },
-  access_declined: { says: "did not let you into", icon: "lock" },
-  version_published: { says: "published a version of", icon: "document" },
-  shared_with_you: { says: "shared", icon: "share" },
-};
+export type { FloorNotification };
 
-/** A verb this build has not heard of still has to read as something.
- *
- *  A deployment one version ahead will send kinds that did not exist
- *  when this shipped, and a row that renders as nothing is a
- *  notification the reader never learns about — worse than a plain
- *  line saying something happened. */
-const UNKNOWN = { says: "did something on", icon: "document" as MenuIconName };
-
-export function when(iso: string): string {
+export function when(iso: string | null | undefined): string {
   const at = Date.parse(iso || "");
   if (Number.isNaN(at)) return "";
   const seconds = Math.max(0, (Date.now() - at) / 1000);
@@ -69,11 +35,17 @@ export function when(iso: string): string {
 
 export function NotificationList({
   rows,
+  sourceName = (id) => id,
+  canOpen = () => true,
   onOpen,
 }: {
-  rows: Notification[];
-  /** Go to the document it is about. */
-  onOpen?: (slug: string, notificationId: string) => void;
+  rows: FloorNotification[];
+  /** The extension's name, for its id. Its id when it is not installed. */
+  sourceName?: (source: string) => string;
+  /** Whether this app has the page a notification points at. */
+  canOpen?: (row: FloorNotification) => boolean;
+  /** Go where it points. */
+  onOpen?: (row: FloorNotification) => void;
 }) {
   if (!rows.length) {
     return <p className="notify-empty">Nothing is waiting on you.</p>;
@@ -81,30 +53,35 @@ export function NotificationList({
   return (
     <ul className="notify-rows">
       {rows.map((row) => {
-        const verb = VERBS[row.kind] ?? UNKNOWN;
-        const who = row.actor_email || "Somebody";
+        const from = sourceName(row.source);
+        const openable = row.target !== null && canOpen(row);
         return (
-          <li key={row.id} className={row.read ? "notify-row is-read" : "notify-row"}>
+          <li key={`${row.origin}:${row.id}`} className={row.read ? "notify-row is-read" : "notify-row"}>
             <button
               type="button"
               className="notify-open"
-              disabled={!row.slug}
-              title={row.slug ? "Open the document" : "This document is gone"}
-              onClick={() => row.slug && onOpen?.(row.slug, row.id)}
+              disabled={!openable}
+              title={
+                openable
+                  ? `Open in ${from}`
+                  : `${from} is not installed here, so this cannot be opened`
+              }
+              onClick={() => openable && onOpen?.(row)}
             >
               <span className="notify-face">
-                <Monogram name={who} size={22} />
-                <span className="notify-verb-icon" aria-hidden="true">
-                  <MenuIcon name={verb.icon} />
-                </span>
+                <Monogram name={row.actor || from} size={22} />
               </span>
               <span className="notify-said">
+                <span className="notify-source">{from}</span>
                 <span className="notify-line">
-                  <strong>{who}</strong> {verb.says}{" "}
-                  <strong>{row.title || "a document"}</strong>
+                  <strong>{row.title || row.kind}</strong>
                 </span>
                 {row.body && <span className="notify-excerpt">{row.body}</span>}
-                <span className="notify-when">{when(row.created_at ?? "")}</span>
+                <span className="notify-when">
+                  {row.actor && <span className="notify-actor">{row.actor}</span>}
+                  {row.actor && row.created_at && " · "}
+                  {when(row.created_at)}
+                </span>
               </span>
             </button>
           </li>

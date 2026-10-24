@@ -2,7 +2,7 @@
 
 igni served these itself: `backend/server_artifacts.py` held a
 3,500-line controller over `core/artifacts/`, and both have moved
-to `igni__artifacts/extension`. What stayed is the *names* — 59
+to `igni__artifacts/extension`. What stayed is the *names* — 57
 RPCs the web client has been calling since before any of this was
 an extension — and this routes them.
 
@@ -17,14 +17,21 @@ implementation and the old caller in one change, with nothing in
 between that runs.
 
 So the names survive one release longer than the implementation.
-When the panels move, this file, `ARTIFACT_ROUTES` and the 59
+When the panels move, this file, `ARTIFACT_ROUTES` and the 57
 `RpcMethod` members go together, and nothing else has to change
 because nothing else knows they were here.
 
+Two names left before the rest: `artifact_notifications` and
+`artifact_mark_seen`. Notifications are the floor's job, not an
+extension's — they are `notifications_*` now, answered by
+:mod:`ember_code.notifications` for every extension at once.
+`artifact_watch_comments` stays: it keeps a document's comments in
+step, and no longer answers a count.
+
 ## The table is derived, not written
 
-`artifact_list` answers `entries`. `artifact_notifications`
-answers `waiting`. `artifact_drift_apply` answers `apply_drift`.
+`artifact_list` answers `entries`. `artifact_drift_apply` answers
+`apply_drift`.
 Nineteen of them rename an argument, because the old handler was
 passing positionally and the client has always sent `id` where
 the controller takes `entry_id` or `artifact_id`.
@@ -104,10 +111,8 @@ ARTIFACT_ROUTES: dict[RpcMethod, Routed] = {
     RpcMethod.ARTIFACT_LINEAGE: Routed("lineage", {"id": "entry_id"}),
     RpcMethod.ARTIFACT_LIST: Routed("entries"),
     RpcMethod.ARTIFACT_LOCKED: Routed("locked"),
-    RpcMethod.ARTIFACT_MARK_SEEN: Routed("mark_seen"),
     RpcMethod.ARTIFACT_MENTIONS: Routed("mentions"),
     RpcMethod.ARTIFACT_MOVE_NODE: Routed("move_node"),
-    RpcMethod.ARTIFACT_NOTIFICATIONS: Routed("waiting"),
     RpcMethod.ARTIFACT_OPEN_EXPORT: Routed("open_export"),
     RpcMethod.ARTIFACT_OPEN_SHARED: Routed("open_shared"),
     RpcMethod.ARTIFACT_PEOPLE: Routed("people"),
