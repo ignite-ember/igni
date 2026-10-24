@@ -334,6 +334,11 @@ class BundleBuilder:
                 "--no-header",
                 "--no-annotate",
                 "--quiet",
+                # A bundle is resolved as a machine with no checkout will
+                # install it: from wheels and indexes only. An enclosing
+                # uv workspace's path sources would otherwise turn the
+                # SDKs into editable paths that exist only here.
+                "--no-sources",
                 *self._index_flags(),
                 *self._isolation_flags(),
                 "-o",

@@ -32,6 +32,7 @@ import jwt
 from jwt.api_jws import PyJWS
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
+from igni_service.bundle import BundleArchive
 from igni_service.clock import Clock
 from igni_service.crypto import ALGORITHM, Base64Url, BundleClaim, Jwk, RsaKeyPair
 from igni_service.directory import Member, Organisation
@@ -789,3 +790,16 @@ class FakeIgni:
                 )
                 delivered += 1
         return httpx.Response(200, json={"delivered": delivered})
+
+
+#: What a service's tests import. `BundleArchive` builds a stand-in
+#: bundle so the fake knows an extension's pages; `IgniPaths` names the
+#: routes `FakeIgni.failing` can be told to fail.
+__all__ = [
+    "BundleArchive",
+    "Delivery",
+    "FakeIgni",
+    "IgniPaths",
+    "ManualClock",
+    "NotifyCall",
+]
