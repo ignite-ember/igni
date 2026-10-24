@@ -1,0 +1,22 @@
+{
+  "name": "@igni/extension-bridge",
+  "version": "0.1.0",
+  "description": "The guest half of the bridge between an igni extension's page and igni: connect(), RPC, navigation, theme. The host imports the same protocol, so there is one description of the wire.",
+  "license": "Apache-2.0",
+  "type": "module",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts",
+    "./protocol": "./src/protocol.ts",
+    "./tokens": "./src/tokens.ts"
+  },
+  "files": [
+    "src",
+    "!src/**/*.test.ts",
+    "README.md"
+  ],
+  "publishConfig": {
+    "access": "public"
+  }
+}

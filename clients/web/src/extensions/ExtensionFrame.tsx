@@ -37,8 +37,8 @@ import {
   type GuestMessage,
   isGuestMessage,
   methodAllowed,
-} from "./protocol";
-import { readThemeTokens } from "./tokens";
+} from "@igni/extension-bridge/protocol";
+import { readThemeTokens } from "@igni/extension-bridge/tokens";
 
 /**
  * Are these the same parameters?

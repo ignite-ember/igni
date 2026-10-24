@@ -127,7 +127,7 @@ describe("the published list and the stylesheet agree", () => {
   // the first theme change — which is the whole failure this layer
   // exists to prevent.
   const css = readFileSync(
-    join(dirname(fileURLToPath(import.meta.url)), "../../../ui/igni-ui.css"),
+    join(dirname(fileURLToPath(import.meta.url)), "../../../clients/ui/igni-ui.css"),
     "utf8",
   );
 

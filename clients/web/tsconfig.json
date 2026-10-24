@@ -5,7 +5,8 @@
       "@igni/ui-react": ["../../packages/ui-react/src/index.ts"],
       "@igni/ui-react/*": ["../../packages/ui-react/src/*"],
       "@igni/test-utils/*": ["../../packages/test-utils/*"],
-      "@igni/extension-bridge": ["./src/extensions/bridge.ts"],
+      "@igni/extension-bridge": ["../../packages/extension-bridge/src/index.ts"],
+      "@igni/extension-bridge/*": ["../../packages/extension-bridge/src/*"],
       "@igni/ui-css": ["../ui/igni-ui.css"],
       /*
        * ``examples/`` and ``packages/`` sit outside this directory,

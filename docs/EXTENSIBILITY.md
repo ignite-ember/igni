@@ -608,7 +608,7 @@ Three published things, and nothing else about how igni is drawn:
 
 | | Where it is declared |
 |---|---|
-| **Design tokens** | `PUBLISHED_TOKENS` in `clients/web/src/extensions/tokens.ts` — colours, the spacing scale, the type scale, shape. Pushed live over the bridge, so an extension follows dark mode, light mode and a group's branding without asking. |
+| **Design tokens** | `PUBLISHED_TOKENS` in `packages/extension-bridge/src/tokens.ts` — colours, the spacing scale, the type scale, shape. Pushed live over the bridge, so an extension follows dark mode, light mode and a group's branding without asking. |
 | **CSS classes** | The classes defined in `clients/ui/igni-ui.css` — `btn`, `chip`, `ui-card`, `ui-row` and the rest. Named deliberately the same as igni's own, so a change lands in both. |
 | **React components** | The exports of `@igni/ui-react`. What the first two extensions actually import, plus the primitives any extension would need. |
 

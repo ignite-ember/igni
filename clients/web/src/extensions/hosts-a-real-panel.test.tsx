@@ -27,8 +27,8 @@ import { cleanup } from "@testing-library/react";
 // to make it work in a frame, this import stops pointing at the one
 // users see and the gate stops meaning anything.
 import { CodeIndexPanel } from "../components/panels/CodeIndexPanel";
-import { connect, type Bridge } from "./bridge";
-import { BRIDGE_VERSION } from "./protocol";
+import { connect, type Bridge } from "@igni/extension-bridge";
+import { BRIDGE_VERSION } from "@igni/extension-bridge/protocol";
 
 afterEach(() => {
   cleanup();

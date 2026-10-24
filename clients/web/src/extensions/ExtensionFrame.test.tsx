@@ -16,7 +16,7 @@ import { cleanup, render, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { ExtensionFrame } from "./ExtensionFrame";
-import { BRIDGE_VERSION, methodAllowed } from "./protocol";
+import { BRIDGE_VERSION, methodAllowed } from "@igni/extension-bridge/protocol";
 
 const ORIGIN = "http://127.0.0.1:54321";
 
