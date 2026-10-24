@@ -13,8 +13,9 @@ with a `kid`; its issuer is not the address it is reached at, as a
 deployment's is not. It checks what igni checks — client assertions
 against the registered key with single-use `jti`s, bundle signatures and
 digests, notification limits — and records what it was sent:
-`fake.notify_calls` (each call as sent) and `fake.deliveries` (each
-person told, after igni's rules).
+`fake.notify_calls` (each call as sent), `fake.deliveries` (each
+person told, after igni's rules) and `fake.revoked` (each refresh token
+revoked, RFC 7009).
 """
 
 from __future__ import annotations
@@ -105,6 +106,8 @@ class HeldRefresh(BaseModel):
     client_id: str
     user_id: str
     org_id: str
+    #: The sign-in it belongs to: what a revocation ends.
+    grant: str
 
 
 class HeldExtension(BaseModel):
@@ -187,6 +190,8 @@ class FakeIgni:
         self._refresh_tokens: dict[str, HeldRefresh] = {}
         #: Every grant the token endpoint answered, by `grant_type`.
         self.grants: list[str] = []
+        #: Every refresh token revoked at `/v1/oauth/revoke`, as presented.
+        self.revoked: list[str] = []
 
     def reset(self) -> None:
         """Forget what happened, keep who exists.
@@ -201,6 +206,7 @@ class FakeIgni:
         self.deliveries.clear()
         self.failing.clear()
         self.grants.clear()
+        self.revoked.clear()
         self._told.clear()
         self._codes.clear()
 
@@ -447,6 +453,7 @@ class FakeIgni:
                     "issuer": self.issuer,
                     "jwks_uri": f"{self.issuer}{IgniPaths.JWKS}",
                     "token_endpoint": f"{self.issuer}{IgniPaths.TOKEN}",
+                    "revocation_endpoint": f"{self.issuer}{IgniPaths.REVOKE}",
                     "authorization_endpoint": self.authorization_endpoint,
                 },
             )
@@ -463,6 +470,8 @@ class FakeIgni:
             return self._extension(seen)
         if path == IgniPaths.TOKEN:
             return self._issue(seen)
+        if path == IgniPaths.REVOKE:
+            return self._revoke(seen)
         if path.startswith(f"{IgniPaths.DIRECTORY}/") or path == IgniPaths.NOTIFICATIONS:
             held = self._service_tokens.get(
                 seen.headers.get("authorization", "").removeprefix("Bearer ")
@@ -637,7 +646,11 @@ class FakeIgni:
                 assertion,
                 client.jwk.public_key(),
                 algorithms=[ALGORITHM],
-                audience=[self.issuer, f"{self.issuer}{IgniPaths.TOKEN}"],
+                audience=[
+                    self.issuer,
+                    f"{self.issuer}{IgniPaths.TOKEN}",
+                    f"{self.issuer}{IgniPaths.REVOKE}",
+                ],
                 issuer=client_id,
                 options={
                     "require": ["exp", "jti", "sub"],
@@ -675,7 +688,7 @@ class FakeIgni:
             != issued.challenge
         ):
             return httpx.Response(400, json={"error": "invalid_grant"})
-        return self._user_tokens(client, issued.user_id, issued.org_id)
+        return self._user_tokens(client, issued.user_id, issued.org_id, grant=uuid.uuid4().hex)
 
     def _refresh(self, client: FakeClient, form: dict[str, str]) -> httpx.Response:
         held = self._refresh_tokens.pop(form.get("refresh_token", ""), None)
@@ -684,12 +697,14 @@ class FakeIgni:
         member = self._member(held.org_id, held.user_id)
         if member is None or not member.is_active:
             return httpx.Response(400, json={"error": "invalid_grant"})
-        return self._user_tokens(client, held.user_id, held.org_id)
+        return self._user_tokens(client, held.user_id, held.org_id, grant=held.grant)
 
-    def _user_tokens(self, client: FakeClient, user_id: str, org_id: str) -> httpx.Response:
+    def _user_tokens(
+        self, client: FakeClient, user_id: str, org_id: str, *, grant: str
+    ) -> httpx.Response:
         refresh = f"refresh-{uuid.uuid4().hex}"
         self._refresh_tokens[refresh] = HeldRefresh(
-            client_id=client.client_id, user_id=user_id, org_id=org_id
+            client_id=client.client_id, user_id=user_id, org_id=org_id, grant=grant
         )
         access = self.person_token(
             user_id, org_id=org_id, aud=client.client_uri, azp=client.client_id
@@ -703,6 +718,34 @@ class FakeIgni:
                 "expires_in": 600,
             },
         )
+
+    def _revoke(self, seen: SeenRequest) -> httpx.Response:
+        """RFC 7009, as igni answers it: the whole sign-in ends."""
+        form = seen.form()
+        if (
+            form.get("client_assertion_type")
+            != "urn:ietf:params:oauth:client-assertion-type:jwt-bearer"
+        ):
+            return self._invalid_client()
+        client = self._authenticated(form.get("client_assertion", ""))
+        if client is None:
+            return self._invalid_client()
+        token = form.get("token", "")
+        if not token:
+            return httpx.Response(400, json={"error": "invalid_request"})
+        held = self._refresh_tokens.get(token)
+        if held is None:
+            if token.startswith("eyJ"):  # a JWT: here, only ever an access token
+                return httpx.Response(400, json={"error": "unsupported_token_type"})
+            # Not a token igni would still honour: nothing to revoke.
+            return httpx.Response(200)
+        if held.client_id != client.client_id:
+            return httpx.Response(400, json={"error": "invalid_grant"})
+        self.revoked.append(token)
+        for other, also in list(self._refresh_tokens.items()):
+            if also.grant == held.grant:
+                del self._refresh_tokens[other]
+        return httpx.Response(200)
 
     @staticmethod
     def _invalid_client() -> httpx.Response:

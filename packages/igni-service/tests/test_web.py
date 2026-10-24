@@ -15,6 +15,7 @@ from sqlalchemy.ext.asyncio import create_async_engine
 from igni_service import IgniService, KeyCipher, Person, SqlWebSessionStore, WebSession
 from igni_service.tables import IgniTables
 from igni_service.testing import FakeIgni, ManualClock
+from igni_service.token_endpoint import GrantRefused, TokenEndpoint
 from igni_service.urls import IgniPaths
 from igni_service.web import Pkce, ReturnTo
 from igni_service.web_sessions import LoginAttempt
@@ -42,6 +43,10 @@ def web_app(igni: IgniService) -> FastAPI:
 
     @app.get("/admin")
     async def admin(person: Person = Depends(igni.web.super_admin)) -> dict[str, str]:
+        return {"admin": person.user_id}
+
+    @app.get("/organisation")
+    async def organisation(person: Person = Depends(igni.web.org_admin)) -> dict[str, str]:
         return {"admin": person.user_id}
 
     return app
@@ -229,6 +234,83 @@ async def test_logout_ends_the_session(browser: httpx.AsyncClient, fake: FakeIgn
     assert out.status_code == 303
     browser.cookies.set("igni_session", session_id, domain="service.test")
     assert (await browser.get("/settings")).status_code == 401
+
+
+async def test_organisation_admin_pages_are_for_that_organisations_admins(
+    browser: httpx.AsyncClient, fake: FakeIgni, web_app: FastAPI
+) -> None:
+    await sign_in(browser, fake, user_id="u-max")
+    assert (await browser.get("/organisation")).status_code == 403
+
+    for user_id, status in (("u-ada", 200), ("u-root", 403)):
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=web_app), base_url=SERVICE
+        ) as other:
+            await sign_in(other, fake, user_id=user_id)
+            assert (await other.get("/organisation")).status_code == status, user_id
+
+
+async def _refresh_token_of(browser: httpx.AsyncClient, igni: IgniService) -> str:
+    session = await igni.web.store.get(browser.cookies["igni_session"])
+    assert session is not None
+    return session.refresh_token
+
+
+async def test_logout_ends_the_sign_in_at_igni_too(
+    browser: httpx.AsyncClient, fake: FakeIgni, igni: IgniService
+) -> None:
+    await sign_in(browser, fake)
+    refresh = await _refresh_token_of(browser, igni)
+
+    out = await browser.post("/auth/logout")
+
+    assert out.status_code == 303
+    assert fake.revoked == [refresh]
+    [revocation] = fake.requests_to(IgniPaths.REVOKE)
+    assert revocation.form()["token_type_hint"] == "refresh_token"
+    endpoint = TokenEndpoint(igni.server, igni.registration, igni.key)
+    with pytest.raises(GrantRefused):
+        await endpoint.grant({"grant_type": "refresh_token", "refresh_token": refresh})
+
+
+async def test_logout_revokes_the_token_the_session_holds_after_a_renewal(
+    browser: httpx.AsyncClient, fake: FakeIgni, igni: IgniService, clock: ManualClock
+) -> None:
+    await sign_in(browser, fake)
+    first = await _refresh_token_of(browser, igni)
+    clock.advance(600)
+    assert (await browser.get("/settings")).status_code == 200
+    renewed = await _refresh_token_of(browser, igni)
+
+    await browser.post("/auth/logout")
+
+    assert renewed != first
+    assert fake.revoked == [renewed]
+
+
+async def test_logout_works_when_igni_cannot_hear_it(
+    browser: httpx.AsyncClient, fake: FakeIgni, caplog: pytest.LogCaptureFixture
+) -> None:
+    await sign_in(browser, fake)
+    session_id = browser.cookies["igni_session"]
+    fake.failing[IgniPaths.REVOKE] = 503
+
+    out = await browser.post("/auth/logout")
+
+    assert out.status_code == 303
+    assert fake.revoked == []
+    assert "could not revoke" in caplog.text
+    browser.cookies.set("igni_session", session_id, domain="service.test")
+    assert (await browser.get("/settings")).status_code == 401
+
+
+async def test_logout_without_a_session_asks_igni_nothing(
+    browser: httpx.AsyncClient, fake: FakeIgni
+) -> None:
+    out = await browser.post("/auth/logout")
+
+    assert out.status_code == 303
+    assert fake.requests_to(IgniPaths.REVOKE) == []
 
 
 async def test_plain_http_in_development_drops_secure(fake: FakeIgni) -> None:

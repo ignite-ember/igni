@@ -36,6 +36,7 @@ class IgniPaths:
     JWKS = "/.well-known/jwks.json"
     CLIENTS = "/v1/clients"
     TOKEN = "/v1/oauth/token"
+    REVOKE = "/v1/oauth/revoke"
     DIRECTORY = "/v1/directory"
     NOTIFICATIONS = "/v1/service-notifications"
 

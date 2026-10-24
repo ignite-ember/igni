@@ -58,6 +58,10 @@ async def settings_page(person: Person = Depends(igni.web.person)) -> Page: ...
 
 @app.get("/admin")
 async def admin_page(person: Person = Depends(igni.web.super_admin)) -> Page: ...
+
+
+@app.get("/organisation/settings")
+async def org_settings(person: Person = Depends(igni.web.org_admin)) -> Page: ...
 ```
 
 ## Installing
@@ -108,6 +112,9 @@ is unreachable, so the service starts and serves either way:
   `org_id`, `org_name`, `org_role`, `email`, `name`, `super_admin`. Every
   check on the token is made here; a refused token is a 401, and a token
   that cannot be checked because igni is unreachable is a 503.
+- `Depends(igni.org_admin)` — the same, for an admin of the organisation
+  the token is for (`org_role == "admin"`); anybody else is a 403. Being a
+  super admin does not make somebody an organisation's admin.
 - `Depends(igni.optional_person)` — the same, or `None` when no token was
   sent: for routes that serve everybody and do more for somebody signed in.
   A token that was sent and is refused is still a 401.
@@ -119,8 +126,13 @@ is unreachable, so the service starts and serves either way:
   an API call gets a 401. Their tokens stay on the server and are renewed
   before they expire; once igni refuses to renew, they are signed out.
   `igni.web.login_path` and `igni.web.logout_path` are what a page links
-  and posts to.
+  and posts to. Signing out ends the session here and revokes its refresh
+  token at igni, so the sign-in is over at igni too; if igni cannot be
+  reached the person is still signed out here, and the refresh token simply
+  expires.
 - `Depends(igni.web.super_admin)` — the same, for super admins only.
+- `Depends(igni.web.org_admin)` — the same, for admins of the organisation
+  the person signed in to; 403 for anybody else, super admins included.
 
 ## igni, for one organisation
 
@@ -211,8 +223,8 @@ sdist-only = ["wikipedia"]
 
 `igni_service.testing.FakeIgni` is igni in-process: it signs tokens,
 serves its keys, takes registrations and bundles, issues service tokens,
-answers the directory, plays the portal's sign-in, and records
-notifications.
+answers the directory, plays the portal's sign-in, revokes sign-ins, and
+records notifications.
 
 ```python
 from igni_service.testing import FakeIgni
@@ -226,4 +238,5 @@ igni_call = fake.igni_token("org-1")                 # what igni sends for erasu
 back = fake.authorize(login_redirect, user_id="u-ada", org_id="org-1")  # the portal
 
 assert [d.user_id for d in fake.deliveries] == ["u-ada"]
+assert fake.revoked == [refresh_token]                # what /auth/logout revoked
 ```

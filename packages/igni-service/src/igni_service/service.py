@@ -241,6 +241,21 @@ class IgniService:
         """
         return await self.verifier.person(token)
 
+    async def org_admin(
+        self, credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(_BEARER)]
+    ) -> Person:
+        """FastAPI dependency: the person, if they are an admin of the organisation
+        their token is for (`org_role == "admin"`); 403 for anybody else.
+
+        Being a super admin does not make somebody an organisation's admin.
+        """
+        person = await self.person(credentials)
+        if not person.is_org_admin:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN, detail="Organisation admins only"
+            )
+        return person
+
     async def igni_call(
         self, credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(_BEARER)]
     ) -> IgniCall:

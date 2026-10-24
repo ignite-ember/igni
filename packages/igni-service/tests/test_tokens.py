@@ -4,14 +4,15 @@ from __future__ import annotations
 
 import httpx
 import pytest
+from fastapi import Depends, FastAPI
 
-from igni_service import IgniService
+from igni_service import IgniService, Person
 from igni_service.crypto import RsaKeyPair
 from igni_service.testing import FakeIgni, ManualClock
 from igni_service.tokens import TokenRefused
 from igni_service.urls import IgniPaths
 
-from .conftest import ORG, bearer
+from .conftest import ORG, OTHER_ORG, bearer
 
 
 async def test_a_person_token_names_the_person_and_their_organisation(
@@ -192,3 +193,32 @@ async def test_igni_calling_is_an_igni_token_naming_igni_as_its_subject(
         await igni.verifier.igni_call(fake.person_token("u-ada", org_id=ORG))
     with pytest.raises(TokenRefused):
         await igni.verifier.igni_call(fake.igni_token(""))
+
+
+async def test_org_admin_is_an_admin_of_the_organisation_the_token_is_for(
+    igni: IgniService, fake: FakeIgni
+) -> None:
+    fake.add_member(ORG, "u-root", email="root@acme.test", super_admin=True)
+    fake.add_member(OTHER_ORG, "u-max", role="admin")
+    app = FastAPI()
+
+    @app.get("/admin")
+    async def admin(person: Person = Depends(igni.org_admin)) -> dict[str, str]:
+        return {"admin": person.user_id, "org": person.org_id}
+
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://service.test"
+    ) as http:
+        ada = await http.get("/admin", headers=bearer(fake.person_token("u-ada", org_id=ORG)))
+        max_here = await http.get("/admin", headers=bearer(fake.person_token("u-max", org_id=ORG)))
+        max_there = await http.get(
+            "/admin", headers=bearer(fake.person_token("u-max", org_id=OTHER_ORG))
+        )
+        root = await http.get("/admin", headers=bearer(fake.person_token("u-root", org_id=ORG)))
+        nobody = await http.get("/admin")
+
+    assert ada.json() == {"admin": "u-ada", "org": ORG}
+    assert max_here.status_code == 403, "a member of this organisation is not its admin"
+    assert max_there.json() == {"admin": "u-max", "org": OTHER_ORG}
+    assert root.status_code == 403, "a super admin is not every organisation's admin"
+    assert nobody.status_code == 401

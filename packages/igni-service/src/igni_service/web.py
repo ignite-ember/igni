@@ -15,7 +15,10 @@ The authorization-code flow with PKCE (S256), run entirely on the server:
   service's URL, `token_use` = `user`, `azp` = this client), opens a
   server-side session and sets only its id in an HttpOnly, SameSite=Lax
   cookie (Secure on https);
-* `/auth/logout` ends the session.
+* `/auth/logout` ends the session here and revokes its refresh token at
+  igni (RFC 7009), so the sign-in is over at igni too: no refresh token
+  of it renews again. Signing out here works whether or not igni can be
+  reached to hear it.
 
 The access token lives ten minutes and is renewed with the refresh token
 a minute before it runs out, inside `person`. igni refusing the renewal —
@@ -36,7 +39,7 @@ from fastapi import APIRouter, HTTPException, Request, Response, status
 from fastapi.responses import PlainTextResponse, RedirectResponse
 
 from igni_service.clock import Clock
-from igni_service.errors import IgniUnavailable
+from igni_service.errors import IgniError, IgniUnavailable
 from igni_service.registration import ServiceRegistration
 from igni_service.server import IgniServer
 from igni_service.signing import SigningKey
@@ -237,10 +240,19 @@ class WebSignIn:
         return response
 
     async def logout(self, request: Request, return_to: str = "/") -> Response:
-        """End the session here. The person stays signed in to igni itself."""
+        """End the session here, and the sign-in at igni.
+
+        The session goes first, so the person is signed out of these pages
+        whatever igni says; then its refresh token is revoked, so nothing
+        that ever held it can renew. The person stays signed in to igni's
+        own portal — that is igni's session, not this service's.
+        """
         session_id = request.cookies.get(self.COOKIE)
+        session = await self._store.get(session_id) if session_id else None
         if session_id:
             await self._store.delete(session_id)
+        if session is not None and session.refresh_token:
+            await self._revoke(session.refresh_token)
         response = RedirectResponse(ReturnTo.safe(return_to), status_code=303)
         response.delete_cookie(self.COOKIE, path="/")
         return response
@@ -271,7 +283,30 @@ class WebSignIn:
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Super admins only")
         return person
 
+    async def org_admin(self, request: Request) -> Person:
+        """FastAPI dependency: a signed-in admin of the organisation they signed in to.
+
+        `org_role == "admin"` in that one organisation, as igni said when it
+        last renewed the token; 403 for anybody else, a super admin included.
+        """
+        person = await self.person(request)
+        if not person.is_org_admin:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN, detail="Organisation admins only"
+            )
+        return person
+
     # ── Inside ──────────────────────────────────────────────────────
+
+    async def _revoke(self, refresh_token: str) -> None:
+        """Revoke at igni, best effort: signing out here has already happened."""
+        try:
+            await self._endpoint.revoke(refresh_token)
+        except IgniError as exc:
+            # The refresh token was only ever in the session just deleted,
+            # so it is not lost to anybody; it simply stays valid at igni
+            # until it expires.
+            logger.warning("igni: could not revoke a sign-in on sign-out: %s", exc)
 
     async def _refreshed(self, session_id: str) -> WebSession | None:
         lock = self._refreshing.setdefault(session_id, asyncio.Lock())

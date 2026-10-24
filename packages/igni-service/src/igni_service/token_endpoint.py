@@ -1,9 +1,10 @@
-"""igni's token endpoint, as this service calls it with its own key.
+"""igni's token and revocation endpoints, as this service calls them with its own key.
 
 Every grant this service asks for — `client_credentials` for itself,
 `authorization_code` and `refresh_token` for a person signed in to its
-pages — authenticates the same way: a `private_key_jwt` client assertion,
-single use, addressed to igni's issuer.
+pages — and every revocation (a person signing out) authenticates the
+same way: a `private_key_jwt` client assertion, single use, addressed to
+igni's issuer.
 """
 
 from __future__ import annotations
@@ -30,7 +31,7 @@ class IssuedTokens(BaseModel):
 
 
 class GrantRefused(IgniError):
-    """igni answered and refused the grant: `invalid_client`, `invalid_grant`."""
+    """igni answered and refused: `invalid_client`, `invalid_grant`, `unsupported_token_type`."""
 
     def __init__(self, status: int, detail: str) -> None:
         super().__init__(f"{status} {detail}")
@@ -39,7 +40,7 @@ class GrantRefused(IgniError):
 
 
 class TokenEndpoint:
-    """`POST /v1/oauth/token`, authenticated as this service."""
+    """`POST /v1/oauth/token` and `POST /v1/oauth/revoke`, authenticated as this service."""
 
     def __init__(
         self, igni: IgniServer, registration: ServiceRegistration, key: SigningKey
@@ -50,6 +51,28 @@ class TokenEndpoint:
 
     async def grant(self, form: dict[str, str]) -> IssuedTokens:
         """Ask for tokens. Raises `GrantRefused` or `IgniUnavailable`."""
+        response = await self._post(IgniPaths.TOKEN, form, what="a token request")
+        try:
+            return IssuedTokens.model_validate(response.json())
+        except (ValidationError, ValueError) as exc:
+            raise IgniUnavailable(
+                "igni server answered a token request with something else"
+            ) from exc
+
+    async def revoke(self, refresh_token: str) -> None:
+        """End the sign-in a refresh token belongs to (RFC 7009).
+
+        Every refresh token of that sign-in stops renewing at igni. A token
+        igni no longer considers valid is not an error. Raises
+        `GrantRefused` or `IgniUnavailable`.
+        """
+        await self._post(
+            IgniPaths.REVOKE,
+            {"token": refresh_token, "token_type_hint": "refresh_token"},
+            what="a revocation",
+        )
+
+    async def _post(self, path: str, form: dict[str, str], *, what: str) -> httpx.Response:
         client_id = await self._registration.client_id()
         authenticated = {
             **form,
@@ -59,20 +82,13 @@ class TokenEndpoint:
             ),
         }
         try:
-            response = await self._igni.http.post(
-                self._igni.url(IgniPaths.TOKEN), data=authenticated
-            )
+            response = await self._igni.http.post(self._igni.url(path), data=authenticated)
         except httpx.HTTPError as exc:
             raise IgniUnavailable(
-                f"could not reach igni server for a token: {type(exc).__name__}"
+                f"could not reach igni server for {what}: {type(exc).__name__}"
             ) from exc
         if response.status_code in (400, 401, 403):
             raise GrantRefused(response.status_code, response.text)
         if response.status_code != 200:
-            raise IgniUnavailable(f"igni server answered a token request {response.status_code}")
-        try:
-            return IssuedTokens.model_validate(response.json())
-        except (ValidationError, ValueError) as exc:
-            raise IgniUnavailable(
-                "igni server answered a token request with something else"
-            ) from exc
+            raise IgniUnavailable(f"igni server answered {what} {response.status_code}")
+        return response
