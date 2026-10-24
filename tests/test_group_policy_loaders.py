@@ -280,7 +280,6 @@ def test_agent_loader_reads_the_project_dir(tmp_path: Path):
     report = AgentDefinitionLoader(
         settings=_bare_settings(),
         project_dir=project,
-        codeindex_available=False,
     ).load()
 
     assert report.entries["contract-review"].priority == AgentPriority.PROJECT_EMBER
@@ -303,7 +302,6 @@ def test_the_policy_cache_is_an_agent_root(tmp_path: Path):
     report = AgentDefinitionLoader(
         settings=_bare_settings(),
         project_dir=project,
-        codeindex_available=False,
         group_dir=cache,
     ).load()
 
@@ -321,7 +319,6 @@ def test_the_cache_is_not_read_unless_it_is_passed(tmp_path: Path):
     report = AgentDefinitionLoader(
         settings=_bare_settings(),
         project_dir=project,
-        codeindex_available=False,
     ).load()
 
     assert "unasked" not in report.entries
@@ -349,7 +346,6 @@ def test_the_project_wins_a_name_collision(tmp_path: Path):
     report = AgentDefinitionLoader(
         settings=_bare_settings(),
         project_dir=project,
-        codeindex_available=False,
         group_dir=cache,
     ).load()
 
@@ -378,7 +374,6 @@ def test_the_group_beats_the_user_globals(tmp_path: Path, monkeypatch):
     report = AgentDefinitionLoader(
         settings=_bare_settings(),
         project_dir=project,
-        codeindex_available=False,
         group_dir=cache,
     ).load()
 

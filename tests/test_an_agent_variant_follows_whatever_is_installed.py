@@ -8,9 +8,9 @@ suffix literally, in three places.
 Once a capability arrives by being installed rather than by being
 compiled in, the base cannot know the suffix. So the loader reads two
 sets instead — every variant name that could appear, and the subset
-that is live — and ``codeindex`` is one name among them. With the
-defaults it behaves exactly as it did, which the first class here is
-about; the rest is what the old form could not express.
+that is live — and ``codeindex`` is one name among them, known only
+once the extension that declares it is installed. The last class is
+what makes an extension able to rewrite an agent it does not own.
 """
 
 from __future__ import annotations
@@ -20,6 +20,7 @@ from pathlib import Path
 import pytest
 
 from ember_code.core.agents.loader import AgentDefinitionLoader
+from ember_code.core.agents.schemas import AgentPriority
 from ember_code.core.config.settings import Settings
 
 
@@ -37,10 +38,17 @@ def _agents(tmp_path: Path, *names: str) -> list[Path]:
 
 
 def _loader(**over: object) -> AgentDefinitionLoader:
+    """A loader that knows the ``codeindex`` variant, live when asked.
+
+    ``codeindex_available`` is shorthand for what an installed CodeIndex
+    extension declares: the variant known, and live while it runs.
+    """
+    live = bool(over.pop("codeindex_available", False))
+    over.setdefault("known_variants", {"codeindex"})
+    over.setdefault("active_variants", {"codeindex"} if live else set())
     return AgentDefinitionLoader(
         Settings(),
         Path("/tmp"),
-        codeindex_available=bool(over.pop("codeindex_available", False)),
         **over,  # type: ignore[arg-type]
     )
 
@@ -148,3 +156,51 @@ def test_an_agent_nobody_wrote_a_variant_for_is_untouched(tmp_path, live):
     files = _agents(tmp_path, "plain.md", "another.md")
     loader = _loader(codeindex_available=live)
     assert _picked(loader, files) == {"plain.md", "another.md"}
+
+
+class TestAnExtensionsPluginReplacesTheAgentItRewrote:
+    """An extension ships ``<agent>.<variant>.md`` in its plugin, without
+    the plain ``<agent>.md`` — that one comes from igni, the org's group
+    or the project. While the extension runs, its file *is* that agent:
+    the same name, not ``<plugin>:<agent>``, and above every file a
+    person or an organisation wrote. When it stops, the file is skipped
+    and the agent is whatever it was before."""
+
+    def test_while_live_it_loads_under_the_plain_name_above_everything(self, tmp_path):
+        files = _agents(tmp_path, "security.codeindex.md")
+
+        report = _loader(codeindex_available=True).load_directory(
+            tmp_path, AgentPriority.USER_EMBER, namespace="igni-codeindex"
+        )
+
+        assert set(report.entries) == {"security"}, [f.name for f in files]
+        assert report.entries["security"].priority == AgentPriority.EXTENSION_OVERRIDE
+        assert AgentPriority.EXTENSION_OVERRIDE > AgentPriority.PROJECT_EMBER
+
+    def test_when_the_extension_stops_the_file_is_skipped(self, tmp_path):
+        _agents(tmp_path, "security.codeindex.md")
+
+        report = _loader(codeindex_available=False).load_directory(
+            tmp_path, AgentPriority.USER_EMBER, namespace="igni-codeindex"
+        )
+
+        assert report.entries == {}
+
+    def test_an_agent_only_the_extension_has_exists_only_while_it_runs(self, tmp_path):
+        """data-architect has no plain version: without CodeIndex it is
+        not an agent at all, rather than one told about an index it
+        cannot reach."""
+        _agents(tmp_path, "data-architect.codeindex.md")
+
+        live = _loader(codeindex_available=True).load_directory(tmp_path, 1, namespace="igni-codeindex")
+        down = _loader(codeindex_available=False).load_directory(tmp_path, 1, namespace="igni-codeindex")
+
+        assert set(live.entries) == {"data-architect"}
+        assert down.entries == {}
+
+    def test_its_own_plain_agents_stay_in_its_namespace(self, tmp_path):
+        _agents(tmp_path, "indexer.md")
+
+        report = _loader(codeindex_available=True).load_directory(tmp_path, 1, namespace="igni-codeindex")
+
+        assert set(report.entries) == {"igni-codeindex:indexer"}

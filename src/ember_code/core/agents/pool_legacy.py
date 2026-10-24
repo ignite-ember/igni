@@ -170,7 +170,6 @@ class LegacyAgentPoolMixin:
         loader = AgentDefinitionLoader(
             settings=self._settings_or_bare(),
             project_dir=Path(self._base_dir) if self._base_dir else Path.cwd(),
-            codeindex_available=self._codeindex_available,
             restriction_policy=policy,
         )
         report = loader.load_directory(path, priority, namespace=namespace)

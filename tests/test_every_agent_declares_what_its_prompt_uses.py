@@ -38,9 +38,16 @@ import yaml
 
 _AGENT_DIR = Path(__file__).resolve().parent.parent / "src/ember_code/bundled_agents"
 
+#: CodeIndex's versions of these agents replace them while it runs, so
+#: they are held to the same contract — checked against the sibling
+#: checkout when there is one.
+_CODEINDEX_AGENT_DIR = (
+    Path(__file__).resolve().parents[2] / "igni__code-index" / "extension" / "plugin" / "agents"
+)
+
 
 def agent_files() -> list[Path]:
-    return sorted(_AGENT_DIR.glob("*.md"))
+    return sorted([*_AGENT_DIR.glob("*.md"), *_CODEINDEX_AGENT_DIR.glob("*.md")])
 
 
 def declared_tools(path: Path) -> set[str]:
@@ -79,7 +86,7 @@ class TestTheScanMeasuredSomething:
     """Every check below is vacuous if the inputs came back empty."""
 
     def test_there_are_agents_to_check(self):
-        assert len(agent_files()) >= 15
+        assert len(sorted(_AGENT_DIR.glob("*.md"))) >= 10
 
     def test_the_catalog_knows_function_names(self):
         from ember_code.core.tools.tool_spec import ToolSpecCatalog

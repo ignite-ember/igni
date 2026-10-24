@@ -51,6 +51,7 @@ class AgentPriority(IntEnum):
     Claude sources by +1::
 
         10  ephemeral agents created at runtime
+         6  an extension's <agent>.<variant>.md, while it runs
          5  <project>/.igni/agents/          (project, native)
          4  <project>/.igni/agents.local/    (project personal)
          3  <project>/.claude/agents/         (project, cross-tool)
@@ -62,6 +63,11 @@ class AgentPriority(IntEnum):
     project declares. It used to sit at the top; the project now
     outranks it, so a repository that ships its own version of an agent
     gets that version.
+
+    An extension's override sits above all of them: the agents it
+    replaces are written for the capability it adds, and while it runs
+    the plain version would be told about tools and an index that it
+    does not use. It applies only while the extension is live.
     """
 
     USER_CLAUDE = 0
@@ -70,6 +76,7 @@ class AgentPriority(IntEnum):
     PROJECT_CLAUDE = 3
     PROJECT_LOCAL = 4
     PROJECT_EMBER = 5
+    EXTENSION_OVERRIDE = 6
     EPHEMERAL = 10
 
 

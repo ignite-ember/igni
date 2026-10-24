@@ -191,7 +191,7 @@ class AgentPool(LegacyAgentPoolMixin):
         """Merge a rehydrated ephemeral dir at
         :attr:`AgentPriority.EPHEMERAL`. Called by
         :class:`EphemeralAgentStore.init`."""
-        loader = self._make_base_loader(codeindex_available=False)
+        loader = self._make_base_loader()
         report = loader.load_directory(path, AgentPriority.EPHEMERAL)
         self._merge(report)
 
@@ -239,7 +239,6 @@ class AgentPool(LegacyAgentPoolMixin):
         loader = AgentDefinitionLoader(
             settings=settings,
             project_dir=project_dir,
-            codeindex_available=codeindex_available,
             group_dir=group_dir,
         )
         report = loader.load()
@@ -258,7 +257,7 @@ class AgentPool(LegacyAgentPoolMixin):
         subsequent ``get(...)`` works."""
         self._settings = settings
         self._base_dir = base_dir or str(path.parent)
-        loader = self._make_base_loader(codeindex_available=False)
+        loader = self._make_base_loader()
         report = loader.load_directory(path, priority)
         self._merge(report)
         # Ensure the builder exists so lazy ``get()`` works.
@@ -282,7 +281,6 @@ class AgentPool(LegacyAgentPoolMixin):
         loader = AgentDefinitionLoader(
             settings=self._settings_or_bare(),
             project_dir=Path(self._base_dir) if self._base_dir else Path.cwd(),
-            codeindex_available=self._codeindex_available_flag,
             restriction_policy=policy,
         )
         report = loader.load_directory(path, priority, namespace=namespace)
@@ -504,13 +502,12 @@ class AgentPool(LegacyAgentPoolMixin):
             if existing is None or entry.priority > existing.priority:
                 self._entries[name] = entry
 
-    def _make_base_loader(self, *, codeindex_available: bool) -> AgentDefinitionLoader:
+    def _make_base_loader(self) -> AgentDefinitionLoader:
         """Construct a bare-bones loader for single-directory
         loads (tests, ephemeral rehydrate)."""
         return AgentDefinitionLoader(
             settings=self._settings_or_bare(),
             project_dir=Path(self._base_dir) if self._base_dir else Path.cwd(),
-            codeindex_available=codeindex_available,
         )
 
     def _ensure_builder(self) -> AgentBuilder:

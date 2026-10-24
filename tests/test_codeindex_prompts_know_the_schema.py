@@ -30,19 +30,16 @@ from ember_code.core.prompts import (
 
 REPO = Path(__file__).resolve().parents[1]
 
-# The directory that ships. ``ProjectInitializer._update_built_in_files`` copies
-# ``src/ember_code/bundled_agents/*.md`` into every project's ``.igni/agents``;
-# the repo-root ``agents/`` copies are development-tree only and are in no wheel.
-#
-# This file used to glob only the root copy, and the same failure it was written
-# about happened one directory up: the placeholder reached 8 of 8 dev copies and
-# 0 of 8 shipped ones, the tests passed, and the product kept serving the
-# hand-written schema. Both directories are checked, and the shipped one is
-# asserted non-empty on its own.
-SHIPPED_AGENT_DIR = REPO / "src" / "ember_code" / "bundled_agents"
-DEV_AGENT_DIR = REPO / "agents"
-SHIPPED_PROMPTS = sorted(SHIPPED_AGENT_DIR.glob("*.codeindex.md"))
-CODEINDEX_PROMPTS = SHIPPED_PROMPTS + sorted(DEV_AGENT_DIR.glob("*.codeindex.md"))
+# The prompts that query the index are CodeIndex's: they ship in its
+# extension's plugin as ``<agent>.codeindex.md`` and replace igni's agents
+# while it runs. What igni owns is the contract they depend on — the
+# placeholder, and the schema substituted into it where agents are built —
+# so they are checked here, against the sibling checkout when there is one.
+CODEINDEX_AGENT_DIR = REPO.parent / "igni__code-index" / "extension" / "plugin" / "agents"
+CODEINDEX_PROMPTS = sorted(CODEINDEX_AGENT_DIR.glob("*.codeindex.md"))
+_needs_codeindex = pytest.mark.skipif(
+    not CODEINDEX_AGENT_DIR.is_dir(), reason="no igni__code-index checkout beside this one"
+)
 
 
 def _prompt_id(path: Path) -> str:
@@ -65,20 +62,11 @@ COUNTED_FACTS = [
 ]
 
 
-def test_there_are_shipped_codeindex_prompts_to_check():
-    """The packaged directory specifically — an empty glob here passes every
-    parametrised test below without checking anything that ships."""
-    assert SHIPPED_PROMPTS, (
-        f"no *.codeindex.md under {SHIPPED_AGENT_DIR} — the packaged agents moved, "
-        "and every assertion in this file just became a no-op for the product"
-    )
-
-
-def test_every_dev_copy_has_a_shipped_counterpart():
-    """A prompt that exists only in the dev tree is a prompt nobody runs."""
-    shipped = {p.name for p in SHIPPED_PROMPTS}
-    missing = sorted(p.name for p in DEV_AGENT_DIR.glob("*.codeindex.md") if p.name not in shipped)
-    assert not missing, f"{missing} exist in agents/ but are not packaged"
+@_needs_codeindex
+def test_there_are_codeindex_prompts_to_check():
+    """An empty glob here passes every parametrised test below without
+    checking anything CodeIndex ships."""
+    assert CODEINDEX_PROMPTS, f"no *.codeindex.md under {CODEINDEX_AGENT_DIR}"
 
 
 @pytest.mark.parametrize("path", CODEINDEX_PROMPTS, ids=_prompt_id)

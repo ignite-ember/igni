@@ -92,7 +92,6 @@ class TestTheModelAnAgentRunsAgainst:
         report = AgentDefinitionLoader(
             settings=bare_settings,
             project_dir=project,
-            codeindex_available=False,
             group_dir=cache.agents_dir,
         ).load()
 
@@ -120,7 +119,6 @@ class TestTheModelAnAgentRunsAgainst:
         report = AgentDefinitionLoader(
             settings=bare_settings,
             project_dir=project,
-            codeindex_available=False,
             group_dir=cache.agents_dir,
         ).load()
 

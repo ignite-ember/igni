@@ -5,9 +5,10 @@ Owns three concerns:
 * Scanning the five standard roots (user/project × Claude/Ember +
   the project-local variant) and applying the priority table so
   the higher-priority definition wins on same-name collisions.
-* Picking the right CodeIndex prompt variant (``<name>.md`` vs
-  ``<name>.codeindex.md``) based on whether the current HEAD has
-  a populated chroma.
+* Picking the right variant of an agent (``<name>.md`` vs
+  ``<name>.<variant>.md``) by whether the extension that declared the
+  variant is running — including an extension's own plugin replacing
+  an agent it does not ship the plain version of.
 * Applying the plugin security envelope when loading from a
   plugin-shipped ``agents/`` directory.
 
@@ -44,8 +45,6 @@ class AgentDefinitionLoader:
     """Scan the standard agent roots and return a merged
     :class:`LoadReport`.
 
-    ``codeindex_available`` is typed instance state — not a
-    ``getattr(self, "_codeindex_available", False)`` reach-in.
     ``restriction_policy`` is optional: passing one flips the
     plugin security envelope on for every loaded agent, so the
     same class serves both the base-load path and the plugin-load
@@ -56,7 +55,6 @@ class AgentDefinitionLoader:
         self,
         settings: Settings,
         project_dir: Path,
-        codeindex_available: bool,
         restriction_policy: PluginRestrictionPolicy | None = None,
         group_dir: Path | None = None,
         known_variants: Collection[str] | None = None,
@@ -64,10 +62,6 @@ class AgentDefinitionLoader:
     ) -> None:
         """
         Args:
-            codeindex_available: Whether the CodeIndex is up. Kept
-                because twenty other modules still ask that question
-                directly; here it only computes the variant sets when
-                nobody passes them.
             known_variants: Every variant name that could appear as a
                 ``<agent>.<variant>.md`` sibling, live or not. Needed
                 separately from the live set so that a sibling naming
@@ -80,24 +74,16 @@ class AgentDefinitionLoader:
         """
         self._settings = settings
         self._project_dir = project_dir
-        self._codeindex_available = codeindex_available
         self._policy = restriction_policy
         self._group_dir = group_dir
-        # The defaults used to be a literal ``{"codeindex"}``, and
-        # nothing anywhere passed these arguments — so an extension's
-        # variants reached no loader and the generalisation stopped
-        # one layer short of working. The registry is what anyone with
-        # variants registers into; CodeIndex stays in the default
-        # because it is in-tree and does not register.
+        # The registry is what every extension with variants declares
+        # into. Nothing is a variant by name alone: core knows no
+        # extension, so it knows no variant until one is installed.
         self._known_variants = frozenset(
-            known_variants
-            if known_variants is not None
-            else {"codeindex"} | variant_registry.known()
+            known_variants if known_variants is not None else variant_registry.known()
         )
         self._active_variants = frozenset(
-            active_variants
-            if active_variants is not None
-            else ({"codeindex"} if codeindex_available else frozenset()) | variant_registry.active()
+            active_variants if active_variants is not None else variant_registry.active()
         )
 
     def load(self) -> LoadReport:
@@ -149,10 +135,17 @@ class AgentDefinitionLoader:
     ) -> LoadReport:
         """Parse ``.md`` files from ``path`` into a :class:`LoadReport`.
 
-        Skips the wrong CodeIndex variant per
-        ``self._codeindex_available``. ``namespace`` prefixes
-        every loaded agent's ``name`` as ``<namespace>:<name>`` —
-        used by the plugin loader.
+        Keeps one file per agent (see :meth:`_pick_variants`).
+        ``namespace`` prefixes every loaded agent's ``name`` as
+        ``<namespace>:<name>`` — used by the plugin loader — with one
+        exception, which is how an extension changes an agent it does
+        not own: a plugin's ``<agent>.<variant>.md``, while its variant
+        is live, *is* ``<agent>``. It loads under the plain name at
+        :attr:`AgentPriority.EXTENSION_OVERRIDE`, above every file a
+        person or an organisation wrote, so the agent behaves the way
+        the extension that is running needs it to — and the moment the
+        extension stops, the file is skipped and the agent is whatever
+        it was before.
         """
         report = LoadReport()
         if not path.exists():
@@ -174,10 +167,13 @@ class AgentDefinitionLoader:
                     definition = self._policy.apply(
                         definition, raw_keys, plugin_name=namespace or ""
                     )
-                if namespace:
+                entry_priority = typed_priority
+                if namespace and self._variant_of(md_file):
+                    entry_priority = AgentPriority.EXTENSION_OVERRIDE
+                elif namespace:
                     definition = definition.namespaced(namespace)
                 report.entries[definition.name] = AgentEntry(
-                    definition=definition, priority=typed_priority
+                    definition=definition, priority=entry_priority
                 )
             except Exception as exc:
                 logger.warning("Failed to parse agent from %s: %s", md_file, exc)
@@ -196,12 +192,9 @@ class AgentDefinitionLoader:
         * An agent with only one of the pair is loaded whichever it is:
           a half-written pair should behave like what is there.
 
-        This read ``.codeindex.md`` in three places. It reads two sets
-        now, because "is the capability this agent was written for
-        available?" has as many answers as there are extensions and
-        the base cannot know their names at compile time. With the
-        defaults — known ``{"codeindex"}``, live iff the index is up —
-        it does exactly what it did.
+        "Is the capability this agent was written for available?" has
+        as many answers as there are extensions, and the base cannot
+        know their names, so both sets come from the registry.
 
         Two live variants of one agent is a conflict its author made:
         both describe the same agent and only one can load. The choice
@@ -244,7 +237,7 @@ class AgentDefinitionLoader:
 
     @staticmethod
     def _stem_without(md_file: Path, variant: str) -> str:
-        """``foo`` for ``foo.codeindex.md`` — the plain sibling's name."""
+        """``foo`` for ``foo.<variant>.md`` — the plain sibling's name."""
         return md_file.name[: -len(f".{variant}.md")]
 
     def _variant_of(self, md_file: Path) -> str:

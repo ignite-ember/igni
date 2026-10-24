@@ -364,7 +364,8 @@ class TestPickVariants:
         return AgentDefinitionLoader(
             settings=MagicMock(),
             project_dir=MagicMock(),
-            codeindex_available=codeindex_available,
+            known_variants={"codeindex"},
+            active_variants={"codeindex"} if codeindex_available else set(),
         )._pick_variants(files)
 
     def test_codeindex_variant_skipped_when_unavailable(self, tmp_path):

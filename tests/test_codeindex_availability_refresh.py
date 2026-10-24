@@ -164,83 +164,14 @@ class TestRefreshCodeIndexAvailability:
         sess._build_main_agent.assert_not_called()
 
 
-class TestRefreshActuallySwitchesPromptVariants:
-    """End-to-end integration test against a real ``AgentPool``.
-
-    The unit tests above with a mocked pool only verify
-    ``refresh_codeindex_availability`` *calls* ``load_definitions``
-    — they can't detect whether that actually swaps the on-disk
-    prompt file (plain ``.md`` vs ``.codeindex.md``).
-
-    The real ``AgentPool._load_directory`` skips upsert when
-    ``priority`` isn't strictly greater than the existing entry's
-    priority. Calling ``load_definitions`` twice with the same
-    sources will therefore *not* refresh the picked prompt
-    variant unless the refresh first clears the prior entries.
-    Without that clear, the user-reported bug ("agent still says
-    CodeIndex isn't active after resync") never gets fixed even
-    though the unit tests pass.
-    """
+class TestARefreshKeepsEphemeralAgents:
+    """End-to-end against a real ``AgentPool``: a refresh reloads the
+    file-based agents, and must not take the ones created mid-session
+    with it."""
 
     def _write_agent(self, path, name: str, body: str) -> None:
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(f"---\nname: {name}\ndescription: {name}\n---\n{body}\n")
-
-    def test_refresh_switches_prompt_to_codeindex_variant(self, tmp_path, monkeypatch):
-        project = tmp_path / "proj"
-        # Two variants of the same agent — only one is loaded at a
-        # time, picked by ``codeindex_available``.
-        self._write_agent(
-            project / CONFIG_DIR / "agents" / "explorer.md",
-            "explorer",
-            "PLAIN-VARIANT: no codeindex tools available.",
-        )
-        self._write_agent(
-            project / CONFIG_DIR / "agents" / "explorer.codeindex.md",
-            "explorer",
-            "CODEINDEX-VARIANT: codeindex_query and codeindex_tree are available.",
-        )
-
-        settings = Settings()
-
-        # Stand up a Session-shaped object the refresh will operate on.
-        sess = Session.__new__(Session)
-        sess.settings = settings
-        sess.project_dir = project
-        sess._disabled_plugins = set()
-        sess.plugin_loader = MagicMock()
-        sess.mcp_manager = MagicMock()
-        sess.mcp_manager.list_connected.return_value = []
-        sess.mcp_manager._clients = {}
-        sess.pool = AgentPool()
-        sess.code_index = MagicMock()
-        sess.code_index_sync = MagicMock()
-        sess.code_index_sync.current_sha.return_value = "abc1234"
-        sess._build_main_agent = MagicMock(return_value="main")  # type: ignore[method-assign]
-        sess.main_team = None
-
-        # Initial state: chroma empty → load plain variant.
-        sess._codeindex_available = False
-        sess.code_index.has_commit.return_value = False
-        sess.pool.load_definitions(settings, project_dir=project, codeindex_available=False)
-        defn = sess.pool.get_definition("explorer")
-        assert "PLAIN-VARIANT" in defn.system_prompt, (
-            "before refresh, the plain prompt should be loaded"
-        )
-
-        # Sync runs, chroma now has the commit.
-        sess.code_index.has_commit.return_value = True
-
-        result = sess.refresh_codeindex_availability()
-        assert result.ok is True
-        assert result.changed is True
-
-        defn = sess.pool.get_definition("explorer")
-        assert "CODEINDEX-VARIANT" in defn.system_prompt, (
-            "after refresh with chroma populated, the codeindex prompt "
-            "variant must be loaded — otherwise the agent keeps the "
-            "old prompt and the user-reported bug persists"
-        )
 
     def test_refresh_preserves_ephemeral_agents(self, tmp_path):
         """Ephemeral agents (priority 10, created mid-session via

@@ -21,6 +21,8 @@ import asyncio
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
 
+import pytest
+
 from ember_code.core.agents.markdown import AgentMarkdownFile
 from ember_code.core.agents.schemas import AgentDefinition
 from ember_code.core.code_index.index import CodeIndex
@@ -28,30 +30,29 @@ from ember_code.core.tools.codeindex.tool import CodeIndexTools
 
 #: What ships — ``src/ember_code/bundled_agents/`` is what the wheel carries and
 #: what a user's session loads. The repo-root ``agents/`` directory is the
-#: editing copy, and this file used to pin that one: SWP-13 found the graph-
-#: schema placeholder present in ``agents/`` and absent from all eight bundled
-#: files, with a passing test over the copy nobody runs. Pinned to the shipped
-#: tree, with the two asserted identical so the drift cannot open again.
+#: editing copy, and it is asserted identical so the two cannot drift.
 AGENTS_DIR = Path(__file__).resolve().parent.parent / "src" / "ember_code" / "bundled_agents"
 REPO_AGENTS_DIR = Path(__file__).resolve().parent.parent / "agents"
-DATA_ARCH = AGENTS_DIR / "data-architect.codeindex.md"
+
+#: data-architect is CodeIndex's: it exists only in the extension's plugin,
+#: as ``data-architect.codeindex.md``, and only while CodeIndex runs. What is
+#: checked here is the contract — that it parses as an igni agent and asks
+#: for the tools igni gives it — against the sibling checkout, when present.
+CODEINDEX_AGENTS = (
+    Path(__file__).resolve().parents[2] / "igni__code-index" / "extension" / "plugin" / "agents"
+)
+DATA_ARCH = CODEINDEX_AGENTS / "data-architect.codeindex.md"
+_needs_codeindex = pytest.mark.skipif(
+    not CODEINDEX_AGENTS.is_dir(), reason="no igni__code-index checkout beside this one"
+)
 
 
 class TestTheShippedCopyIsTheOneTested:
-    def test_the_bundled_file_is_what_exists(self):
-        assert DATA_ARCH.is_file(), f"{DATA_ARCH} is what a session loads and it is missing"
-
-    def test_the_editing_copy_has_not_drifted_from_it(self):
-        """The two are maintained by hand. A test over only one of them is how
-        the schema placeholder came to be in the repo copy and in none of the
-        shipped ones."""
-        repo_copy = REPO_AGENTS_DIR / "data-architect.codeindex.md"
-        if not repo_copy.is_file():
-            return
-        assert repo_copy.read_text() == DATA_ARCH.read_text(), (
-            "agents/data-architect.codeindex.md and the bundled copy differ — "
-            "the bundled one is what ships"
-        )
+    def test_core_ships_no_extensions_agents(self):
+        """An extension's versions of igni's agents come with the extension.
+        A copy here would load whether or not the extension is installed."""
+        variants = sorted(p.name for p in AGENTS_DIR.glob("*.*.md"))
+        assert not variants, f"core ships extension variants: {variants}"
 
     def test_no_editing_copy_has_drifted(self):
         """Pinning one file left the other sixteen free to rot, and they did.
@@ -82,6 +83,7 @@ class TestTheShippedCopyIsTheOneTested:
         )
 
 
+@_needs_codeindex
 class TestDataArchitectParsing:
     def test_agent_file_exists(self):
         assert DATA_ARCH.exists(), (
