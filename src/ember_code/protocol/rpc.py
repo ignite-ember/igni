@@ -373,6 +373,16 @@ class RpcMethod(StrEnum):
     NOTIFICATIONS_COUNTS = "notifications_counts"
     NOTIFICATIONS_MARK_READ = "notifications_mark_read"
 
+    # ── The host object model ─────────────────────────────────────
+    #
+    # How an extension's *page* reaches ``docs/HOST_OBJECT_MODEL.md``:
+    # the bridge forwards ``bridge.host.…`` here, with the frame's
+    # extension as ``caller``, and the host answers from the same
+    # :class:`~ember_code.extensions.host.model.HostModel` the
+    # extension's process reaches over its loopback socket. Pool-level,
+    # like ``attach_session``: the model spans every session.
+    HOST_MODEL = "host_model"
+
 
 def validate_rpc_table(registered_keys: Iterable[str]) -> None:
     """Raise if any :class:`RpcMethod` member is missing from the

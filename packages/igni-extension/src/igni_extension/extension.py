@@ -12,6 +12,8 @@ ext.run()
 
 from __future__ import annotations
 
+import asyncio
+import contextlib
 from collections.abc import Awaitable, Callable, Mapping
 from typing import Any, overload
 
@@ -21,13 +23,16 @@ from anyio.streams.memory import MemoryObjectReceiveStream, MemoryObjectSendStre
 from mcp.server.fastmcp import FastMCP
 from mcp.shared.message import SessionMessage
 
+from igni_extension.channel import HostConnection
 from igni_extension.clock import Clock
 from igni_extension.environment import ExtensionEnvironment
 from igni_extension.errors import NotConfigured
 from igni_extension.host import Host
+from igni_extension.members import Signal
+from igni_extension.service import ServiceClient
 from igni_extension.session import HostSession
-from igni_extension.signals import Signal, SignalHandlers
-from igni_extension.tokens import HostTokenAuth, HostTokens
+from igni_extension.signals import SignalHandlers
+from igni_extension.tokens import HostTokens
 
 AnyFunction = Callable[..., Any]
 
@@ -51,11 +56,14 @@ class IgniExtension:
         self.environment = ExtensionEnvironment.read(environ)
         self.mcp = FastMCP(extension_id, instructions=instructions)
         self._session = HostSession(self.mcp._mcp_server)
-        self.host = Host(self._session)
+        self._signals = SignalHandlers()
+        #: The socket to the igni host that `ext.host` travels on.
+        self.connection = HostConnection(self.environment.host, self._signals, self._session)
+        #: igni, as this extension sees it: `ext.host.chat`, `ext.host.ui`, …
+        self.host = Host(self.connection)
         self.tokens = HostTokens(self.environment.service, transport=token_transport, clock=clock)
         self._service_transport = service_transport
-        self._service: httpx.AsyncClient | None = None
-        self._signals = SignalHandlers()
+        self._service: ServiceClient | None = None
 
     # ── What the extension offers ───────────────────────────────────
 
@@ -92,27 +100,38 @@ class IgniExtension:
     # ── Its service ─────────────────────────────────────────────────
 
     @property
-    def service(self) -> httpx.AsyncClient:
+    def service(self) -> ServiceClient:
         """An HTTP client for this extension's own service, as the signed-in person.
 
         Paths are relative to the service. The person's token is attached
         and renewed; `NotSignedIn` is raised when nobody is signed in to
-        igni.
+        igni. `ext.service.anonymous` reaches the same service with no
+        token, and `ext.service.websocket(path)` opens a WebSocket to it
+        as the person.
         """
         if self._service is None:
             if not self.environment.service.configured:
                 raise NotConfigured(
                     f"{self.id} was not started with its service's URL (IGNI_SERVICE_URL)"
                 )
-            self._service = httpx.AsyncClient(
+            self._service = ServiceClient(
                 base_url=self.environment.service.url,
-                auth=HostTokenAuth(self.tokens),
+                tokens=self.tokens,
                 transport=self._service_transport,
-                timeout=30.0,
             )
         return self._service
 
+    async def connect(self) -> None:
+        """Connect to the igni host now rather than on the first `ext.host` call.
+
+        `ext.run()` does this itself, and stays connected so that signals
+        arrive; a test or a script that drives the extension without
+        `run()` calls it.
+        """
+        await self.connection.connect()
+
     async def aclose(self) -> None:
+        await self.connection.close()
         if self._service is not None:
             await self._service.aclose()
             self._service = None
@@ -124,9 +143,15 @@ class IgniExtension:
         anyio.run(self._run_stdio)
 
     async def _run_stdio(self) -> None:
+        # The host's socket alongside MCP, so signals arrive whether or
+        # not igni is calling a tool.
+        host = asyncio.create_task(self.connection.serve_forever())
         try:
             await self.mcp.run_stdio_async()
         finally:
+            host.cancel()
+            with contextlib.suppress(BaseException):
+                await host
             await self.aclose()
 
     async def serve(

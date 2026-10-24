@@ -9,11 +9,15 @@ extension reacts to a signal and, while handling it, reads and writes the
 model.
 
 ```python
+from igni_extension import IgniExtension
+from igni_extension.host_model import Run, SessionChange
+
 ext = IgniExtension("acme.reviewer")
 
 @ext.on(ext.host.sessions.current_changed)
-async def follow(session: Session) -> None:
-    await ext.host.chat.append(Card(title="Reviewer", body=f"Watching {session.title}"))
+async def follow(change: SessionChange) -> None:
+    card = {"type": "Card", "props": {"title": f"Reviewer: watching {change.session_id}"}}
+    await ext.host.chat.append({"root": "c", "elements": {"c": card}})
 
 @ext.on(ext.host.chat.run_completed)
 async def review(run: Run) -> None:
@@ -22,8 +26,10 @@ async def review(run: Run) -> None:
 ```
 
 The extension's page sees the same model through `@igni/extension-bridge`
-(`bridge.host.sessions.current`, `bridge.on(...)`), so the process and the
-page never disagree about what igni looks like.
+(`await bridge.host.sessions.current.get()`, `bridge.on(bridge.host.chat.run_completed, fn)`),
+so the process and the page never disagree about what igni looks like.
+A property is read with `await prop` (Python) or `prop.get()`, written
+with `prop.set(value)`; names are the schema's, snake_case, in both SDKs.
 
 ## The UI is part of the model
 
@@ -35,10 +41,34 @@ their model. So an extension observes every UI change and can make any
 of them, by the same path the view uses. igni's own UI is then just the
 first client of the model.
 
-Today the web client keeps this state in its components (`useState` in
-`clients/web/src/App.tsx`), and only some of it — the window's session,
-the sidebar, drafts — round-trips to the host as client state. Moving the
-rest into the model is part of building this.
+**Stage 1 — built.** The state a window already round-trips to the host
+as client state is in the model now: the session the window shows
+(`host.sessions.current`), its page stack (`host.ui.route`,
+`navigate`, `back`), whether its sidebar is open (`host.ui.sidebar`,
+`set_sidebar(open)`), its draft (`host.ui.composer`, `set_composer(text)`
+— live, from the window's typing), and the windows themselves
+(`host.windows.list`, `opened`, `closed`). A write is stored where the
+window stores it and the window is told (the `client_state_changed`
+push), so a reload restores it too. A window is identified by the stable
+id it keeps its state under; `host.ui` is **the active window** — the
+one the person last used — and `host.windows.ui(id)` any open window. A
+page's `host.ui` is the window it is framed in.
+
+**Stage 2 — defined, not yet available.** The rest of a window's state
+still lives in the web client's components (`useState` in
+`clients/web/src/App.tsx`). Its members are in the schema and both SDKs
+so extensions can be written against them, and answer `stage_2` — "not
+yet available" — until that state moves into the model:
+`windows.focused`, `windows.focus_changed`, `ui.panel`, `ui.preview`,
+`ui.selection`, `ui.toasts`, `ui.dialog`, `ui.scroll`,
+`ui.panel_changed`, `ui.preview_changed`, `ui.selection_changed`,
+`ui.toast_shown`, `ui.toast_dismissed`, `ui.dialog_opened`,
+`ui.dialog_closed`, `ui.scrolled`, `ui.open_panel`, `ui.close_panel`,
+`ui.open_preview`, `ui.select`, `ui.toast`, `ui.show_dialog`,
+`ui.scroll_to` — and the `width`/`section` of the sidebar and the
+`attachments`/`mode` of the composer. Until a window reports focus, the
+active window stands in for the focused one; they agree whenever there
+is one window.
 
 ## Every write is a signal
 
@@ -46,76 +76,132 @@ Every property has a change signal, and every method that writes data
 signals what it changed. The data might be a session, a message, a
 setting, a plugin, a permission rule, the UI state or anything else.
 Besides each object's own signals, `host.changed(path, value)` reports
-every change in the model, for an extension that wants to see all of it.
+every change in the model, for an extension that wants to see all of it:
+`path` is the property that changed and `value` is what its own change
+signal carries. A write is signalled whoever made it — the person in a
+window, another extension, or this one.
 
 ## Rules
 
 - **Complete by construction.** Every RPC method (`RpcMethod`), every
   action the UI sends (`schemas/fe_actions.py`) and every event the host
-  broadcasts (`schemas/be_events.py`, `schemas/mirroring.py`) is mapped to
-  a member of this model, or is listed under *Not reachable* with its
-  reason. So is every piece of UI state and every route: no view may hold
-  state of its own that is not in the model. Tests enforce both. A feature added to igni without its member
-  here fails the build, so the model cannot fall behind the app.
-- **One schema, two SDKs.** The model is described once and versioned
-  under the compatibility floor (EXTENSIBILITY §8). The Python SDK
-  (`igni-extension`) and the TypeScript bridge are generated from it.
+  broadcasts (`schemas/be_events.py`, `schemas/mirroring.py`, and the
+  push channels) is mapped to a member of this model, or is listed under
+  *Not reachable* with its reason. So is every piece of UI state and
+  every route: no view may hold state of its own that is not in the
+  model. Tests enforce both (`tests/test_the_host_model_covers_the_app.py`;
+  the view-state half arrives with stage 2). A feature added to igni
+  without its member here fails the build, so the model cannot fall
+  behind the app.
+- **One schema, two SDKs.** The model is described once —
+  `ember_code.extensions.host.definition`, version **1.0.0** — and
+  versioned under the compatibility floor (EXTENSIBILITY §8): a new
+  member is a minor version, a changed or removed one a major. The Python
+  SDK (`igni-extension`, `igni_extension.host_model`) and the TypeScript
+  bridge (`hostModel.generated.ts`) are generated from it by `make
+  host-sdks`, and a test fails when what is checked in is stale.
 - **Granted per object.** Every object has one permission per row below.
   It is declared in the manifest (`permissions.host`) and shown on the
-  Services page before a super admin approves. An ungranted object does
-  not exist for the extension: reads fail, methods are refused, and its
-  signals never arrive.
+  Services page before a super admin approves, and by `igni ext install`.
+  An entry is a permission name or a `*`-suffixed prefix (`chat.*`).
+  An ungranted object does not exist for the extension: reads fail
+  (`not_granted`), methods are refused, and its signals never arrive —
+  subscribing to one is not an error, it simply never fires.
+  `workspace` is not a `permissions.host` entry: `permissions.workspace`
+  (`read` or `write`) grants `host.workspace`, limited to
+  `workspacePaths` — a changed file outside them is not in any list an
+  extension is handed. An extension's own state, settings and
+  notifications need no grant.
+- **Writes are the person's writes.** A member writes through the same
+  RPC handler, UI action or store the person's window uses, so a write
+  the person could not make — another project's session, a model that is
+  not configured, an approval nobody asked for — is refused the same way,
+  with `refused`.
 - **Signals carry the new value**, so a handler need not read back what it
   was told.
 - **The host's internal calls stay private.** Extensions reach the model,
   never `RpcMethod` itself, so igni can refactor its UI wire without
   breaking an extension. The model is the promise; the wire is not.
+  Members typed `json` are the host's report of something whose shape is
+  not part of the promise yet (a plugin's details, an MCP server's
+  tools); typing one is a minor version.
 - **The channel is the SDK's business.** The process uses a loopback
-  WebSocket guarded by its per-process secret, and the page uses the
-  bridge. No extension author sees either.
+  WebSocket guarded by its per-process secret (`IGNI_HOST_URL`,
+  `IGNI_HOST_SECRET` — the same secret the service-token endpoint takes),
+  and the page uses the bridge, which the window forwards as the
+  `host_model` RPC with the frame's extension as its caller. No extension
+  author sees either; `docs/HOST_MODEL_PROTOCOL.md` describes them for
+  SDK maintainers.
+
+Errors carry a code both SDKs raise (`HostError.code`): `not_granted`,
+`not_found`, `invalid`, `read_only`, `stage_2`, `refused`, `failed`.
 
 ## The model
 
 | Object | Properties | Signals | Methods | Permission |
 |---|---|---|---|---|
-| `host.app` | `display` (theme, verbosity, output style), `version`, `update_available`, `connection` | `display_changed`, `connection_changed` | `set_verbose(on)`, `set_output_style(name)`, `check_for_update()` | `app` |
-| `host.windows` | every open window: id, kind (desktop, VS Code, JetBrains, browser), `focused` | `opened`, `closed`, `focus_changed` | — | `ui` |
-| `host.ui` — the focused window, or `host.windows[id].ui` | `route` (the page stack: kind and params of each), `panel` (which side panel is open, and its params), `sidebar` (open, width, section), `preview` (the file or document previewed), `selection` (the highlighted message, selected text, selected file), `composer` (draft text, attachments, mode), `toasts`, `dialog` (the open one), `scroll` (where the transcript is) | `navigated`, `panel_changed`, `sidebar_changed`, `preview_changed`, `selection_changed`, `composer_changed`, `toast_shown`, `toast_dismissed`, `dialog_opened`, `dialog_closed` | `navigate(page, params)`, `back()`, `open_panel(kind, params)`, `close_panel()`, `set_sidebar(...)`, `preview(path)`, `select(...)`, `set_composer(text, attachments)`, `toast(text, kind)`, `dialog(spec)` → the answer, `scroll_to(message)` | `ui` |
-| `host.app.state` | key–value client state (its own keys) | `changed` | `get`, `set`, `delete` | always (own keys) |
-| `host.sessions` | `list`, `current` (writable — switches) | `current_changed`, `listed`, `cleared` | `open(id)`, `create()`, `attach(id)` | `sessions` |
-| `host.chat` — the current session | `session_id`, `messages` (list model), `pending` (queued messages), `processing`, `status`, `timeout`, `interrupted_runs`, `context` (token counts and breakdown) | `message_added`, `content_delta`, `reasoning_started`, `run_started`, `run_completed` (with the files changed), `run_error`, `run_paused`, `streaming_done`, `typing`, `status_changed`, `info`, `error` | `post(text, attachments)` — **as the extension**; the agent answers. `queue(text)` — for the next turn, as the extension. `append(view)`, `replace(view_id, view)` — json-render blocks in the transcript, not sent to the model. `search(query)`, `cancel()`, `cancel_agent(id)`, `truncate(after)`, `compact()`, `extract_learnings()`, `discard_interrupted(id)`, `upload(file)` | `chat.read`, `chat.post`, `chat.append`, `chat.control` |
-| `host.chat.approvals` — the agent asking to act | `waiting` (requests and details) | `requested`, `resolved` | `answer(id, choice)`, `answer_all(choices)` | `chat.approvals` |
-| `host.chat.views` — json-render in the chat | the views the run produced | `action` | `dispatch(view_id, action)` | `chat.append` |
-| `host.plan` | `latest` | `changed` | `approve()`, `dismiss()` | `chat.control` |
-| `host.tasks` — the agent's todo list and sub-agent tasks | `todos`, `tasks` | `created`, `updated`, `iteration`, `snapshot` | — | `chat.read` |
+| `host` (the root) | — | `changed` (path, value) | — | each delivery needs the changed member's |
+| `host.app` | `display` (theme, verbosity, output style), `version`, `update_available`, `connection` | `display_changed`, `connection_changed`, `update_changed` | `set_verbose(on)`, `set_output_style(name)`, `check_for_update()` | `app` |
+| `host.app.state` | `values` — key–value state (its own keys) | `changed` | `get(key)`, `set(key, value)`, `delete(key)` | always (own keys) |
+| `host.windows` | `list` — every open window: id, kind (`tauri`, `vscode`, `jetbrains`, `web`), session, `focused` (stage 2); `focused` (stage 2) | `opened`, `closed`, `focus_changed` (stage 2) | `ui(id)` — that window's `host.ui` | `ui` |
+| `host.ui` — the active window, or `host.windows.ui(id)` | `route` (the page stack: kind, label and params of each; writable), `sidebar` (open; width, section stage 2; writable), `composer` (draft text; attachments, mode stage 2; writable); stage 2: `panel`, `preview`, `selection`, `toasts`, `dialog`, `scroll` | `navigated`, `sidebar_changed`, `composer_changed`; stage 2: `panel_changed`, `preview_changed`, `selection_changed`, `toast_shown`, `toast_dismissed`, `dialog_opened`, `dialog_closed`, `scrolled` | `navigate(page, params)`, `back()`, `set_sidebar(open, width, section)`, `set_composer(text, attachments)`; stage 2: `open_panel(kind, params)`, `close_panel()`, `open_preview(path)`, `select(selection)`, `toast(text, kind)`, `show_dialog(spec)` → the answer, `scroll_to(message_id)` | `ui` |
+| `host.sessions` | `list`, `current` (writable — switches the active window) | `current_changed`, `listed`, `cleared`, `named` | `open(session_id)`, `create(project_dir)`, `attach(session_id, project_dir)` | `sessions` |
+| `host.chat` — the current session | `session_id`, `messages` (the transcript), `pending` (queued messages), `processing`, `status`, `timeout`, `interrupted_runs`, `context` (token counts and breakdown) | `message_added` (with `from_extension`), `content_delta`, `reasoning_started`, `run_started`, `run_completed` (with the files changed), `run_error`, `run_paused`, `streaming_done`, `typing`, `status_changed`, `info`, `error`, `tool_started`, `tool_completed`, `tool_error`, `model_completed`, `file_edited` (needs `workspace`), `agent_event`, `retry`, `history_changed` | `post(text, attachments)` — **as the extension**; the agent answers. `queue(text)` — for the next turn, as the extension. `append(view, title)` → its id, `replace(view_id, view, title)` — json-render blocks in the transcript, not sent to the model. `search(query, limit)`, `cancel()`, `cancel_agent(run_id)`, `truncate(run_id)`, `compact()`, `extract_learnings(user_msg, assistant_msg)`, `discard_interrupted(message_id)`, `upload(filename, content_base64)` | `chat.read`; `post`, `queue`, `upload`: `chat.post`; `append`, `replace`: `chat.append`; the rest of the methods: `chat.control` |
+| `host.chat.approvals` — the agent asking to act | `waiting` (requests and details) | `requested`, `resolved`, `details` | `answer(requirement_id, action, choice)`, `answer_all(answers)` | `chat.approvals` |
+| `host.chat.views` — json-render in the chat | `list` — the views in the session, the visualizer's and extensions' | `shown`, `action` | `dispatch(view_id, action, params)` | `chat.append` |
+| `host.plan` | `latest` | `changed` | `approve(run_id)`, `dismiss(run_id)` | `chat.control` |
+| `host.tasks` — the agent's todo list and sub-agent tasks | `todos` | `created`, `updated`, `iteration`, `snapshot`, `todos_changed` | — | `chat.read` |
 | `host.loop` | `status` | `changed` | `pause()`, `resume()`, `cancel_pending()`, `pop_pending()` | `chat.control` |
-| `host.commands` | slash commands, skills (names, definitions, details) | — | `run(command)` — as the extension | `commands` |
-| `host.agents` | definitions and details | — | `promote_ephemeral(name)`, `discard_ephemeral(name)` | `agents` |
-| `host.workflows` | `list` | `changed` | `run(name, input)`, `cancel(id)` | `workflows` |
-| `host.scheduler` | `tasks` | `event` | `start()`, `run_now(id)`, `cancel(id)` | `scheduler` |
-| `host.processes` — background shells | `list` | `changed` | `tail(id)`, `stop(id)`, `run(command)` | `processes` |
-| `host.workspace` | `root`, `head {sha, branch}` | `head_changed`, `files_changed` | `read(path)`, `list(dir)`, `complete(prefix)`, `search(query)`, `pick_dir()` | `workspace` (as today, with its paths) |
+| `host.commands` | `list` (slash commands), `skills`, `skill_definitions`, `skill_details` | — (they change with `plugins.changed`) | `run(command)` — as the extension; the answer comes back to it | `commands` |
+| `host.agents` | `details` | `changed` | `promote_ephemeral(name)`, `discard_ephemeral(name)` | `agents` |
+| `host.workflows` | `list` | `changed` | `run(name, input)`, `cancel(workflow_run_id)` | `workflows` |
+| `host.scheduler` | `tasks` | `event` | `start()`, `run_now(task_id)`, `cancel(task_id)` | `scheduler` |
+| `host.processes` — background shells | `list` | `changed` | `tail(pid, lines)`, `stop(pid)`, `run(command)` | `processes` |
+| `host.workspace` | `root`, `head {commit_sha, branch}` | `head_changed`, `files_changed` | `read(path)`, `list(dir)`, `complete(prefix)`, `search(query)`, `pick_dir()` | `workspace` (`permissions.workspace`, with its paths) |
 | `host.models` | `registry`, `current` (writable — switches) | `changed` | — | `models` |
-| `host.mcp` | servers, status, details | `changed` | `connect(name)`, `disconnect(name)`, `ensure(name)`, `set_tool_enabled(server, tool, on)` | `mcp` |
-| `host.plugins` | installed, details, contents, marketplaces | `changed` | `preview`, `install`, `update`, `remove`, `set_enabled`, `add_marketplace`, `remove_marketplace`, `refresh_marketplaces` | `plugins` |
-| `host.extensions` | installed extensions and their state | `state_changed` | `set_settings(own)` | `extensions` (others read-only) |
-| `host.hooks` | details | — | `reload()`, `fire_session_start()` | `hooks` |
-| `host.permissions` | rules, mode | — | `check(action)`, `save_rule(rule)` | `permissions` |
-| `host.policy` | the group policy in force | — | — | `policy` |
-| `host.account` | signed in or not, server, organisation | `changed` | `sign_in()` (starts the person's own sign-in), `sign_out()` | `account` |
-| `host.notifications` | `list`, `unread`, by source | `changed` | `notify(...)` to the person at this machine, `mark_read(...)` | always for its own; `notifications` for all |
-| `host.self` | its own `settings` (writable), `state` | `settings_changed`, `state_changed` | — | always |
+| `host.mcp` | `servers`, `status`, `details` | `changed` | `connect(name)`, `disconnect(name)`, `ensure()`, `set_tool_enabled(server, tool, on)` | `mcp` |
+| `host.plugins` | `installed`, `marketplaces` | `changed` | `contents(name)`, `preview(source, branch, subdir)`, `install`, `update`, `remove`, `set_enabled`, `add_marketplace`, `remove_marketplace`, `refresh_marketplaces` | `plugins` |
+| `host.extensions` | `installed` — every extension: id, name, version, state, reason, `web_url` | `state_changed` | `set_settings(values)` (its own) | `extensions` (read-only; `set_settings` always, own only) |
+| `host.hooks` | `details` | `changed` | `reload()`, `fire_session_start()` | `hooks` |
+| `host.permissions` | `mode` | `mode_changed` | `check(tool_name, func_name, tool_args)`, `save_rule(rule, level)` | `permissions` |
+| `host.policy` | `pack` — the group policy in force | — (changes with `account.changed`) | — | `policy` |
+| `host.account` | `status` — signed in or not, email, name, organisation | `changed` | `sign_in()` (starts the person's own sign-in), `sign_out()` | `account` |
+| `host.notifications` | `list`, `unread` (by source) | `changed` | `notify(notification)` to the person at this machine, `mark_read(ids, source)` | always for its own; `notifications` for all |
+| `host.self` | `id`, its own `settings` (writable), `state`, `web_url` | `settings_changed`, `state_changed` | — | always |
+
+`host.permissions` has no `rules` property: igni has no read of the rule
+set to back it. `check` answers for one call, and `save_rule` writes one.
+
+`web_url` is an extension's home on the web: its service's URL — the
+distribution record's `service_url`, which is the service's `client_uri`,
+RFC 7591's "home page of the client" — or, for a development install,
+its `serviceUrl` setting. igni shows it as **Open on the web** on the
+extension's row and above its page.
 
 ## Not reachable
 
 | What | Why |
 |---|---|
-| The person's igni session and any credential (`login`, `reload_cloud_credentials`, `clear_cloud_credentials`, `set_server`, `discover_server` values) | An extension never holds the session (service-identity §9). It can start or end the person's sign-in through `host.account`, but never read what it produces. |
-| Posting *as the person* (`UserMessage` from an extension) | Decided: an extension's messages are labelled as the extension's. |
+| The person's igni session and any credential (`login`, `reload_cloud_credentials`, `clear_cloud_credentials`, `set_server`, `discover_server` values, `cancel_login`) | An extension never holds the session (service-identity §9). It can start or end the person's sign-in through `host.account`, but never read what it produces. |
+| Posting *as the person* (`UserMessage` from an extension) | Decided: an extension's messages are labelled as the extension's (`host.chat.post`). |
 | `shutdown` | Quitting igni is the person's decision. |
-| `artifact_*`, `codeindex_*` | These are not the floor. They belong to the Artifacts and CodeIndex extensions, and they leave the host as those extensions take them over. |
+| `artifact_*`, `get_artifact_status`, `public_document`, `codeindex_*` | These are not the floor. They belong to the Artifacts and CodeIndex extensions, and they leave the host as those extensions take them over. |
+| The model's own plumbing: the `host_model` RPC, and the `host_signal`, `client_state_changed` and `extension_event` pushes | They are how the model reaches a page and a window, not things igni does. `extension_event` also carries an extension's own events to its frame, which need no member. |
 
 Anything else missing from this table is a bug in it.
+
+## Messages from an extension
+
+`host.chat.post(text)` puts a message in the current chat labelled as
+coming from the extension. Every window paints it with the extension's
+name on the bubble — it is nobody's echo — and the agent is told, in a
+block the windows do not show, that the extension posted it, not the
+person; then it answers in the chat as usual. Nothing posts as the
+person, and nothing calls a model behind the person's back.
+`host.chat.append(view)` and `replace(view_id, view)` put json-render
+blocks in the transcript — the same path the visualizer's cards take,
+kept in the session's log so a reload shows them again — shown to the
+person and never sent to the model. An extension replaces only its own.
 
 ## The existing events
 
@@ -128,4 +214,9 @@ The four host events extensions receive today become signals:
 | `workspace.files-changed` | `workspace.files_changed` |
 | `extension.state-changed` | `extensions.state_changed` |
 
-Their topic strings remain the wire names.
+Their topic strings remain the wire names. As signals they are granted
+by `permissions.host` like every other (`sessions`; `workspace` from
+`permissions.workspace`; `extensions`, which hears every extension's
+state — `self.state_changed` is an extension's own, always). The earlier
+delivery of the same topics — to a page's `onEvent` and a service's
+`igni_on_event`, granted by `permissions.events` — still works.

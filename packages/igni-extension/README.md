@@ -42,6 +42,32 @@ def main() -> None:   # the console script the manifest's `python.entry` names
     ext.run()
 ```
 
+## Installing
+
+From igni's package index, not PyPI. Name the index and pin the package
+to it, so nothing called `igni-extension` is ever taken from anywhere else:
+
+```toml
+[[tool.uv.index]]
+name = "igni"
+url = "https://us-central1-python.pkg.dev/ember-prod-491411/ember-prod-python/simple/"
+explicit = true
+
+[tool.uv.sources]
+igni-extension = { index = "igni" }
+```
+
+```bash
+export UV_INDEX_IGNI_USERNAME=oauth2accesstoken
+export UV_INDEX_IGNI_PASSWORD="$(gcloud auth print-access-token)"   # an hour
+uv add igni-extension
+```
+
+Your Google account needs read access to the index (igni's developers'
+group has it). The versions, the other ways to authenticate, and working
+against an igni checkout instead are in igni's
+`docs/PUBLISHING_THE_SDKS.md`.
+
 ## Its service: `ext.service`
 
 An `httpx.AsyncClient` for the extension's own service, as the person
@@ -50,24 +76,90 @@ comes from the igni host, is attached to every request, and is renewed
 before it expires — the extension never sees the person's igni session.
 When nobody is signed in to igni, a request raises `NotSignedIn`.
 
+- `ext.service.anonymous` — the same service with no token, for what
+  anyone may read (a public link, a health check). It never asks the host
+  for a token, so it works when nobody is signed in:
+  `await ext.service.anonymous.get(f"/v1/public/{slug}")`.
+- `ext.service.websocket(path)` — a WebSocket to the service, opened with
+  the person's token in its `Authorization` header:
+
+  ```python
+  async with ext.service.websocket(f"/v1/rooms/{slug}") as room:
+      await room.send(json.dumps({"hello": "room"}))
+      async for frame in room: ...
+  ```
+
+- `await ext.tokens.token()` — the token itself, for a client neither of
+  those covers.
+- `ext.tokens.signed_in` — who the last token was for (`user_id`,
+  `org_id`, `email`, `name`), read from it without checking it; `None`
+  before the first token or once nobody is signed in. For showing who is
+  signed in and noticing that it changed — the service checks the token,
+  this never decides anything. Whether anyone is signed in to igni at all
+  is `await ext.host.account.status` (with the `account` grant).
+
 ## The host: `ext.host`
 
-`ext.host` is igni as the extension sees it. Today it has one object:
+`ext.host` is igni as the extension sees it — the **host object model**
+(`docs/HOST_OBJECT_MODEL.md` in igni): one object per part of the app,
+each with properties, signals and methods. An extension can do anything
+igni's own UI can do, and see everything that happens in it.
 
-- `await ext.host.notifications.notify(LocalNotification(...))` — tell
-  the person at this machine something: an export is ready, an index
-  finished. It never leaves the machine. igni shows it beside the
-  notifications other people's actions caused, opens `target` when it is
-  clicked, and shows a repeated `event_key` once. Sent before igni has
-  connected, it is delivered as soon as igni does.
+```python
+from igni_extension.host_model import Run, SessionChange
 
-To tell *other* people something, the extension's service uses
-`host.notify` in `igni-service`.
+@ext.on(ext.host.sessions.current_changed)
+async def follow(change: SessionChange) -> None:
+    busy = await ext.host.chat.processing           # read a property
+    ...
+
+@ext.on(ext.host.chat.run_completed)                 # handle a signal
+async def review(run: Run) -> None:
+    if run.changed_files:
+        await ext.host.chat.post("Two issues in the files you just changed.")
+
+await ext.host.sessions.current.set(session_id)      # write a property
+await ext.host.windows.ui(window_id).navigate("plugins")  # any window
+```
+
+- **Properties** read with `await prop` (or `prop.get()`) and, when
+  writable, write with `await prop.set(value)`.
+- **Signals** are handled with `@ext.on(signal)`; the value they carry is
+  typed (`igni_extension.host_model` has every type). A handler may read
+  and write the model while it runs.
+- **Methods** are `async`; their results are typed.
+- `ext.host.chat.post(text)` posts in the chat **labelled as the
+  extension**; the agent is told who sent it and answers as usual.
+  `ext.host.chat.append(view)` shows a json-render block that is never
+  sent to the model.
+- `await ext.host.notifications.notify(LocalNotification(...))` tells
+  the person at this machine something — it never leaves the machine;
+  igni opens `target` when it is clicked and shows a repeated `event_key`
+  once. To tell *other* people, the extension's service uses
+  `host.notify` in `igni-service`.
+
+**Every object needs its grant** in the manifest's `permissions.host`
+(`"host": ["sessions", "chat.read", "chat.post"]`); `host.workspace` is
+granted by `permissions.workspace`. An object not granted raises
+`HostError` with `code == "not_granted"`, and its signals never arrive.
+Other codes: `not_found`, `invalid`, `read_only`, `refused` (the person
+could not have done it either), `stage_2` (defined, not yet available —
+a few members of `host.ui`), `failed`.
+
+`ext.host` travels on a loopback socket igni gives the process
+(`IGNI_HOST_URL`, `IGNI_HOST_SECRET`). `ext.run()` connects and stays
+connected so signals arrive; a script or test that does not call `run()`
+calls `await ext.connect()`. Run outside igni, `ext.host` raises
+`NotConfigured` — except `notifications.notify`, which then travels as
+the MCP notification igni has always understood.
+
+`igni_extension.host_model` is generated from igni's host schema; its
+`SCHEMA_VERSION` is the model version it was generated for.
 
 ## Testing an extension
 
 ```python
-from igni_extension.testing import FakeHostTokenEndpoint, HostHarness
+from igni_extension.testing import FakeHost, FakeHostTokenEndpoint, HostHarness
 
 host_tokens = FakeHostTokenEndpoint()
 ext = IgniExtension(
@@ -84,5 +176,29 @@ async with HostHarness(ext) as host:              # igni's side of the MCP sessi
 
 `FakeHostTokenEndpoint` hands out tokens the way the igni host does, and
 answers as igni does when nobody is signed in (`host_tokens.sign_out()`).
+Its tokens are unsigned JWTs of the person's claims; to test against a
+service that checks signatures, pass `minter`, which is given the
+person's `TokenClaims` and returns the token to hand out:
+
+```python
+igni = FakeIgni(...)                               # igni_service.testing
+host_tokens = FakeHostTokenEndpoint(
+    minter=lambda claims: igni.person_token(claims.sub, org_id=claims.org)
+)
+```
+
 `HostHarness` connects to the extension over the same MCP session
 `ext.run()` serves, and records what it tells the host.
+
+`FakeHost` is igni's host object model on a loopback socket, speaking
+the protocol igni speaks:
+
+```python
+async with FakeHost(values={"chat.processing": False}, answers={"chat.append": "v1"}) as host:
+    ext = IgniExtension("acme.example", environ=host.environment())
+    assert await ext.host.chat.processing is False
+    await ext.connect()
+    await host.wait_subscribed("chat.run_completed")
+    await host.emit("chat.run_completed", {...})   # your handler runs
+    host.calls                                      # everything the extension asked
+```

@@ -353,6 +353,14 @@ class PushChannel(StrEnum):
     VISUALIZATION_ACTION_DISPATCHED = (
         "visualization_action_dispatched"  # backend/visualization_action_bus.py
     )
+    #: A host-model signal for an extension's page: the window posts
+    #: it into that extension's frames. See
+    #: :mod:`ember_code.extensions.host`.
+    HOST_SIGNAL = "host_signal"
+    #: A window's client state was written by somebody other than the
+    #: window — an extension through ``host.ui`` — so the window
+    #: applies it. ``{client_id, key, value}``; an empty value deletes.
+    CLIENT_STATE_CHANGED = "client_state_changed"
     UNKNOWN = "unknown"
 
     @classmethod

@@ -60,6 +60,32 @@ async def settings_page(person: Person = Depends(igni.web.person)) -> Page: ...
 async def admin_page(person: Person = Depends(igni.web.super_admin)) -> Page: ...
 ```
 
+## Installing
+
+From igni's package index, not PyPI. Name the index and pin the package
+to it, so nothing called `igni-service` is ever taken from anywhere else:
+
+```toml
+[[tool.uv.index]]
+name = "igni"
+url = "https://us-central1-python.pkg.dev/ember-prod-491411/ember-prod-python/simple/"
+explicit = true
+
+[tool.uv.sources]
+igni-service = { index = "igni" }
+```
+
+```bash
+export UV_INDEX_IGNI_USERNAME=oauth2accesstoken
+export UV_INDEX_IGNI_PASSWORD="$(gcloud auth print-access-token)"   # an hour
+uv add igni-service
+```
+
+Your Google account needs read access to the index (igni's developers'
+group has it). The versions, the other ways to authenticate, and working
+against an igni checkout instead are in igni's
+`docs/PUBLISHING_THE_SDKS.md`.
+
 ## What happens on its own
 
 `igni.lifespan` runs in the background, retrying with backoff while igni

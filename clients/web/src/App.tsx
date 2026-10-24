@@ -64,6 +64,7 @@ import {
   type RunPhase,
 } from "./chat/runPhase";
 import { ClientStateStore, ensureClientId } from "./clientState";
+import { useExtensionTraffic } from "./extensions/useExtensionTraffic";
 import { Virtuoso, type VirtuosoHandle } from "react-virtuoso";
 import { ChatItemView } from "./components/ChatItems";
 import { ChatSearchBar } from "./components/ChatSearchBar";
@@ -158,14 +159,6 @@ interface UpdateInfo {
  * it: places, not conversations. Three and not thirteen — the rest
  * keep their place in `TOOLS_MENU` below, and these are the ones you
  * go back to while working rather than configure once. */
-/** How many undelivered events we hold per extension.
- *
- * A frame that is closed still accumulates — reopening it skips
- * the backlog rather than replaying it, so this only bounds the
- * memory, not what anybody sees. Deep enough that a burst during
- * one React batch survives, shallow enough that a producer nobody
- * listens to costs nothing worth measuring. */
-const EXTENSION_EVENT_BACKLOG = 32;
 
 const BASE_SIDEBAR_LINKS: { kind: PageKind; label: string }[] = [
   { kind: "plugins", label: "Plugins" },
@@ -295,24 +288,13 @@ export default function App() {
    * — the origin to frame, the grant list, the state and its reason.
    */
   const [extensions, setExtensions] = useState<ExtensionSummary[]>([]);
+  // Read by the message handler, which is not rebuilt when this changes.
+  const extensionsRef = useRef(extensions);
+  extensionsRef.current = extensions;
   // Followed rather than read once: the app keeps its theme on the
   // document, so without this an extension frame would be told the
   // theme at mount and never again.
   const frameTheme = useDocumentTheme();
-  /**
-   * The latest event for each extension.
-   *
-   * Addressed by the backend, which decided who was entitled to
-   * hear it — this only routes. Counted rather than compared,
-   * because two identical events are two events and a frame
-   * waiting for "the file changed again" has to hear it again.
-   */
-  const [extensionEvents, setExtensionEvents] = useState<
-    Record<
-      string,
-      { topic: string; payload: Record<string, unknown>; n: number }[]
-    >
-  >({});
   const [composerSeed, setComposerSeed] = useState<{
     text: string;
     n: number;
@@ -590,7 +572,8 @@ export default function App() {
   // bound to two distinct sessions, rather than one client fighting
   // itself over the session binding and the composer draft.
   const clientState = useMemo(
-    () => new ClientStateStore(client, ensureClientId(host.viewKey)),
+    () =>
+      new ClientStateStore(client, ensureClientId(host.viewKey), 250, host.kind),
     [client],
   );
   const SESSION_KEY = "session-id";
@@ -1282,6 +1265,17 @@ export default function App() {
         return;
       }
       if (m.type === "user_message_received") {
+        // An extension's message (``host.chat.post``) is nobody's echo:
+        // every view paints it, labelled as the extension's.
+        if (m.extension_id) {
+          const from =
+            extensionsRef.current.find((e) => e.id === m.extension_id)
+              ?.name ?? m.extension_id;
+          append(userItem(m.text, from));
+          if (m.queued)
+            append(infoItem("Queued — will run after the current turn."));
+          return;
+        }
         // Another view submitted — paint its bubble here. Our own
         // echo is skipped (we already painted on submit).
         if (m.client_id !== client.clientId) {
@@ -1367,6 +1361,21 @@ export default function App() {
               goPage({ kind: "schedule", label: "Scheduled tasks" }),
             data: { channel: m.channel, task_id: m.payload.task_id },
           });
+        } else if (m.channel === "client_state_changed") {
+          // An extension changed this window through ``host.ui`` /
+          // ``host.sessions``: the backend stored it and says so. Applied
+          // as if this window had made the change itself.
+          const body = m.payload as {
+            client_id?: unknown;
+            key?: unknown;
+            value?: unknown;
+          };
+          if (
+            body.client_id === clientState.clientId &&
+            typeof body.key === "string"
+          ) {
+            clientState.applyRemote(body.key, String(body.value ?? ""));
+          }
         } else if (m.channel === "file_edited") {
           // BE edit_file / edit_file_replace_all / create_file just
           // wrote to disk. Forward to the host (JetBrains for now)
@@ -1673,49 +1682,10 @@ export default function App() {
     return () => clearInterval(t);
   }, [conn, refreshStatus]);
 
-  // Events for installed extensions. One channel for all of them;
-  // the payload says which frame it is for, and nothing is posted
-  // into a frame it was not addressed to.
-  useEffect(() => {
-    if (conn !== "connected") return;
-    return client.onEvent((message) => {
-      const push = message as unknown as {
-        channel?: string;
-        payload?: unknown;
-      };
-      if (push.channel !== "extension_event") return;
-      const body = (push.payload ?? {}) as {
-        extension_id?: unknown;
-        topic?: unknown;
-        payload?: unknown;
-      };
-      if (
-        typeof body.extension_id !== "string" ||
-        typeof body.topic !== "string"
-      ) {
-        return;
-      }
-      const payload =
-        typeof body.payload === "object" && body.payload !== null
-          ? (body.payload as Record<string, unknown>)
-          : {};
-      setExtensionEvents((current) => {
-        const id = body.extension_id as string;
-        const queue = current[id] ?? [];
-        const next = {
-          topic: body.topic as string,
-          payload,
-          n: (queue[queue.length - 1]?.n ?? 0) + 1,
-        };
-        // Bounded: a frame that is closed, or slow, must not turn
-        // a chatty producer into a growing array nobody reads.
-        return {
-          ...current,
-          [id]: [...queue, next].slice(-EXTENSION_EVENT_BACKLOG),
-        };
-      });
-    });
-  }, [client, conn]);
+  // Events and host-model signals for installed extensions. One push
+  // each for all of them; the payload says which frame it is for, and
+  // nothing is posted into a frame it was not addressed to.
+  const extensionTraffic = useExtensionTraffic(client, conn === "connected");
 
   /**
    * What is installed, and its contributions folded into the nav.
@@ -2864,6 +2834,21 @@ export default function App() {
     [client],
   );
 
+  // A change an extension made to this window (``host.ui``,
+  // ``host.sessions``), already stored by the backend: applied as this
+  // window's own would be. The draft is the composer's to apply.
+  useEffect(
+    () =>
+      clientState.onRemote((key, value) => {
+        if (key === SIDEBAR_KEY) setSidebarOpenState(value === "true");
+        else if (key === PAGE_KEY)
+          setPages(restorePages(value, contributions.pages));
+        else if (key === SESSION_KEY && value && value !== client.sessionId)
+          void pickSession(value);
+      }),
+    [clientState, client, pickSession],
+  );
+
   const pickModel = useCallback(
     async (name: string) => {
       try {
@@ -3579,7 +3564,23 @@ export default function App() {
                   // when one is what opened it.
                   params={page.params}
                   theme={frameTheme}
-                  events={extensionEvents[extension.id]}
+                  events={extensionTraffic.events[extension.id]}
+                  signals={extensionTraffic.signals[extension.id]}
+                  // `bridge.host…`: the host object model, as this
+                  // extension, from the window it is framed in — the
+                  // backend checks its `permissions.host`.
+                  onHost={(request) =>
+                    client
+                      .asExtension(extension.id)
+                      .rpc<{
+                        ok: boolean;
+                        result?: unknown;
+                        error?: { code: string; message: string };
+                      }>("host_model", {
+                        ...request,
+                        home_window: clientState.clientId,
+                      })
+                  }
                   onClose={goChat}
                   // Every call carries its caller, which is what lets
                   // the backend enforce this extension's

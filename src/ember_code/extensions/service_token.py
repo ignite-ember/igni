@@ -287,15 +287,22 @@ class ServiceTokenEndpoint:
         with contextlib.suppress(Exception):
             await server.wait_closed()
 
-    async def grant(self, extension_id: str, service_url: str) -> dict[str, str]:
+    async def grant(
+        self, extension_id: str, service_url: str, *, secret: str | None = None
+    ) -> dict[str, str]:
         """Let one extension process ask for its service's token.
 
         Returns the environment to start it with. A second grant for
         the same extension replaces the first, so a restarted process
         does not inherit its predecessor's secret.
+
+        ``secret`` is the process's own, when the installer made one to
+        share with the host model's channel
+        (:class:`~ember_code.extensions.host.channel.HostChannel`): one
+        secret names one process, wherever it presents it.
         """
         await self.start()
-        secret = secrets.token_urlsafe(32)
+        secret = secret or secrets.token_urlsafe(32)
         self._grants[extension_id] = ServiceGrant(
             extension_id=extension_id, service_url=service_url, secret=secret
         )

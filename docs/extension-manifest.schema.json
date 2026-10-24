@@ -293,6 +293,26 @@
             ]
           ]
         },
+        "host": {
+          "type": "array",
+          "description": "Objects of igni's host object model (docs/HOST_OBJECT_MODEL.md) this extension may reach — from its process through `ext.host` and from its page through `bridge.host`. One name per object: `app`, `ui`, `sessions`, `chat.read`, `chat.post`, `chat.append`, `chat.control`, `chat.approvals`, `commands`, `agents`, `workflows`, `scheduler`, `processes`, `models`, `mcp`, `plugins`, `extensions`, `hooks`, `permissions`, `policy`, `account`, `notifications` — or a `*`-suffixed prefix (`chat.*`). An object not granted does not exist for the extension: reads fail, methods are refused, and its signals never arrive. `host.workspace` is granted by `workspace` above, not here, and is limited to `workspacePaths`. Its own state (`host.app.state`), its own settings (`host.self`) and its own notifications need no grant. Shown to the super admin who approves the service, and by `igni ext install`.",
+          "items": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9_.]*\\*?$"
+          },
+          "default": [],
+          "examples": [
+            [
+              "sessions",
+              "chat.read",
+              "chat.post"
+            ],
+            [
+              "chat.*",
+              "ui"
+            ]
+          ]
+        },
         "rpc": {
           "type": "array",
           "description": "Backend RPC methods this extension's UI may call over the bridge. Exact names, or a `*`-suffixed prefix — no other patterns, because this list is read by whoever approves the install. An extension's own service answers under `ext.<id>.*`; naming a base method here requests access to igni's own data.",

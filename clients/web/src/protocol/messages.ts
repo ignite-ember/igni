@@ -252,6 +252,8 @@ export interface UserMessageReceived extends BaseMessage {
   text: string;
   client_id: string;
   queued: boolean;
+  /** Set when an extension posted it (`host.chat.post`). */
+  extension_id?: string;
 }
 
 export interface RequirementResolved extends BaseMessage {

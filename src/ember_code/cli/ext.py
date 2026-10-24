@@ -354,6 +354,7 @@ def _echo_grants(manifest: ExtensionManifest) -> None:
         ("secrets", ", ".join(permissions.secrets) or "none"),
         ("agent tools", ", ".join(permissions.tools) or "none"),
         ("backend methods", ", ".join(permissions.rpc) or "none"),
+        ("host objects", ", ".join(permissions.host) or "none"),
     ]
     click.echo()
     click.echo("  it may use:")

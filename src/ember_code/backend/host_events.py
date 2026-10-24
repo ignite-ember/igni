@@ -37,6 +37,7 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
+from typing import Any
 
 from ember_code.backend.workspace_watch import GitWorkspace, Head, WorkspaceWatcher
 from ember_code.extensions.events import EventRouter, HostTopic
@@ -59,6 +60,9 @@ class HostEvents:
 
     def __init__(self, *, router: EventRouter, project_dir: Path) -> None:
         self._router = router
+        #: The host object model, once there is one: the same facts, as
+        #: its ``workspace`` and ``sessions`` signals.
+        self._model: Any = None
         #: Last session we announced. ``attach_session`` fires on
         #: every page reload, and a reload is not a switch.
         self._session_id: str | None = None
@@ -68,6 +72,16 @@ class HostEvents:
             on_files=self.files_changed,
             wants=self._wanted,
         )
+
+    def attach_model(self, model: Any) -> None:
+        """Tell the host object model too.
+
+        :class:`~ember_code.extensions.host.model.HostModel` delivers the
+        same three facts as signals whose wire names are these topics.
+        Its subscribers count as listeners, so the workspace poll runs
+        for an extension that only uses ``ext.host``.
+        """
+        self._model = model
 
     async def start(self) -> None:
         """Start the workspace poll."""
@@ -85,6 +99,8 @@ class HostEvents:
         extension that granted the topic and would be filtered out
         of every payload it produced.
         """
+        if self._model is not None and self._model.bus.wanted(str(topic)):
+            return True
         return any(self._sees_workspace(entry) for _, entry in self._router.audience_entries(topic))
 
     @staticmethod
@@ -139,6 +155,8 @@ class HostEvents:
             return {"commit_sha": head.commit_sha, "branch": head.branch}
 
         self._router.emit_each(HostTopic.WORKSPACE_HEAD_CHANGED, payload)
+        if self._model is not None:
+            self._model.head_changed(head)
 
     def files_changed(self, paths: frozenset[str]) -> None:
         """Files git reports as changed, each listener its own share."""
@@ -146,6 +164,8 @@ class HostEvents:
             HostTopic.WORKSPACE_FILES_CHANGED,
             lambda entry: self._visible(entry, paths),
         )
+        if self._model is not None:
+            self._model.files_changed(paths, self.MAX_PATHS)
 
     def _visible(
         self, entry: InstalledExtension, paths: frozenset[str]

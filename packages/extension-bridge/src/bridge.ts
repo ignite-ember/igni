@@ -28,10 +28,13 @@ function matchesTopic(topic: string, pattern: string): boolean {
     ? topic.startsWith(pattern.slice(0, -1))
     : topic === pattern;
 }
+import { HostError, type HostLink, type Signal } from "./hostModel";
+import { Host } from "./hostModel.generated";
 import {
   BRIDGE_VERSION,
   type CallMessage,
   type CloseMessage,
+  type HostRequestMessage,
   type LocationMessage,
   type NavigateMessage,
   type ResultMessage,
@@ -126,6 +129,30 @@ export interface Bridge {
    * every keystroke.
    */
   setLocation(state: Record<string, string>): void;
+
+  /**
+   * igni, as this extension sees it: the host object model
+   * (`docs/HOST_OBJECT_MODEL.md` in igni). The same model the
+   * extension's process reaches as `ext.host`.
+   *
+   *   const busy = await bridge.host.chat.processing.get();
+   *   await bridge.host.chat.post("Two issues in the files you changed.");
+   *
+   * A page's `host.ui` is the window it is framed in. Every object needs
+   * its grant in the manifest's `permissions.host`; one that is not
+   * granted rejects with a `HostError` whose `code` is `not_granted`.
+   */
+  readonly host: Host;
+
+  /**
+   * Handle a host signal: `bridge.on(bridge.host.chat.run_completed, fn)`.
+   *
+   * The first handler of a signal subscribes to it; removing the last
+   * one unsubscribes. A signal whose object is not granted never
+   * arrives — and subscribing to it is not an error. Returns an
+   * unsubscribe.
+   */
+  on<T>(signal: Signal<T>, fn: (value: T) => void): () => void;
 }
 
 interface Pending {
@@ -200,6 +227,8 @@ function build(
   let theme = hello.theme;
   let tokens = hello.tokens;
   let counter = 0;
+  const hostPending = new Map<string, Pending>();
+  const signalHandlers = new Map<string, Set<(value: unknown) => void>>();
 
   // Applied before the page renders anything, so an extension never
   // paints once in the fallback palette and again in the real one.
@@ -228,6 +257,28 @@ function build(
       }
       return;
     }
+    if (event.data.kind === "signal") {
+      const handlers = signalHandlers.get(event.data.signal);
+      if (handlers === undefined) return;
+      for (const fn of handlers) fn(event.data.value);
+      return;
+    }
+    if (event.data.kind === "host-reply") {
+      const reply = event.data;
+      const waiter = hostPending.get(reply.id);
+      if (waiter === undefined) return;
+      hostPending.delete(reply.id);
+      clearTimeout(waiter.timer);
+      if (reply.ok) waiter.resolve(reply.result);
+      else
+        waiter.reject(
+          new HostError(
+            reply.error?.code ?? "failed",
+            reply.error?.message ?? "the host refused without saying why",
+          ),
+        );
+      return;
+    }
     if (event.data.kind !== "result") return;
 
     const reply = event.data as ResultMessage;
@@ -247,7 +298,12 @@ function build(
   });
 
   function post(
-    message: CallMessage | NavigateMessage | LocationMessage | CloseMessage,
+    message:
+      | CallMessage
+      | NavigateMessage
+      | LocationMessage
+      | CloseMessage
+      | HostRequestMessage,
   ) {
     // Targeted at "*" deliberately: the guest does not know the host's
     // origin, and guessing one would mean a message silently going
@@ -257,8 +313,70 @@ function build(
     host.postMessage(message, "*");
   }
 
+  function hostRequest(
+    body: Omit<HostRequestMessage, "igni" | "kind" | "nonce" | "id">,
+  ): Promise<unknown> {
+    const id = `h${++counter}`;
+    return new Promise<unknown>((resolve, reject) => {
+      const timer = setTimeout(() => {
+        hostPending.delete(id);
+        reject(
+          new HostError(
+            "failed",
+            `igni bridge: host.${body.path || body.op} timed out after ${DEFAULT_TIMEOUT_MS}ms`,
+          ),
+        );
+      }, DEFAULT_TIMEOUT_MS);
+      hostPending.set(id, { resolve, reject, timer });
+      post({ igni: BRIDGE_VERSION, kind: "host", nonce, id, ...body });
+    });
+  }
+
+  const link: HostLink = {
+    request(op, path, options) {
+      return hostRequest({
+        op,
+        path,
+        window: options.window ?? null,
+        ...(options.params !== undefined ? { params: options.params } : {}),
+        ...(op === "set" ? { value: options.value } : {}),
+      });
+    },
+  };
+  const hostModel = new Host(link);
+
   return {
     extensionId: hello.extensionId,
+    host: hostModel,
+    on<T>(signal: Signal<T>, fn: (value: T) => void) {
+      const wire = signal.name;
+      let handlers = signalHandlers.get(wire);
+      if (handlers === undefined) {
+        handlers = new Set();
+        signalHandlers.set(wire, handlers);
+        void hostRequest({ op: "subscribe", path: "", signals: [wire] }).catch(
+          () => {
+            /* Refused or unknown: nothing will arrive, which is the
+               promise either way. */
+          },
+        );
+      }
+      const handler = fn as (value: unknown) => void;
+      handlers.add(handler);
+      return () => {
+        const current = signalHandlers.get(wire);
+        if (current === undefined) return;
+        current.delete(handler);
+        if (current.size === 0) {
+          signalHandlers.delete(wire);
+          void hostRequest({
+            op: "unsubscribe",
+            path: "",
+            signals: [wire],
+          }).catch(() => {});
+        }
+      };
+    },
     get params() {
       return params;
     },

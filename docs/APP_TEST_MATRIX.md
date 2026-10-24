@@ -239,6 +239,7 @@ real bundle and calls it over a real subprocess.
 |---|---|---|
 | `list_extensions` | `tests/test_the_frontend_can_draw_an_extension.py`. Offline, read-only — returns the installed set with each one's state, reason and origin, including the FAILED ones, because "why is it missing" is better answered by a row than by an absence. | `answers` |
 | `set_extension_settings` | `tests/test_an_extension_contributes_commands_and_settings.py`. Offline, mutating — writes values for the keys a manifest declares and refuses every other key. Returns the whole list, since the caller has just invalidated its view of all of it. | `answers` |
+| `host_model` | `tests/test_the_host_model_answers.py` (`TestAPageReachesTheSameModel`). An extension page's `bridge.host…`, forwarded by its window with the frame's extension as caller: get, set, call and subscribe against the host object model, refused for igni's own UI (no caller) and for any object `permissions.host` does not grant. The model itself is driven member by member in the same file, and by a real extension process over its socket in `tests/test_an_extension_process_reaches_the_host.py`. | `answers` |
 
 Notifications are the floor's, not an extension's: one list and one
 count per extension, merging what igni server delivered to whoever is

@@ -49,6 +49,7 @@ Everything below is a key under `contributes` in the manifest, and the list is e
 | `menu` | entries in the header tools menu | — |
 | `pages` | **optional** UI — a surface the extension renders in its own frame | MCP has no UI concept |
 | `events` (in `permissions`) | being told when something happens, instead of polling for it | MCP carries no push to a UI. Two kinds, one envelope: **host events** from a published vocabulary, which need a grant, and an extension's **own** events under `ext.<id>.`, which do not. |
+| `host` (in `permissions`) | reaching igni itself — sessions, the chat, the UI, plugins, models, everything igni's own UI can do — and being told everything that happens in it | MCP runs host→server and knows nothing of igni. The **host object model** (`docs/HOST_OBJECT_MODEL.md`): objects with properties, signals and methods, granted per object. See below. |
 | `indicators` | a status chip in igni's own chrome, beside igni's | MCP has no UI concept. Data rather than a frame: a chip is twenty pixels and an iframe is not what twenty pixels costs. The host draws it; the extension decides what it says, because what "preparing" means for an index is not what it means for a document store. |
 
 `menu` rather than `tools`, because `permissions.tools` already means the MCP tool names an extension may register with the agent. See §2.
@@ -148,6 +149,57 @@ merely ungranted. Its own, under `ext.<id>.`, need no grant — it is
 always allowed to talk to itself. And events go host→extension only;
 an extension cannot emit into another.
 
+### The host object model
+
+**An extension can do anything in igni that igni's own UI can do, and
+see everything that happens in it** — `docs/HOST_OBJECT_MODEL.md` is the
+model. igni is one tree of objects (`host.sessions`, `host.chat`,
+`host.ui`, `host.plugins`, `host.workspace`, …) with properties, signals
+and methods; an extension handles a signal and, while handling it, reads
+and writes the model:
+
+```python
+@ext.on(ext.host.chat.run_completed)
+async def review(run: Run) -> None:
+    if run.changed_files:
+        await ext.host.chat.post("Two issues in the files you just changed: …")
+```
+
+The process reaches it as `ext.host` (`igni-extension`) over a loopback
+WebSocket igni gives it (`IGNI_HOST_URL`, guarded by the same per-process
+secret as the token endpoint, `IGNI_HOST_SECRET`); the page reaches the
+same model as `bridge.host` (`@igni/extension-bridge`) through the window
+it is framed in. `docs/HOST_MODEL_PROTOCOL.md` is the wire, for SDK
+maintainers only.
+
+**Granted per object, by `permissions.host`.** One entry per object
+(`chat.read`, `chat.post`, `sessions`, `ui`, …) or a `*`-suffixed prefix.
+An object not granted does not exist for the extension: reads and
+methods answer `not_granted`, and its signals never arrive.
+`host.workspace` is granted by `permissions.workspace` and limited to
+`workspacePaths`, like every other workspace fact; an extension's own
+state, settings and notifications need no grant. A write goes through
+the handler igni's own UI uses, so one the person could not make is
+refused the same way.
+
+**One schema, two SDKs.** The model is described once
+(`ember_code.extensions.host.definition`, versioned under §8) and both
+SDKs' `host` objects are generated from it (`make host-sdks`); a test
+fails when they are stale, and another fails when igni gains an RPC, a
+UI action or a broadcast with no member in the model and no reason it
+has none.
+
+**Messages from an extension are labelled.** `host.chat.post(text)` puts
+a message in the chat with the extension's name on it, and the agent is
+told who sent it before it answers; nothing posts as the person.
+`host.chat.append(view)` shows a json-render block that is never sent to
+the model.
+
+The four host events above are signals in the model, under the same
+topic strings (`sessions.current_changed` travels as `session.switched`),
+granted there by `permissions.host`; their delivery to `onEvent` and
+`igni_on_event`, granted by `permissions.events`, is unchanged.
+
 ### Shipping one: from its service, through igni
 
 An extension reaches people's machines **from its service and nowhere
@@ -219,6 +271,24 @@ audience, so an extension can only ever get its own service's token.
 It is a listener of its own rather than the extension's UI origin,
 which lives in a browser. (`extensions/service_token.py`) A service
 token is never a `permissions.secrets` grant.
+
+**Its home on the web.** The service's URL — the distribution record's
+`service_url` — is the service's `client_uri`, which RFC 7591 defines as
+the client's home page. igni shows it as **Open on the web** on the
+extension's row in the Extensions panel and above the extension's page,
+opened in the person's browser the way igni opens every external link,
+and reports it as `web_url` in `host.extensions` and `host.self`. A
+development install uses its `serviceUrl` setting when one is set; with
+neither, no link is shown. (`extensions/web_home.py`)
+
+**From the process, as the person.** `ext.service` (`igni-extension`)
+is an HTTP client for the extension's own service that fetches,
+attaches and renews that token; `ext.service.anonymous` reaches the same
+service with no token, for what anyone may read; and
+`ext.service.websocket(path)` opens a WebSocket to it with the token in
+its `Authorization` header. `ext.tokens.token()` is the token itself and
+`ext.tokens.signed_in` says whose it was. Whether anyone is signed in to
+igni at all is `host.account`.
 
 ### Developing one: a directory or a repository
 
@@ -299,7 +369,8 @@ Additive changes are never breaking, so omitting is cheap and premature inclusio
     "egress": [],
     "secrets": [],
     "tools": ["igni.codeindex.search"], // MCP tools it may register with the agent
-    "rpc": ["ext.igni.codeindex.*"]     // backend methods its own UI may call
+    "rpc": ["ext.igni.codeindex.*"],    // backend methods its own UI may call
+    "host": ["sessions", "chat.read"]   // host-model objects it may reach — §1
   },
 
   "contributes": { /* §1 */ }
@@ -324,6 +395,13 @@ different places, and an extension commonly wants one and not the
 other: a headless extension has no `rpc`, and a UI-only extension has
 no `tools`. For the same reason the header-menu contributions in §1
 are `contributes.menu` and not `contributes.tools`.
+
+**`rpc` and `host` are different lists, too.** `permissions.rpc` is
+backend methods by their wire names — the extension's own service under
+`ext.<id>.*`, and igni's internal methods, which can change with igni's
+UI. `permissions.host` is objects of the host object model, which is the
+promise: an extension that reaches igni through `host` is not broken by
+igni refactoring its wire.
 
 **Installed once.** One `id`, one install. No second copy, no per-project instance. Everything the extension needs to do, it does — two indexes is configuration inside the extension, not two installs.
 
@@ -543,13 +621,14 @@ The manifest's `trust` (`first-party` / `partner` / `unsigned`) is the author's 
 
 ### Permissions
 
-Declared, admin-granted, base-enforced, deny by default: `workspace` (none/read/write, path-scoped), `egress` (explicit hosts, empty by default), `secrets` (named grants the deployment resolves), `tools` (MCP tool names it may register with the agent), `rpc` (backend methods its UI may call over the bridge — exact names, or a `*`-suffixed prefix, because this list is read by whoever approves the install).
+Declared, admin-granted, base-enforced, deny by default: `workspace` (none/read/write, path-scoped), `egress` (explicit hosts, empty by default), `secrets` (named grants the deployment resolves), `tools` (MCP tool names it may register with the agent), `rpc` (backend methods its UI may call over the bridge — exact names, or a `*`-suffixed prefix, because this list is read by whoever approves the install), `host` (objects of the host object model its process and page may reach, same grammar).
 
 **Where each one is enforced, and how far.** This list was written before any of it was, and for a while the only enforced permission was `rpc` — which made the rest a list of restrictions that restricted nothing.
 
 | Permission | Enforced at | How far it goes |
 |---|---|---|
 | `rpc` | `ExtensionRegistry.authorise`, on every call | Complete. |
+| `host` | `HostModel.handle`, on every request from the process's socket and the page's bridge; and at dispatch, for every signal | Complete for what igni does on the extension's behalf: an ungranted object answers `not_granted` and its signals are never sent; signal contents are filtered by `workspace` and `workspacePaths`. |
 | `tools` | tool registration, which is igni's | Complete. A service may expose what it likes; what reaches the model is this list. |
 | `egress` | the page's `connect-src`, written from the manifest; and the endpoint host igni itself dials | **The UI, completely. Not the service's own process** — confining that needs an OS sandbox igni does not apply. A sidecar can still open its own sockets. |
 | `workspace` | what igni *tells* a service, as `IGNI_WORKSPACE*` | An extension that was never granted the workspace is not told where it is. A service that goes looking anyway is not stopped — same OS-sandbox gap. |

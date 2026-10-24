@@ -6,6 +6,14 @@
     ext = IgniExtension("acme.example", environ=host.environment(),
                         token_transport=host.transport, service_transport=my_fake_service)
 
+`FakeHost` is the host's object model, on a loopback socket, the way igni
+serves `ext.host`:
+
+    async with FakeHost(values={"chat.processing": False}) as host:
+        ext = IgniExtension("acme.example", environ=host.environment())
+        assert await ext.host.chat.processing is False
+        await host.emit("chat.run_completed", {...})
+
 `HostHarness` is the host's MCP client, connected to the extension over
 memory streams — the same session `ext.run()` serves over stdio — and
 records what the extension tells the host:
@@ -17,9 +25,12 @@ records what the extension tells the host:
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import contextlib
+import json
 import secrets
+from collections.abc import Callable
 from datetime import timedelta
 from types import TracebackType
 from typing import Any
@@ -32,9 +43,11 @@ from mcp import ClientSession, types
 from mcp.shared.message import SessionMessage
 from mcp.shared.session import RequestResponder
 from pydantic import BaseModel, RootModel
+from websockets.asyncio.server import serve
 
 from igni_extension.clock import Clock
 from igni_extension.extension import IgniExtension
+from igni_extension.host_model import SCHEMA_VERSION
 from igni_extension.notifications import NOTIFY_METHOD, LocalNotification, NotifyNotification
 
 
@@ -63,8 +76,27 @@ class TokenClaims(BaseModel):
     jti: str
 
 
+#: Makes the token a fake host hands out for one person — see
+#: `FakeHostTokenEndpoint(minter=...)`.
+Minter = Callable[["TokenClaims"], str]
+
+
 class FakeHostTokenEndpoint:
-    """The host's token endpoint for one extension process (service identity §9)."""
+    """The host's token endpoint for one extension process (service identity §9).
+
+    Hands out tokens for whoever is signed in (`sign_in`, `sign_out`). By
+    default a token is an unsigned JWT carrying the person's claims — enough
+    for `ext.tokens.signed_in`, and refused by a real service. To test
+    against a service that checks signatures (`igni_service.testing.FakeIgni`),
+    pass `minter`: it is given the person's `TokenClaims` (`sub`, `org`,
+    `email`, `name`, `aud` — the service URL — and a fresh `jti`) and
+    returns the token to hand out:
+
+        igni = FakeIgni(...)
+        host = FakeHostTokenEndpoint(
+            minter=lambda claims: igni.person_token(claims.sub, org_id=claims.org)
+        )
+    """
 
     TOKEN_URL = "http://127.0.0.1:47011/igni/service-token"
     SERVICE_URL = "http://service.test"
@@ -78,8 +110,10 @@ class FakeHostTokenEndpoint:
         org_id: str = "org-acme",
         email: str = "ada@acme.test",
         name: str = "Ada",
+        minter: Minter | None = None,
     ) -> None:
         self.service_url = service_url
+        self.minter: Minter = minter or self.unsigned
         self.secret = secrets.token_urlsafe(24)
         self.expires_in = expires_in
         self.person: TokenClaims | None = None
@@ -118,7 +152,7 @@ class FakeHostTokenEndpoint:
             return httpx.Response(401, json={"detail": "wrong secret"})
         if self.person is None:
             return httpx.Response(503, json={"detail": "nobody is signed in to igni"})
-        token = self._mint(self.person.model_copy(update={"jti": secrets.token_hex(8)}))
+        token = self.minter(self.person.model_copy(update={"jti": secrets.token_hex(8)}))
         self.issued.append(token)
         return httpx.Response(
             200,
@@ -130,7 +164,9 @@ class FakeHostTokenEndpoint:
         )
 
     @staticmethod
-    def _mint(claims: TokenClaims) -> str:
+    def unsigned(claims: TokenClaims) -> str:
+        """The default token: an unsigned JWT of `claims`."""
+
         def part(value: bytes) -> str:
             return base64.urlsafe_b64encode(value).rstrip(b"=").decode()
 
@@ -243,3 +279,156 @@ class HostHarness:
         if isinstance(root, NotifyNotification):
             self.notifications.append(root.local())
             self._changed.set()
+
+
+class HostCall(BaseModel):
+    """One request an extension made of `FakeHost`."""
+
+    op: str
+    path: str
+    window: str | None = None
+    params: dict[str, Any] = {}
+    value: Any = None
+
+
+class FakeHost:
+    """igni's host object model for one extension process, on a loopback socket.
+
+    Speaks the protocol igni does (`docs/HOST_MODEL_PROTOCOL.md` in igni).
+    What it answers is up to the test:
+
+    * `values` — `path -> value` for `get`; a `set` stores into it;
+    * `answers` — `path -> value` (or a callable of the params) for `call`;
+    * `refusals` — `path -> (code, message)`: that member is refused, as
+      igni refuses an object the manifest does not grant;
+
+    and `emit(signal, value)` fires a signal at whoever subscribed.
+    Everything asked is kept in `calls`.
+    """
+
+    def __init__(
+        self,
+        *,
+        extension_id: str = "acme.example",
+        granted: tuple[str, ...] = (),
+        values: dict[str, Any] | None = None,
+        answers: dict[str, Any] | None = None,
+        refusals: dict[str, tuple[str, str]] | None = None,
+    ) -> None:
+        self.extension_id = extension_id
+        self.granted = list(granted)
+        self.values: dict[str, Any] = dict(values or {})
+        self.answers: dict[str, Any] = dict(answers or {})
+        self.refusals: dict[str, tuple[str, str]] = dict(refusals or {})
+        self.secret = secrets.token_urlsafe(16)
+        self.calls: list[HostCall] = []
+        self.subscribed: set[str] = set()
+        self._subscribed_changed = asyncio.Event()
+        self._sockets: set[Any] = set()
+        self._server: Any = None
+        self.url = ""
+
+    def environment(self, **extra: str) -> dict[str, str]:
+        """The variables igni starts the process with, for its host."""
+        return {"IGNI_HOST_URL": self.url, "IGNI_HOST_SECRET": self.secret, **extra}
+
+    async def __aenter__(self) -> FakeHost:
+        await self.start()
+        return self
+
+    async def __aexit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc: BaseException | None,
+        traceback: TracebackType | None,
+    ) -> None:
+        await self.stop()
+
+    async def start(self) -> None:
+        self._server = await serve(self._serve, "127.0.0.1", 0, compression=None)
+        port = int(next(iter(self._server.sockets)).getsockname()[1])
+        self.url = f"ws://127.0.0.1:{port}/v1/host"
+
+    async def stop(self) -> None:
+        if self._server is not None:
+            self._server.close()
+            await self._server.wait_closed()
+            self._server = None
+
+    async def emit(self, signal: str, value: Any) -> None:
+        """Fire `signal` (its wire name) at every connection that subscribed."""
+        frame = json.dumps({"op": "signal", "signal": signal, "value": value})
+        if signal not in self.subscribed:
+            return
+        for socket in list(self._sockets):
+            with contextlib.suppress(Exception):
+                await socket.send(frame)
+
+    async def wait_subscribed(self, signal: str, timeout: float = 5.0) -> None:
+        """Wait until the extension has subscribed to `signal`."""
+        with anyio.fail_after(timeout):
+            while signal not in self.subscribed:
+                self._subscribed_changed.clear()
+                await self._subscribed_changed.wait()
+
+    async def _serve(self, socket: Any) -> None:
+        headers = socket.request.headers if socket.request is not None else {}
+        if headers.get("Authorization") != f"Bearer {self.secret}":
+            await socket.close(4001, "unauthorized")
+            return
+        self._sockets.add(socket)
+        try:
+            await socket.send(
+                json.dumps(
+                    {
+                        "op": "hello",
+                        "protocol": 1,
+                        "schema_version": SCHEMA_VERSION,
+                        "extension_id": self.extension_id,
+                        "granted": self.granted,
+                    }
+                )
+            )
+            async for raw in socket:
+                request = json.loads(raw)
+                await socket.send(json.dumps(self._answer(request)))
+        finally:
+            self._sockets.discard(socket)
+
+    def _answer(self, request: dict[str, Any]) -> dict[str, Any]:
+        op = str(request.get("op"))
+        path = str(request.get("path") or "")
+        reply: dict[str, Any] = {"op": "reply", "id": request.get("id"), "ok": True, "result": None}
+        if op in ("subscribe", "unsubscribe"):
+            wires = list(request.get("signals") or [])
+            if op == "subscribe":
+                self.subscribed.update(wires)
+                self._subscribed_changed.set()
+                reply["result"] = {"subscribed": wires, "not_granted": [], "unknown": []}
+            else:
+                self.subscribed.difference_update(wires)
+            return reply
+        self.calls.append(
+            HostCall(
+                op=op,
+                path=path,
+                window=request.get("window"),
+                params=dict(request.get("params") or {}),
+                value=request.get("value"),
+            )
+        )
+        if path in self.refusals:
+            code, message = self.refusals[path]
+            return {**reply, "ok": False, "error": {"code": code, "message": message}}
+        if op == "get":
+            if path not in self.values:
+                return {**reply, "ok": False, "error": {"code": "not_found", "message": path}}
+            reply["result"] = self.values[path]
+        elif op == "set":
+            self.values[path] = request.get("value")
+        else:
+            answer = self.answers.get(path)
+            reply["result"] = (
+                answer(dict(request.get("params") or {})) if callable(answer) else answer
+            )
+        return reply

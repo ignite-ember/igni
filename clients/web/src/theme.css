@@ -16501,6 +16501,50 @@ button {
   display: block;
 }
 
+/* A message an extension posted (host.chat.post): labelled, never
+   mistaken for the person's. */
+.msg-user-from {
+  font-size: var(--text-sm);
+  color: var(--fg-muted);
+  margin-bottom: var(--space-1);
+}
+
+/* "Open on the web" — an extension's home page, its service's
+   `client_uri`. Shown on its row and above its page when known. */
+.ext-web-link {
+  display: inline-block;
+  margin-top: var(--space-2);
+  font-size: var(--text-sm);
+  color: var(--accent-blue-text);
+  text-decoration: none;
+}
+
+.ext-web-link:hover {
+  text-decoration: underline;
+}
+
+.extension-page {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+}
+
+.extension-page-bar {
+  display: flex;
+  justify-content: flex-end;
+  padding: 0 var(--space-3);
+}
+
+.extension-page-bar .ext-web-link {
+  margin: var(--space-1) 0;
+}
+
+.extension-page > iframe {
+  flex: 1;
+  min-height: 0;
+}
+
 .ext-head {
   display: flex;
   align-items: flex-start;

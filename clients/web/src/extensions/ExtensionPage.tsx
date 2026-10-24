@@ -14,7 +14,8 @@ import { useCallback, useMemo } from "react";
 
 import { Banner, Button, Empty } from "@igni/ui-react";
 
-import { ExtensionFrame } from "./ExtensionFrame";
+import { ExtensionFrame, type ExtensionFrameProps } from "./ExtensionFrame";
+import { OpenOnWeb } from "./OpenOnWeb";
 
 /** One extension, as `list_extensions` describes it. */
 export interface ExtensionSummary {
@@ -44,6 +45,11 @@ export interface ExtensionSummary {
     options: string[];
   }[];
   values: Record<string, unknown>;
+  /**
+   * Its home on the web — its service's URL, which is the service's
+   * `client_uri` — when one is known. Shown as "Open on the web".
+   */
+  web_url?: string | null;
 }
 
 export interface ExtensionPageProps {
@@ -64,6 +70,10 @@ export interface ExtensionPageProps {
   onNavigate?: (to: string) => void;
   /** Events the backend addressed to this extension. */
   events?: { topic: string; payload: Record<string, unknown>; n: number }[];
+  /** Host-model signals the backend addressed to this extension. */
+  signals?: { signal: string; value: unknown; n: number }[];
+  /** Forwards a host-model request (`bridge.host…`) as this extension. */
+  onHost?: ExtensionFrameProps["onHost"];
   /** Launch parameters — the host's URL state for this extension. */
   params?: Record<string, unknown>;
   onLocation?: (state: Record<string, string>) => void;
@@ -85,6 +95,8 @@ export function ExtensionPage({
   onClose,
   onNavigate,
   events,
+  signals,
+  onHost,
   params,
   onLocation,
 }: ExtensionPageProps) {
@@ -141,7 +153,7 @@ export function ExtensionPage({
     );
   }
 
-  return (
+  const frame = (
     <ExtensionFrame
       extensionId={extension.id}
       origin={extension.origin}
@@ -152,6 +164,8 @@ export function ExtensionPage({
       onNavigate={onNavigate}
       onLocation={onLocation}
       events={events}
+      signals={signals}
+      onHost={onHost}
       params={params}
       // What an administrator set it to, from `list_extensions`.
       // The backend has already filled defaults in and dropped keys
@@ -161,5 +175,14 @@ export function ExtensionPage({
       theme={theme}
       title={page.label}
     />
+  );
+  if (!extension.web_url) return frame;
+  return (
+    <div className="extension-page">
+      <div className="extension-page-bar">
+        <OpenOnWeb url={extension.web_url} name={extension.name} />
+      </div>
+      {frame}
+    </div>
   );
 }

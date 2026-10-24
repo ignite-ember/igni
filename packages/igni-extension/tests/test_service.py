@@ -4,9 +4,10 @@ from __future__ import annotations
 
 import httpx
 import pytest
+from websockets.asyncio.server import ServerConnection, serve
 
 from igni_extension import HostUnavailable, IgniExtension, NotConfigured, NotSignedIn
-from igni_extension.testing import FakeHostTokenEndpoint, ManualClock
+from igni_extension.testing import FakeHostTokenEndpoint, ManualClock, TokenClaims
 
 
 class FakeService:
@@ -149,3 +150,59 @@ async def test_a_process_igni_did_not_give_a_service_says_so() -> None:
         _ = ext.service
     with pytest.raises(NotConfigured, match="IGNI_SERVICE_TOKEN_URL"):
         await ext.tokens.token()
+
+
+async def test_an_anonymous_request_carries_no_token_and_asks_the_host_for_none(
+    ext: IgniExtension, host: FakeHostTokenEndpoint, service: FakeService
+) -> None:
+    host.sign_out()  # works with nobody signed in, too
+
+    response = await ext.service.anonymous.get("/v1/public/runbook")
+
+    assert response.json() == {"path": "/v1/public/runbook"}
+    assert service.seen == [""]
+    assert host.requests == []
+
+
+async def test_a_websocket_to_the_service_is_opened_as_the_person(
+    host: FakeHostTokenEndpoint,
+) -> None:
+    seen: list[str] = []
+
+    async def room(socket: ServerConnection) -> None:
+        assert socket.request is not None
+        seen.append(socket.request.headers.get("Authorization", ""))
+        seen.append(socket.request.path)
+        async for frame in socket:
+            await socket.send(f"echo {frame!s}")
+
+    async with serve(room, "127.0.0.1", 0) as server:
+        port = next(iter(server.sockets)).getsockname()[1]
+        ext = IgniExtension(
+            "acme.example",
+            environ=host.environment(IGNI_SERVICE_URL=f"http://127.0.0.1:{port}/api"),
+            token_transport=host.transport,
+        )
+        async with ext.service.websocket("/v1/rooms/runbook") as socket:
+            await socket.send("hello")
+            assert await socket.recv() == "echo hello"
+        await ext.aclose()
+
+    assert seen == [f"Bearer {host.issued[-1]}", "/api/v1/rooms/runbook"]
+
+
+async def test_tokens_can_come_from_a_minter_the_test_supplies() -> None:
+    minted: list[str] = []
+
+    def minter(claims: TokenClaims) -> str:
+        token = f"signed-for-{claims.sub}-{claims.aud}"
+        minted.append(token)
+        return token
+
+    host = FakeHostTokenEndpoint(minter=minter, user_id="u-grace")
+    ext = IgniExtension("acme.example", environ=host.environment(), token_transport=host.transport)
+
+    token = await ext.tokens.token()
+
+    assert token == f"signed-for-u-grace-{FakeHostTokenEndpoint.SERVICE_URL}"
+    assert minted == host.issued == [token]

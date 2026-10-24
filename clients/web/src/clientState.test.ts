@@ -211,7 +211,10 @@ describe("ClientStateStore — hydrate", () => {
     expect(store.isHydrated()).toBe(false);
     await store.hydrate();
     expect(store.isHydrated()).toBe(true);
-    expect(rpc).toHaveBeenCalledWith("get_client_state", { client_id: "client-1" });
+    expect(rpc).toHaveBeenCalledWith(
+      "get_client_state",
+      expect.objectContaining({ client_id: "client-1" }),
+    );
     expect(store.get("sidebar_open")).toBe("true");
     expect(store.get("draft")).toBe("hello");
   });
@@ -386,5 +389,49 @@ describe("ClientStateStore — flush", () => {
     const rpc = vi.fn().mockResolvedValue(undefined);
     const store = new ClientStateStore(makeClient(rpc), "c-1");
     store.flush(); // no raise
+  });
+});
+
+// ── Changes an extension made (host object model) ────────────
+
+describe("applyRemote", () => {
+  function store() {
+    const rpc = vi.fn(async () => ({}));
+    const client = { rpc, clientId: "ws-7" } as unknown as IgniClient;
+    return { rpc, store: new ClientStateStore(client, "w-1", 250, "tauri") };
+  }
+
+  it("says which connection and kind of window it is when it hydrates", async () => {
+    const { rpc, store: s } = store();
+    await s.hydrate();
+    expect(rpc).toHaveBeenCalledWith("get_client_state", {
+      client_id: "w-1",
+      connection_id: "ws-7",
+      kind: "tauri",
+    });
+  });
+
+  it("applies a change the backend already stored, without writing it back", () => {
+    vi.useFakeTimers();
+    const { rpc, store: s } = store();
+    const seen: [string, string][] = [];
+    s.onRemote((key, value) => seen.push([key, value]));
+
+    s.applyRemote("sidebar-open", "true");
+    vi.advanceTimersByTime(1000);
+
+    expect(s.get("sidebar-open")).toBe("true");
+    expect(seen).toEqual([["sidebar-open", "true"]]);
+    expect(rpc).not.toHaveBeenCalled();
+  });
+
+  it("an empty value is a delete, and it cancels a pending local write", () => {
+    vi.useFakeTimers();
+    const { rpc, store: s } = store();
+    s.set("draft:s-1", "half typed");
+    s.applyRemote("draft:s-1", "");
+    vi.advanceTimersByTime(1000);
+    expect(s.get("draft:s-1")).toBeUndefined();
+    expect(rpc).not.toHaveBeenCalled();
   });
 });

@@ -387,6 +387,7 @@
     "user_message_received": [
       "client_id",
       "event_seq",
+      "extension_id",
       "id",
       "queued",
       "session_id",

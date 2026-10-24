@@ -24,6 +24,7 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
+from ember_code.backend.host_backend import HostModelWiring, ObservedTransport
 from ember_code.backend.host_events import HostEvents
 from ember_code.backend.login_coordinator import LoginCoordinator
 from ember_code.backend.push_bridge import PushNotificationBridge
@@ -38,6 +39,8 @@ from ember_code.extensions.contributions import ExtensionContributions
 from ember_code.extensions.distribution import ExtensionDistribution
 from ember_code.extensions.events import EventRouter
 from ember_code.extensions.health import ExtensionHealth
+from ember_code.extensions.host.channel import HostChannel
+from ember_code.extensions.host.model import HostModel
 from ember_code.extensions.installer import ExtensionInstaller
 from ember_code.extensions.launcher import ExtensionLauncher
 from ember_code.extensions.origin import ExtensionOrigins
@@ -142,6 +145,10 @@ class BackendApp:
         self._distribution: ExtensionDistribution | None = None
         self._service_tokens: ServiceTokenEndpoint | None = None
         self._notifications: NotificationCenter | None = None
+        self._notices: ExtensionNoticeReceiver | None = None
+        # The host object model and the socket processes reach it on.
+        self._host_model: HostModel | None = None
+        self._host_channel: HostChannel | None = None
 
     def _start_wake_detector(self) -> None:
         """Notice sleep, and drop the cloud state it invalidated.
@@ -215,7 +222,9 @@ class BackendApp:
     async def run(self) -> None:
         """Boot, serve, and tear down. Exceptions in the boot or
         serve phases are logged; teardown always runs."""
-        self._transport = await self._transport_builder.build()
+        # Wrapped once, at the root, so the host object model sees
+        # every message igni sends any window — see ``host_backend``.
+        self._transport = ObservedTransport(await self._transport_builder.build())
 
         settings = self._load_settings_with_group_policy()
         self._backend = BackendServer(
@@ -341,6 +350,7 @@ class BackendApp:
         )
         pool = self._orchestrator.setup_pool()
         self._supervisor.set_pool(pool)
+        self._start_host_model()
         # The push bridge subscribes to the process-wide shell bus and
         # narrates background-process completions into ITS session's
         # conversation. Once the pool holds more than the boot
@@ -415,6 +425,8 @@ class BackendApp:
             logger.error("Backend error: %s", exc, exc_info=True)
         finally:
             await notifications.stop()
+            if self._host_channel is not None:
+                await self._host_channel.stop()
             await self._service_events.stop()
             await self._host_events.stop()
             await self._extension_health.stop()
@@ -445,12 +457,36 @@ class BackendApp:
             announce=self._push_bridge.notifications_changed,
         )
         receiver = ExtensionNoticeReceiver(registry=self._extensions.registry, sink=center)
+        self._notices = receiver
         router = getattr(self._backend.mcp_manager, "notifications", None)
         if router is not None:
             router.handle(ExtensionNoticeReceiver.METHOD, receiver)
         if self._login is not None:
             self._login.on_signed_in(center.schedule_signed_in)
         return center
+
+    def _start_host_model(self) -> None:
+        """Build the host object model over the pool, and tell it everything.
+
+        ``docs/HOST_OBJECT_MODEL.md``. One model for every extension,
+        reached by a process over :class:`HostChannel` and by a page over
+        the ``host_model`` RPC. It hears igni through four taps: every
+        outbound message, every window RPC (to signal writes), every
+        registry change, and the workspace poll.
+        """
+        assert self._orchestrator is not None
+        model = HostModelWiring.build(
+            orchestrator=self._orchestrator,
+            transport=self._transport,
+            registry=self._extensions.registry,
+            project_dir=self._project_dir,
+            store=ExtensionStore(),
+            notifications=self._notifications,
+            notices=self._notices,
+            host_events=self._host_events,
+        )
+        self._host_model = model
+        self._host_channel = HostChannel(model)
 
     def _wire_extension_events(self) -> None:
         """Deliver events, and emit the one igni always knows.
@@ -528,6 +564,7 @@ class BackendApp:
             store=store,
             environments=PythonEnvironments(store.environments_root),
             service_tokens=self._service_tokens,
+            host_channel=self._host_channel,
         )
         launcher = ExtensionLauncher(
             store=store,

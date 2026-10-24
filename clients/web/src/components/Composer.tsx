@@ -253,6 +253,13 @@ export function Composer({
     }
     setText(clientState.get(draftKey) || "");
   }, [draftKey, clientState]);
+  // A draft an extension set (``host.ui.set_composer``), already stored.
+  useEffect(() => {
+    if (!draftKey || !clientState) return;
+    return clientState.onRemote((key, value) => {
+      if (key === draftKey) setText(value);
+    });
+  }, [draftKey, clientState]);
   // Mirror text → BE on change (debounced inside clientState). When
   // the draft empties out, drop the row so the store stays tidy.
   useEffect(() => {

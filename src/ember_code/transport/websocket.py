@@ -28,7 +28,7 @@ import contextlib
 import logging
 import os
 import uuid
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -133,6 +133,8 @@ class WebSocketServerTransport(ListeningTransport):
         # drains it. ``None`` is the close sentinel — enqueued only by
         # ``close()``, never on client disconnect.
         self._inbox: asyncio.Queue[Message | None] = asyncio.Queue()
+        # Told ``(event, client_id)`` when a view attaches or detaches.
+        self._connection_watchers: list[Callable[[str, str], None]] = []
 
     @property
     def port(self) -> int:
@@ -162,6 +164,22 @@ class WebSocketServerTransport(ListeningTransport):
         GUI shells may open the webview long after spawning the BE."""
         await asyncio.wait_for(self._connected.wait(), timeout=timeout)
 
+    def watch_connections(self, watcher: Callable[[str, str], None]) -> None:
+        """Be told ``("attached" | "detached", client_id)`` for every view.
+
+        How the host object model knows a window went away: a window
+        says who it is when it reads its state, and its connection
+        closing is the only word it gets to say when it leaves.
+        """
+        self._connection_watchers.append(watcher)
+
+    def _tell_watchers(self, event: str, client_id: str) -> None:
+        for watcher in list(self._connection_watchers):
+            try:
+                watcher(event, client_id)
+            except Exception:
+                logger.exception("a connection watcher failed on %s %s", event, client_id)
+
     async def _handler(self, conn: ServerConnection) -> None:
         client_id = f"ws-{uuid.uuid4().hex[:8]}"
         client = MirroredClient(client_id=client_id, conn=conn)
@@ -183,6 +201,7 @@ class WebSocketServerTransport(ListeningTransport):
         finally:
             self._conns.pop(client_id, None)
             logger.info("FE client %s detached (%d left)", client_id, len(self._conns))
+            self._tell_watchers("detached", client_id)
 
     async def send(self, message: Message) -> None:
         """Broadcast to every attached client concurrently; drop dead /

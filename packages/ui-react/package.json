@@ -3,6 +3,11 @@
   "version": "0.1.0",
   "description": "The React components an igni extension is allowed to build on. Everything exported here is under the compatibility floor.",
   "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ignite-ember/igni.git",
+    "directory": "packages/ui-react"
+  },
   "type": "module",
   "main": "./src/index.ts",
   "types": "./src/index.ts",

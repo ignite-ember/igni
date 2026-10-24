@@ -18,7 +18,7 @@ cannot be installed is not installable either.
 ## Where they go
 
 Two Artifact Registry repositories per environment, made by igni_iac's
-`modules/artifact-registry` (its `docs/sdk-package-repositories.md` has the
+`modules/artifact-registry` (its SDK package repositories guide has the
 infrastructure and the one-time setup):
 
 | | Python | npm |
@@ -254,7 +254,7 @@ config; `package-lock.json`'s integrity hashes still hold.
 In order — the consumers cannot resolve against an index that is empty.
 
 1. **Infrastructure** (igni_iac): `terraform apply` for prod (and dev for a
-   rehearsal), then its `docs/sdk-package-repositories.md` steps: the WIF
+   rehearsal), then the steps in its SDK package repositories guide: the WIF
    provider's attribute condition, the `sdk-<env>` GitHub environments here
    with `WIF_PROVIDER`/`WIF_SERVICE_ACCOUNT`, the consumers' repository
    variables, the developers' group in `sdk_reader_members`.

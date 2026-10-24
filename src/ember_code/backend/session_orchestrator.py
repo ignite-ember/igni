@@ -160,6 +160,10 @@ class SessionOrchestrator:
         # itself is cheap (path resolution only).
         self._neo4j_runtime: Any = None
         self._neo4j_attach_task: asyncio.Task | None = None
+        # The host object model, once :class:`BackendApp` builds it,
+        # and whoever wants to see what windows send.
+        self._host_model: Any = None
+        self._inbound_watchers: list[Any] = []
 
     @property
     def extensions(self) -> ExtensionRpc:
@@ -309,6 +313,12 @@ class SessionOrchestrator:
             await session.attach_codeindex_neo4j(runtime)
 
     @property
+    def client_state(self) -> ClientStateStore:
+        """Every window's UI state — the store ``{get,set,delete}_client_state`` use."""
+        assert self._client_state is not None, "setup_pool must be called first"
+        return self._client_state
+
+    @property
     def pool(self) -> SessionPool:
         assert self._pool is not None, "setup_pool must be called first"
         return self._pool
@@ -391,21 +401,20 @@ class SessionOrchestrator:
 
     # ── Pool-level RPCs ──────────────────────────────────────────
 
-    async def _handle_attach_session(self, message: Any) -> None:
-        """Bind/create a session, optionally in a specific project
-        directory. Returns ``{session_id, project_dir}`` so the
-        view can adopt the binding."""
+    async def attach(self, session_id: str, project_dir: str | None) -> AttachSessionResult:
+        """Bind/create a session, optionally in a specific project directory.
+
+        The check a window's attach passes, in one place, so that the
+        host model's ``host.sessions`` is refused exactly where a window
+        would be. Raises :class:`ValueError` with the reason.
+        """
         assert self._dir_registry is not None
-        args = message.args or {}
-        session_id = str(args.get("session_id") or "")
-        wanted_dir = str(args.get("project_dir") or "")
+        session_id = str(session_id or "")
+        wanted_dir = str(project_dir or "")
         if wanted_dir:
             wd = Path(wanted_dir).expanduser()
             if not wd.is_dir():
-                await self._transport.send(
-                    msg.RPCResponse(id=message.id or "", error=f"not a directory: {wanted_dir}")
-                )
-                return
+                raise ValueError(f"not a directory: {wanted_dir}")
             if not session_id:
                 session_id = str(uuid.uuid4())[:8]
             # Register BEFORE creation so the factory picks the
@@ -423,17 +432,11 @@ class SessionOrchestrator:
             # wrong project.
             existing_dir = self._dir_registry.get_dir(session_id)
             if existing_dir and Path(existing_dir).resolve() != self._project_dir.resolve():
-                await self._transport.send(
-                    msg.RPCResponse(
-                        id=message.id or "",
-                        error=(
-                            f"session {session_id} belongs to a different "
-                            f"project ({existing_dir}); this backend is "
-                            f"bound to {self._project_dir}"
-                        ),
-                    )
+                raise ValueError(
+                    f"session {session_id} belongs to a different "
+                    f"project ({existing_dir}); this backend is "
+                    f"bound to {self._project_dir}"
                 )
-                return
         if not session_id:
             session_id = str(uuid.uuid4())[:8]
         assert self._pool is not None
@@ -444,10 +447,24 @@ class SessionOrchestrator:
             # repeat of the same id rather than every extension
             # having to learn that a page reload is not a switch.
             self._host_events.session_switched(rt.backend.session_id)
-        result = AttachSessionResult(
+        return AttachSessionResult(
             session_id=rt.backend.session_id,
             project_dir=str(rt.backend.project_dir),
         )
+
+    async def _handle_attach_session(self, message: Any) -> None:
+        """``attach_session`` from a window: :meth:`attach`, answered.
+
+        Returns ``{session_id, project_dir}`` so the view can adopt the
+        binding."""
+        args = message.args or {}
+        try:
+            result = await self.attach(
+                str(args.get("session_id") or ""), str(args.get("project_dir") or "")
+            )
+        except ValueError as exc:
+            await self._transport.send(msg.RPCResponse(id=message.id or "", error=str(exc)))
+            return
         await self._transport.send(msg.RPCResponse(id=message.id or "", result=result.model_dump()))
 
     async def _handle_client_state_rpc(self, message: Any) -> None:
@@ -463,19 +480,108 @@ class SessionOrchestrator:
                 snapshot = self._client_state.get_for_client(client_id)
                 payload: dict[str, Any] = GetClientStateResult(state=snapshot).model_dump()["state"]
                 await self._transport.send(msg.RPCResponse(id=message.id or "", result=payload))
+                if self._host_model is not None and client_id:
+                    # A window reads its state when it connects: it is
+                    # open. It says which connection it is on so the
+                    # host can tell when it goes away.
+                    self._host_model.window_attached(
+                        client_id,
+                        connection_id=str(args.get("connection_id") or ""),
+                        kind=str(args.get("kind") or ""),
+                    )
                 return
+            key = str(args.get("key") or "")
             if method == RpcMethod.SET_CLIENT_STATE:
-                self._client_state.set_value(
-                    client_id, str(args.get("key") or ""), str(args.get("value") or "")
-                )
+                value = str(args.get("value") or "")
+                self._client_state.set_value(client_id, key, value)
             else:  # DELETE_CLIENT_STATE
-                self._client_state.delete_value(client_id, str(args.get("key") or ""))
+                value = ""
+                self._client_state.delete_value(client_id, key)
+            if self._host_model is not None and client_id and key:
+                self._host_model.window_wrote(client_id, key, value)
             ack = WriteClientStateResult(ok=True).model_dump()
             await self._transport.send(msg.RPCResponse(id=message.id or "", result=ack))
         except Exception as exc:
             await self._transport.send(
                 msg.RPCResponse(id=message.id or "", error=f"client_state: {exc}")
             )
+
+    async def _handle_host_model(self, message: Any) -> None:
+        """``host_model``: an extension's page reaching the host object model.
+
+        The bridge forwards ``bridge.host.…`` here with the frame's
+        extension as ``caller`` — set by the host side of the bridge,
+        never by the frame. The answer is the model's reply, success or
+        refusal, as the result: the bridge needs the refusal's code,
+        which an RPC error string would lose.
+        """
+        caller = getattr(message, "caller", None)
+        if self._host_model is None or not caller:
+            await self._transport.send(
+                msg.RPCResponse(
+                    id=message.id or "",
+                    error="host_model: only an extension's page reaches the host model",
+                )
+            )
+            return
+        reply = await self._host_model.handle_page(caller, dict(message.args or {}))
+        await self._transport.send(msg.RPCResponse(id=message.id or "", result=reply))
+
+    # ── Serving the host object model ────────────────────────────
+
+    def attach_host_model(self, host_model: Any) -> None:
+        """The :class:`~ember_code.extensions.host.model.HostModel` to tell
+        about windows and to answer ``host_model`` with."""
+        self._host_model = host_model
+
+    def watch_inbound(self, watcher: Any) -> None:
+        """Be shown every message a window sends that a runtime handles."""
+        self._inbound_watchers.append(watcher)
+
+    def spawn_dispatch(self, message: Any) -> asyncio.Task:
+        """Dispatch a message as a window's would be, in the background."""
+        task = asyncio.create_task(self.dispatch(message))
+        self._in_flight.add(task)
+        task.add_done_callback(self._in_flight.discard)
+        return task
+
+    async def post_from_extension(
+        self,
+        *,
+        session_id: str,
+        extension_id: str,
+        text: str,
+        media: dict[str, str] | None,
+        queued: bool,
+    ) -> None:
+        """A message in a session's chat, labelled as an extension's.
+
+        The agent answers it as it answers the person — the run streams
+        to every window — but nothing about it says the person wrote
+        it: every window labels it as the extension's, and the agent is
+        told who sent it.
+        """
+        assert self._pool is not None
+        rt = await self._pool.get_or_create(session_id)
+        dispatcher = self._dispatcher_for(rt)
+        if queued:
+            await dispatcher.queue_from_extension(extension_id, text)
+            return
+        task = asyncio.create_task(dispatcher.post_from_extension(extension_id, text, media or {}))
+        self._in_flight.add(task)
+        task.add_done_callback(self._in_flight.discard)
+
+    def _dispatcher_for(self, rt: SessionRuntime) -> MessageDispatcher:
+        if rt is self._default_runtime and self._default_dispatcher is not None:
+            return self._default_dispatcher
+        return MessageDispatcher(
+            backend=rt.backend,
+            transport=rt.transport,
+            rpc_table=rt.rpc_table,
+            queue=rt.queue,
+            login=self._login,
+            extensions=self._extensions,
+        )
 
     # ── Message fan-out ──────────────────────────────────────────
 
@@ -494,9 +600,13 @@ class SessionOrchestrator:
             if isinstance(message, msg.RPCRequest) and message.method in POOL_LEVEL_RPCS:
                 if message.method == RpcMethod.ATTACH_SESSION:
                     await self._handle_attach_session(message)
+                elif message.method == RpcMethod.HOST_MODEL:
+                    await self._handle_host_model(message)
                 else:
                     await self._handle_client_state_rpc(message)
                 return
+            for watcher in self._inbound_watchers:
+                watcher(message)
             # ``SessionList`` is a project-scoped query — force it
             # onto the boot runtime.
             if isinstance(message, msg.SessionList):
@@ -527,18 +637,7 @@ class SessionOrchestrator:
     async def _dispatch_to_runtime(self, rt: SessionRuntime, message: Any) -> None:
         # Default runtime already has a dispatcher; other runtimes
         # get a fresh one per call (cheap — no state carried over).
-        if rt is self._default_runtime:
-            await self._default_dispatcher.dispatch(message)
-            return
-        dispatcher = MessageDispatcher(
-            backend=rt.backend,
-            transport=rt.transport,
-            rpc_table=rt.rpc_table,
-            queue=rt.queue,
-            login=self._login,
-            extensions=self._extensions,
-        )
-        await dispatcher.dispatch(message)
+        await self._dispatcher_for(rt).dispatch(message)
 
     # ── Serve loop ───────────────────────────────────────────────
 

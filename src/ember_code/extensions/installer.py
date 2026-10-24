@@ -37,10 +37,11 @@ It never sees the person's igni session.
 from __future__ import annotations
 
 import logging
+import secrets
 import shutil
 from collections.abc import Callable
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from ember_code.core.agents.tool_audience import ToolAudience
 from ember_code.core.agents.tool_audience import audience as default_audience
@@ -54,6 +55,8 @@ from ember_code.extensions.capabilities import (
     check_dimensions_agree,
 )
 from ember_code.extensions.events import EVENT_SINK_TOOL, unknown_grants
+from ember_code.extensions.host.definition import HOST_SCHEMA
+from ember_code.extensions.host.grants import HostGrants
 from ember_code.extensions.manifest import ExtensionManifest, Workspace
 from ember_code.extensions.origin import ExtensionOrigins
 from ember_code.extensions.permissions import PermissionDenied, Permissions
@@ -68,6 +71,10 @@ from ember_code.extensions.rpc import ExtensionRpc
 from ember_code.extensions.service import McpExtensionService
 from ember_code.extensions.service_token import ServiceTokenEndpoint
 from ember_code.extensions.store import DistributionRecord, ExtensionStore
+from ember_code.extensions.web_home import SERVICE_URL_SETTING
+
+if TYPE_CHECKING:
+    from ember_code.extensions.host.channel import HostChannel
 
 logger = logging.getLogger(__name__)
 
@@ -77,9 +84,6 @@ logger = logging.getLogger(__name__)
 #: in their own ``.mcp.json`` — the id alone would let an install
 #: silently take over ``github``.
 SERVER_PREFIX = "ext:"
-
-#: The setting a development install names its service with.
-SERVICE_URL_SETTING = "serviceUrl"
 
 
 class InstallError(Exception):
@@ -118,6 +122,7 @@ class ExtensionInstaller:
         store: ExtensionStore | None = None,
         environments: PythonEnvironments | None = None,
         service_tokens: ServiceTokenEndpoint | None = None,
+        host_channel: HostChannel | None = None,
     ) -> None:
         """
         Args:
@@ -154,6 +159,9 @@ class ExtensionInstaller:
             service_tokens: The loopback endpoint an extension fetches
                 its service's token from. Without one, no extension is
                 told how to reach its service as the signed-in person.
+            host_channel: The loopback socket an extension's process
+                reaches the host object model on (``ext.host``). Without
+                one, a process is not told where igni is.
         """
         self._registry = registry
         self._rpc = rpc
@@ -167,6 +175,7 @@ class ExtensionInstaller:
         self._store = store
         self._environments = environments
         self._service_tokens = service_tokens
+        self._host_channel = host_channel
         # Where a plugin an extension carries is installed.
         # ``None`` means this deployment does not take them —
         # the extension still installs, and its agents do not
@@ -196,6 +205,7 @@ class ExtensionInstaller:
         self._check_profile(manifest)
         self._check_deliverable(manifest)
         self._check_events(manifest)
+        self._check_host_grants(manifest)
         self._check_tool_audience(manifest)
 
         if self._registry.get(manifest.id) is not None:
@@ -216,7 +226,7 @@ class ExtensionInstaller:
         try:
             resolved = await self._resolve_requirements(manifest)
             entry_point = await self._python_entry(manifest, bundle, distribution)
-            token_env = await self._service_token_environment(manifest, distribution)
+            token_env = await self._process_grants(manifest, distribution)
             config = self._service_config(
                 manifest, bundle, permissions, resolved, entry_point, token_env
             )
@@ -450,6 +460,24 @@ class ExtensionInstaller:
                 )
 
     @staticmethod
+    def _check_host_grants(manifest: ExtensionManifest) -> None:
+        """Say which ``permissions.host`` entries name nothing the model has.
+
+        Noted, never refused, as an unknown event is: a manifest written
+        against a newer igni asks for objects this one does not have yet.
+        ``workspace`` is named specifically, because it reads like a
+        host grant and is decided by ``permissions.workspace``.
+        """
+        stray = HostGrants.unknown(list(manifest.permissions.host), HOST_SCHEMA.permission_names())
+        if stray:
+            logger.warning(
+                "extension %s asks for host-model objects igni does not have: %s. "
+                "host.workspace is granted by permissions.workspace, not here.",
+                manifest.id,
+                ", ".join(stray),
+            )
+
+    @staticmethod
     def _check_deliverable(manifest: ExtensionManifest) -> None:
         """Refuse a grant this packaging cannot deliver.
 
@@ -556,24 +584,37 @@ class ExtensionInstaller:
         text = str(value).strip() if value is not None else ""
         return text or None
 
-    async def _service_token_environment(
+    async def _process_grants(
         self, manifest: ExtensionManifest, distribution: DistributionRecord | None
     ) -> dict[str, str]:
-        """How this extension's process gets a token for its service.
+        """How this extension's process reaches igni: its host and its service.
 
-        Only for a process igni starts, and only when there is a
-        service: an extension that belongs to none is told nothing.
+        Only for a process igni starts. One secret per start, shared by
+        the two loopback endpoints, so one value names one process
+        wherever it presents it: the host model's channel
+        (``IGNI_HOST_URL``, ``IGNI_HOST_SECRET``) and, when the extension
+        belongs to a service, the token endpoint for it
+        (``IGNI_SERVICE_TOKEN_URL``, ``IGNI_SERVICE_TOKEN_SECRET``).
         """
-        if self._service_tokens is None or not manifest.runs_here:
+        if not manifest.runs_here:
             return {}
-        service_url = self._service_url(manifest, distribution)
-        if service_url is None:
-            return {}
-        return await self._service_tokens.grant(manifest.id, service_url)
+        secret = secrets.token_urlsafe(32)
+        env: dict[str, str] = {}
+        if self._service_tokens is not None:
+            service_url = self._service_url(manifest, distribution)
+            if service_url is not None:
+                env.update(
+                    await self._service_tokens.grant(manifest.id, service_url, secret=secret)
+                )
+        if self._host_channel is not None:
+            env.update(await self._host_channel.grant(manifest.id, secret))
+        return env
 
     def _revoke_token(self, extension_id: str) -> None:
         if self._service_tokens is not None:
             self._service_tokens.revoke(extension_id)
+        if self._host_channel is not None:
+            self._host_channel.revoke(extension_id)
 
     def _process_environment(
         self,

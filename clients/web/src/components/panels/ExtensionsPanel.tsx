@@ -1,6 +1,7 @@
 import { useMemo, useState } from "react";
 import type { IgniClient } from "../../protocol/client";
 import type { ExtensionSummary } from "../../extensions/ExtensionPage";
+import { OpenOnWeb } from "../../extensions/OpenOnWeb";
 import { Drawer } from "./Drawer";
 
 /**
@@ -216,6 +217,7 @@ export function ExtensionsPanel({
             </span>
           </div>
           {extension.reason && <div className="meta">{extension.reason}</div>}
+          <OpenOnWeb url={extension.web_url} name={extension.name} />
           {extension.settings.length > 0 && (
             <SettingsForm
               extension={extension}

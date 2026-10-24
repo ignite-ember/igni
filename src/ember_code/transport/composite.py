@@ -13,7 +13,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
 
 from ember_code.protocol.messages import Message
 from ember_code.transport.base import ListeningTransport, Transport
@@ -77,6 +77,13 @@ class CompositeTransport(Transport):
             # Start the merge pumps once something is listening.
             if not self._pumps:
                 self._pumps = [asyncio.create_task(self._pump(t)) for t in self._transports]
+
+    def watch_connections(self, watcher: Callable[[str, str], None]) -> None:
+        """Forward to every child that reports its views coming and going."""
+        for t in self._transports:
+            watch = getattr(t, "watch_connections", None)
+            if watch is not None:
+                watch(watcher)
 
     async def send(self, message: Message) -> None:
         for t in self._transports:

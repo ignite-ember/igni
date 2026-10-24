@@ -5,7 +5,17 @@ Everything exported here is under the compatibility floor: removing
 one, renaming it, or changing a prop's meaning is a breaking change
 under `docs/EXTENSIBILITY.md` §8.
 
+From igni's npm registry, not npmjs — the `@igni` scope is mapped to it,
+so no `@igni/*` package is ever taken from anywhere else:
+
+```ini
+# .npmrc, beside your package.json
+@igni:registry=https://us-central1-npm.pkg.dev/ember-prod-491411/ember-prod-npm/
+//us-central1-npm.pkg.dev/ember-prod-491411/ember-prod-npm/:_authToken=${IGNI_INDEX_TOKEN}
+```
+
 ```bash
+export IGNI_INDEX_TOKEN="$(gcloud auth print-access-token)"   # an hour
 npm install @igni/ui-react @igni/ui-css
 ```
 

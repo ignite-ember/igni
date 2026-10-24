@@ -60,6 +60,10 @@ SETTING_KEY = re.compile(r"^[a-z][a-zA-Z0-9_]*$")
 #: by whoever approves the install.
 EVENT_GRANT = re.compile(r"^[a-z][a-z0-9.-]*\*?$")
 
+#: A host-model grant: a permission name from the model
+#: (``chat.read``), or a ``*``-suffixed prefix (``chat.*``).
+HOST_GRANT = re.compile(r"^[a-z][a-z0-9_.]*\*?$")
+
 #: An RPC grant: an exact method, or a ``*``-suffixed prefix. No other
 #: pattern, because this list is read by whoever approves the install
 #: and ``ext.*.scanner.list`` is not something a person can reason
@@ -252,6 +256,16 @@ class Permissions(Strict):
     #: before it is sent. See
     #: :class:`~ember_code.backend.host_events.HostEvents`.
     events: list[Annotated[str, Field(pattern=EVENT_GRANT.pattern)]] = Field(default_factory=list)
+    #: Objects of the host object model this extension may reach —
+    #: ``docs/HOST_OBJECT_MODEL.md``. One name per object (``chat.read``,
+    #: ``sessions``, ``ui``…), or a ``*``-suffixed prefix. An object
+    #: not granted does not exist for the extension: reads fail,
+    #: methods are refused and its signals never arrive.
+    #:
+    #: ``workspace`` is not listed here: ``workspace`` above grants
+    #: ``host.workspace``. Its own state, settings and notifications
+    #: need no grant. See :mod:`ember_code.extensions.host.grants`.
+    host: list[Annotated[str, Field(pattern=HOST_GRANT.pattern)]] = Field(default_factory=list)
 
 
 class PageContribution(Strict):

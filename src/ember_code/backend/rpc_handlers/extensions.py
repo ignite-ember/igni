@@ -16,6 +16,7 @@ from __future__ import annotations
 from ember_code.backend.rpc_handlers.base import RpcHandler, rpc
 from ember_code.backend.schemas_extensions import ExtensionListResult, ExtensionSummary
 from ember_code.extensions.store import ExtensionStore
+from ember_code.extensions.web_home import ExtensionWebHome
 from ember_code.protocol.rpc import RpcMethod
 
 
@@ -41,12 +42,14 @@ class ExtensionsRpcHandler(RpcHandler):
         origins = self._ctx.origins
         registry = extensions.registry
         store = ExtensionStore()
+        web_home = ExtensionWebHome(store)
         return ExtensionListResult(
             extensions=[
                 ExtensionSummary.of(
                     entry,
                     origins.url_for(extension_id) if origins is not None else None,
                     store.settings(entry.manifest),
+                    web_home.url_for(entry.manifest),
                 )
                 for extension_id in registry.ids()
                 if (entry := registry.get(extension_id)) is not None

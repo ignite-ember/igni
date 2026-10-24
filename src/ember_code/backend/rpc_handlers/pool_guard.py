@@ -27,6 +27,7 @@ POOL_LEVEL_RPCS: frozenset[RpcMethod] = frozenset(
         RpcMethod.GET_CLIENT_STATE,
         RpcMethod.SET_CLIENT_STATE,
         RpcMethod.DELETE_CLIENT_STATE,
+        RpcMethod.HOST_MODEL,
     }
 )
 

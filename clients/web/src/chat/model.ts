@@ -389,6 +389,9 @@ export type ChatItem =
       kind: "user";
       id: number;
       text: string;
+      /** The extension that posted it (``host.chat.post``), by name;
+       *  absent for the person's own messages. */
+      fromExtension?: string;
       /** Run that owns this user message. Set on history restore from
        *  the BE; backfilled live when ``run_started`` fires. Required
        *  for the edit/delete operations — both call
@@ -724,8 +727,24 @@ export function extractAttachedPaths(content: string): string[] {
   return paths;
 }
 
-export function userItem(text: string): ChatItem {
-  return { kind: "user", id: nid(), text };
+export function userItem(text: string, fromExtension?: string): ChatItem {
+  return fromExtension
+    ? { kind: "user", id: nid(), text, fromExtension }
+    : { kind: "user", id: nid(), text };
+}
+
+/** ``<extension-message from="…">text</extension-message>``, which is how
+ *  a message an extension posted is kept in history — the backend's
+ *  ``ExtensionMessage.wrap``. */
+const EXTENSION_MESSAGE_RE =
+  /^<extension-message from="([^"]+)">\n?([\s\S]*?)\n?<\/extension-message>$/;
+
+/** An extension's message out of its history wrapper, or ``null``. */
+export function parseExtensionMessage(
+  text: string,
+): { from: string; body: string } | null {
+  const found = EXTENSION_MESSAGE_RE.exec(text.trim());
+  return found ? { from: found[1], body: found[2] } : null;
 }
 
 /** Parse a wrapped ``/loop`` iteration prompt. The BE emits a
@@ -1073,6 +1092,8 @@ export function restoredItem(turn: Record<string, unknown>): ChatItem | null {
     if (text.startsWith("<loop-iteration ") || text.startsWith("<loop-iteration\n")) {
       return loopItem(text);
     }
+    const posted = parseExtensionMessage(text);
+    if (posted) return userItem(posted.body, posted.from);
     return userItem(text);
   }
   if (role === "assistant") {

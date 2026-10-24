@@ -132,6 +132,12 @@ async def test_the_manifest_itself_does_not_go_to_the_browser(wired, tmp_path):
         # no password among its four.
         "settings",
         "values",
+        # The host-model objects it was granted, for display — the
+        # backend checks every request against the manifest itself.
+        "host",
+        # Its home on the web, the service's `client_uri`, for "Open
+        # on the web". Public by nature: it is the service's address.
+        "web_url",
     }
 
 

@@ -88,6 +88,13 @@ class ExtensionSummary(BaseModel):
     #: The configured values, which reach the frame as launch params.
     #: Defaults filled in, undeclared keys dropped.
     values: dict[str, Any] = Field(default_factory=dict)
+    #: The host-model objects it was granted (``permissions.host``).
+    #: The backend checks every request; this copy is for display.
+    host: list[str] = Field(default_factory=list)
+    #: Its home on the web — its service's URL, the service's
+    #: ``client_uri`` — when one is known. See
+    #: :mod:`ember_code.extensions.web_home`.
+    web_url: str | None = None
 
     @classmethod
     def of(
@@ -95,6 +102,7 @@ class ExtensionSummary(BaseModel):
         entry: InstalledExtension,
         origin: str | None,
         values: dict[str, Any] | None = None,
+        web_url: str | None = None,
     ) -> ExtensionSummary:
         manifest = entry.manifest
         return cls(
@@ -110,6 +118,8 @@ class ExtensionSummary(BaseModel):
             indicators=[_indicator(i) for i in manifest.contributes.indicators],
             settings=[_setting(s) for s in manifest.contributes.settings],
             values=dict(values or {}),
+            host=list(manifest.permissions.host),
+            web_url=web_url,
         )
 
 

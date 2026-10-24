@@ -49,6 +49,9 @@ class UserMessageReceived(Message):
     text: str = ""
     client_id: str = ""
     queued: bool = False
+    #: Set when an extension posted it (``host.chat.post``): every view
+    #: paints it labelled as that extension's, never as the person's.
+    extension_id: str = ""
 
 
 class RequirementResolved(Message):

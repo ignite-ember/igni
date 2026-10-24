@@ -1343,7 +1343,14 @@ const UserMessage = memo(function UserMessage({
 
   const body = mode === "chat" ? renderUserText(item.text) : item.text;
   return (
-    <div className={`msg-user mode-${mode}`}>
+    <div
+      className={`msg-user mode-${mode}${item.fromExtension ? " msg-user-extension" : ""}`}
+    >
+      {item.fromExtension && (
+        // Posted by an extension (``host.chat.post``), never by the
+        // person — said on the bubble, every time.
+        <div className="msg-user-from">from {item.fromExtension}</div>
+      )}
       {body}
       {canMutate && (
         <div className="msg-user-actions" onClick={(e) => e.stopPropagation()}>

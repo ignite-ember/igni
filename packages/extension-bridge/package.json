@@ -3,6 +3,11 @@
   "version": "0.1.0",
   "description": "The guest half of the bridge between an igni extension's page and igni: connect(), RPC, navigation, theme. The host imports the same protocol, so there is one description of the wire.",
   "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ignite-ember/igni.git",
+    "directory": "packages/extension-bridge"
+  },
   "type": "module",
   "main": "./src/index.ts",
   "types": "./src/index.ts",

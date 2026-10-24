@@ -196,6 +196,47 @@ async def test_a_development_install_builds_the_wheelhouse_from_source(tmp_path)
     assert install[install.index("--find-links") + 1] == build[build.index("--wheel-dir") + 1]
 
 
+async def test_a_development_install_is_rebuilt_when_its_code_changes_under_one_version(tmp_path):
+    """Reinstalling changed code under the same version must not run the old code.
+
+    Keyed by version, it did: the environment for ``1.0.0`` was found
+    finished and reused. A development install is keyed by what it is
+    made of.
+    """
+    bundle = tmp_path / "source"
+    (bundle / "src").mkdir(parents=True)
+    (bundle / "manifest.json").write_text(json.dumps(manifest()))
+    (bundle / "pyproject.toml").write_text("[project]\nname='acme-notes'\n")
+    (bundle / "src" / "notes.py").write_text("ANSWER = 1\n")
+    runner = Pretending()
+    environments = PythonEnvironments(tmp_path / "envs", runner=runner)
+
+    await environments.ensure(load(bundle), bundle, development=True)
+    runner.calls.clear()
+    # The same code again — and caches that do not count — is reused.
+    (bundle / "src" / "__pycache__").mkdir()
+    (bundle / "src" / "__pycache__" / "notes.cpython-312.pyc").write_bytes(b"x")
+    await environments.ensure(load(bundle), bundle, development=True)
+    assert runner.calls == [], "unchanged code is not rebuilt"
+
+    (bundle / "src" / "notes.py").write_text("ANSWER = 2\n")
+    await environments.ensure(load(bundle), bundle, development=True)
+    assert any(call[1:4] == ["-m", "pip", "wheel"] for call, _ in runner.calls), (
+        "changed code under the same version is rebuilt"
+    )
+
+
+async def test_a_distributed_bundle_is_still_keyed_by_its_version(tmp_path):
+    bundle = bundle_with_wheels(tmp_path)
+    runner = Pretending()
+    environments = PythonEnvironments(tmp_path / "envs", runner=runner)
+    await environments.ensure(load(bundle), bundle, development=False)
+    runner.calls.clear()
+    (bundle / "wheels" / "extra.txt").write_text("not part of what was verified")
+    await environments.ensure(load(bundle), bundle, development=False)
+    assert runner.calls == []
+
+
 async def test_a_wheelhouse_outside_the_bundle_is_refused(tmp_path):
     bundle = tmp_path / "bundle"
     bundle.mkdir()

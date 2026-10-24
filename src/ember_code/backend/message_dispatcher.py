@@ -35,6 +35,28 @@ from ember_code.protocol.messages import Message
 logger = logging.getLogger(__name__)
 
 
+class ExtensionMessage:
+    """How a message an extension posts reads to the agent.
+
+    The agent must never take it for the person's: it says who sent it,
+    in a block the windows strip from display (``<system-context>``),
+    around the text wrapped in a tag the web client reads back on
+    reload to label the bubble (``chat/model.ts``).
+    """
+
+    TAG = "extension-message"
+
+    @classmethod
+    def wrap(cls, extension_id: str, text: str) -> str:
+        return (
+            "<system-context>\n"
+            f"The message below was posted by the igni extension '{extension_id}', "
+            "not typed by the person. Answer it in the chat as you would answer them.\n"
+            "</system-context>\n"
+            f'<{cls.TAG} from="{extension_id}">\n{text}\n</{cls.TAG}>'
+        )
+
+
 class MessageDispatcher:
     """Route one wire message to its per-message-class handler.
 
@@ -126,7 +148,11 @@ class MessageDispatcher:
                     discarded,
                 )
         agent_text = self._maybe_wrap_plan_hint(message.text)
-        async for proto in self._backend.run_message(agent_text, media=message.file_contents):
+        await self._run_turn(agent_text, message.file_contents, req_id)
+
+    async def _run_turn(self, agent_text: str, media: dict[str, str], req_id: str) -> None:
+        """Run one turn and stream it to every view."""
+        async for proto in self._backend.run_message(agent_text, media=media):
             if req_id:
                 proto = proto.model_copy(update={"id": req_id})
             await self._transport.send(proto)
@@ -135,6 +161,30 @@ class MessageDispatcher:
         # First completed run: name the session in the background so
         # a queued follow-up isn't blocked on the naming model call.
         self._spawn_auto_name()
+
+    # ── An extension's messages ──────────────────────────────────
+
+    async def post_from_extension(
+        self, extension_id: str, text: str, media: dict[str, str]
+    ) -> None:
+        """``host.chat.post``: a message from an extension, for the agent.
+
+        Every view paints it labelled as the extension's — never as the
+        person's, which an extension cannot post as — and the agent is
+        told who sent it, then answers in the chat as it answers the
+        person.
+        """
+        await self._transport.send(
+            msg.UserMessageReceived(text=text, client_id="", extension_id=extension_id)
+        )
+        await self._run_turn(ExtensionMessage.wrap(extension_id, text), media, "")
+
+    async def queue_from_extension(self, extension_id: str, text: str) -> None:
+        """``host.chat.queue``: the same, for the next turn."""
+        self._queue.append(ExtensionMessage.wrap(extension_id, text))
+        await self._transport.send(
+            msg.UserMessageReceived(text=text, client_id="", queued=True, extension_id=extension_id)
+        )
 
     def _maybe_wrap_plan_hint(self, text: str) -> str:
         """One-shot ``/plan`` → ``enter_plan_mode`` nudge.

@@ -11,7 +11,10 @@ extension's manifest cannot shadow them:
   grant, and its value arrives as `IGNI_SECRET_<NAME>`;
 * `IGNI_SECRET_<NAME>` — each declared secret;
 * `IGNI_SERVICE_URL`, `IGNI_SERVICE_TOKEN_URL`, `IGNI_SERVICE_TOKEN_SECRET`
-  — the extension's own service and where to ask for a token to it.
+  — the extension's own service and where to ask for a token to it;
+* `IGNI_HOST_URL`, `IGNI_HOST_SECRET` — the host's object model
+  (`ext.host`), on a loopback socket, and this process's secret for it —
+  the same secret as the token endpoint's.
 
 `ExtensionEnvironment` reads them once, typed. Nothing here is a setting
 an author chooses; it is what this process was granted.
@@ -114,6 +117,19 @@ class ServiceEndpoint(BaseModel):
         return bool(self.url)
 
 
+class HostEndpoint(BaseModel):
+    """Where the igni host's object model is: `IGNI_HOST_URL`, `IGNI_HOST_SECRET`."""
+
+    model_config = ConfigDict(frozen=True)
+
+    url: str = ""
+    secret: str = ""
+
+    @property
+    def configured(self) -> bool:
+        return bool(self.url and self.secret)
+
+
 class ExtensionEnvironment(BaseModel):
     """What igni granted this process, read from its environment."""
 
@@ -126,6 +142,7 @@ class ExtensionEnvironment(BaseModel):
     capabilities: Capabilities = Field(default_factory=Capabilities)
     secrets: Secrets = Field(default_factory=Secrets)
     service: ServiceEndpoint = Field(default_factory=ServiceEndpoint)
+    host: HostEndpoint = Field(default_factory=HostEndpoint)
 
     @classmethod
     def read(cls, environ: Mapping[str, str] | None = None) -> ExtensionEnvironment:
@@ -145,6 +162,10 @@ class ExtensionEnvironment(BaseModel):
                 url=env.get("IGNI_SERVICE_URL", "").strip().rstrip("/"),
                 token_url=env.get("IGNI_SERVICE_TOKEN_URL", "").strip(),
                 token_secret=env.get("IGNI_SERVICE_TOKEN_SECRET", "").strip(),
+            ),
+            host=HostEndpoint(
+                url=env.get("IGNI_HOST_URL", "").strip(),
+                secret=env.get("IGNI_HOST_SECRET", "").strip(),
             ),
         )
 

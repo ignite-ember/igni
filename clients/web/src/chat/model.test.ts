@@ -1671,3 +1671,23 @@ describe("reduceWorkflowEvent — failure tape", () => {
     expect(items[0].run.error).toBe("Design phase failed");
   });
 });
+
+describe("a message an extension posted", () => {
+  it("restores labelled as the extension's, out of its history wrapper", () => {
+    const content =
+      "<system-context>\nThe message below was posted by the igni extension 'acme.reviewer', not typed by the person.\n</system-context>\n" +
+      '<extension-message from="acme.reviewer">\nTwo issues in auth.py.\n</extension-message>';
+    const item = restoredItem({ role: "user", content });
+    expect(item).toMatchObject({
+      kind: "user",
+      text: "Two issues in auth.py.",
+      fromExtension: "acme.reviewer",
+    });
+  });
+
+  it("leaves the person's own messages unlabelled", () => {
+    const item = restoredItem({ role: "user", content: "hello" });
+    expect(item).toMatchObject({ kind: "user", text: "hello" });
+    expect(item && "fromExtension" in item).toBe(false);
+  });
+});

@@ -35,6 +35,7 @@ import { useCallback, useEffect, useMemo, useRef } from "react";
 import {
   BRIDGE_VERSION,
   type GuestMessage,
+  type HostRequestMessage,
   isGuestMessage,
   methodAllowed,
 } from "@igni/extension-bridge/protocol";
@@ -113,6 +114,26 @@ export interface ExtensionFrameProps {
    * and changes the dirty set at the same moment.
    */
   events?: { topic: string; payload: Record<string, unknown>; n: number }[];
+  /**
+   * Answers a host-model request (`bridge.host…`) from the frame.
+   *
+   * The caller forwards it to the backend as this extension — the
+   * `host_model` RPC with the frame's extension as `caller` — and the
+   * backend checks `permissions.host`. Resolves with the model's reply,
+   * refusals included. Absent, every request is refused here.
+   */
+  onHost?: (
+    request: Omit<HostRequestMessage, "igni" | "kind" | "nonce">,
+  ) => Promise<{
+    ok: boolean;
+    result?: unknown;
+    error?: { code: string; message: string };
+  }>;
+  /**
+   * Host-model signals for this extension, oldest first, each with a
+   * monotonic `n` — queued for the same reason `events` is.
+   */
+  signals?: { signal: string; value: unknown; n: number }[];
   /** Launch parameters, passed through on `hello`. */
   params?: Record<string, unknown>;
   /**
@@ -162,7 +183,9 @@ export function ExtensionFrame({
   onNavigate,
   onClose,
   onLocation,
+  onHost,
   events,
+  signals,
   params,
   settings,
   theme = "dark",
@@ -177,8 +200,8 @@ export function ExtensionFrame({
   // Read through refs so the message listener does not have to be torn
   // down and rebuilt whenever a caller passes a new closure — a
   // re-registered listener drops messages in flight.
-  const handlers = useRef({ onCall, onNavigate, onClose, onLocation, allow });
-  handlers.current = { onCall, onNavigate, onClose, onLocation, allow };
+  const handlers = useRef({ onCall, onNavigate, onClose, onLocation, onHost, allow });
+  handlers.current = { onCall, onNavigate, onClose, onLocation, onHost, allow };
 
   const post = useCallback(
     (message: unknown) => {
@@ -205,8 +228,40 @@ export function ExtensionFrame({
         onNavigate: navigate,
         onClose: close,
         onLocation: located,
+        onHost: ask,
         allow: granted,
       } = handlers.current;
+
+      if (message.kind === "host") {
+        const { id, op, path, window: target, params: args, value, signals: wires } =
+          message;
+        const refuse = (code: string, text: string) =>
+          post({
+            igni: BRIDGE_VERSION,
+            kind: "host-reply",
+            id,
+            ok: false,
+            error: { code, message: text },
+          });
+        if (ask === undefined) {
+          refuse("not_found", "this window does not reach the host model");
+          return;
+        }
+        void ask({ id, op, path, window: target, params: args, value, signals: wires }).then(
+          (reply) =>
+            post({
+              igni: BRIDGE_VERSION,
+              kind: "host-reply",
+              id,
+              ok: reply.ok,
+              result: reply.result,
+              error: reply.error,
+            }),
+          (error: unknown) =>
+            refuse("failed", error instanceof Error ? error.message : String(error)),
+        );
+        return;
+      }
 
       if (message.kind === "navigate") {
         navigate?.(message.to);
@@ -285,6 +340,11 @@ export function ExtensionFrame({
   const queued = useRef<NonNullable<ExtensionFrameProps["events"]>>([]);
   queued.current = events ?? [];
 
+  // The same, for host-model signals.
+  const signalsUpTo = useRef<number | null>(null);
+  const queuedSignals = useRef<NonNullable<ExtensionFrameProps["signals"]>>([]);
+  queuedSignals.current = signals ?? [];
+
   // The frame cannot be spoken to until it has loaded, and it cannot
   // do anything until it has the nonce, so `hello` goes on load.
   const onLoad = useCallback(() => {
@@ -293,6 +353,11 @@ export function ExtensionFrame({
     const waiting = queued.current;
     deliveredUpTo.current =
       waiting.length === 0 ? 0 : waiting[waiting.length - 1].n;
+    const waitingSignals = queuedSignals.current;
+    signalsUpTo.current =
+      waitingSignals.length === 0
+        ? 0
+        : waitingSignals[waitingSignals.length - 1].n;
     post({
       igni: BRIDGE_VERSION,
       kind: "hello",
@@ -352,6 +417,26 @@ export function ExtensionFrame({
       });
     }
   }, [events, post]);
+
+  /*
+    Host-model signals, as events are: in order, nothing before
+    `hello`, nothing the frame was not addressed.
+  */
+  useEffect(() => {
+    const upTo = signalsUpTo.current;
+    if (signals === undefined || upTo === null) return;
+    const pending = signals.filter((one) => one.n > upTo);
+    if (pending.length === 0) return;
+    signalsUpTo.current = pending[pending.length - 1].n;
+    for (const one of pending) {
+      post({
+        igni: BRIDGE_VERSION,
+        kind: "signal",
+        signal: one.signal,
+        value: one.value,
+      });
+    }
+  }, [signals, post]);
 
   // Theme changes after the handshake are their own message rather
   // than a reload: a panel that reloaded every time the user flipped

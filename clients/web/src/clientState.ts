@@ -96,11 +96,15 @@ export class ClientStateStore {
   private hydrated = false;
   private pending: Map<string, ReturnType<typeof setTimeout>> = new Map();
   private listeners: Set<(key: string, value: string) => void> = new Set();
+  private remoteListeners: Set<(key: string, value: string) => void> =
+    new Set();
 
   constructor(
     private client: IgniClient,
     public readonly clientId: string,
     private debounceMs = 250,
+    /** `tauri`, `vscode`, `jetbrains` or `web` — `host.kind`. */
+    private viewKind = "web",
   ) {}
 
   /** Pull all keys for this client from the BE. Call once after
@@ -109,6 +113,11 @@ export class ClientStateStore {
     try {
       const all = await this.client.rpc<Record<string, string>>("get_client_state", {
         client_id: this.clientId,
+        // Which connection this window is on, and what kind of window
+        // it is: the host object model's `host.windows` is built from
+        // this, and learns the window closed when that connection does.
+        connection_id: this.client.clientId,
+        kind: this.viewKind,
       });
       this.cache = all || {};
     } catch {
@@ -159,6 +168,29 @@ export class ClientStateStore {
   onChange(fn: (key: string, value: string) => void): () => void {
     this.listeners.add(fn);
     return () => this.listeners.delete(fn);
+  }
+
+  /**
+   * A change somebody else made — an extension, through the host object
+   * model. The backend has already stored it, so it is applied to the
+   * cache without being written back, and told to `onRemote` listeners,
+   * which apply it to the view. An empty value is a delete.
+   */
+  applyRemote(key: string, value: string): void {
+    if (value) this.cache[key] = value;
+    else delete this.cache[key];
+    const pending = this.pending.get(key);
+    if (pending) {
+      clearTimeout(pending);
+      this.pending.delete(key);
+    }
+    for (const fn of this.remoteListeners) fn(key, value);
+  }
+
+  /** Be told of each change `applyRemote` applies. */
+  onRemote(fn: (key: string, value: string) => void): () => void {
+    this.remoteListeners.add(fn);
+    return () => this.remoteListeners.delete(fn);
   }
 
   /** Flush any pending debounced writes — call before the page

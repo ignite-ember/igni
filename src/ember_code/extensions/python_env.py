@@ -27,11 +27,21 @@ the ``package`` the manifest names.
 
 An environment is finished when its marker is written, last. One
 without it was interrupted and is rebuilt rather than trusted.
+
+**A development install is keyed by what it is made of, not its
+version.** A developer reinstalls changed code under the same version
+all day; keyed by version, the second install ran the first one's
+environment. So a development environment records a digest of its
+wheelhouse — or of the source directory it is built from — and is
+rebuilt when that changes. A distributed bundle stays keyed by version:
+its contents were verified against the service's signature, and a new
+build is a new version.
 """
 
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import logging
 import os
 import shutil
@@ -40,6 +50,7 @@ from pathlib import Path
 
 from pydantic import BaseModel
 
+from ember_code.core.paths import CONFIG_DIR
 from ember_code.extensions.manifest import ExtensionManifest
 
 logger = logging.getLogger(__name__)
@@ -97,6 +108,58 @@ class EnvironmentRecord(BaseModel):
     #: ``wheelhouse`` — the bundle's own, offline. ``source`` — built
     #: from a development directory first.
     installed_from: str
+    #: For a development install, the digest of what it was built from;
+    #: a different digest is a rebuild. Empty for a distributed bundle.
+    content: str = ""
+
+
+class ContentDigest:
+    """What a development install is made of, as one hash.
+
+    Every file's path and bytes, in a stable order, skipping what a
+    checkout accumulates without its code changing — caches, virtual
+    environments, version control.
+    """
+
+    IGNORED = frozenset(
+        {
+            ".git",
+            ".hg",
+            "__pycache__",
+            ".venv",
+            "venv",
+            "node_modules",
+            ".mypy_cache",
+            ".pytest_cache",
+            ".ruff_cache",
+            "build",
+            "dist",
+            CONFIG_DIR,
+        }
+    )
+
+    @classmethod
+    def of(cls, root: Path) -> str:
+        digest = hashlib.sha256()
+        for path in sorted(cls._files(root)):
+            relative = path.relative_to(root).as_posix()
+            digest.update(relative.encode("utf-8") + b"\0")
+            try:
+                digest.update(path.read_bytes())
+            except OSError:
+                continue
+            digest.update(b"\0")
+        return digest.hexdigest()
+
+    @classmethod
+    def _files(cls, root: Path) -> list[Path]:
+        found: list[Path] = []
+        for dirpath, dirnames, filenames in os.walk(root):
+            dirnames[:] = [
+                d for d in dirnames if d not in cls.IGNORED and not d.endswith(".egg-info")
+            ]
+            found.extend(Path(dirpath) / name for name in filenames if not name.endswith(".pyc"))
+        return found
 
 
 class PythonEnvironments:
@@ -147,10 +210,17 @@ class PythonEnvironments:
 
         environment = self.path_for(manifest)
         entry = self.executable(environment, package.entry)
-        if (environment / READY_MARKER).is_file() and entry.exists():
-            return entry
-
         wheelhouse = self._wheelhouse(manifest, bundle)
+        content = ContentDigest.of(wheelhouse or bundle) if development else ""
+        if (environment / READY_MARKER).is_file() and entry.exists():
+            if self._built_from(environment) == content:
+                return entry
+            logger.info(
+                "rebuilding %s: its development install changed under version %s",
+                manifest.id,
+                manifest.version,
+            )
+
         if wheelhouse is None and not development:
             raise PythonEnvironmentError(
                 f"{manifest.id} has no wheelhouse at {package.wheels!r} in its bundle. "
@@ -218,10 +288,22 @@ class PythonEnvironments:
             version=manifest.version,
             package=package.package,
             installed_from=installed_from,
+            content=content,
         )
         (environment / READY_MARKER).write_text(record.model_dump_json(indent=2), encoding="utf-8")
         logger.info("extension %s installed into %s", manifest.id, environment)
         return entry
+
+    @staticmethod
+    def _built_from(environment: Path) -> str | None:
+        """The content digest the marker records; ``None`` if unreadable."""
+        try:
+            record = EnvironmentRecord.model_validate_json(
+                (environment / READY_MARKER).read_text(encoding="utf-8")
+            )
+        except (OSError, ValueError):
+            return None
+        return record.content
 
     def _wheelhouse(self, manifest: ExtensionManifest, bundle: Path) -> Path | None:
         """The bundle's wheelhouse, when it has one inside itself."""

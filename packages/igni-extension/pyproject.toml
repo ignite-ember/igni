@@ -23,6 +23,8 @@ dependencies = [
     "pydantic>=2.11",
     "pydantic-settings>=2.8",
     "anyio>=4",
+    # The host object model's socket (`ext.host`) and `ext.service.websocket`.
+    "websockets>=15,<17",
 ]
 
 [dependency-groups]
@@ -46,6 +48,9 @@ addopts = "--import-mode=importlib"
 target-version = "py312"
 line-length = 100
 src = ["src", "tests"]
+# Generated from igni's host schema; `make host-sdks` in igni writes it
+# and a test there checks it is current.
+extend-exclude = ["src/igni_extension/host_model.py"]
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "UP", "B", "SIM"]

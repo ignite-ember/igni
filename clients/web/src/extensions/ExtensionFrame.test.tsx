@@ -377,3 +377,89 @@ describe("following the host", () => {
     expect(frame.getAttribute("src")).toBe(src);
   });
 });
+
+describe("the host object model, from a frame", () => {
+  it("forwards a host request and posts the model's reply back", async () => {
+    const onHost = vi.fn(async () => ({ ok: true, result: false }));
+    const { frame } = mount({ onHost });
+    const nonce = handshake(frame);
+
+    send(frame, {
+      kind: "host",
+      nonce,
+      id: "h1",
+      op: "get",
+      path: "chat.processing",
+      window: null,
+    });
+
+    await waitFor(() =>
+      expect(repliesTo(frame)).toContainEqual({
+        igni: BRIDGE_VERSION,
+        kind: "host-reply",
+        id: "h1",
+        ok: true,
+        result: false,
+        error: undefined,
+      }),
+    );
+    expect(onHost).toHaveBeenCalledWith(
+      expect.objectContaining({ id: "h1", op: "get", path: "chat.processing" }),
+    );
+  });
+
+  it("passes a refusal through with its code", async () => {
+    const onHost = vi.fn(async () => ({
+      ok: false,
+      error: { code: "not_granted", message: "not granted 'mcp'" },
+    }));
+    const { frame } = mount({ onHost });
+    const nonce = handshake(frame);
+
+    send(frame, { kind: "host", nonce, id: "h2", op: "get", path: "mcp.servers" });
+
+    await waitFor(() =>
+      expect(repliesTo(frame)).toContainEqual(
+        expect.objectContaining({
+          kind: "host-reply",
+          id: "h2",
+          ok: false,
+          error: { code: "not_granted", message: "not granted 'mcp'" },
+        }),
+      ),
+    );
+  });
+
+  it("refuses a request without the issued nonce, without asking", async () => {
+    const onHost = vi.fn(async () => ({ ok: true }));
+    const { frame } = mount({ onHost });
+    handshake(frame);
+    send(frame, { kind: "host", nonce: "forged", id: "h3", op: "get", path: "chat.processing" });
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    expect(onHost).not.toHaveBeenCalled();
+  });
+
+  it("posts the signals addressed to the extension, in order, after hello", () => {
+    const { frame, rerender } = mount();
+    handshake(frame);
+    rerender(
+      <ExtensionFrame
+        extensionId="igni.codeindex"
+        origin={ORIGIN}
+        allow={[]}
+        onCall={vi.fn()}
+        signals={[
+          { signal: "session.switched", value: { session_id: "s-1" }, n: 1 },
+          { signal: "chat.run_completed", value: { run_id: "r1" }, n: 2 },
+        ]}
+      />,
+    );
+    const signals = repliesTo(frame).filter(
+      (m) => (m as { kind?: string }).kind === "signal",
+    );
+    expect(signals).toEqual([
+      { igni: BRIDGE_VERSION, kind: "signal", signal: "session.switched", value: { session_id: "s-1" } },
+      { igni: BRIDGE_VERSION, kind: "signal", signal: "chat.run_completed", value: { run_id: "r1" } },
+    ]);
+  });
+});

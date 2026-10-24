@@ -963,6 +963,19 @@ class BackendServer:
             turns = await ChatHistoryRebuilder(session=self._session).rebuild(session_id)
         return [t.model_dump(mode="json") for t in turns]
 
+    async def record_event(self, event_type: str, payload: dict, run_id: str = "") -> None:
+        """Keep an event in the session's log, which a reload replays.
+
+        How a block an extension appends to the transcript
+        (``host.chat.append``) survives a reload: the same log the
+        visualizer's cards are kept in.
+        """
+        await self._session.append_event(event_type, payload, run_id)
+
+    def session_events(self, event_type: str) -> list[Any]:
+        """The session's logged events of one type, oldest first."""
+        return [e for e in self._session.event_log if e.type == event_type]
+
     # ── Team-wiring ───────────────────────────────────────────────
 
     def wire_queue_hook(self, queue: list) -> None:
