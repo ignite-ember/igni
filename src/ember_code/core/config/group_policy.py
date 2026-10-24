@@ -124,13 +124,16 @@ class GroupPolicyEntry(BaseModel):
     When ``kind == "plugins"`` and ``source_url`` is set, the policy
     cache treats the entry as "install this plugin from this git URL"
     (via :class:`PluginInstaller`) rather than "write this YAML file
-    to disk". ``kind == "extensions"`` uses the same trio and must
-    have one: an extension is a bundle to clone, not a file to
-    write. The cache also takes them on other kinds for forward
+    to disk". The cache also takes them on other kinds for forward
     compatibility.
+
+    There is no ``extensions`` kind. An extension reaches a machine
+    from its service through igni server (its ``docs/service-identity.md``
+    §8), never from a group's policy; an entry of that kind is
+    ignored with a warning.
     """
 
-    kind: str  # agents | mcps | plugins | extensions | settings
+    kind: str  # agents | mcps | plugins | settings | hooks | …
     entry_name: str
     content: str
     content_type: str  # markdown | yaml | json
@@ -241,18 +244,6 @@ class GroupPolicyPack(BaseModel):
 
     def plugin_disabled_names(self) -> list[str]:
         return [o.entry_name for o in self.entries if o.kind == "plugins" and not o.enabled]
-
-    def extension_entries(self) -> list[GroupPolicyEntry]:
-        return [o for o in self.entries if o.kind == "extensions" and o.enabled]
-
-    def extension_disabled_names(self) -> list[str]:
-        """Extensions the group ships and has turned off.
-
-        Disabled rather than removed, so an admin can stop one
-        across a fleet without the bundle having to be re-fetched
-        when they turn it back on.
-        """
-        return [o.entry_name for o in self.entries if o.kind == "extensions" and not o.enabled]
 
 
 def _deep_merge(base: dict, override: dict) -> dict:
@@ -380,152 +371,8 @@ class GroupPolicyCache:
     def plugins_dir(self) -> Path:
         return self.dir_for("plugins")
 
-    @property
-    def extensions_dir(self) -> Path:
-        """Bundles this group pushed, before the store takes them."""
-        return self.dir_for("extensions")
-
     def _content_hash(self, content: str) -> str:
         return hashlib.md5(content.encode()).hexdigest()[:12]
-
-    def _materialize_extension(self, o: GroupPolicyEntry) -> None:
-        """Clone and stage an extension this group pushed.
-
-        **Signed, and never ``dev``.** Everything else a pack ships
-        is data — prompts, agent files, MCP config, settings. An
-        extension is a *process* with ``workspace``, ``secrets`` and
-        ``egress``, installed on somebody's machine without them
-        seeing the grant screen ``igni ext install`` prints.
-
-        ``trust: unsigned`` with ``dev`` packaging is, in the
-        manifest's own words, "an arbitrary executable named in a
-        text file". Locally that is gated behind
-        ``IGNI_DEV_EXTENSIONS``, which the person running igni sets
-        for themselves. A policy is set by somebody else, so the
-        local flag is not theirs to spend: unsigned and ``dev`` are
-        refused here whatever it says.
-
-        Staged rather than started. This writes the bundle where
-        the store will find it at next boot and the ordinary
-        install path — trust, profile, deliverability, resolution
-        — runs over it unchanged. A second install path for
-        policy-pushed extensions would be a second place for a
-        permission check to be missing.
-        """
-        if not o.source_url:
-            logger.warning(
-                "Group policy extension %r has no source_url. An extension is "
-                "a bundle to clone, not a file to write; nothing was staged.",
-                o.entry_name,
-            )
-            return
-
-        target = self.extensions_dir / safe_entry_name(o.entry_name)
-        try:
-            staged = self._clone_extension(o, target)
-        except Exception as exc:  # noqa: BLE001 — one bad entry must not stop the pack
-            logger.warning("Group policy extension %r could not be fetched: %s", o.entry_name, exc)
-            return
-        if staged is None:
-            return
-        logger.info(
-            "Group policy extension %r staged at %s; it starts at the next boot",
-            o.entry_name,
-            staged,
-        )
-
-    def _clone_extension(self, o: GroupPolicyEntry, target: Path) -> Path | None:
-        """Fetch the bundle and check what a policy may push.
-
-        Returns the staged path, or ``None`` when it was refused —
-        the reason is logged, because the person this was pushed to
-        has no other way to find out why their group's extension is
-        not there.
-        """
-        from ember_code.core.plugins.git import GitClient
-        from ember_code.extensions.manifest import ExtensionManifest
-
-        git = GitClient()
-        if not git.is_available():
-            logger.warning(
-                "Group policy extension %r needs git to fetch %s and it is not on PATH.",
-                o.entry_name,
-                o.source_url,
-            )
-            return None
-
-        scratch = self._cache_dir / "_extension_fetch" / safe_entry_name(o.entry_name)
-        if scratch.exists():
-            shutil.rmtree(scratch)
-        scratch.parent.mkdir(parents=True, exist_ok=True)
-        git.clone(o.source_url, scratch, ref=o.source_ref)
-        bundle = scratch / o.source_subdir if o.source_subdir else scratch
-
-        manifest_path = bundle / "manifest.json"
-        if not manifest_path.is_file():
-            logger.warning(
-                "Group policy extension %r: no manifest.json at %s",
-                o.entry_name,
-                o.source_subdir or "the repository root",
-            )
-            shutil.rmtree(scratch, ignore_errors=True)
-            return None
-
-        try:
-            manifest = ExtensionManifest.load(manifest_path)
-        except Exception as exc:  # noqa: BLE001 — a bad manifest is a refusal, not a crash
-            logger.warning(
-                "Group policy extension %r has an unusable manifest: %s", o.entry_name, exc
-            )
-            shutil.rmtree(scratch, ignore_errors=True)
-            return None
-
-        refusal = self._refuse_policy_extension(manifest)
-        if refusal:
-            logger.error("Group policy extension %r refused: %s", o.entry_name, refusal)
-            shutil.rmtree(scratch, ignore_errors=True)
-            return None
-
-        if target.exists():
-            shutil.rmtree(target)
-        target.parent.mkdir(parents=True, exist_ok=True)
-        shutil.move(str(bundle), str(target))
-        shutil.rmtree(scratch, ignore_errors=True)
-        return target
-
-    @staticmethod
-    def _refuse_policy_extension(manifest: Any) -> str:
-        """Why a policy may not push this one, or empty.
-
-        Two rules, and they are the same rule twice: a policy is
-        written by somebody other than the person it lands on, so
-        it may not push anything whose contents are unattested.
-        """
-        from ember_code.extensions.manifest import Trust
-
-        if manifest.trust is Trust.UNSIGNED:
-            return (
-                "it is unsigned. A group policy may only push a signed "
-                "extension — its contents are attested by a key this "
-                "deployment trusts, and an unsigned one is whatever the "
-                "repository said this morning."
-            )
-        # Belt and braces, and marked as such. A signed ``dev``
-        # manifest cannot currently parse — ``_dev_is_unsigned`` on
-        # the model refuses it — so with the trust check above this
-        # branch is unreachable today. It stays because the
-        # guarantee lives in another module's validator, and the
-        # cost of that validator being relaxed one day is a policy
-        # that silently starts pushing commands to run.
-        if manifest.dev is not None:
-            return (
-                "it uses 'dev' packaging, which is a command igni runs. "
-                "That is a development convenience the person at the "
-                "machine turns on for themselves; it is not something a "
-                "policy may turn on for them. Ship it as 'sidecar' or "
-                "'endpoint'."
-            )
-        return ""
 
     def _materialize_plugin(self, o: GroupPolicyEntry) -> None:
         """Install or skip-write a single plugin entry.
@@ -614,7 +461,6 @@ class GroupPolicyCache:
         active: dict[str, set[str]] = {kind: set() for kind in _PLAIN_KINDS}
         active["mcps"] = set()
         active["plugins"] = set()
-        active["extensions"] = set()
         hooks: dict[str, list] = {}
 
         for o in pack.entries:
@@ -661,8 +507,16 @@ class GroupPolicyCache:
                 self._materialize_plugin(o)
                 active["plugins"].add(o.entry_name)
             elif o.kind == "extensions":
-                self._materialize_extension(o)
-                active["extensions"].add(o.entry_name)
+                # Withdrawn: extensions come from their services
+                # through igni, and a policy is somebody else deciding
+                # what runs on this machine. Said, so an admin whose
+                # pack still carries one learns why nothing arrives.
+                logger.warning(
+                    "Group policy entry %r is an extension, and a group policy "
+                    "no longer installs extensions — they arrive from their "
+                    "services through igni server. Ignored.",
+                    o.entry_name,
+                )
 
         self._write_hooks(hooks)
         self._write_settings(pack)
@@ -911,12 +765,6 @@ class GroupPolicyCache:
                     stale = path.is_dir() and path.name not in names
                 elif kind == "plugins":
                     stale = path.suffix == ".yaml" and path.stem not in names
-                elif kind == "extensions":
-                    # A whole bundle directory, named for its entry.
-                    # Pruned rather than kept, unlike a plugin clone:
-                    # a bundle the group withdrew is a process it no
-                    # longer wants running.
-                    stale = path.is_dir() and path.name not in names
                 else:
                     stale = path.suffix == _SUFFIX.get(kind, "") and stem not in names
                 if not stale:

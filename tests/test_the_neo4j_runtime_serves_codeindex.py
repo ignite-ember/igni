@@ -138,7 +138,9 @@ async def test_a_failing_attach_does_not_take_the_backend_down(tmp_path, monkeyp
     monkeypatch.setattr(neo4j_runtime_mod, "Neo4jRuntime", _StubRuntime)
     monkeypatch.delenv("IGNI_NEO4J_RUNTIME", raising=False)
 
-    task = _orchestrator(_Exploding(), tmp_path, _settings(code_index=True)).attach_neo4j_in_background()
+    task = _orchestrator(
+        _Exploding(), tmp_path, _settings(code_index=True)
+    ).attach_neo4j_in_background()
     assert task is not None
     await asyncio.wait_for(task, timeout=5)
 

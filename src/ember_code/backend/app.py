@@ -20,7 +20,6 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-import os
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
@@ -36,14 +35,22 @@ from ember_code.backend.supervisor import BackendSupervisor
 from ember_code.core.config.settings import Settings, load_settings
 from ember_code.core.plugins.installer import PluginInstaller
 from ember_code.extensions.contributions import ExtensionContributions
+from ember_code.extensions.distribution import ExtensionDistribution
 from ember_code.extensions.events import EventRouter
 from ember_code.extensions.health import ExtensionHealth
 from ember_code.extensions.installer import ExtensionInstaller
+from ember_code.extensions.launcher import ExtensionLauncher
 from ember_code.extensions.origin import ExtensionOrigins
-from ember_code.extensions.profile import DeploymentProfile
-from ember_code.extensions.registry import ExtensionRegistry, ExtensionState
+from ember_code.extensions.profile import DeploymentProfile, DevelopmentFlag
+from ember_code.extensions.python_env import PythonEnvironments
+from ember_code.extensions.registry import ExtensionRegistry
 from ember_code.extensions.rpc import ExtensionRpc
 from ember_code.extensions.service_events import ServiceEvents
+from ember_code.extensions.service_token import (
+    CredentialsSession,
+    ServiceTokenEndpoint,
+    ServiceTokenExchange,
+)
 from ember_code.extensions.store import ExtensionStore
 
 logger = logging.getLogger(__name__)
@@ -126,6 +133,10 @@ class BackendApp:
         self._rpc_router: RpcRouter | None = None
         self._orchestrator: SessionOrchestrator | None = None
         self._queue: list[str] = []
+        # Built in ``_start_extensions``, once there is an MCP manager
+        # to start extensions with.
+        self._distribution: ExtensionDistribution | None = None
+        self._service_tokens: ServiceTokenEndpoint | None = None
 
     def _start_wake_detector(self) -> None:
         """Notice sleep, and drop the cloud state it invalidated.
@@ -393,6 +404,10 @@ class BackendApp:
             await self._service_events.stop()
             await self._host_events.stop()
             await self._extension_health.stop()
+            if self._distribution is not None:
+                await self._distribution.stop()
+            if self._service_tokens is not None:
+                await self._service_tokens.stop()
             await self._origins.stop_all()
             await self._supervisor.teardown()
 
@@ -433,23 +448,29 @@ class BackendApp:
         self._extensions.registry.watch(on_change)
 
     async def _start_extensions(self) -> None:
-        """Start everything ``igni ext install`` put in the store.
+        """Start what is installed, then bring it up to date.
 
-        An install is a decision that outlives a process — the CLI
-        copies a bundle under ``<data>/extensions/<id>/`` and this is
-        the half that reads it back. Without this, ``igni ext
-        install`` would write a directory nobody looked at.
+        Two sources, one boot path. What is already in the store —
+        extensions igni distributed earlier, and development installs
+        ``igni ext install`` put there — starts first, from disk, with
+        no network. Then, in the background, the distribution sync asks
+        igni server which extensions its approved services ship, and
+        installs, upgrades or removes to match (igni server's ``docs/service-identity.md``
+        §8). Start-up never waits for that: a machine that cannot reach
+        igni runs what it has.
 
         Failures are logged and skipped. One extension that will not
         start must not stop the backend, and the registry records why
         so the UI can say it rather than the user finding out by
         opening a blank page.
         """
+        assert self._backend is not None
+        settings = self._backend.settings
         store = ExtensionStore()
-        bundles = store.installed()
-        if not bundles:
-            return
-
+        session = CredentialsSession(settings.auth.credentials_file)
+        self._service_tokens = ServiceTokenEndpoint(
+            ServiceTokenExchange(api_url=self._igni_api_url, session=session)
+        )
         installer = ExtensionInstaller(
             registry=self._extensions.registry,
             rpc=self._extensions,
@@ -461,27 +482,33 @@ class BackendApp:
             # directory ``igni plugin install`` writes to, because
             # the loader only looks in one place and an extension's
             # agents are not a different kind of agent.
-            plugins_dir=PluginInstaller(
-                data_dir=self._backend.settings.storage.data_dir
-            ).plugins_dir,
-            allow_unsigned=_dev_extensions_allowed(),
+            plugins_dir=PluginInstaller(data_dir=settings.storage.data_dir).plugins_dir,
+            allow_development=DevelopmentFlag.enabled(),
+            store=store,
+            environments=PythonEnvironments(store.environments_root),
+            service_tokens=self._service_tokens,
         )
-        for bundle in bundles:
-            try:
-                # Where it came from, for a `source: file` fragment.
-                # Recorded before the install so a fragment resolved
-                # during it can find the bundle.
-                manifest_id = store.read(bundle).id
-                self._extension_contributions.note_bundle(manifest_id, bundle)
-                entry = await installer.install(bundle)
-            except Exception as exc:
-                # Refused before registration — a bad manifest, an
-                # untrusted signature. There is no registry entry to
-                # carry the reason, so the log is the only record.
-                logger.error("extension at %s was not installed: %s", bundle, exc)
-                continue
-            if entry.state is not ExtensionState.READY:
-                logger.warning("extension %s is %s: %s", entry.id, entry.state.value, entry.reason)
+        launcher = ExtensionLauncher(
+            store=store,
+            installer=installer,
+            registry=self._extensions.registry,
+            contributions=self._extension_contributions,
+        )
+        await launcher.start_installed()
+
+        self._distribution = ExtensionDistribution(
+            store, api_url=self._igni_api_url, session=session, lifecycle=launcher
+        )
+        self._distribution.schedule()
+        # And again whenever somebody signs in: the listing is the
+        # signed-in person's, and before that there was none.
+        if self._login is not None:
+            self._login.on_signed_in(self._distribution.schedule)
+
+    def _igni_api_url(self) -> str | None:
+        """igni server's URL as it is configured now — read per call,
+        because signing in can change which server that is."""
+        return self._backend.settings.api_url if self._backend is not None else None
 
     def _emit_ready_line(self) -> None:
         """Write the "ready" JSON line to stdout so the parent
@@ -506,19 +533,3 @@ class BackendApp:
         # didn't set are omitted rather than serialised as null.
         payload = json.loads(ready.model_dump_json(exclude_none=True))
         print(json.dumps(payload), flush=True)
-
-
-def _dev_extensions_allowed() -> bool:
-    """Whether this deployment accepts ``trust: unsigned``.
-
-    An environment variable rather than a setting, for now, and
-    deliberately not something a manifest or a bundle can turn on:
-    the whole point of the trust tier is that the easiest way to ship
-    is not the one with no provenance. A deployment that wants to
-    develop extensions opts in once, visibly, outside the bundle.
-    """
-    return os.environ.get("IGNI_DEV_EXTENSIONS", "").strip().lower() in {
-        "1",
-        "true",
-        "yes",
-    }

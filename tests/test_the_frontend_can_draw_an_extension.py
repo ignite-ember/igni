@@ -8,7 +8,7 @@ and was never mounted, because there was no way to know what to
 mount.
 
 ``list_extensions`` is the base side of that. It is deliberately not
-the manifest: a manifest holds the signature, the egress allowlist
+the manifest: a manifest holds the packaging, the egress allowlist
 and the sidecar image, and none of those belong in a browser's memory
 or in anything that logs a WebSocket frame.
 """
@@ -67,7 +67,7 @@ class Wired:
             rpc=self.rpc,
             mcp=self.mcp,
             origins=self.origins,
-            allow_unsigned=True,
+            allow_development=True,
         )
 
     async def close(self) -> None:
@@ -103,7 +103,7 @@ async def test_an_installed_extension_is_listed_with_what_it_takes_to_draw(wired
 async def test_the_manifest_itself_does_not_go_to_the_browser(wired, tmp_path):
     """Only what is needed to draw.
 
-    The signature, the egress allowlist and the sidecar image are
+    The packaging, the egress allowlist and the sidecar image are
     none of a frontend's business, and sending them would put each of
     them in anything that logs a frame.
     """

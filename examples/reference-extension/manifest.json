@@ -10,7 +10,6 @@
   "vendor": "Acme Corp <platform@acme.test>",
 
   "trust": "partner",
-  "signature": "<detached, verified against a key this deployment trusts>",
 
   "sidecar": {
     "image": "acme__scanner:1.0.0",

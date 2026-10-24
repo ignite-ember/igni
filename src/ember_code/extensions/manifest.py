@@ -74,12 +74,20 @@ class Strict(BaseModel):
 
 
 class Trust(StrEnum):
-    """Who vouched for this extension.
+    """Who the author says this extension is from — a label, not trust.
 
-    ``UNSIGNED`` is a development build. An install refuses it unless
-    the deployment has explicitly allowed unsigned extensions, because
-    the alternative is that the easiest way to ship is the one with no
-    provenance.
+    What makes a bundle trusted is **where it came from**: a bundle igni
+    server distributed is trusted because its signature verifies against
+    the key of the service a super admin approved (igni server's
+    ``docs/service-identity.md`` §8), whatever this label says, and
+    anything else is a development install that needs
+    ``IGNI_DEV_EXTENSIONS``. A manifest cannot sign itself — the
+    signature is over the archive the manifest is inside — so it no
+    longer carries one.
+
+    The one rule left on it: ``dev`` packaging requires ``UNSIGNED``,
+    because an argv line out of a text file is a development build by
+    definition.
     """
 
     FIRST_PARTY = "first-party"
@@ -155,6 +163,31 @@ class Endpoint(Strict):
 
     url: str
     auth: EndpointAuth | None = None
+
+
+class PythonPackage(Strict):
+    """Packaging D: a Python package igni installs and runs here.
+
+    How a service's extension reaches people's machines
+    (igni server's ``docs/service-identity.md`` §8). The bundle carries the package
+    and every dependency as wheels, so igni installs it into a private
+    environment **from the wheelhouse only** — never an index, because
+    an air-gapped deployment has none — and starts ``entry`` speaking
+    MCP over stdio, as it starts a ``dev`` command.
+
+    A development install runs the same manifest from a source
+    checkout: with no wheelhouse in the directory, the package is
+    built from the directory itself, network allowed, behind
+    ``IGNI_DEV_EXTENSIONS``.
+    """
+
+    #: The distribution to install, as pip names it.
+    package: str = Field(min_length=1)
+    #: Its console script — what igni runs.
+    entry: str = Field(min_length=1)
+    #: The wheelhouse, a directory inside the bundle.
+    wheels: str = "wheels"
+    mcp: McpBinding
 
 
 class DevCommand(Strict):
@@ -374,10 +407,10 @@ class ExtensionManifest(Strict):
     name: str | None = None
     description: str | None = None
     vendor: str | None = None
-    signature: str | None = None
 
     sidecar: Sidecar | None = None
     endpoint: Endpoint | None = None
+    python: PythonPackage | None = None
     dev: DevCommand | None = None
 
     #: Infrastructure the deployment provides and igni brokers.
@@ -409,6 +442,7 @@ class ExtensionManifest(Strict):
             for name, value in (
                 ("sidecar", self.sidecar),
                 ("endpoint", self.endpoint),
+                ("python", self.python),
                 ("dev", self.dev),
             )
             if value is not None
@@ -416,9 +450,9 @@ class ExtensionManifest(Strict):
         if len(chosen) != 1:
             found = ", ".join(chosen) if chosen else "none"
             raise ValueError(
-                f"{self.id}: exactly one of 'sidecar', 'endpoint' and 'dev' is "
-                f"required and {found} was given — packaging is a property of "
-                "the extension, not a runtime choice"
+                f"{self.id}: exactly one of 'sidecar', 'endpoint', 'python' and "
+                f"'dev' is required and {found} was given — packaging is a "
+                "property of the extension, not a runtime choice"
             )
         return self
 
@@ -430,15 +464,6 @@ class ExtensionManifest(Strict):
                 f"{self.trust.value!r}. It names an arbitrary executable, so a "
                 "signature over it would attest to something that then ran "
                 "whatever it liked."
-            )
-        return self
-
-    @model_validator(mode="after")
-    def _signed_unless_development(self) -> ExtensionManifest:
-        if self.trust is not Trust.UNSIGNED and not self.signature:
-            raise ValueError(
-                f"{self.id}: trust is {self.trust.value!r} and there is no signature; "
-                "anything but a development build carries one"
             )
         return self
 
@@ -457,6 +482,39 @@ class ExtensionManifest(Strict):
         if not isinstance(raw, dict):
             raise ValueError(f"{path}: a manifest is a JSON object, got {type(raw).__name__}")
         return cls.model_validate(raw)
+
+    @property
+    def packaging(self) -> str:
+        """Which of the four packagings this is, by its manifest key."""
+        if self.sidecar is not None:
+            return "sidecar"
+        if self.endpoint is not None:
+            return "endpoint"
+        if self.python is not None:
+            return "python"
+        return "dev"
+
+    @property
+    def is_development_command(self) -> bool:
+        """Whether this runs a ``dev`` command out of its own manifest.
+
+        igni runs one only as a development install, never one that
+        arrived from a service: a service ships a ``python`` package,
+        installed from wheels igni checked, not an argv line. The
+        ``trust`` label does not enter into it — provenance is the
+        distribution's signature, not what the manifest says.
+        """
+        return self.dev is not None
+
+    @property
+    def runs_here(self) -> bool:
+        """Whether igni starts this extension as a process of its own.
+
+        What decides which grants can be delivered at all: igni sets
+        the environment of a process it starts, and an endpoint is
+        somebody else's.
+        """
+        return self.endpoint is None
 
     @property
     def display_name(self) -> str:

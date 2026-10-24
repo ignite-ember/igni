@@ -59,7 +59,7 @@ class Wired:
             rpc=self.rpc,
             mcp=self.mcp,
             origins=self.origins,
-            allow_unsigned=True,
+            allow_development=True,
         )
         self.health = ExtensionHealth(
             registry=self.registry, rpc=self.rpc, mcp=self.mcp, interval_s=3600

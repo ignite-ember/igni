@@ -17,8 +17,8 @@ from __future__ import annotations
 
 from typing import Any
 
-#: The smallest manifest that is valid. Development trust, so no
-#: signature is needed and each case below can stay about one thing.
+#: The smallest manifest that is valid, so each case below can stay
+#: about one thing.
 BASE: dict[str, Any] = {
     "id": "acme.scanner",
     "version": "1.0.0",
@@ -59,7 +59,30 @@ REFUSALS: list[tuple[str, dict[str, Any], str]] = [
         "",
     ),
     ("neither packaging", without("sidecar"), ""),
-    ("a signed trust tier with no signature", with_(trust="partner"), ""),
+    (
+        "a signature in the manifest, which a bundle cannot carry over itself",
+        with_(trust="partner", signature="detached"),
+        "",
+    ),
+    (
+        "a python package with nothing to run",
+        {
+            **without("sidecar"),
+            "python": {"package": "acme_scanner", "mcp": {"transport": "stdio"}},
+        },
+        "python",
+    ),
+    (
+        "a python package alongside a sidecar",
+        with_(
+            python={
+                "package": "acme_scanner",
+                "entry": "acme-scanner",
+                "mcp": {"transport": "stdio"},
+            }
+        ),
+        "",
+    ),
     ("an id that is not reverse-DNS", with_(id="scanner"), "id"),
     ("a version that is not semver", with_(version="1.0"), "version"),
     (
@@ -118,7 +141,6 @@ REFUSALS: list[tuple[str, dict[str, Any], str]] = [
         {
             **{k: v for k, v in BASE.items() if k != "sidecar"},
             "trust": "partner",
-            "signature": "detached",
             "dev": {"command": ["node", "./server.js"]},
         },
         "trust",

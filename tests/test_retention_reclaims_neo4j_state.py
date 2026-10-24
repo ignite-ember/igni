@@ -32,11 +32,11 @@ def _index(tmp_path: Path, *, runtime=None) -> CodeIndex:
 
 #: Real-shaped commit hashes: retention reclaims only stores named
 #: like a commit, so an extension's named store is never mistaken for one.
-KEEPSHA = 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
-GONESHAAA = 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'
-LIVESHA = 'cccccccccccccccccccccccccccccccccccccccc'
-DEADSHA = 'dddddddddddddddddddddddddddddddddddddddd'
-OLDSHA = 'eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee'
+KEEPSHA = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+GONESHAAA = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+LIVESHA = "cccccccccccccccccccccccccccccccccccccccc"
+DEADSHA = "dddddddddddddddddddddddddddddddddddddddd"
+OLDSHA = "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
 
 
 def _state_dir_with_bytes(index: CodeIndex, sha: str) -> Path:

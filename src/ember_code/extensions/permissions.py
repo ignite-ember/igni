@@ -5,9 +5,15 @@ six. Exactly one — ``permissions.rpc`` — was enforced by anything.
 ``egress``, ``secrets``, ``workspace``, ``tools`` and ``signature``
 were read by nobody, so the extension boundary was a comment.
 
-This module is where the other four are decided. ``signature`` lives
-in :mod:`ember_code.extensions.signature` because it is a different
-kind of check — provenance rather than scope.
+This module is where the other four are decided. ``signature`` has
+left the manifest: provenance is decided by where a bundle came from —
+igni server's distribution, verified in
+:mod:`ember_code.extensions.distribution` — rather than by scope.
+
+A service token is never a ``secrets`` grant. The host fetches it for
+the extension and serves it on loopback
+(:mod:`ember_code.extensions.service_token`), so the extension never
+holds the person's igni session.
 
 ## What enforcement means here, honestly
 

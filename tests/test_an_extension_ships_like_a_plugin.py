@@ -2,13 +2,14 @@
 
 Two questions that turned out to be the same question.
 
-**How do you hand somebody an extension?** A plugin is a git
-repository, because that is how people share things. An extension
-could only be installed from a directory you already had, which
-makes "try my extension" a conversation about zip files. It takes
-a repository now — the same two forms `igni plugin install` takes,
-and the signature works unchanged because it is over the bundle
-digest and a clone is a bundle.
+**How do you hand somebody an extension you are developing?** A
+plugin is a git repository, because that is how people share things.
+An extension could only be installed from a directory you already
+had, which makes "try my extension" a conversation about zip files.
+It takes a repository now — the same two forms `igni plugin install`
+takes. Both are development installs, behind ``IGNI_DEV_EXTENSIONS``:
+a released extension reaches people from its service through igni
+server, which is tested in ``test_extensions_arrive_from_their_services.py``.
 
 **How does an extension ship its agents?** Artifacts has the
 archivist, the only agent allowed to touch the document store;
@@ -41,6 +42,12 @@ from ember_code.extensions.registry import ExtensionRegistry, ExtensionState
 from ember_code.extensions.rpc import ExtensionRpc
 
 FIXTURE = Path(__file__).parent / "fixtures" / "dev_extension"
+
+
+@pytest.fixture(autouse=True)
+def dev_flag(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Every install here is a development install."""
+    monkeypatch.setenv("IGNI_DEV_EXTENSIONS", "1")
 
 
 def _git(repo: Path, *args: str) -> str:
@@ -216,7 +223,7 @@ class TestThePluginActuallyArrives:
             rpc=rpc,
             mcp=mcp,
             origins=origins,
-            allow_unsigned=True,
+            allow_development=True,
             plugins_dir=plugins_dir,
         )
         try:

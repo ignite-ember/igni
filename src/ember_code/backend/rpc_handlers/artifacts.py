@@ -174,8 +174,9 @@ class ArtifactRpcHandler(RpcHandler):
         if extensions is None:
             raise ExtensionRefused(
                 "This backend has no extension support, so there is nothing "
-                "to answer document requests. Documents are an extension: "
-                "install it with `igni ext install`."
+                "to answer document requests. Documents are an extension, and it "
+                "arrives from the Artifacts service through igni server when you "
+                "are signed in."
             )
         return await extensions.dispatch(
             caller=ARTIFACTS,

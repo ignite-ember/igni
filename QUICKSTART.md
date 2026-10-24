@@ -332,8 +332,10 @@ Or use `/sessions` in interactive mode to browse past sessions.
 ### Documents
 
 Project documents — runbooks, decisions, conventions the agent should not
-re-derive — are the Artifacts extension's, with its own settings. Install it
-with `igni ext install`; nothing in `.igni/config.yaml` turns it on.
+re-derive — are the Artifacts extension's, with its own settings. It arrives
+from your organisation's Artifacts service through igni server once you are
+signed in and a super admin has approved that service; nothing in
+`.igni/config.yaml` turns it on.
 
 ### MCP (IDE Integration)
 

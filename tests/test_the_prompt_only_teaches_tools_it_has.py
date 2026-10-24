@@ -43,6 +43,7 @@ def _with_artifacts(live: bool) -> ConditionalRegistry:
         registry.declare("igni.artifacts", {"artifacts", "can-persist"})
     return registry
 
+
 # The names the main-agent prompt uses for the artifact store.
 # Every artifact tool. The main agent holds none of them — only the
 # archivist gets the toolkit (agents/builder.py) — so none may appear in

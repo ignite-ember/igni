@@ -56,11 +56,7 @@
         "partner",
         "unsigned"
       ],
-      "description": "first-party: signed by igni's key, compiled into the base. partner: signed by a key this deployment's administrator added to its trust store — the SI's, or the customer's own. unsigned: development only, never production, and the install refuses unless the deployment has explicitly allowed it."
-    },
-    "signature": {
-      "type": "string",
-      "description": "Detached signature over the bundle, verified locally against a key this deployment trusts. No network, so it survives an air-gap. Required unless `trust` is `unsigned`."
+      "description": "Who the author says this is from — a label an administrator reads, not what makes it trusted. A bundle is trusted because igni server distributed it and its signature verifies against the key of the service a super admin approved (service-identity §8), whatever this label says; anything installed another way is a development install and needs IGNI_DEV_EXTENSIONS. The one rule on it: `dev` packaging requires `unsigned`."
     },
     "sidecar": {
       "type": "object",
@@ -135,9 +131,57 @@
         }
       }
     },
+    "python": {
+      "type": "object",
+      "description": "Packaging D: a Python package igni installs into a private environment and starts here, speaking MCP over stdio. How a service ships its extension (service-identity §8). The bundle carries the package and every dependency as wheels (cp312 or pure-Python, for each platform igni runs on), and igni installs from that wheelhouse only — never an index, because an air-gapped deployment has none. A development install of a source checkout with no wheelhouse builds the package from the directory instead.",
+      "required": [
+        "package",
+        "entry",
+        "mcp"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "package": {
+          "type": "string",
+          "minLength": 1,
+          "description": "The distribution to install, as pip names it.",
+          "examples": [
+            "igni_artifacts_extension"
+          ]
+        },
+        "entry": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Its console script — what igni runs.",
+          "examples": [
+            "igni-artifacts-extension"
+          ]
+        },
+        "wheels": {
+          "type": "string",
+          "default": "wheels",
+          "description": "The wheelhouse, a directory inside the bundle."
+        },
+        "mcp": {
+          "type": "object",
+          "required": [
+            "transport"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "transport": {
+              "enum": [
+                "stdio"
+              ],
+              "description": "The package speaks MCP over stdio, as a dev command does."
+            }
+          }
+        }
+      }
+    },
     "dev": {
       "type": "object",
-      "description": "Packaging C: a command igni runs on this machine, speaking MCP over stdio. Development only, and the schema refuses it on anything but `trust: unsigned` — it is an arbitrary command out of a text file, which is exactly what a signature exists to prevent. It exists because the other two packagings both need something an author does not have on their laptop: a container registry, or a deployed service.",
+      "description": "Packaging C: a command igni runs on this machine, speaking MCP over stdio. Development only, and the schema refuses it on anything but `trust: unsigned` — it is an arbitrary command out of a text file. It exists so an author can run an extension while writing it, before there is a service to ship it from.",
       "required": [
         "command"
       ],
@@ -214,7 +258,7 @@
         },
         "secrets": {
           "type": "array",
-          "description": "Named grants the deployment resolves. A name not declared here is never resolved, and the resolver is the deployment's — never anything the bundle supplies. The value reaches your service in its environment as `IGNI_SECRET_<NAME>`; an earlier version of this said you receive a handle rather than a value, which described an exchange step that does not exist.",
+          "description": "Named grants the deployment resolves. A name not declared here is never resolved, and the resolver is the deployment's — never anything the bundle supplies. The value reaches your service in its environment as `IGNI_SECRET_<NAME>`; an earlier version of this said you receive a handle rather than a value, which described an exchange step that does not exist. Never a token for your own service: igni fetches that for you by token exchange and serves it on a loopback endpoint named by IGNI_SERVICE_TOKEN_URL (service-identity §9), so your extension never holds the person's igni session.",
           "items": {
             "type": "string"
           },
@@ -579,6 +623,13 @@
         {
           "not": {
             "required": [
+              "python"
+            ]
+          }
+        },
+        {
+          "not": {
+            "required": [
               "dev"
             ]
           }
@@ -594,6 +645,41 @@
           "not": {
             "required": [
               "sidecar"
+            ]
+          }
+        },
+        {
+          "not": {
+            "required": [
+              "python"
+            ]
+          }
+        },
+        {
+          "not": {
+            "required": [
+              "dev"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "required": [
+        "python"
+      ],
+      "allOf": [
+        {
+          "not": {
+            "required": [
+              "sidecar"
+            ]
+          }
+        },
+        {
+          "not": {
+            "required": [
+              "endpoint"
             ]
           }
         },
@@ -624,6 +710,13 @@
               "endpoint"
             ]
           }
+        },
+        {
+          "not": {
+            "required": [
+              "python"
+            ]
+          }
         }
       ]
     }
@@ -641,25 +734,7 @@
             "const": "unsigned"
           }
         },
-        "description": "A dev command is an arbitrary executable named in a text file. Allowing it on a signed manifest would mean a signature attested to something that then ran whatever it liked."
-      }
-    },
-    {
-      "if": {
-        "properties": {
-          "trust": {
-            "enum": [
-              "first-party",
-              "partner"
-            ]
-          }
-        }
-      },
-      "then": {
-        "required": [
-          "signature"
-        ],
-        "description": "Anything but a development build carries a signature."
+        "description": "A dev command is an arbitrary executable named in a text file, so it is a development build by definition — and igni never runs one that arrived from a service."
       }
     }
   ]

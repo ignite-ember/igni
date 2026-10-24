@@ -106,6 +106,10 @@ describe("what is installed", () => {
   it("says so when nothing is", () => {
     panelWith([]);
     expect(screen.getByText(/No extensions installed/)).toBeTruthy();
+    // Extensions come from their services through igni; installing
+    // one by hand is a development install and not advice for users.
+    expect(screen.getByText(/arrive from your organisation/)).toBeTruthy();
+    expect(screen.queryByText(/igni ext install/)).toBeNull();
   });
 
   it("shows the state and the reason it is not ready", () => {

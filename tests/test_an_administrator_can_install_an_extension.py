@@ -28,14 +28,19 @@ from ember_code.extensions.installer import ExtensionInstaller
 from ember_code.extensions.origin import ExtensionOrigins
 from ember_code.extensions.registry import ExtensionRegistry, ExtensionState
 from ember_code.extensions.rpc import ExtensionRpc
-from ember_code.extensions.store import ExtensionStore, StoreError
+from ember_code.extensions.store import DistributionRecord, ExtensionStore, StoreError
 
 FIXTURE = Path(__file__).parent / "fixtures" / "dev_extension"
 
 
 @pytest.fixture
-def run(tmp_path: Path):
-    """Invoke ``igni ext`` with a store under ``tmp_path``."""
+def run(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    """Invoke ``igni ext`` with a store under ``tmp_path``.
+
+    With ``IGNI_DEV_EXTENSIONS`` set: everything ``install`` does is a
+    development install now, and the one test about the flag clears it.
+    """
+    monkeypatch.setenv("IGNI_DEV_EXTENSIONS", "1")
     runner = CliRunner()
     store = tmp_path / "store"
 
@@ -119,7 +124,6 @@ def test_doctor_names_a_sidecar_as_not_startable(run, tmp_path):
                 "version": "1.0.0",
                 "contract": ">=1.0 <2",
                 "trust": "partner",
-                "signature": "x",
                 "sidecar": {
                     "image": "acme__scanner:1.0.0",
                     "mcp": {"transport": "stdio"},
@@ -177,6 +181,44 @@ def test_install_copies_the_bundle_and_says_what_it_granted(run, tmp_path):
     assert "it may use" in result.output
     assert "backend methods" in result.output
     assert (run.store / "local.mine" / "manifest.json").is_file()
+
+
+def test_install_is_a_development_install_behind_the_flag(run, tmp_path, monkeypatch):
+    """Extensions reach machines from their services through igni.
+    A directory or a repository is development, and says so."""
+    target = tmp_path / "mine"
+    run("init", str(target), rooted=False)
+    monkeypatch.delenv("IGNI_DEV_EXTENSIONS")
+
+    refused = run("install", str(target))
+    assert refused.exit_code != 0
+    assert "IGNI_DEV_EXTENSIONS=1" in refused.output
+    assert not (run.store / "local.mine").exists()
+
+    monkeypatch.setenv("IGNI_DEV_EXTENSIONS", "1")
+    done = run("install", str(target))
+    assert done.exit_code == 0, done.output
+    assert "for development" in done.output
+
+
+def test_list_says_where_each_one_came_from(run, tmp_path):
+    target = tmp_path / "mine"
+    run("init", str(target), rooted=False)
+    run("install", str(target))
+    store = ExtensionStore(run.store)
+    store.record_distribution(
+        DistributionRecord(
+            extension_id="local.mine",
+            version="0.1.0",
+            sha256="0" * 64,
+            service_url="https://mine.example.com",
+        )
+    )
+    listed = run("list")
+    assert "from https://mine.example.com" in listed.output
+
+    store.distribution_path("local.mine").unlink()
+    assert "development install" in run("list").output
 
 
 def test_installing_twice_needs_replace(run, tmp_path):
@@ -291,7 +333,7 @@ async def test_what_init_writes_actually_runs(run, tmp_path):
     mcp = MCPClientManager(project_dir=tmp_path)
     origins = ExtensionOrigins()
     installer = ExtensionInstaller(
-        registry=registry, rpc=rpc, mcp=mcp, origins=origins, allow_unsigned=True
+        registry=registry, rpc=rpc, mcp=mcp, origins=origins, allow_development=True
     )
     try:
         entry = await installer.install(bundle)

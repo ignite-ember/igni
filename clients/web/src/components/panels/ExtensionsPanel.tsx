@@ -197,7 +197,8 @@ export function ExtensionsPanel({
     <Drawer title="Extensions" onClose={onClose}>
       {extensions.length === 0 && (
         <div className="msg-info">
-          No extensions installed. Add one with <code>igni ext install</code>.
+          No extensions installed. They arrive from your organisation&apos;s
+          services when you are signed in to igni.
         </div>
       )}
       {extensions.map((extension) => (

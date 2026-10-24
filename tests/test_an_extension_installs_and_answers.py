@@ -60,7 +60,7 @@ def bundle_at(tmp_path: Path, **manifest_changes: object) -> Path:
 class Wired:
     """A registry, a router and an installer over a real MCP manager."""
 
-    def __init__(self, tmp_path: Path, *, allow_unsigned: bool = True) -> None:
+    def __init__(self, tmp_path: Path, *, allow_development: bool = True) -> None:
         self.registry = ExtensionRegistry()
         self.rpc = ExtensionRpc(self.registry)
         self.mcp = MCPClientManager(project_dir=tmp_path)
@@ -70,7 +70,7 @@ class Wired:
             rpc=self.rpc,
             mcp=self.mcp,
             origins=self.origins,
-            allow_unsigned=allow_unsigned,
+            allow_development=allow_development,
         )
 
     async def close(self) -> None:
@@ -218,7 +218,7 @@ async def test_a_headless_backend_says_so_rather_than_half_installing(tmp_path):
         rpc=w.rpc,
         mcp=w.mcp,
         origins=None,
-        allow_unsigned=True,
+        allow_development=True,
     )
     try:
         entry = await w.installer.install(bundle_at(tmp_path))
@@ -266,11 +266,11 @@ async def test_an_invalid_manifest_names_the_file(wired, tmp_path):
     assert wired.registry.ids() == []
 
 
-async def test_unsigned_is_refused_unless_the_deployment_opted_in(tmp_path):
+async def test_a_development_install_is_refused_unless_the_flag_is_set(tmp_path):
     """The easiest way to ship must not be the one with no provenance."""
-    w = Wired(tmp_path, allow_unsigned=False)
+    w = Wired(tmp_path, allow_development=False)
     try:
-        with pytest.raises(InstallError, match="does not accept unsigned"):
+        with pytest.raises(InstallError, match="IGNI_DEV_EXTENSIONS"):
             await w.installer.install(bundle_at(tmp_path))
         assert w.registry.ids() == []
     finally:

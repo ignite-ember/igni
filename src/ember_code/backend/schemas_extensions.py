@@ -4,7 +4,7 @@ Pydantic rather than dicts, because this is a wire shape the web
 client reads field by field and ``wire-schema.json`` snapshots.
 
 Deliberately not the manifest. A manifest holds things the frontend
-has no business with — the signature, the egress allowlist, the
+has no business with — the packaging, the egress allowlist, the
 sidecar image — and sending the whole thing would put every one of
 them in a browser's memory and in anything that logs a WebSocket
 frame. What goes out is what is needed to draw: who it is, what state

@@ -44,6 +44,7 @@ def _with_artifacts(live: bool) -> ConditionalRegistry:
         registry.declare("igni.artifacts", {"artifacts", "can-persist"})
     return registry
 
+
 PROMPTS = Path(ember_code.__file__).parent / "core" / "prompts"
 
 

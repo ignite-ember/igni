@@ -192,8 +192,12 @@ class TestAnExtensionsPluginReplacesTheAgentItRewrote:
         cannot reach."""
         _agents(tmp_path, "data-architect.codeindex.md")
 
-        live = _loader(codeindex_available=True).load_directory(tmp_path, 1, namespace="igni-codeindex")
-        down = _loader(codeindex_available=False).load_directory(tmp_path, 1, namespace="igni-codeindex")
+        live = _loader(codeindex_available=True).load_directory(
+            tmp_path, 1, namespace="igni-codeindex"
+        )
+        down = _loader(codeindex_available=False).load_directory(
+            tmp_path, 1, namespace="igni-codeindex"
+        )
 
         assert set(live.entries) == {"data-architect"}
         assert down.entries == {}
@@ -201,6 +205,8 @@ class TestAnExtensionsPluginReplacesTheAgentItRewrote:
     def test_its_own_plain_agents_stay_in_its_namespace(self, tmp_path):
         _agents(tmp_path, "indexer.md")
 
-        report = _loader(codeindex_available=True).load_directory(tmp_path, 1, namespace="igni-codeindex")
+        report = _loader(codeindex_available=True).load_directory(
+            tmp_path, 1, namespace="igni-codeindex"
+        )
 
         assert set(report.entries) == {"igni-codeindex:indexer"}

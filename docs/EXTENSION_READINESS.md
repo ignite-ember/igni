@@ -14,9 +14,12 @@ of six permissions are enforced completely with two enforced at
 igni's boundary rather than the extension's.** A bundle installs,
 starts, serves its UI on its own origin, draws in a frame and answers
 `ext.<id>.*` calls that are authorised against its manifest — proven
-by a test that runs a real MCP server as a subprocess. What is still missing
-is a CLI to install with, and OS-level confinement of a service's own
-network and filesystem.
+by a test that runs a real MCP server as a subprocess. Extensions reach
+machines from their services through igni server — signed, listed,
+verified and installed by the host (§8 of igni server's `service-identity.md`) —
+and a `python` packaging installs one offline from the wheels its bundle
+carries. What is still missing is OS-level confinement of a service's
+own network and filesystem.
 
 ---
 
@@ -31,11 +34,15 @@ Nothing here is hard. All of it is missing.
 | A3 | ✅ | `ExtensionRpc` is constructed in `BackendApp` and shared by the boot router and every per-session one, so one registry serves the whole backend. |
 | A4 | ✅ | `ExtensionInstaller` validates, checks trust, registers `PREPARING`, starts or reaches the service, serves the UI on its own origin, binds and marks `READY`. Failures after registration are `FAILED` with a reason. |
 
-**What is not done in A4:** there is no CLI, so installing means
-calling `ExtensionInstaller.install` rather than
-`igni ext install ./my-extension` — that is D1/D2. Sidecar images
-fail saying container supervision is not implemented; `endpoint` and
-the new development packaging both work.
+**What is not done in A4:** sidecar images fail saying container
+supervision is not implemented; `python`, `endpoint` and the
+development packaging all work.
+
+**A fourth packaging, `python`,** is how a service ships its
+extension: a package speaking MCP over stdio, installed into a private
+environment per extension and version with igni's own interpreter,
+from the bundle's wheelhouse only (`--no-index`), so an air-gapped
+machine needs nothing else.
 
 **A third packaging, `dev`,** was added because neither of the other
 two can be run by an author on a laptop: one needs a container
@@ -69,10 +76,10 @@ the extension boundary is a security boundary or a comment.
 |---|---|---|---|
 | B1 | `permissions.rpc` | `ExtensionRegistry.authorise` | ✅ complete |
 | B2 | `permissions.egress` | the page's `connect-src`, written from the manifest; and the endpoint host igni dials | ⚠️ **UI complete, service not.** Confining a sidecar's own sockets needs an OS network namespace. |
-| B3 | `permissions.secrets` | resolution — an undeclared name is never looked up, and the resolver is the deployment's | ⚠️ **value, not handle.** It reaches the service's environment as `IGNI_SECRET_<NAME>`. |
+| B3 | `permissions.secrets` | resolution — an undeclared name is never looked up, and the resolver is the deployment's | ⚠️ **value, not handle.** It reaches the service's environment as `IGNI_SECRET_<NAME>`. **Never a token for the extension's own service**: that the host fetches by token exchange and serves on a loopback endpoint (`IGNI_SERVICE_TOKEN_URL`, §9 of igni server's `service-identity.md`), so the extension never holds the person's igni session. No deployment wires a secret source yet, so a declared secret currently fails the install. |
 | B4 | `permissions.workspace` / `workspacePaths` | what igni *tells* a service | ⚠️ **told, not confined.** An ungranted extension is not told where the project is; one that goes looking is not stopped. |
 | B5 | `permissions.tools` | tool registration, which is igni's | ✅ complete |
-| B6 | `signature` | install, offline, Ed25519, against keys an administrator added | ✅ complete. The digest covers every file plus the manifest without its own signature, so widening a permission after signing breaks it. |
+| B6 | provenance (was `signature`) | the distribution sync, before a bundle is stored: the JWS igni server hands over with the bundle, checked against the approved service's `publisher_jwks` (RS256/ES256) and the archive's SHA-256; then the installer, which trusts a bundle only with that record | ✅ complete. The manifest no longer carries a signature — one cannot cover the archive it is inside — and the administrator-maintained Ed25519 trust store is gone. Anything not distributed by igni is a development install behind `IGNI_DEV_EXTENSIONS`. |
 
 **The two partial ones are the same gap twice**: `egress` and
 `workspace` are enforced where igni decides, not where the extension
@@ -110,7 +117,7 @@ The manifest can declare these. None of them reach the app.
 |---|---|---|
 | D1 | ✅ | `igni ext init` scaffolds a bundle that installs and runs as written — manifest, MCP server, framed page with an inlined bridge, README. `install`, `list` and `remove` work against the store rather than a running backend, so an install outlives the process that made it. |
 | D2 | ✅ | `igni ext doctor` prints the contract this igni implements and what is wrong with a bundle. It separates *problems* from *notes*, which it did not at first — an unsigned development bundle was reported as a problem, so `doctor` failed on the output of `init`. |
-| D3 | ⚠️ partial | `trust: unsigned` is accepted only when `IGNI_DEV_EXTENSIONS=1`, which is outside the bundle and cannot be turned on by one. No persistent banner and no hot reload. |
+| D3 | ⚠️ partial | Every install igni server did not distribute — a directory, a clone, whatever trust it claims — is a development install, accepted only when `IGNI_DEV_EXTENSIONS=1`, which is outside the bundle and cannot be turned on by one. `igni ext install` refuses without it too. No persistent banner and no hot reload. |
 | D4 | ✅ | `examples/release-notes` is the opposite of all four — a two-pane browser over editable documents with comments. It found a published pair that could not be used as a pair (`Tabs` generated its own id prefix, `TabPanel` required one, nothing let a caller learn it), and its README carries what it still had to hand-roll: the split, block markdown, and an editor that fills its pane. |
 
 ---

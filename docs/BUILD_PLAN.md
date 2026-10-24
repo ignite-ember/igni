@@ -133,9 +133,11 @@ One bug found by the suite rather than by review: the first `expand()` dropped e
 
 ### A6 — manifest, validation, signature (≈4 days)
 
-Pydantic model of the manifest in EXTENSIBILITY §2. Install verifies the signature against a compiled-in key for `first-party` and a deployment trust store for everyone else. Unsigned installs are a per-deployment setting, default off. `ExtensionRegistry` reports state through `SubsystemRegistry`.
+Pydantic model of the manifest in EXTENSIBILITY §2. `ExtensionRegistry` reports state through `SubsystemRegistry`.
 
-*Done when:* a tampered bundle refuses to install with a reason, and an expired or unknown signer says which it was.
+**Superseded on signatures.** The compiled-in key and the deployment trust store were replaced by igni server's distribution (its service-identity contract, §8): a service signs its bundle with the key it registered, a super admin approves the service, and the host verifies the JWS against that key before storing the bundle. Anything else is a development install behind `IGNI_DEV_EXTENSIONS`. The manifest carries no signature.
+
+*Done when:* a tampered bundle refuses to install with a reason — **met**, by the distribution sync (`tests/test_extensions_arrive_from_their_services.py`).
 
 ### A7 — remote extension registration (≈3 days)
 

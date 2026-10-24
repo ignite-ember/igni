@@ -38,7 +38,7 @@ how to use it. `manifest.json` here opens with
 
 which gives you completion, inline descriptions and red squiggles for
 every field, including the ones whose absence is only an error in
-combination — a `partner` build with no signature, both packagings at
+combination — a `dev` command on a `partner` build, two packagings at
 once, a `sidecar` with no `image`.
 
 Do not take this file as the authority on its own. It is validated

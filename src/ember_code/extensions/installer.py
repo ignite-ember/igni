@@ -10,11 +10,11 @@ What an install does, in order, and why that order:
 
 1. **Read and validate the manifest.** Anything wrong here is wrong
    before we have touched the machine.
-2. **Check trust.** An unsigned bundle is refused unless the
-   deployment opted in. This is the point at which a signature would
-   be verified; it is not verified yet, and
-   :meth:`ExtensionInstaller.install` says so out loud rather than
-   implying otherwise by succeeding.
+2. **Check trust**, which is a question about where the bundle came
+   from. One igni server distributed — its signature verified against
+   the approved service's key before it was stored — is trusted. Any
+   other is a development install, refused unless the person at this
+   machine set ``IGNI_DEV_EXTENSIONS``.
 3. **Register as PREPARING.** From here on a failure is *recorded*
    rather than raised away: an extension that failed to start is a
    state an administrator needs to see, with the reason and the fix,
@@ -23,9 +23,15 @@ What an install does, in order, and why that order:
 5. **READY**, which is what makes it callable — the registry refuses
    anything else.
 
-Three packagings, one per manifest. ``dev`` runs a command here,
+Four packagings, one per manifest. ``python`` installs a package into
+a private environment and runs it here, ``dev`` runs a command here,
 ``endpoint`` reaches a service somebody else runs, and ``sidecar``
 needs a container runtime this does not have yet and fails saying so.
+
+A process igni starts that belongs to a service is told how to get a
+token for it — ``IGNI_SERVICE_URL``, ``IGNI_SERVICE_TOKEN_URL`` and
+``IGNI_SERVICE_TOKEN_SECRET`` (:mod:`ember_code.extensions.service_token`).
+It never sees the person's igni session.
 """
 
 from __future__ import annotations
@@ -48,10 +54,11 @@ from ember_code.extensions.capabilities import (
     check_dimensions_agree,
 )
 from ember_code.extensions.events import EVENT_SINK_TOOL, unknown_grants
-from ember_code.extensions.manifest import ExtensionManifest, Trust, Workspace
+from ember_code.extensions.manifest import ExtensionManifest, Workspace
 from ember_code.extensions.origin import ExtensionOrigins
 from ember_code.extensions.permissions import PermissionDenied, Permissions
-from ember_code.extensions.profile import DeploymentProfile
+from ember_code.extensions.profile import DEV_FLAG, DeploymentProfile
+from ember_code.extensions.python_env import PythonEnvironmentError, PythonEnvironments
 from ember_code.extensions.registry import (
     ExtensionRegistry,
     ExtensionState,
@@ -59,7 +66,8 @@ from ember_code.extensions.registry import (
 )
 from ember_code.extensions.rpc import ExtensionRpc
 from ember_code.extensions.service import McpExtensionService
-from ember_code.extensions.signature import SignatureError, TrustStore, verify_bundle
+from ember_code.extensions.service_token import ServiceTokenEndpoint
+from ember_code.extensions.store import DistributionRecord, ExtensionStore
 
 logger = logging.getLogger(__name__)
 
@@ -69,6 +77,9 @@ logger = logging.getLogger(__name__)
 #: in their own ``.mcp.json`` — the id alone would let an install
 #: silently take over ``github``.
 SERVER_PREFIX = "ext:"
+
+#: The setting a development install names its service with.
+SERVICE_URL_SETTING = "serviceUrl"
 
 
 class InstallError(Exception):
@@ -97,14 +108,16 @@ class ExtensionInstaller:
         rpc: ExtensionRpc,
         mcp: Any,
         origins: ExtensionOrigins | None = None,
-        trust_store: TrustStore | None = None,
         project_dir: Path | None = None,
         secret_resolver: Callable[[str], str | None] | None = None,
         profile: DeploymentProfile | None = None,
         resolver: CapabilityResolver | None = None,
         plugins_dir: Path | None = None,
         audience: ToolAudience | None = None,
-        allow_unsigned: bool = False,
+        allow_development: bool = False,
+        store: ExtensionStore | None = None,
+        environments: PythonEnvironments | None = None,
+        service_tokens: ServiceTokenEndpoint | None = None,
     ) -> None:
         """
         Args:
@@ -119,10 +132,6 @@ class ExtensionInstaller:
                 and script each other's frames. Optional: an
                 extension that contributes no pages needs none, and
                 neither does a headless deployment.
-            trust_store: The public keys this deployment accepts a
-                bundle from. Never populated from the bundle being
-                installed, which would make a signature a formality
-                any bundle could satisfy by bringing its own key.
             project_dir: The user's project. Told to a service only
                 when ``permissions.workspace`` grants it.
             secret_resolver: The deployment's secret source. A name
@@ -134,21 +143,30 @@ class ExtensionInstaller:
             profile: How many principals this backend serves. A
                 sidecar is one process, so a shared backend refuses
                 one — see :mod:`ember_code.extensions.profile`.
-            allow_unsigned: Whether ``trust: unsigned`` may be
-                installed. False everywhere but development, because
-                the easiest way to ship must not be the one with no
-                provenance.
+            allow_development: Whether a bundle igni server did not
+                distribute may be installed — ``IGNI_DEV_EXTENSIONS``.
+                False everywhere but development, because the easiest
+                way to ship must not be the one with no provenance.
+            store: Where a development install's settings are read,
+                for the ``serviceUrl`` its token is fetched for.
+            environments: Where ``python`` packaging is installed.
+                Without one such an extension cannot start, and says so.
+            service_tokens: The loopback endpoint an extension fetches
+                its service's token from. Without one, no extension is
+                told how to reach its service as the signed-in person.
         """
         self._registry = registry
         self._rpc = rpc
         self._mcp = mcp
         self._origins = origins
-        self._trust = trust_store if trust_store is not None else TrustStore()
         self._project_dir = project_dir
         self._secret_resolver = secret_resolver
         self._profile = profile if profile is not None else DeploymentProfile.current()
         self._resolver = resolver
-        self._allow_unsigned = allow_unsigned
+        self._allow_development = allow_development
+        self._store = store
+        self._environments = environments
+        self._service_tokens = service_tokens
         # Where a plugin an extension carries is installed.
         # ``None`` means this deployment does not take them —
         # the extension still installs, and its agents do not
@@ -156,19 +174,25 @@ class ExtensionInstaller:
         self._plugins_dir = plugins_dir
         self._audience = audience or default_audience
 
-    async def install(self, bundle: Path) -> InstalledExtension:
+    async def install(
+        self, bundle: Path, *, distribution: DistributionRecord | None = None
+    ) -> InstalledExtension:
         """Install the bundle at ``bundle`` and try to start it.
 
         Returns the registry entry either way. A started extension is
         ``READY``; one that could not start is ``FAILED`` with a
         reason, which is a state, not an error.
 
+        Args:
+            distribution: How igni server distributed this bundle, when
+                it did. ``None`` makes it a development install.
+
         Raises:
             InstallError: The bundle is not installable at all — bad
                 manifest, refused trust, or an id already installed.
         """
         manifest = self._read(bundle)
-        self._check_trust(manifest, bundle)
+        self._check_trust(manifest, distribution)
         self._check_profile(manifest)
         self._check_deliverable(manifest)
         self._check_events(manifest)
@@ -191,16 +215,27 @@ class ExtensionInstaller:
 
         try:
             resolved = await self._resolve_requirements(manifest)
-            config = self._service_config(manifest, bundle, permissions, resolved)
-        except (InstallError, PermissionDenied, UnresolvedRequirement) as exc:
+            entry_point = await self._python_entry(manifest, bundle, distribution)
+            token_env = await self._service_token_environment(manifest, distribution)
+            config = self._service_config(
+                manifest, bundle, permissions, resolved, entry_point, token_env
+            )
+        except (
+            InstallError,
+            PermissionDenied,
+            UnresolvedRequirement,
+            PythonEnvironmentError,
+        ) as exc:
             # Packaging we cannot honour. Recorded rather than raised:
             # the extension is installed and not runnable here, which
             # is exactly what an administrator needs to be shown.
+            self._revoke_token(manifest.id)
             self._registry.set_state(manifest.id, ExtensionState.FAILED, str(exc))
             return entry
 
         reason = await self._start(config)
         if reason is not None:
+            self._revoke_token(manifest.id)
             self._registry.set_state(manifest.id, ExtensionState.FAILED, reason)
             return entry
 
@@ -275,6 +310,7 @@ class ExtensionInstaller:
             logger.warning("stopping %s failed: %s", extension_id, exc)
         self._remove_plugin(extension_id)
         self._audience.release(server_name(extension_id))
+        self._revoke_token(extension_id)
         self._registry.remove(extension_id)
         logger.info("extension %s removed", extension_id)
         return True
@@ -291,29 +327,56 @@ class ExtensionInstaller:
         except ValueError as exc:
             raise InstallError(f"{path} is not a valid manifest: {exc}") from exc
 
-    def _check_trust(self, manifest: ExtensionManifest, bundle: Path) -> None:
+    def _check_trust(
+        self, manifest: ExtensionManifest, distribution: DistributionRecord | None
+    ) -> None:
         """Provenance, before anything is registered or started.
 
-        An unsigned bundle is refused outright unless the deployment
-        opted in. A signed one has its signature checked against the
-        keys an administrator added — offline, because an air-gapped
-        customer is the normal case and a check that needs the
-        network is a check that gets skipped.
+        Where the bundle came from decides, not what its manifest says
+        about itself. A distributed one was verified against its
+        service's key before it was stored, so here it only has to be
+        the bundle that was verified, and not a ``dev`` command; its
+        ``trust`` label is not consulted. Any other bundle is a
+        development install, and needs the flag the person at this
+        machine sets for themselves.
         """
-        if manifest.trust is Trust.UNSIGNED:
-            if not self._allow_unsigned:
+        if distribution is not None:
+            if (manifest.id, manifest.version) != (
+                distribution.extension_id,
+                distribution.version,
+            ):
                 raise InstallError(
-                    f"{manifest.id} is unsigned and this deployment does not accept "
-                    "unsigned extensions. Sign it, or enable development mode."
+                    f"{manifest.id} {manifest.version} is not what igni distributed "
+                    f"({distribution.extension_id} {distribution.version}); the bundle "
+                    "changed after it was verified. It is fetched again at the next sync."
                 )
-            logger.warning("extension %s is unsigned; this deployment allows that", manifest.id)
+            if manifest.is_development_command:
+                raise InstallError(
+                    f"{manifest.id} uses 'dev' packaging, a command out of its "
+                    "manifest, and igni does not run one that came from a service. "
+                    "A service ships 'python' packaging."
+                )
+            logger.info(
+                "extension %s %s distributed by igni for %s",
+                manifest.id,
+                manifest.version,
+                distribution.service_url,
+            )
             return
 
-        try:
-            key = verify_bundle(bundle, manifest, self._trust)
-        except SignatureError as exc:
-            raise InstallError(f"{manifest.id}: {exc}") from exc
-        logger.info("extension %s signed by %s", manifest.id, key.owner)
+        if not self._allow_development:
+            raise InstallError(
+                f"{manifest.id} was not distributed by igni server, so it is a "
+                f"development install, and {DEV_FLAG} is not set. Extensions reach "
+                "this machine from their services through igni; set "
+                f"{DEV_FLAG}=1 to run one you are developing."
+            )
+        logger.warning(
+            "extension %s is a development install (trust %s); %s allows that",
+            manifest.id,
+            manifest.trust.value,
+            DEV_FLAG,
+        )
 
     def _check_profile(self, manifest: ExtensionManifest) -> None:
         """What this deployment's shape forbids.
@@ -326,7 +389,7 @@ class ExtensionInstaller:
         if not self._profile.is_shared:
             return
 
-        if manifest.sidecar is not None or manifest.dev is not None:
+        if manifest.runs_here:
             raise InstallError(
                 f"{manifest.id} is packaged to run as a process here, and this "
                 "backend serves more than one principal. One process would be "
@@ -455,35 +518,119 @@ class ExtensionInstaller:
             resolved.append(answer)
         return resolved
 
+    async def _python_entry(
+        self,
+        manifest: ExtensionManifest,
+        bundle: Path,
+        distribution: DistributionRecord | None,
+    ) -> Path | None:
+        """The installed console script, for ``python`` packaging.
+
+        Built once per extension and version; a development install
+        may build it from the bundle directory, a distributed one only
+        from the wheels it carries.
+        """
+        if manifest.python is None:
+            return None
+        if self._environments is None:
+            raise InstallError(
+                f"{manifest.id} is a Python package and this backend has nowhere "
+                "to install one, so it cannot start here."
+            )
+        return await self._environments.ensure(manifest, bundle, development=distribution is None)
+
+    def _service_url(
+        self, manifest: ExtensionManifest, distribution: DistributionRecord | None
+    ) -> str | None:
+        """The service this extension belongs to, if it has one.
+
+        From the distribution record — igni says which service shipped
+        it — or, for a development install, the extension's own
+        ``serviceUrl`` setting, because there is no record to ask.
+        """
+        if distribution is not None:
+            return distribution.service_url
+        if self._store is None:
+            return None
+        value = self._store.settings(manifest).get(SERVICE_URL_SETTING)
+        text = str(value).strip() if value is not None else ""
+        return text or None
+
+    async def _service_token_environment(
+        self, manifest: ExtensionManifest, distribution: DistributionRecord | None
+    ) -> dict[str, str]:
+        """How this extension's process gets a token for its service.
+
+        Only for a process igni starts, and only when there is a
+        service: an extension that belongs to none is told nothing.
+        """
+        if self._service_tokens is None or not manifest.runs_here:
+            return {}
+        service_url = self._service_url(manifest, distribution)
+        if service_url is None:
+            return {}
+        return await self._service_tokens.grant(manifest.id, service_url)
+
+    def _revoke_token(self, extension_id: str) -> None:
+        if self._service_tokens is not None:
+            self._service_tokens.revoke(extension_id)
+
+    def _process_environment(
+        self,
+        literal: dict[str, str],
+        permissions: Permissions,
+        resolved: list[Resolved],
+        token_env: dict[str, str],
+    ) -> dict[str, str]:
+        """A started process's environment, in precedence order.
+
+        The manifest's own literals first, so nothing igni grants can
+        be shadowed by a value the bundle shipped — an extension
+        setting ``IGNI_WORKSPACE`` or ``IGNI_SERVICE_TOKEN_URL`` itself
+        must not be how it gets one. Then the grants, then what the
+        resolver found, then the token endpoint.
+        """
+        env = dict(literal)
+        env.update(permissions.service_environment(self._project_dir))
+        env.update(Connections(resolved).environment())
+        env.update(token_env)
+        return env
+
     def _service_config(
         self,
         manifest: ExtensionManifest,
         bundle: Path,
         permissions: Permissions,
         resolved: list[Resolved],
+        entry_point: Path | None = None,
+        token_env: dict[str, str] | None = None,
     ) -> MCPServerConfig:
         """How to reach this extension's service, within its grants."""
         name = server_name(manifest.id)
 
+        if manifest.python is not None:
+            if entry_point is None:
+                raise InstallError(f"{manifest.id}: its package was not installed")
+            return MCPServerConfig(
+                name=name,
+                type=MCPTransport.stdio,
+                command=str(entry_point),
+                args=[],
+                env=self._process_environment({}, permissions, resolved, token_env or {}),
+                cwd=str(bundle),
+                source="extension",
+            )
+
         if manifest.dev is not None:
             cwd = bundle if manifest.dev.cwd is None else bundle / manifest.dev.cwd
-            # The manifest's own `env` first, so a grant cannot be
-            # shadowed by a literal the bundle shipped — an extension
-            # setting `IGNI_WORKSPACE` itself must not be how it gets
-            # one.
-            env = dict(manifest.dev.env)
-            env.update(permissions.service_environment(self._project_dir))
-            # What the resolver found, so the service can reach it.
-            # Last, for the same reason the grants go after the
-            # bundle's own ``env``: a literal in the manifest must
-            # not be how an extension picks its own graph store.
-            env.update(Connections(resolved).environment())
             return MCPServerConfig(
                 name=name,
                 type=MCPTransport.stdio,
                 command=manifest.dev.command[0],
                 args=list(manifest.dev.command[1:]),
-                env=env,
+                env=self._process_environment(
+                    dict(manifest.dev.env), permissions, resolved, token_env or {}
+                ),
                 # Its command is relative to the bundle, which is not
                 # where the backend happens to be running.
                 cwd=str(cwd),
@@ -504,8 +651,9 @@ class ExtensionInstaller:
         raise InstallError(
             f"{manifest.id} is packaged as a sidecar image "
             f"({manifest.sidecar.image if manifest.sidecar else '?'}), and "
-            "starting container images is not implemented yet. Use 'endpoint' "
-            "to register a service you run, or 'dev' to run a command locally."
+            "starting container images is not implemented yet. Use 'python' "
+            "to ship a package, 'endpoint' to register a service you run, or "
+            "'dev' to run a command locally."
         )
 
     @staticmethod

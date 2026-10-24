@@ -1,10 +1,15 @@
-"""``igni ext`` — build, check and install extensions.
+"""``igni ext`` — build, check and install extensions while developing them.
 
-EXTENSIBILITY §9 has promised ``igni ext init`` and ``igni ext
-doctor`` for as long as there has been an extension system, and
-neither existed. Installing meant calling ``ExtensionInstaller`` from
-Python, which is not a thing an administrator does and not a thing a
-partner can be handed.
+Extensions reach people's machines from their services, through igni
+server: a service uploads its signed bundle, a super admin approves the
+service, and every signed-in igni installs it (igni server's ``docs/service-identity.md``
+§8). There is no extension marketplace and no policy that pushes one.
+
+What is left here is the author's side. ``init`` scaffolds one,
+``doctor`` checks one, and ``install`` runs one from a directory or a
+repository — a **development install**, which needs
+``IGNI_DEV_EXTENSIONS=1`` because it is the one way onto a machine that
+does not go through igni.
 
 Everything here works against the **store** rather than a running
 backend. An install is a decision that outlives a process: the bundle
@@ -28,8 +33,8 @@ from pathlib import Path
 import click
 
 from ember_code.core.plugins.git import GitClient, GitError
-from ember_code.core.plugins.marketplace_store import MarketplaceRegistryStore
-from ember_code.extensions.manifest import ExtensionManifest, Trust, Workspace
+from ember_code.extensions.manifest import ExtensionManifest, Workspace
+from ember_code.extensions.profile import DEV_FLAG, DevelopmentFlag
 from ember_code.extensions.store import ExtensionStore, StoreError
 
 #: What this build of igni implements. An extension declares a range
@@ -69,9 +74,7 @@ def doctor(bundle: Path) -> None:
     click.echo(f"{manifest.display_name} ({manifest.id} {manifest.version})")
     click.echo(f"  contract   {manifest.contract}")
     click.echo(f"  trust      {manifest.trust.value}")
-
-    packaging = "dev" if manifest.dev else "sidecar" if manifest.sidecar else "endpoint"
-    click.echo(f"  packaging  {packaging}")
+    click.echo(f"  packaging  {manifest.packaging}")
 
     # Two lists, because they are not the same question. A *problem*
     # stops this working; a *note* is something to know. The
@@ -83,24 +86,34 @@ def doctor(bundle: Path) -> None:
     problems: list[str] = []
     notes: list[str] = []
 
-    if manifest.trust is Trust.UNSIGNED:
-        if manifest.dev is not None:
-            notes.append(
-                "unsigned, which development packaging requires. A deployment "
-                "that has not enabled development mode will refuse it, so sign "
-                "it before anybody else installs it."
-            )
-        else:
+    if manifest.dev is not None:
+        notes.append(
+            "development packaging: it runs only as a development install, "
+            f"with {DEV_FLAG}=1. To reach anybody else, ship it from your "
+            "service with 'python' packaging."
+        )
+
+    if manifest.python is not None:
+        wheels = bundle / manifest.python.wheels
+        has_wheels = wheels.is_dir() and any(wheels.glob("*.whl"))
+        buildable = (bundle / "pyproject.toml").is_file() or (bundle / "setup.py").is_file()
+        if not has_wheels and not buildable:
             problems.append(
-                "unsigned — a deployment that has not enabled development mode will refuse it"
+                f"python packaging with no wheelhouse at {manifest.python.wheels!r} "
+                "and nothing to build one from (no pyproject.toml or setup.py)"
             )
-    elif not manifest.signature:
-        problems.append(f"trust is {manifest.trust.value} and there is no signature")
+        elif not has_wheels:
+            notes.append(
+                f"no wheelhouse at {manifest.python.wheels!r}: a development install "
+                "builds one from this directory, network allowed. The bundle your "
+                "service uploads must carry it, because a machine installs from it "
+                "with no index."
+            )
 
     if manifest.sidecar is not None:
         problems.append(
             f"packaged as a sidecar image ({manifest.sidecar.image}); igni "
-            "cannot start container images yet. Use 'endpoint' or 'dev'."
+            "cannot start container images yet. Use 'python', 'endpoint' or 'dev'."
         )
 
     if manifest.contributes.pages and not (bundle / "ui").is_dir():
@@ -128,7 +141,7 @@ def doctor(bundle: Path) -> None:
                 "endpoint, so they could never be delivered"
             )
 
-    if manifest.sidecar is not None or manifest.dev is not None:
+    if manifest.runs_here:
         notes.append(
             "runs as a process on the machine igni is on, so it installs only on "
             "a single-user backend. One process cannot serve a group: there is "
@@ -203,23 +216,12 @@ def _bundle_from(source: str, *, ref: str | None, subdir: str | None) -> Iterato
     ``~/.igni`` would be a stale checkout nobody updates and
     everybody finds.
     """
-    marketplace = MarketplaceRegistryStore().resolve_extension_ref(source)
-    if marketplace is not None:
-        resolved, row = marketplace
-        click.echo(f"{row.name} — {row.description or 'from the catalog'}")
-        # The catalog's own ref wins only when the caller gave
-        # none: somebody typing `--ref` has said something more
-        # specific than the listing did.
-        with _bundle_from(
-            resolved.url, ref=ref or resolved.ref, subdir=subdir or resolved.subdir
-        ) as bundle:
-            yield bundle
-        return
     if source.startswith("@"):
         raise click.ClickException(
-            f"{source} does not name an extension in any registered "
-            "marketplace. `igni ext marketplace list` shows what is "
-            "registered, and `igni ext marketplace add <url>` adds one."
+            f"{source} looks like a marketplace reference, and extensions have "
+            "no marketplace. They arrive from their services through igni "
+            "server when you are signed in; a development install takes a "
+            "directory or a repository URL."
         )
 
     if not source.startswith(_REPOSITORY):
@@ -298,29 +300,31 @@ def _bundle_from(source: str, *, ref: str | None, subdir: str | None) -> Iterato
 def install(
     source: str, replace: bool, ref: str | None, subdir: str | None, root: str | None
 ) -> None:
-    """Install a bundle into this deployment.
+    """Install a bundle you are developing.
 
-    SOURCE is a marketplace ref (``@acme/scanner``), a directory, or
-    a repository URL — the same three things ``igni plugin install``
-    takes, and deliberately so. A plugin is
-    shared as a repository because that is how people share things,
-    and an extension that could only be installed from a directory
-    somebody already had was an extension nobody could hand you.
+    SOURCE is a directory or a repository URL. This is a development
+    install, and it needs ``IGNI_DEV_EXTENSIONS=1``: extensions reach
+    machines from their services through igni server, and this is the
+    one way onto a machine that does not. The backend refuses to start
+    a development install without the flag too, so setting it here
+    and not there gets you a stored bundle that does not run.
 
-    A clone is a bundle like any other: the signature is over the
-    bundle digest, so ``trust: signed`` is verified exactly as it is
-    for a directory, and an unsigned one is refused in the same
-    place. Pin with ``--ref`` — an extension is a process, which is
-    more than a plugin is, so installing whatever ``main`` says
-    today is worth less here than it is there.
+    A ``python``-packaged source checkout with no wheelhouse is built
+    from the directory when the backend starts it, network allowed.
 
-    An air-gapped deployment clones nothing and passes a directory,
-    which is why the directory form stays rather than being replaced.
+    A development install of an id igni also distributes wins on this
+    machine: the sync leaves it alone until you remove it.
 
     Copies it into the store. The backend starts it at its next boot
     — this command does not reach into a running one, so a backend
     that is up will not see it until it restarts.
     """
+    if not DevelopmentFlag.enabled():
+        raise click.ClickException(
+            "Installing from a directory or a repository is for developing an "
+            f"extension, and needs {DEV_FLAG}=1. Extensions reach this machine "
+            "from their services through igni server when you are signed in."
+        )
     store = _store(root)
     with _bundle_from(source, ref=ref, subdir=subdir) as bundle:
         try:
@@ -329,7 +333,7 @@ def install(
         except StoreError as exc:
             raise click.ClickException(str(exc)) from exc
 
-    click.echo(f"installed {manifest.display_name} ({manifest.id}) to {target}")
+    click.echo(f"installed {manifest.display_name} ({manifest.id}) to {target} for development")
     _echo_grants(manifest)
     click.echo()
     click.echo("Restart igni for it to start.")
@@ -372,22 +376,35 @@ def list_installed(root: str | None) -> None:
         except StoreError as exc:
             click.echo(f"{bundle.name:<28} unreadable — {exc}")
             continue
-        click.echo(f"{manifest.id:<28} {manifest.version:<10} {manifest.trust.value}")
+        record = store.distribution_of(manifest.id)
+        source = f"from {record.service_url}" if record is not None else "development install"
+        click.echo(f"{manifest.id:<28} {manifest.version:<10} {source}")
 
 
 @ext.command("remove")
 @click.argument("extension_id")
 @click.option("--root", default=None, help="Read somewhere other than the default.")
 def remove(extension_id: str, root: str | None) -> None:
-    """Uninstall an extension from this deployment."""
+    """Uninstall an extension from this deployment.
+
+    One igni distributed comes back at the next sync for as long as
+    its service is approved, and this says so rather than letting the
+    removal look permanent.
+    """
     store = _store(root)
     try:
+        distributed = store.distribution_of(extension_id)
         removed = store.remove(extension_id)
     except StoreError as exc:
         raise click.ClickException(str(exc)) from exc
     if not removed:
         raise click.ClickException(f"{extension_id} is not installed")
     click.echo(f"removed {extension_id}")
+    if distributed is not None:
+        click.echo(
+            f"It came from {distributed.service_url} through igni, and is installed "
+            "again at the next sync while that service is approved."
+        )
     click.echo("Restart igni for it to stop.")
 
 
@@ -432,7 +449,7 @@ def init(directory: Path, extension_id: str | None) -> None:
     click.echo(f"created {directory}")
     click.echo()
     click.echo(f"  igni ext doctor {directory}")
-    click.echo(f"  igni ext install {directory}")
+    click.echo(f"  {DEV_FLAG}=1 igni ext install {directory}")
 
 
 _SERVER = '''"""This extension's backend.
@@ -523,9 +540,12 @@ ui/index.html   the page igni frames
 ## Run it
 
 ```bash
-igni ext doctor .     # check it
-igni ext install .    # copy it into this deployment
+igni ext doctor .                          # check it
+IGNI_DEV_EXTENSIONS=1 igni ext install .   # a development install
 ```
+
+Start igni with `IGNI_DEV_EXTENSIONS=1` too — a development install
+does not run without it.
 
 Then restart igni. The page appears in the sidebar.
 
@@ -543,99 +563,10 @@ Then restart igni. The page appears in the sidebar.
 
 ## Before anybody else installs it
 
-`trust: unsigned` is development only, and a deployment that has not
-enabled development mode will refuse it. Sign the bundle and set
-`trust` to `partner`.
+Nobody else installs it from here. An extension reaches people's
+machines from its service, through igni server: package it as
+`python` with its wheelhouse, and have the service upload the signed
+bundle at start-up (igni server's `docs/service-identity.md` §8).
+Once a super admin
+approves the service, every signed-in igni installs it.
 """
-
-
-@ext.group("marketplace")
-def marketplace() -> None:
-    """Catalogs of extensions you can install by name.
-
-    **The same registry ``igni plugin marketplace`` uses**, and the
-    same ``.claude-plugin/marketplace.json`` file — igni reads an
-    ``extensions`` array beside the ``plugins`` one. A catalog can
-    offer either or both, a Claude Code marketplace still parses,
-    and adding one here makes its plugins available there too.
-
-    Two doors, one room. The commands are duplicated because
-    somebody installing an extension should not have to know that
-    the registry lives under ``plugin``; the registry is not.
-
-    Self-hosted: a marketplace is a git repository you control.
-    There is no index igni publishes and nothing to submit to.
-    """
-
-
-def _marketplace_store() -> MarketplaceRegistryStore:
-    return MarketplaceRegistryStore()
-
-
-@marketplace.command("add")
-@click.argument("url")
-def marketplace_add(url: str) -> None:
-    """Register the catalog at URL."""
-    try:
-        entry = _marketplace_store().add(url)
-    except Exception as exc:
-        raise click.ClickException(f"adding {url} failed: {exc}") from exc
-    catalog = entry.cached
-    extensions = len(catalog.extensions) if catalog else 0
-    plugins = len(catalog.plugins) if catalog else 0
-    click.echo(f"added {entry.name} — {extensions} extension(s), {plugins} plugin(s)")
-
-
-@marketplace.command("remove")
-@click.argument("name")
-def marketplace_remove(name: str) -> None:
-    """Forget a registered catalog. Installed extensions stay."""
-    if not _marketplace_store().remove(name):
-        raise click.ClickException(f"no marketplace named {name!r} is registered")
-    click.echo(f"removed {name}")
-
-
-@marketplace.command("refresh")
-@click.argument("name", required=False)
-def marketplace_refresh(name: str | None) -> None:
-    """Re-fetch one catalog, or every one."""
-    store = _marketplace_store()
-    if name:
-        if store.refresh(name) is None:
-            raise click.ClickException(f"no marketplace named {name!r} is registered")
-        click.echo(f"refreshed {name}")
-        return
-    outcomes = store.refresh_all()
-    if not outcomes:
-        click.echo("no marketplaces registered")
-        return
-    for outcome in outcomes:
-        click.echo(f"  {'ok  ' if outcome.ok else 'fail'} {outcome.name} {outcome.reason}")
-
-
-@marketplace.command("list")
-def marketplace_list() -> None:
-    """What is registered, and what each one offers.
-
-    Extensions only. A catalog's plugins are listed by ``igni
-    plugin marketplace list``, which is the command somebody
-    looking for a plugin would reach for.
-    """
-    registry = _marketplace_store().load()
-    if not registry.marketplaces:
-        click.echo("no marketplaces registered")
-        click.echo()
-        click.echo("  igni ext marketplace add <git-url>")
-        return
-    for entry in registry.marketplaces:
-        catalog = entry.cached
-        click.echo(f"{entry.name}  {entry.url}")
-        if catalog is None:
-            click.echo("    not fetched yet — igni ext marketplace refresh")
-            continue
-        if not catalog.extensions:
-            click.echo("    no extensions (it may still offer plugins)")
-            continue
-        for row in catalog.extensions:
-            summary = f" — {row.description}" if row.description else ""
-            click.echo(f"    @{entry.name}/{row.name}{summary}")

@@ -19,6 +19,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
+from collections.abc import Callable
 from typing import Any
 
 from ember_code.backend.push_bridge import PushNotificationBridge
@@ -39,6 +40,17 @@ class LoginCoordinator:
         self._backend = backend
         self._push = push_bridge
         self._task: asyncio.Task[None] | None = None
+        self._signed_in: list[Callable[[], object]] = []
+
+    def on_signed_in(self, callback: Callable[[], object]) -> None:
+        """Call ``callback`` after every successful sign-in.
+
+        For the work that depends on who is signed in and cannot have
+        happened before — fetching the extensions that person's igni
+        server distributes is the first. A callback that raises is
+        logged and does not undo the sign-in.
+        """
+        self._signed_in.append(callback)
 
     async def start(self) -> LoginStarted:
         """Cancel any previous login attempt, kick off a new one,
@@ -66,9 +78,17 @@ class LoginCoordinator:
             res: LoginResult = await self._backend.login(on_status=self._push.on_login_status)
             if res.ok:
                 self._backend.reload_cloud_credentials()
+                self._notify_signed_in()
             await self._push.on_login_result(success=res.ok, result=res.wire_result_string())
         except asyncio.CancelledError:
             # Cancelled via ``CancelLogin`` — no result to push.
             pass
         except Exception as exc:  # pragma: no cover — defensive
             await self._push.on_login_result(success=False, result=str(exc))
+
+    def _notify_signed_in(self) -> None:
+        for callback in list(self._signed_in):
+            try:
+                callback()
+            except Exception:  # noqa: BLE001 — a listener must not fail the sign-in
+                logger.exception("a sign-in listener failed")

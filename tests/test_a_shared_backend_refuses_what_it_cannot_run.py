@@ -58,7 +58,7 @@ def installer(tmp_path: Path, profile: DeploymentProfile) -> ExtensionInstaller:
         mcp=MCPClientManager(project_dir=tmp_path),
         origins=ExtensionOrigins(),
         profile=profile,
-        allow_unsigned=True,
+        allow_development=True,
     )
 
 
@@ -92,6 +92,23 @@ def test_a_value_that_is_not_a_profile_falls_back_to_single_user(monkeypatch):
 async def test_a_process_packaging_is_refused_on_a_shared_backend(tmp_path):
     with pytest.raises(InstallError, match="more than one principal"):
         await installer(tmp_path, DeploymentProfile.SHARED).install(bundle_at(tmp_path))
+
+
+@pytest.mark.asyncio
+async def test_a_python_package_is_a_process_too(tmp_path):
+    """A service's extension runs here as one process, so a shared
+    backend refuses it for the same reason it refuses ``dev``."""
+    bundle = bundle_at(
+        tmp_path,
+        dev=None,
+        trust="first-party",
+        python={"package": "acme-x", "entry": "acme-x", "mcp": {"transport": "stdio"}},
+    )
+    raw = json.loads((bundle / "manifest.json").read_text())
+    raw.pop("dev")
+    (bundle / "manifest.json").write_text(json.dumps(raw))
+    with pytest.raises(InstallError, match="more than one principal"):
+        await installer(tmp_path, DeploymentProfile.SHARED).install(bundle)
 
 
 @pytest.mark.asyncio

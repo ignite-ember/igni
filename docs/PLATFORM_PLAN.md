@@ -42,7 +42,7 @@ Contract in [EXTENSIBILITY.md](EXTENSIBILITY.md). Order matters; step 3 is the g
 3. **Port `CodeIndexPanel` behind the bridge, unchanged.** If a two-prop panel hosts without modification, the contract is real. If not, we learn it in days.
 4. **Contribution points** replacing the closed unions — `PageKind` (`chat/pageStack.ts:28`), `SIDEBAR_LINKS` / `TOOLS_MENU` (`App.tsx:143`).
 5. **Prompt contributions**: generalise `{{CODEINDEX_GRAPH_SCHEMA}}` (`core/prompts/__init__.py:20`) and the `.codeindex.md` variant suffix (`core/agents/loader.py:151`).
-6. **Manifest, validation, signature verification.** Local against a compiled-in key for first-party; a deployment trust store for everyone else.
+6. **Manifest, validation, signature verification.** Now igni server's distribution: the service signs its bundle with its registered key, and the host verifies it against that key before installing (`EXTENSIBILITY.md`, "Shipping one"). No trust store.
 7. **Remote extension registration** so any backend can attach a remote extension (Artifacts) regardless of where it runs.
 
 ---

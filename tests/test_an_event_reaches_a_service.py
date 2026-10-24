@@ -74,7 +74,7 @@ class Wired:
             rpc=self.rpc,
             mcp=self.mcp,
             origins=self.origins,
-            allow_unsigned=True,
+            allow_development=True,
         )
         self.service_events = ServiceEvents(rpc=self.rpc)
 

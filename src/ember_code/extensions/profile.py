@@ -41,6 +41,9 @@ logger = logging.getLogger(__name__)
 #: Set to ``shared`` on a backend serving more than one principal.
 ENV_VAR = "IGNI_DEPLOYMENT"
 
+#: Set to ``1`` to allow development installs.
+DEV_FLAG = "IGNI_DEV_EXTENSIONS"
+
 
 class DeploymentProfile(StrEnum):
     """Who this backend is for."""
@@ -76,3 +79,20 @@ class DeploymentProfile(StrEnum):
     @property
     def is_shared(self) -> bool:
         return self is DeploymentProfile.SHARED
+
+
+class DevelopmentFlag:
+    """``IGNI_DEV_EXTENSIONS``: whether development installs may run.
+
+    Extensions reach a machine from their services through igni
+    server (its ``docs/service-identity.md`` §8). Anything else — a
+    directory, a clone — is a development install, and the person at
+    the keyboard opts in to running one, visibly, outside any bundle.
+    An environment variable rather than a setting for the same reason
+    the deployment profile is one: it is not something a manifest or a
+    bundle can reach.
+    """
+
+    @staticmethod
+    def enabled() -> bool:
+        return os.environ.get(DEV_FLAG, "").strip().lower() in {"1", "true", "yes"}

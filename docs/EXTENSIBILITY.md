@@ -148,105 +148,105 @@ merely ungranted. Its own, under `ext.<id>.`, need no grant — it is
 always allowed to talk to itself. And events go host→extension only;
 an extension cannot emit into another.
 
-### Shipping one
+### Shipping one: from its service, through igni
 
-An extension installs from a **directory or a repository URL** —
-the same two forms `igni plugin install` takes. The signature is
-over the bundle digest, so a clone verifies exactly as a directory
-does, and an air-gapped deployment passes a directory because it
-clones nothing.
+An extension reaches people's machines **from its service and nowhere
+else** — §8 of igni server's `service-identity.md` is the contract.
+There is no extension marketplace and no group policy that pushes one.
+
+1. **The service uploads it.** On every start, after registering, a
+   service `PUT`s its bundle — a gzipped tar with `manifest.json` at
+   its root — to `{igni}/v1/clients/{client_id}/extension`, with
+   `X-Igni-Bundle-Signature`: a compact JWS, signed with the key the
+   service registered, over `{"extension", "version", "sha256"}`.
+2. **A super admin approves the service**, having compared its key's
+   thumbprint and read what the extension would put on machines.
+3. **Every signed-in igni installs it.** At session start-up and on
+   sign-in the host lists `GET {igni}/v1/extensions` as the signed-in
+   person, and for each entry whose version or digest differs from what
+   is installed downloads `GET /v1/extensions/{id}/bundle`, verifies
+   the JWS against the entry's `publisher_jwks` (RS256 or ES256, by
+   `kid`), checks that the claim names this archive's SHA-256 and this
+   manifest's id and version, unpacks it safely, and installs it through
+   the ordinary boot path — trust, deployment profile, capability
+   resolution. An extension whose service is no longer listed is
+   stopped and removed.
+
+**Never in the way.** The sync runs in the background. Not signed in,
+igni unreachable, a bundle that does not verify — each is logged and
+whatever is installed keeps running; a failed listing removes nothing.
+(`extensions/distribution.py`)
+
+**Trust is provenance.** A bundle igni distributed is trusted because
+its signature verified against the approved service's key, and the
+store records that (`<id>.distribution.json`). Everything else is a
+development install. A manifest no longer carries a signature: one
+cannot cover the archive it is inside, and the administrator-kept
+Ed25519 trust store that checked it is gone.
+
+**The `python` packaging** is how a service's extension runs: a package
+speaking MCP over stdio, whose bundle carries its wheel and every
+dependency's (`cp312` or pure-Python, per platform igni runs on).
+
+```json
+"python": {
+  "package": "igni_artifacts_extension",
+  "entry": "igni-artifacts-extension",
+  "wheels": "wheels",
+  "mcp": {"transport": "stdio"}
+}
+```
+
+igni installs it into a private environment per extension and version,
+made with its own interpreter (CPython 3.12), with `pip install
+--no-index --find-links <wheels> --only-binary :all:` and pip's own
+configuration ignored — an air-gapped machine has no index, and one
+that has must not quietly use it — and starts `entry` over stdio.
+(`extensions/python_env.py`)
+
+**An extension's token for its service.** The extension never holds
+the person's igni session. The host does the RFC 8693 token exchange at
+`{igni}/v1/oauth/token` with the session as `subject_token` and the
+service's URL as `audience`, caches the ten-minute token and renews it
+in its last minute, and serves it on a loopback endpoint. A process
+igni starts is given `IGNI_SERVICE_URL` (from the distribution record,
+or the extension's `serviceUrl` setting for a development install),
+`IGNI_SERVICE_TOKEN_URL` and `IGNI_SERVICE_TOKEN_SECRET`; `GET` with
+`Authorization: Bearer <secret>` answers
+`{"access_token", "expires_in", "service_url"}`, `401` for any other
+secret, `503` when nobody is signed in. The secret decides the
+audience, so an extension can only ever get its own service's token.
+It is a listener of its own rather than the extension's UI origin,
+which lives in a browser. (`extensions/service_token.py`) A service
+token is never a `permissions.secrets` grant.
+
+### Developing one: a directory or a repository
+
+The only other way onto a machine, and only for development:
+`IGNI_DEV_EXTENSIONS=1`, set by the person at the keyboard, for both
+`igni ext install` and the backend that starts it.
 
 ```
-igni ext install ./my-extension
-igni ext install https://github.com/acme/scanner
-igni ext install https://github.com/acme/tools --subdir extensions/scanner --ref v1.2.0
+IGNI_DEV_EXTENSIONS=1 igni ext install ./my-extension
+IGNI_DEV_EXTENSIONS=1 igni ext install https://github.com/acme/tools --subdir extensions/scanner --ref v1.2.0
 ```
 
-`--ref` takes a branch, a tag or a commit. Without it you get the
-default branch as it stands, which is a choice rather than an
-oversight; the commit that was installed is always printed either
-way. Pinning is yours to decide — igni says what it took and does
-not argue about it.
+`--ref` takes a branch, a tag or a commit, and the commit that was
+installed is always printed. `--subdir` picks one bundle out of a
+repository holding several; the store keys by extension id, so two
+bundles in one repository need different ids.
 
-**One repository, several extensions.** `--subdir` is how, and it
-is the shape plugins already use for the same reason. The store
-keys by extension *id*, so two bundles in one repository need
-different ids — the second refuses rather than overwriting the
-first. Note that extensions have no marketplace: a monorepo of
-them is installable but not browsable, and somebody has to be told
-the subdir.
+A development install of a `python`-packaged source checkout with no
+wheelhouse builds one from the directory (`pip wheel`, network
+allowed) and then installs from it exactly as a distributed bundle is
+installed. A development install of an id igni also distributes wins
+on that machine: the sync neither overwrites nor removes it.
 
 **One repository, extension *and* plugin.** `contributes.plugin`
 names a directory inside your bundle, so the plugin is not a
 second thing to publish, version or hand anybody — it ships, and
 is removed, with the extension. One plugin per extension: two
 would be asking which agents belong to what.
-
-### A marketplace, which is a repository you run
-
-```
-igni ext marketplace add https://github.com/acme/catalog
-igni ext marketplace list
-igni ext install @acme/scanner
-```
-
-A marketplace is `.claude-plugin/marketplace.json` in a git
-repository you control. igni reads an `extensions` array beside
-the `plugins` one:
-
-```json
-{
-  "name": "acme",
-  "extensions": [
-    { "name": "scanner", "id": "acme.scanner",
-      "source": "./extensions/scanner",
-      "description": "Policy violations in this repository" }
-  ]
-}
-```
-
-`source` takes the same three shapes a plugin row does — a URL, a
-`./relative/path` inside the catalog's own repository, or the
-object form with `git-subdir` — because the question is the same
-one: where do I clone this from, and which part of it do I want.
-
-**Self-hosted, and only that.** There is no index igni publishes
-and nothing to submit to. A marketplace is a repository, which
-means an air-gapped deployment hosts its own and the usual access
-control is the usual access control.
-
-**The same registry as plugins.** `igni ext marketplace add` and
-`igni plugin marketplace add` write the same file; a catalog may
-offer either kind or both, and a Claude Code marketplace still
-parses here. What is *not* shared is the install command: `igni
-plugin install @acme/scanner` will not install an extension and
-will not fall back to looking for one. A plugin is a directory of
-prompts and an extension is a process with permissions, and a ref
-that quietly resolved to the wrong kind would be the worst
-possible convenience.
-
-### Pushed to a fleet
-
-A group policy pack — set in the portal, polled every five minutes
-— can carry `kind: "extensions"` beside the agents, MCPs, plugins
-and settings it already ships. The bundle is cloned and staged;
-the ordinary install path runs over it at next boot, so trust,
-profile, deliverability and capability resolution all apply
-unchanged. A second install path for pushed extensions would be a
-second place for a permission check to go missing.
-
-**Two things a policy may not push.** An **unsigned** extension:
-its contents are whatever the repository said this morning, and
-nobody at the machine reads the policy. And one with **`dev`
-packaging**, which is a command igni runs — locally that sits
-behind `IGNI_DEV_EXTENSIONS`, a flag the person at the keyboard
-sets for themselves, and a policy is written by somebody else. The
-local flag is not theirs to spend, so it is ignored here.
-
-Withdrawing an entry prunes the bundle, unlike a plugin clone
-which is kept: a plugin the group stopped shipping is a directory,
-and an extension it stopped shipping is a process it no longer
-wants running.
 
 ### Not in v1
 
@@ -273,10 +273,15 @@ Additive changes are never breaking, so omitting is cheap and premature inclusio
   "name": "CodeIndex",                // what an admin sees in an install list
   "vendor": "Ignite Ember",           // shown beside the trust tier
 
-  "signature": "…",                   // detached; verified against a key this deployment trusts
   "trust": "first-party",             // first-party | partner | unsigned (dev only)
 
-  // ── one of these two, by packaging. Never both, never neither ──
+  // ── exactly one packaging: python, sidecar, endpoint or dev ──
+  "python": {                         // how a service ships it — see "Shipping one"
+    "package": "igni_codeindex_extension",
+    "entry": "igni-codeindex-extension",
+    "wheels": "wheels",
+    "mcp": { "transport": "stdio" }
+  },
   "sidecar": {
     "image": "igni__code-index:1.4.0", // in the bundle; never pulled at install
     "mcp": { "transport": "stdio" },
@@ -365,7 +370,7 @@ exist and they differ only in what they do *before* returning:
 | Missing instance | provisions one | **refuses the install**, because that is an operator's problem and a backend starting one quietly is the surprise |
 
 **The extension cannot tell which it got**, and that is the point:
-the same bundle, the same signature and the same manifest install in
+the same signed bundle and the same manifest install in
 both places. A manifest that had to know where it was running would
 not be a contract.
 
@@ -472,7 +477,7 @@ Entitlement and configuration are group-level in both deployments; capability ex
 
 | Layer | Decides | User override? |
 |---|---|---|
-| **Deployment** | which images are installed / which endpoints exist, trust store, contract version | no |
+| **Deployment** | which services a super admin approved (and so which extensions igni distributes), which endpoints exist, contract version | no |
 | **Group** | entitlement, configuration, permission narrowing, which contributions appear, branding | **no** |
 | **User** | preferences inside what the group allows | yes, within bounds |
 
@@ -523,15 +528,16 @@ The threat model is not a hostile stranger on a marketplace. It is **a trusted a
 
 ### Trust
 
-| Tier | Signed by | Trusted because | Installed by |
-|---|---|---|---|
-| first-party | us | our key is compiled into the base | ships with the platform |
-| partner | the SI, or the customer for their own code | the admin added that key to the trust store | the admin |
-| unsigned | nobody | — | `--dev` only, persistent banner, never production |
+| Arrived | Trusted because | Installed by |
+|---|---|---|
+| distributed by igni server | its bundle's JWS verifies against the key of the service a super admin approved, and the archive is the one signed | the host, at start-up and sign-in, for every signed-in person |
+| anything else — a directory, a clone | it is not; it is a development install | the person at the keyboard, with `IGNI_DEV_EXTENSIONS=1` |
 
-**We do not sign, review or countersign anyone else's capability.** The base verifies it was signed by a key *this deployment* trusts — nothing more. Verification is local against a detached signature, no network, so it survives the air-gap.
+The manifest's `trust` (`first-party` / `partner` / `unsigned`) is the author's label, shown to an administrator, and not consulted for trust: a bundle igni distributed is trusted whatever it says, and a development install needs the flag whatever it says. One rule hangs off it: `dev` packaging requires `unsigned` — and igni never runs `dev` packaging that arrived from a service.
 
-**Only an administrator installs or registers**, and only an administrator adds a trusted key. No user install, no marketplace fetch, no install-on-demand: software inventory is an accreditation control.
+**We do not sign, review or countersign anyone else's capability.** The host verifies the bundle is what the approved service signed — nothing more. The service's public key arrives with the listing from the customer's own igni server, so verification needs nothing outside their network.
+
+**Only a super admin decides what is distributed**, by approving a service. No user install outside development, no marketplace fetch, no group policy push: software inventory is an accreditation control.
 
 ### Permissions
 
@@ -546,7 +552,7 @@ Declared, admin-granted, base-enforced, deny by default: `workspace` (none/read/
 | `egress` | the page's `connect-src`, written from the manifest; and the endpoint host igni itself dials | **The UI, completely. Not the service's own process** — confining that needs an OS sandbox igni does not apply. A sidecar can still open its own sockets. |
 | `workspace` | what igni *tells* a service, as `IGNI_WORKSPACE*` | An extension that was never granted the workspace is not told where it is. A service that goes looking anyway is not stopped — same OS-sandbox gap. |
 | `secrets` | resolution: an undeclared name is never looked up, and the resolver is the deployment's | The value arrives in the service's environment as `IGNI_SECRET_<NAME>`. **Not a handle** — see below. |
-| `signature` | install, offline, against keys an administrator added | Complete for Ed25519. The digest covers every file and the manifest with its own signature removed, so widening a permission after signing breaks it. |
+| provenance | the distribution sync, before a bundle is stored, and the installer, which trusts only a recorded distribution | Complete. The JWS covers the archive's SHA-256, so changing any byte — a permission, a file — breaks it. |
 
 **Secrets are values, not handles.** This section said "a handle, never a value" for as long as nothing implemented it. A handle needs an exchange step, and an extension's service is an MCP server igni *calls* — there is no channel for it to call back on. So the honest statement is the one above, and the handle exchange joins the list of things not built. What that costs: a secret is in the service's process environment, visible to anything that can read it there.
 
@@ -629,9 +635,10 @@ This replaces a line that read "the React component tree, CSS class names, any t
 ## 9. Developing one
 
 - **The reference extension is `examples/reference-extension/`** — a compliance scanner, around 200 lines, written against the published surface and nothing else. It is the answer to "what does an extension look like", and a standing check on this contract: anything it has to hand-roll is something the floor is missing, and its README keeps that list.
-- **`igni ext init <dir>`** scaffolds one that runs as written — manifest, an MCP server, a framed page with the bridge inlined so there is no build step, and a README. `igni ext doctor` checks a bundle and prints the contract version this igni implements; `igni ext install` copies it into `<data>/extensions/<id>/`, prints the permissions it is being granted, and the backend starts it at its next boot. `list` and `remove` do what they say.
+- **`igni ext init <dir>`** scaffolds one that runs as written — manifest, an MCP server, a framed page with the bridge inlined so there is no build step, and a README. `igni ext doctor` checks a bundle and prints the contract version this igni implements; `igni ext install` (development only, behind `IGNI_DEV_EXTENSIONS=1`) copies it into `<data>/extensions/<id>/`, prints the permissions it is being granted, and the backend starts it at its next boot. `list` says where each one came from, and `remove` does what it says — one igni distributed comes back at the next sync while its service is approved.
 - **An install outlives the process that made it**, which is why the CLI writes to a store rather than talking to a running backend: a CLI that needed one could install nothing before it started, and nothing would survive it stopping.
-- **Dev mode** is `IGNI_DEV_EXTENSIONS=1`, the only thing that makes `trust: unsigned` installable. An environment variable and not a setting a bundle can reach, because the point of the trust tier is that the easiest way to ship is not the one with no provenance. The persistent banner and hot reload do not exist yet.
+- **Dev mode** is `IGNI_DEV_EXTENSIONS=1`, the only thing that lets a bundle igni server did not distribute install or start, whatever trust it claims. An environment variable and not a setting a bundle can reach, because the easiest way to ship must not be the one with no provenance. The persistent banner and hot reload do not exist yet.
+- **Shipping it** is the service's job: package it as `python` with its wheelhouse and have the service upload the signed bundle at start-up (§8 of igni server's `service-identity.md`).
 - **`igni ext doctor`** checks manifest schema, contract range, permissions, collisions, deprecations, the MCP round-trip and the phones-home scan. **If doctor passes, it loads** — that equivalence is the promise.
 - **Errors carry fixes**, because the reader is often a partner's L2 engineer with no internet.
 - **Observability**: logs in the Watcher panel, state in the subsystem view, versions in the diagnostic bundle.
@@ -653,16 +660,18 @@ This replaces a line that read "the React component tree, CSS class names, any t
 | Capability services as separate images | **shipped in the service repos** (`igni__code-index`, `igni__artifacts`) — and **not extracted here**: both still live in `core/` and are imported unconditionally by the agent and tool builders, so neither is separable. See `docs/EXTRACTING_A_CAPABILITY.md`. |
 | Prompt fragments / variants as contributions | **shipped** (`extensions/contributions.py`, tied to `READY` rather than to being installed) |
 | Manifest + validation | **shipped** (`docs/extension-manifest.schema.json` for the author's editor, `extensions/manifest.py` for the installer, held to each other by `tests/test_the_manifest_model_and_its_schema_agree.py`) |
-| Manifest signature verification | not started — the field is modelled and required for any trust tier but `unsigned`; nothing checks it against a key yet |
+| Distribution from services (signed bundle, JWS verified against the approved service's key, sync at start-up and sign-in) | **shipped** (`extensions/distribution.py`, `extensions/bundle_signature.py`) — the manifest `signature` field and the Ed25519 trust store are removed |
+| `python` packaging, offline from the bundle's wheelhouse | **shipped** (`extensions/python_env.py`) |
+| Service tokens by exchange, served on loopback | **shipped** (`extensions/service_token.py`) |
 | `ext.<id>.*` RPC namespace | **shipped** (`extensions/registry.py`, `extensions/rpc.py`, `extensions/service.py`) |
 | Sidecar supervision / install pipeline | not started — the registry takes a manifest and a bound service; nothing yet starts a container or registers an endpoint |
 | Backend static origin, one port per extension | **shipped** (`extensions/origin.py`) |
 | Sandboxed iframe + bridge | **shipped** (`extensions/ExtensionFrame.tsx`, `bridge.ts`, `protocol.ts`) — the host-side permission check now has its backend counterpart; nothing renders the frame yet |
 | Policy cache keyed by `group_id` | not started |
-| Remote extension registration in group packs | not started |
+| Extensions in group packs | **removed** — extensions come from their services through igni |
 | Requirement resolver (local only) | not started |
 | Deployment profile: URL builder + the four raw-sqlite3 stores | not started |
-| `igni ext init` / `doctor` | not started |
+| `igni ext init` / `doctor` | **shipped** |
 
 **First consumer is CodeIndex**, ported while still in-tree. `CodeIndexPanel` takes two props, and the bridge hosts it with one line changed — its prop type, from the concrete client class to the one method it uses.
 
@@ -692,7 +701,7 @@ Authorisation is decided before the service is consulted, and that ordering is t
 
 **The transport is MCP**, per §Principles. An extension's service answers `ext.<id>.<method>` as a tool call named `<method>`, on the same server that serves the agent. Two grant lists over one server: `permissions.tools` is what the *agent* may call, `permissions.rpc` what the extension's own *UI* may call. `structuredContent` is used where a server sends it; otherwise text blocks are joined and parsed as JSON when they are JSON, because that is what a server written for a UI sends.
 
-**What is still missing** is the install pipeline. `ExtensionRegistry.install` takes a validated manifest and `ExtensionRpc.bind` takes a service; nothing yet starts a sidecar container, registers an endpoint, or verifies a signature. So the namespace works and has no production path to being populated — which is the next thing, not this thing.
+**The install pipeline now populates it.** `ExtensionInstaller` starts a `python` or `dev` process or reaches an endpoint, binds it, and marks it `READY`; bundles arrive from their services through igni server's distribution and are verified before they are stored (see "Shipping one"). Starting a sidecar container is what is still missing.
 
 ## Reference
 

@@ -314,7 +314,6 @@ class BackendServer:
             self._auth_ctrl = cached
         return cached
 
-
     @property
     def files(self) -> FilesController:
         """File-I/O controller."""
@@ -943,65 +942,6 @@ class BackendServer:
     def search_code(self, snippet: str, max_results: int = 20) -> SearchCodeResult:
         """See :meth:`SearchController.search_code`."""
         return self.search.search_code(snippet, max_results)
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
     # ── Chat history ──────────────────────────────────────────────
 
