@@ -217,6 +217,30 @@ class IgniService:
         except IgniUnavailable as exc:
             raise self._cannot_check(exc) from exc
 
+    async def optional_person(
+        self, credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(_BEARER)]
+    ) -> Person | None:
+        """FastAPI dependency: the person, or `None` when no token was sent.
+
+        For routes that serve everybody and do more for somebody signed in
+        (a public link that also shows the reader's own comments). A token
+        that *was* sent and is refused is still a 401: a broken session
+        should be noticed, not quietly treated as anonymous.
+        """
+        if credentials is None:
+            return None
+        return await self.person(credentials)
+
+    async def person_of(self, token: str) -> Person:
+        """The person a bare token names, outside an HTTP request.
+
+        For a WebSocket greeting, a queued job, anything that holds a token
+        but no `Authorization` header. Raises `TokenRefused` or
+        `IgniUnavailable` rather than an HTTP error, so the caller answers in
+        its own protocol.
+        """
+        return await self.verifier.person(token)
+
     async def igni_call(
         self, credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(_BEARER)]
     ) -> IgniCall:

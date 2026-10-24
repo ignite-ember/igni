@@ -24,6 +24,7 @@ import io
 import json
 import tarfile
 import uuid
+from datetime import timedelta
 from typing import Any
 from urllib.parse import parse_qs, urlencode, urlsplit
 
@@ -186,6 +187,22 @@ class FakeIgni:
         self._refresh_tokens: dict[str, HeldRefresh] = {}
         #: Every grant the token endpoint answered, by `grant_type`.
         self.grants: list[str] = []
+
+    def reset(self) -> None:
+        """Forget what happened, keep who exists.
+
+        For a fake shared across a session: requests, notifications,
+        deliveries, the once-per-event memory, failures and issued codes go;
+        organisations, members, registered clients, keys and uploaded
+        extensions stay, so the next test starts from the same world.
+        """
+        self.seen.clear()
+        self.notify_calls.clear()
+        self.deliveries.clear()
+        self.failing.clear()
+        self.grants.clear()
+        self._told.clear()
+        self._codes.clear()
 
     # ── Setting the scene ───────────────────────────────────────────
 
@@ -352,12 +369,14 @@ class FakeIgni:
         use: str = "user",
         aud: str | None = None,
         iss: str | None = None,
-        lifetime: float = 600,
+        lifetime: float | timedelta = 600,
         kid: str | None = None,
         key: RsaKeyPair | None = None,
         **claims: Any,
     ) -> str:
         now = int(self.clock.wall())
+        if isinstance(lifetime, timedelta):
+            lifetime = lifetime.total_seconds()
         payload: dict[str, Any] = {
             "iss": iss if iss is not None else self.issuer,
             "sub": sub,

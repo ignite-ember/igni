@@ -24,7 +24,7 @@ from igni_service.settings import IgniSettings
 from igni_service.sql_keystore import SqlKeyStore
 from igni_service.subjects import ExportSection, Subject
 from igni_service.tables import IgniTables
-from igni_service.tokens import IgniCall, Person
+from igni_service.tokens import IgniCall, Person, TokenRefused
 from igni_service.web import WebSignIn
 from igni_service.web_sessions import (
     MemoryWebSessionStore,
@@ -61,6 +61,7 @@ __all__ = [
     "StoredKey",
     "Subject",
     "Target",
+    "TokenRefused",
     "WebSession",
     "WebSessionStore",
     "WebSignIn",

@@ -82,6 +82,12 @@ is unreachable, so the service starts and serves either way:
   `org_id`, `org_name`, `org_role`, `email`, `name`, `super_admin`. Every
   check on the token is made here; a refused token is a 401, and a token
   that cannot be checked because igni is unreachable is a 503.
+- `Depends(igni.optional_person)` — the same, or `None` when no token was
+  sent: for routes that serve everybody and do more for somebody signed in.
+  A token that was sent and is refused is still a 401.
+- `await igni.person_of(token)` — the same check for a token held outside a
+  request header, such as a WebSocket greeting. Raises `TokenRefused` or
+  `IgniUnavailable`, so you answer in your own protocol.
 - `Depends(igni.web.person)` — a person signed in to the service's own
   pages. A page that needs somebody sends a stranger to sign in and back;
   an API call gets a 401. Their tokens stay on the server and are renewed
