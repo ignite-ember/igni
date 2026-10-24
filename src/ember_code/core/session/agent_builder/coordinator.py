@@ -79,8 +79,6 @@ class MainAgentBuilder:
             mcp_manager=s.mcp_manager,
             lsp_manager=s.lsp_manager,
             monitor_manager=s.monitor_manager,
-            artifacts=s.artifacts,
-            artifact_mgr=s.artifact_mgr,
             skill_pool=s.skill_pool,
             pool=s.pool,
             hook_executor=s.hook_executor,
@@ -98,12 +96,6 @@ class MainAgentBuilder:
             project_dir=s.project_dir,
             settings=s.settings,
             codeindex_available=s.codeindex_available,
-            # ``s.artifacts`` is the store itself and is ``None``
-            # whenever the subsystem is off or failed to come up — the
-            # same value ``attach_artifact_manager`` is gated on, so the
-            # prompt and the toolkit cannot disagree about whether the
-            # archivist can do anything.
-            artifacts_available=s.artifacts is not None,
             # The exact condition under which ``update_user_memory`` is
             # attached: agno adds the learning-store tools only when
             # ``agent._learning is not None`` (``agno/agent/_tools.py``),

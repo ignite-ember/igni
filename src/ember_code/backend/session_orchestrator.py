@@ -204,14 +204,11 @@ class SessionOrchestrator:
         # ``_AUTO_NAME_TASKS`` set. Kept as instance attributes so
         # each orchestrator has its own lifetime.
         self._in_flight: set[asyncio.Task] = set()
-        # Optional Neo4j runtime. Constructed lazily when
-        # ``artifacts.enabled`` says so (see
-        # :mod:`ember_code.backend.artifact_gate`) — the
-        # runtime's heavy work (downloading the JDK + Neo4j
-        # distribution, spawning the per-process subprocess) is
-        # triggered on first use via ``start_for_artifacts`` /
-        # ``start_for_commit``, not at construction. The
-        # construction itself is cheap (path resolution only).
+        # Optional Neo4j runtime. The heavy work (downloading the
+        # JDK + Neo4j distribution, spawning the subprocess) is
+        # triggered on first use via ``start_for_commit`` /
+        # ``start_store``, not at construction. The construction
+        # itself is cheap (path resolution only).
         self._neo4j_runtime: Any = None
         self._neo4j_attach_task: asyncio.Task | None = None
 

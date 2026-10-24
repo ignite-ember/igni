@@ -263,6 +263,14 @@
               "codeindex_status"
             ]
           ]
+        },
+        "toolAudience": {
+          "enum": [
+            "all-agents",
+            "own-agents"
+          ],
+          "default": "all-agents",
+          "description": "Which agents may call your `tools`. `all-agents` is MCP's ordinary behaviour. `own-agents` offers them only to agents shipped by the plugin you carry (`contributes.plugin`) — for a capability whose tools must belong to one role, because a capability any agent can grant itself is no rule at all. igni checks it by where an agent's file lives, so it never needs to know your id or your agents' names. Needs `contributes.plugin`; without one there are no own agents and the tools reach nobody, which is refused at install."
         }
       }
     },
@@ -493,6 +501,21 @@
           "description": "A directory inside your bundle holding a plugin, installed with the extension and removed with it. **This is how an extension ships agents, skills and hooks** — they are not contribution types, because igni already delivers them through plugins and a second path for the same thing is a second thing to keep in step. The directory is a Claude-Code-shaped plugin (`.claude-plugin/plugin.json` plus `agents/`, `skills/`, `hooks/`); igni copies it into the plugins directory at install and deletes it at uninstall, and the loader that was already there picks it up. Relative to the bundle root and inside it: a plugin from somewhere else is one you install yourself.",
           "examples": [
             "plugin"
+          ]
+        },
+        "promptConditionals": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9-]*$"
+          },
+          "default": [],
+          "description": "Prompt conditionals you satisfy while you are READY. A prompt has `{{#artifacts}}…{{/artifacts}}` sections kept or dropped depending on what the session can do, and igni used to know the answers because it owned the capabilities. It does not any more, and the alternative to this was igni checking for your extension id by name. Declared rather than inferred: you say which questions you answer yes to, and a name igni has no marker for is harmless.",
+          "examples": [
+            [
+              "artifacts",
+              "can-persist"
+            ]
           ]
         }
       }

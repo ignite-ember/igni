@@ -37,17 +37,17 @@ its per-commit chroma directories, and the cutover's marker.
 
 ## The Neo4j layout is shared, not CodeIndex's
 
-One sidecar serves the per-commit code graph *and* the per-project
-knowledge store that Artifacts reads, which is why
-:data:`NEO4J_KNOWLEDGE_SLUG` lives beside the per-commit helpers:
-anything enumerating ``state/`` has to tell them apart, and reading
-the knowledge store as an untracked commit would make retention
-delete it.
+One sidecar serves the per-commit code graph *and* the named
+per-project stores extensions ask for, which is why
+:func:`is_commit_slug` lives beside the per-commit helpers: anything
+enumerating ``state/`` has to tell them apart, and reading a named
+store as an untracked commit would make retention delete it.
 """
 
 from __future__ import annotations
 
 import hashlib
+import re
 import logging
 import subprocess
 from pathlib import Path
@@ -135,13 +135,18 @@ def neo4j_data_dir(data_dir: str | Path = DEFAULT_DATA_DIR) -> Path:
     return data_root(data_dir) / "neo4j"
 
 
-#: The slug the backend runtime uses for the per-project knowledge
-#: store (``<project_id>-knowledge``). It sits in the same ``state/``
-#: directory as the per-commit slugs and is not a commit, so anything
-#: enumerating that directory has to skip it — retention would
-#: otherwise read it as an untracked commit and delete the project's
-#: knowledge graph.
-NEO4J_KNOWLEDGE_SLUG: str = "knowledge"
+_COMMIT_SHA = re.compile(r"^[0-9a-f]{40}$")
+
+
+def is_commit_slug(suffix: str) -> bool:
+    """Whether ``<project>-<suffix>`` in ``state/`` is a commit's store.
+
+    The same directory holds named stores (``<project>-<instance>``)
+    that extensions asked for; the runtime refuses an instance name
+    shaped like a sha, so shape alone tells them apart. Retention
+    must only ever reclaim commits.
+    """
+    return bool(_COMMIT_SHA.match(suffix))
 
 
 def neo4j_state_root(data_dir: str | Path = DEFAULT_DATA_DIR) -> Path:
@@ -175,7 +180,7 @@ def neo4j_auth_file(
 
 
 __all__ = [
-    "NEO4J_KNOWLEDGE_SLUG",
+    "is_commit_slug",
     "data_root",
     "global_db_path",
     "legacy_artifact_index_path",

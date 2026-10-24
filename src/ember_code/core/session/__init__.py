@@ -1,6 +1,5 @@
 """Session package — interactive conversation loop with full subsystem integration."""
 
-from ember_code.core.artifacts.session_manager import SessionArtifactManager
 from ember_code.core.session.cloud_auth import SessionCloudAuth
 from ember_code.core.session.cloud_catalog import CloudModelCatalog
 from ember_code.core.session.codeindex_availability import (
@@ -94,7 +93,6 @@ __all__ = [
     "SessionCloudAuth",
     "SessionEventLog",
     "SessionIdentity",
-    "SessionArtifactManager",
     "SessionLearningManager",
     "SessionLifecyclePayload",
     "SessionMemoryManager",

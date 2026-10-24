@@ -88,18 +88,16 @@ def _edges() -> list[tuple[str, int, str, bool]]:
 
 #: **This number may go down. It may not go up.**
 #:
-#: 59 when it was first counted. Two thirds of it is two clusters:
-#: ``backend/server_artifacts.py`` and ``core/session/``. Neither is
-#: unpicked one import at a time — they move with the capability or
-#: not at all.
+#: 59 when it was first counted, 53 once the shared Cypher layer
+#: moved to ``core/graph/``, and 18 once Artifacts left: its 12,700
+#: lines and its 3,500-line RPC controller are in
+#: ``igni__artifacts/extension`` and the host keeps only the
+#: fifty-nine legacy RPC *names*, routed there by
+#: ``backend/rpc_handlers/artifacts.py``.
 #:
-#: Down to 53 once ``core/artifacts/`` stopped importing CodeIndex:
-#: the Cypher guard both of them query through moved to
-#: ``core/graph/``, and ``ARTIFACT_SCHEMA_STATEMENTS`` — Artifacts'
-#: own DDL, defined inside CodeIndex's schema module — moved to
-#: ``core/artifacts/graph_schema.py``. Two capabilities cannot be
-#: extracted separately while one defines the other's schema.
-MAY_NOT_GROW = 53
+#: What is left is CodeIndex, and most of it is CodeIndex talking
+#: to itself across two directories.
+MAY_NOT_GROW = 18
 
 
 def test_the_measurement_finds_something():
@@ -126,15 +124,16 @@ def test_the_ratchet_is_tight():
     )
 
 
-def test_most_of_the_work_is_in_two_files():
-    """Recorded so the order is obvious from the test rather than
-    from re-deriving it: this is not fifty-nine small jobs."""
-    by_file: dict[str, int] = {}
-    for rel, _, _, _ in _edges():
-        by_file[rel] = by_file.get(rel, 0) + 1
-    worst = sorted(by_file.items(), key=lambda kv: -kv[1])[:2]
-    assert worst[0][0] == "backend/server_artifacts.py"
-    assert worst[0][1] >= 15
+def test_nothing_reaches_into_artifacts_any_more():
+    """The capability that left. Not a count — zero.
+
+    ``backend/server_artifacts.py`` held twenty of the original
+    fifty-nine and was the reason "cut the two imports" was the
+    wrong first step. It is gone, with ``core/artifacts/`` and
+    ``core/tools/artifacts.py``.
+    """
+    reaching = sorted(f"{rel}:{line}" for rel, line, mod, _ in _edges() if "artifacts" in mod)
+    assert not reaching, reaching
 
 
 # ── The goal, kept in the suite rather than in a document ─────────
@@ -191,19 +190,26 @@ def test_a_capability_imports_normally_when_it_is_there():
     assert done.returncode == 0, done.stderr[-800:]
 
 
+def test_the_backend_starts_without_artifacts():
+    """The one this file was written to fail.
+
+    It did, for as long as `backend/controller_registry` imported
+    `server_artifacts`. Both are gone: the fifty-nine RPCs are
+    served by the extension and igni keeps only their names.
+    """
+    done = _import_without("ember_code.backend.app", "ember_code.core.artifacts")
+    assert done.returncode == 0, done.stderr[-800:]
+
+
 @pytest.mark.xfail(
     reason=(
-        "53 edges. `backend/controller_registry` imports `server_artifacts`, "
-        "which is the capability's 57 RPCs — the host has no build without "
-        "them yet. This is the target, and it is here rather than in a "
-        "document so it is re-measured rather than re-asserted."
+        "CodeIndex has not left yet. `core/code_index/` is still the local "
+        "index, `core/tools/codeindex/` its agent tool and "
+        "`backend/server_codeindex.py` its RPCs. Artifacts is the worked "
+        "example; this is the same move again, and smaller."
     ),
     strict=True,
 )
-def test_the_backend_starts_without_either_capability():
-    done = _import_without(
-        "ember_code.backend.app",
-        "ember_code.core.artifacts",
-        "ember_code.core.code_index",
-    )
+def test_the_backend_starts_without_codeindex():
+    done = _import_without("ember_code.backend.app", "ember_code.core.code_index")
     assert done.returncode == 0, done.stderr[-800:]

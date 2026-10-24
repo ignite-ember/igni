@@ -18,9 +18,10 @@ from ember_code.core.agents.schemas import (
     AgentConstructorArgs,
     AgentDefinition,
 )
+from ember_code.core.agents.tool_audience import ToolAudience
+from ember_code.core.agents.tool_audience import audience as default_audience
 from ember_code.core.config.models import ModelRegistry
 from ember_code.core.config.tool_permissions import ToolPermissions
-from ember_code.core.tools.artifacts import ARCHIVIST, ArtifactTools
 from ember_code.core.tools.registry import ToolRegistry
 from ember_code.core.tools.schedule import ScheduleTools
 
@@ -33,8 +34,8 @@ class AgentBuilder:
     :class:`Agent`.
 
     Constructor takes an :class:`AgentBuildContext` bundle so the
-    six shared-state params (``settings``, ``base_dir``,
-    ``mcp_clients``, ``artifact_mgr``, ``db``, ``broadcast``)
+    five shared-state params (``settings``, ``base_dir``,
+    ``mcp_clients``, ``db``, ``broadcast``)
     live on ``self`` — the public :meth:`build` method then takes
     only the definition (what varies per agent).
     """
@@ -91,8 +92,9 @@ class AgentBuilder:
 
         return Agent
 
-    def __init__(self, context: AgentBuildContext) -> None:
+    def __init__(self, context: AgentBuildContext, *, audience: ToolAudience | None = None) -> None:
         self._context = context
+        self._audience = audience or default_audience
 
     @property
     def context(self) -> AgentBuildContext:
@@ -192,17 +194,12 @@ class AgentBuilder:
 
         if tools:
             tools.append(ScheduleTools(project_dir=ctx.base_dir))
-        if tools and ctx.artifact_mgr is not None and definition.name == ARCHIVIST:
-            # One toolkit, one agent — reads included. Not a safety
-            # rule: a specialist that holds exactly the toolkit it was
-            # granted is the only shape whose traces can be attributed
-            # to it afterwards, and a capability spread across every
-            # agent makes every agent's manifest wrong.
-            #
-            # Keyed on the definition's name rather than a frontmatter
-            # flag, because an agent that could grant itself the
-            # capability is the same as having no rule.
-            tools.append(ArtifactTools(ctx.artifact_mgr))
+        # The archivist's toolkit used to be appended here, by name:
+        # `definition.name == ARCHIVIST` got `ArtifactTools`. Both
+        # are gone with the capability. The archivist ships inside
+        # the Artifacts extension now and its tools arrive over MCP
+        # like any other extension's, so the host no longer has a
+        # branch that knows one agent by name.
 
         agent_mcp: dict[str, Any] = {}
         if tools and ctx.mcp_clients:
@@ -216,6 +213,15 @@ class AgentBuilder:
                 }
             else:
                 agent_mcp = ctx.mcp_clients
+            # Some servers are offered only to the agents their own
+            # extension ships — declared by the extension, checked
+            # here by where this agent's file lives. See
+            # :mod:`ember_code.core.agents.tool_audience`.
+            agent_mcp = {
+                name: client
+                for name, client in agent_mcp.items()
+                if self._audience.allows(name, definition.source_path)
+            }
             for client in agent_mcp.values():
                 if client not in tools:
                     tools.append(client)

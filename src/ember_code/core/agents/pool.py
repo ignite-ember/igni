@@ -34,7 +34,6 @@ from ember_code.core.agents.schemas import (
     AgentDefinition,
     AgentEntry,
     AgentPriority,
-    ArtifactManager,
     Broadcast,
     DbHandle,
     LoadReport,
@@ -87,7 +86,6 @@ class AgentPool(LegacyAgentPoolMixin):
         self._codeindex_available_flag: bool = False
         # Pending knowledge manager set before ``build_agents``
         # first runs. Declared here so no ``getattr`` hidden-field.
-        self._pending_artifact_mgr: ArtifactManager | None = None
         self._pending_code_index_provider: Any | None = None
         # Per-session sub-agent budget cache — lazily constructed
         # on first :meth:`spawn_budget` call so every
@@ -116,7 +114,6 @@ class AgentPool(LegacyAgentPoolMixin):
         object.__setattr__(self, "_settings", None)
         object.__setattr__(self, "_base_dir", None)
         object.__setattr__(self, "_codeindex_available_flag", False)
-        object.__setattr__(self, "_pending_artifact_mgr", None)
         object.__setattr__(self, "_pending_code_index_provider", None)
         object.__setattr__(self, "_spawn_budgets", {})
 
@@ -306,7 +303,6 @@ class AgentPool(LegacyAgentPoolMixin):
             settings=self._settings,
             base_dir=self._base_dir,
             mcp_clients=mcp_clients,
-            artifact_mgr=self._pending_artifact_mgr,
             code_index_provider=self._pending_code_index_provider,
             db=self._db,
             broadcast=self._broadcast,
@@ -329,20 +325,6 @@ class AgentPool(LegacyAgentPoolMixin):
         if self._builder is not None:
             new_context = self._builder.context.model_copy(update={"code_index_provider": provider})
             self._builder.replace_context(new_context)
-            self._agents.clear()
-
-    def attach_artifact_manager(self, artifact_mgr: ArtifactManager | None) -> None:
-        """Public setter so :class:`Session` no longer reaches for
-        ``pool._artifact_mgr`` directly.
-
-        If the builder is already constructed, the context is
-        rebuilt so sub-agents built next see the manager."""
-        self._pending_artifact_mgr = artifact_mgr
-        if self._builder is not None:
-            new_context = self._builder.context.model_copy(update={"artifact_mgr": artifact_mgr})
-            self._builder.replace_context(new_context)
-            # Invalidate the built agent cache — the next ``get()``
-            # rebuilds with the artifact manager attached.
             self._agents.clear()
 
     def load_all(
@@ -541,7 +523,6 @@ class AgentPool(LegacyAgentPoolMixin):
             settings=settings,
             base_dir=self._base_dir,
             mcp_clients=None,
-            artifact_mgr=self._pending_artifact_mgr,
             code_index_provider=self._pending_code_index_provider,
             db=self._db,
             broadcast=self._broadcast,

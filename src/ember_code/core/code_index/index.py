@@ -61,7 +61,7 @@ from ember_code.core.code_index.paths import code_index_dir, legacy_commit_index
 from ember_code.core.code_index.schema.items import ChunkRow, CodeIndexItem, CodeIndexResult
 from ember_code.core.code_index.schema.stats import HeadStats
 from ember_code.core.code_index.schema.where_filter import ChromaWhereFilter
-from ember_code.core.data_paths import NEO4J_KNOWLEDGE_SLUG, neo4j_state_root, resolve_project_id
+from ember_code.core.data_paths import is_commit_slug, neo4j_state_root, resolve_project_id
 from ember_code.core.paths import DEFAULT_DATA_DIR
 
 logger = logging.getLogger(__name__)
@@ -830,10 +830,10 @@ class CodeIndex:
             if not child.is_dir() or not child.name.startswith(prefix):
                 continue
             sha = child.name[len(prefix) :]
-            # ``<project>-knowledge`` is the per-project knowledge store, not
-            # a commit; it survives every commit switch and is never in the
-            # commit manifest.
-            if sha == NEO4J_KNOWLEDGE_SLUG or sha in tracked:
+            # Only commits are CodeIndex's to reclaim. A named store
+            # (``<project>-<instance>``) belongs to whichever extension
+            # asked for it and outlives every commit switch.
+            if not is_commit_slug(sha) or sha in tracked:
                 continue
             if _neo4j_state_dir_is_live(child):
                 # Another BE re-attached to this commit's process. Deleting

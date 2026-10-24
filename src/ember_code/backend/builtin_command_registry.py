@@ -149,7 +149,7 @@ class BuiltinCommandRegistry:
             BuiltinCommand("/rename", "Rename the current session", cmd_rename),
             BuiltinCommand("/fork", "Fork the current session under a new id", cmd_fork),
             BuiltinCommand("/memory", "Inspect or optimise learned memories", cmd_memory),
-            BuiltinCommand("/artifacts", "Search or add to the artifact store", cmd_artifacts),
+            BuiltinCommand("/artifacts", "Open the documents page", cmd_artifacts),
             BuiltinCommand("/codeindex", "Manage the semantic code index", cmd_codeindex),
             BuiltinCommand("/config", "Show current settings", cmd_config),
             BuiltinCommand("/model", "Switch the active model", cmd_model),

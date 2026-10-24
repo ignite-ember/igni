@@ -469,20 +469,16 @@ class ToolSpecCatalog:
     invalidated on register.
     """
 
-    # Registry names the resolver skips silently — they're pseudo-tools
-    # handled elsewhere in the agent builder (Orchestrate ->
-    # ``OrchestrateTools``, Artifacts -> ``ArtifactTools``) rather than
-    # by the built-in registry. Kept on the catalog so ``resolve``
-    # doesn't need a magic-string check.
+    # Registry names the resolver skips silently — pseudo-tools
+    # handled elsewhere in the agent builder rather than by the
+    # built-in registry. ``Orchestrate`` -> ``OrchestrateTools``.
     #
-    # ``Knowledge`` is retained alongside ``Artifacts`` for the same
-    # reason the config keeps its alias: a user-authored agent ``.md``
-    # written before the rename still names it, and dropping it here
-    # would turn that line into an unknown-tool warning for a toolkit
-    # the agent gets anyway.
-    RESERVED_NON_TOOL_NAMES: ClassVar[frozenset[str]] = frozenset(
-        {"Orchestrate", "Artifacts", "Knowledge"}
-    )
+    # ``Artifacts`` and ``Knowledge`` were here too, because the
+    # builder special-cased one agent by name. That capability is an
+    # extension now and its agent names its server in
+    # ``mcp_servers``; an old agent file that still says
+    # ``Artifacts`` gets an unknown-tool warning, which is the truth.
+    RESERVED_NON_TOOL_NAMES: ClassVar[frozenset[str]] = frozenset({"Orchestrate"})
 
     def __init__(self, specs: list[ToolSpec]) -> None:
         self._specs: list[ToolSpec] = list(specs)

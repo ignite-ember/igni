@@ -17,27 +17,6 @@ from __future__ import annotations
 
 from typing import ClassVar
 
-# At module top rather than inside the function below, which is where
-# it used to be. That hid a real edge: the table in this class body is
-# built while the body evaluates, so importing this module imports the
-# Artifacts toolkit — an edge no grep for an import would have found.
-from ember_code.core.tools.artifacts import ArtifactTools
-
-
-def _artifact_expansion() -> dict[str, list[str]]:
-    """``{"Artifacts": [...]}``, derived from the toolkit.
-
-    Read from the toolkit so the eval catalog cannot drift from the
-    manifest the agent is given — which is how ``artifact_add``
-    survived here long after it stopped being an agent tool.
-
-    Instantiated with ``None`` as the manager: the toolkit registers
-    bound methods in ``__init__`` and never touches the manager until
-    one is called, so this is enough to enumerate names and nothing
-    here ever calls one.
-    """
-    return {"Artifacts": sorted(ArtifactTools(None).async_functions)}  # type: ignore[arg-type]
-
 
 class ToolNameCatalog:
     """Owns the display-name to Agno-function-name expansion table.
@@ -93,14 +72,12 @@ class ToolNameCatalog:
         # here so eval YAMLs can use the umbrella name "Artifacts" when
         # a case wants to allow any operation on the document store.
         #
-        # Derived from the toolkit rather than written out, because the
-        # hand-written list went stale: it named ``artifact_add``, from
-        # the knowledge-base API this replaced, which no agent has ever
-        # held as a tool. An allowlist entry for a tool that cannot be
-        # called neither allows nor forbids anything — the case passes
-        # whatever happens, which is the worst way for an eval to be
-        # wrong.
-        **_artifact_expansion(),
+        # ``Artifacts`` was expanded here, derived from the toolkit
+        # so the catalog could not drift from what the agent held.
+        # The toolkit left with the capability. An eval naming
+        # ``Artifacts`` now falls through unchanged and matches no
+        # call, which this module's docstring already calls the
+        # right answer for a name it does not know.
     }
 
     #: Tools that Agno may auto-invoke regardless of what the case asked

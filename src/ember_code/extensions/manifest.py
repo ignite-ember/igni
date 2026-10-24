@@ -199,6 +199,15 @@ class Permissions(Strict):
     #: the bridge. A different list, granted by the same person,
     #: enforced somewhere else entirely.
     rpc: list[Annotated[str, Field(pattern=RPC_GRANT.pattern)]] = Field(default_factory=list)
+    #: Which agents may call this extension's ``tools``.
+    #:
+    #: ``all-agents`` is MCP's ordinary behaviour. ``own-agents``
+    #: offers them only to agents the plugin this extension carries
+    #: ships — for a capability whose tools must belong to one role,
+    #: because a capability any agent can grant itself is no rule at
+    #: all. igni checks it by where an agent's file lives, so it does
+    #: not need to know which extension, or which agent, is meant.
+    toolAudience: Literal["all-agents", "own-agents"] = "all-agents"
     #: Host events this extension may be told about, from the
     #: published vocabulary. Its *own* events need no grant and
     #: another extension's cannot be granted at all — see
@@ -311,6 +320,23 @@ class Contributes(Strict):
     commands: list[CommandContribution] = Field(default_factory=list)
     promptFragments: list[PromptFragment] = Field(default_factory=list)
     promptVariants: list[Annotated[str, Field(pattern=SLUG.pattern)]] = Field(default_factory=list)
+    #: Prompt conditionals this extension satisfies while it is
+    #: READY.
+    #:
+    #: A prompt has ``{{#artifacts}}…{{/artifacts}}`` sections that
+    #: are kept or dropped depending on what the session can do. The
+    #: host knew the answers because it owned the capabilities; now
+    #: it does not, and the alternative to this was a line in
+    #: ``backend/app.py`` reading ``if extension_id ==
+    #: "igni.artifacts"`` — igni knowing one extension by name,
+    #: which is the thing an extension platform exists to stop.
+    #:
+    #: Declared, not inferred: an extension says which questions it
+    #: answers yes to, and the host merges whatever it is told with
+    #: its own. A name igni has no marker for is harmless.
+    promptConditionals: list[Annotated[str, Field(pattern=SLUG.pattern)]] = Field(
+        default_factory=list
+    )
     settings: list[Setting] = Field(default_factory=list)
     #: A directory inside the bundle holding a plugin, installed
     #: with the extension and removed with it.

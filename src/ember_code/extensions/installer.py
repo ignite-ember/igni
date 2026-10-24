@@ -36,6 +36,8 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
+from ember_code.core.agents.tool_audience import ToolAudience
+from ember_code.core.agents.tool_audience import audience as default_audience
 from ember_code.core.mcp.config import MCPServerConfig, MCPTransport
 from ember_code.core.mcp.naming import bare_tool_name
 from ember_code.extensions.capabilities import (
@@ -101,6 +103,7 @@ class ExtensionInstaller:
         profile: DeploymentProfile | None = None,
         resolver: CapabilityResolver | None = None,
         plugins_dir: Path | None = None,
+        audience: ToolAudience | None = None,
         allow_unsigned: bool = False,
     ) -> None:
         """
@@ -151,6 +154,7 @@ class ExtensionInstaller:
         # the extension still installs, and its agents do not
         # arrive, which is said at install rather than found out.
         self._plugins_dir = plugins_dir
+        self._audience = audience or default_audience
 
     async def install(self, bundle: Path) -> InstalledExtension:
         """Install the bundle at ``bundle`` and try to start it.
@@ -168,6 +172,7 @@ class ExtensionInstaller:
         self._check_profile(manifest)
         self._check_deliverable(manifest)
         self._check_events(manifest)
+        self._check_tool_audience(manifest)
 
         if self._registry.get(manifest.id) is not None:
             raise InstallError(
@@ -217,6 +222,7 @@ class ExtensionInstaller:
             return entry
 
         self._install_plugin(manifest, bundle)
+        self._apply_tool_audience(manifest)
 
         self._registry.set_state(manifest.id, ExtensionState.READY)
         logger.info("extension %s is READY", manifest.id)
@@ -268,6 +274,7 @@ class ExtensionInstaller:
         except Exception as exc:  # pragma: no cover — best effort
             logger.warning("stopping %s failed: %s", extension_id, exc)
         self._remove_plugin(extension_id)
+        self._audience.release(server_name(extension_id))
         self._registry.remove(extension_id)
         logger.info("extension %s removed", extension_id)
         return True
@@ -571,6 +578,42 @@ class ExtensionInstaller:
             ", ".join(manifest.permissions.events),
             EVENT_SINK_TOOL,
         )
+
+    @staticmethod
+    def _check_tool_audience(manifest: ExtensionManifest) -> None:
+        """Refuse ``own-agents`` with no agents to be its own.
+
+        The audience is "agents the carried plugin ships". With no
+        plugin there are none, so every tool would be offered to
+        nobody — approved at install and unreachable forever, the
+        failure this contract keeps removing.
+        """
+        if manifest.permissions.toolAudience != "own-agents":
+            return
+        if not manifest.contributes.plugin:
+            raise InstallError(
+                f"{manifest.id} offers its tools to its own agents only "
+                "(toolAudience: own-agents) and carries no plugin, so it "
+                "has no agents of its own. Ship them with "
+                "contributes.plugin, or use toolAudience: all-agents."
+            )
+
+    def _apply_tool_audience(self, manifest: ExtensionManifest) -> None:
+        """Offer the service only to the agents its plugin ships.
+
+        By directory, not by name: igni does not know which agents
+        an extension has or what they are called, only where it put
+        them.
+        """
+        if manifest.permissions.toolAudience != "own-agents":
+            return
+        if self._plugins_dir is None:
+            # Nowhere to have put the agents, so nobody qualifies.
+            # Restricting to a directory that does not exist is the
+            # honest consequence rather than falling open.
+            self._audience.restrict(server_name(manifest.id), Path("/nonexistent"))
+            return
+        self._audience.restrict(server_name(manifest.id), self._plugins_dir / manifest.id)
 
     def _install_plugin(self, manifest: ExtensionManifest, bundle: Path) -> None:
         """Put the plugin an extension carries where the loader looks.

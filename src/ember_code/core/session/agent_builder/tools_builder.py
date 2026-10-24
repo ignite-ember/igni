@@ -21,8 +21,6 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from ember_code.core.agents import AgentPool
-from ember_code.core.artifacts.index import ArtifactIndex
-from ember_code.core.artifacts.session_manager import SessionArtifactManager
 from ember_code.core.config.settings import Settings
 from ember_code.core.config.tool_permissions import ToolPermissions
 from ember_code.core.hooks.executor import HookExecutor
@@ -73,8 +71,6 @@ class ToolsBuilder:
         mcp_manager: MCPClientManager,
         lsp_manager: LspServerManager | None,
         monitor_manager: MonitorManager | None,
-        artifacts: ArtifactIndex | None,
-        artifact_mgr: SessionArtifactManager,
         skill_pool: SkillPool,
         pool: AgentPool,
         hook_executor: HookExecutor,
@@ -96,8 +92,6 @@ class ToolsBuilder:
         self._mcp_manager = mcp_manager
         self._lsp_manager = lsp_manager
         self._monitor_manager = monitor_manager
-        self._artifacts = artifacts
-        self._artifact_mgr = artifact_mgr
         self._skill_pool = skill_pool
         self._pool = pool
         self._hook_executor = hook_executor

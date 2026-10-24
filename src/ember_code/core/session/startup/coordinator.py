@@ -18,7 +18,6 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from ember_code.core.session.schemas import McpInitResult
-from ember_code.core.session.startup.artifacts import KnowledgeWarmupPhase
 from ember_code.core.session.startup.codeindex import CodeIndexWarmupPhase
 from ember_code.core.session.startup.marketplace import MarketplaceWarmupPhase
 from ember_code.core.session.startup.mcp import McpInitPhase
@@ -42,7 +41,6 @@ class SessionStartupCoordinator:
 
     def __init__(self, session: Session) -> None:
         self._session = session
-        self.artifacts = KnowledgeWarmupPhase(session)
         self.codeindex = CodeIndexWarmupPhase(session)
         self.marketplace = MarketplaceWarmupPhase(session)
         self.mcp = McpInitPhase(session)
@@ -60,15 +58,13 @@ class SessionStartupCoordinator:
     def mcp_initialized(self, value: bool) -> None:
         self.mcp.initialized = value
 
-    # ── Knowledge / CodeIndex / marketplace warmups ───────────
-
-    def start_knowledge_background(self) -> None:
-        """See :meth:`KnowledgeWarmupPhase.start_background`."""
-        self.artifacts.start_background()
-
-    async def ensure_knowledge_started(self) -> None:
-        """See :meth:`KnowledgeWarmupPhase.ensure_started`."""
-        await self.artifacts.ensure_started()
+    # ── CodeIndex / marketplace warmups ───────────────────────
+    #
+    # There was a knowledge warmup here, opening the local
+    # artifact index in the background so the first `/artifacts`
+    # press did not block. There is no local index: Artifacts is
+    # an extension, and igni starts its service the way it starts
+    # any other one.
 
     def start_codeindex_background(self) -> None:
         """See :meth:`CodeIndexWarmupPhase.start_background`."""

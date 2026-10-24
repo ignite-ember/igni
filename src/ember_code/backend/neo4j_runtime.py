@@ -61,6 +61,7 @@ import contextlib
 import json
 import logging
 import os
+import re
 import secrets
 import shutil
 import signal
@@ -156,8 +157,8 @@ class Neo4jEndpoints:
 
 class _ProjectCommitState:
     """In-memory state for one scope: a ``(project, commit)``
-    code process OR a ``(project, knowledge)`` knowledge
-    process.
+    code process OR a ``(project, store:<instance>)`` named
+    store.
 
     Holds the live subprocess, the cached driver, the bolt/HTTP
     endpoints, and the refcount. There's one of these per active
@@ -400,6 +401,26 @@ class Neo4jBootstrapError(RuntimeError):
     """Raised when Neo4j bootstrap cannot produce a working binary."""
 
 
+#: An instance name: lowercase, starting with a letter. Never a
+#: commit sha — per-commit stores live in the same directory as
+#: ``<project>-<sha>``, and retention tells them apart by shape.
+_INSTANCE = re.compile(r"^[a-z][a-z0-9-]{0,63}$")
+_COMMIT_SHA = re.compile(r"^[0-9a-f]{40}$")
+
+
+def _check_instance(instance: str) -> None:
+    if not _INSTANCE.match(instance) or _COMMIT_SHA.match(instance):
+        raise ValueError(
+            f"{instance!r} is not a store instance name: lowercase letters, "
+            "digits and hyphens, starting with a letter, and never a commit sha"
+        )
+
+
+def _store_key(instance: str) -> str:
+    """The process-table key for a named store, apart from commit keys."""
+    return f"store:{instance}"
+
+
 class Neo4jRuntime:
     """Per-(project, commit) Neo4j process manager.
 
@@ -627,87 +648,88 @@ class Neo4jRuntime:
             popped = self._processes.pop(key)
         return await self._shutdown_one(popped, project_hash, commit_sha)
 
-    async def start_for_artifacts(self, project_hash: str) -> Neo4jEndpoints:
-        """Ensure a Neo4j process exists for ``(project, knowledge)``.
+    async def start_store(self, project_hash: str, instance: str) -> Neo4jEndpoints:
+        """Ensure a named, per-project Neo4j store is running.
 
-        Knowledge is per-project (not per-commit) — the process
-        is spawned once per project and stays alive across
-        commit switches. Refcount bumps on every call; the
-        process dies only when no BE is using it.
+        For an extension that declared ``requires: graph-db``. The
+        runtime does not know which extension asked or what it keeps
+        — only the *instance* name the requirement carried, which is
+        how two extensions asking for the same instance share one
+        store and an extension asking for its own gets its own.
+
+        Per project, not per commit: the store survives commit
+        switches. Refcounted; the process dies when nothing uses it.
+
+        The state directory is ``<project>-<instance>``. A store that
+        existed before extensions did — ``<project>-knowledge`` — is
+        therefore the instance ``knowledge``, found where it always
+        was, with no migration.
         """
-        key = (project_hash, "artifacts")
+        _check_instance(instance)
+        key = (project_hash, _store_key(instance))
         async with self._lock:
             state = self._processes.get(key)
             if state is not None and state.proc.returncode is None:
                 state.refcount += 1
                 logger.debug(
-                    "neo4j (project=%s scope=knowledge) already running (pid=%d); refcount=%d",
+                    "neo4j store (project=%s instance=%s) already running (pid=%d); refcount=%d",
                     project_hash,
+                    instance,
                     state.endpoints.pid,
                     state.refcount,
                 )
                 return state.endpoints
-
-            existing = self._discover_knowledge(project_hash)
+            existing = self._discover_store(project_hash, instance)
             if existing is not None and self._is_alive(existing):
                 proc = _ExternalProcessHandle(existing.pid)
                 state = _ProjectCommitState(
                     proc=proc,
                     endpoints=existing,
                     refcount=1,
-                    state_dir=self._state_dir_knowledge(project_hash),
-                    auth_file=self._auth_path_knowledge(project_hash),
-                    config_file=self._config_path_knowledge(project_hash),
-                    logs_dir=self._logs_path_knowledge(project_hash),
-                    data_dir=self._data_path_knowledge(project_hash),
-                    runtime_file=self._runtime_path_knowledge(project_hash),
+                    state_dir=self._state_dir_store(project_hash, instance),
+                    auth_file=self._auth_path_store(project_hash, instance),
+                    config_file=self._config_path_store(project_hash, instance),
+                    logs_dir=self._logs_path_store(project_hash, instance),
+                    data_dir=self._data_path_store(project_hash, instance),
+                    runtime_file=self._runtime_path_store(project_hash, instance),
                 )
                 self._processes[key] = state
                 logger.info(
-                    "attached to existing knowledge (project=%s pid=%d)",
+                    "attached to existing store (project=%s instance=%s pid=%d)",
                     project_hash,
+                    instance,
                     existing.pid,
                 )
                 return existing
-
             bootstrap = Neo4jBootstrap(
                 version=self._version,
                 cache_root=self._neo4j_root,
                 tarball_url=self._download_url,
             )
             neo4j_bin = await bootstrap.ensure()
-            state = await self._spawn_one_knowledge(project_hash, neo4j_bin)
+            state = await self._spawn_one_store(project_hash, instance, neo4j_bin)
             self._processes[key] = state
             self._save_runtime(state)
             return state.endpoints
 
-    def driver_for_artifacts(self, project_hash: str) -> AsyncDriver:
-        """Return the per-``(project, knowledge)`` driver."""
-        state = self._processes.get((project_hash, "artifacts"))
+    def store_password(self, project_hash: str, instance: str) -> str:
+        """The generated password for a running store.
+
+        Handed to the one service that asked for it, by value. It is
+        igni's own credential for a process igni started, so there is
+        no deployment secret store for it to be a name in.
+        """
+        state = self._processes.get((project_hash, _store_key(instance)))
         if state is None:
             raise RuntimeError(
-                f"Neo4jRuntime.start_for_artifacts({project_hash!r}) must be "
-                f"called before driver_for_artifacts(...)"
+                f"store {instance!r} for project {project_hash!r} is not running; "
+                "start_store must be called first"
             )
-        if state.driver is None:
-            password = state.auth_file.read_text(encoding="utf-8").strip()
-            auth = (state.endpoints.user, password)
-            from neo4j import AsyncGraphDatabase
+        return state.auth_file.read_text(encoding="utf-8").strip()
 
-            state.driver = AsyncGraphDatabase.driver(
-                state.endpoints.bolt_uri,
-                auth=auth,
-                max_connection_pool_size=50,
-            )
-        return state.driver
-
-    async def stop_for_knowledge(self, project_hash: str) -> bool:
-        """Decrement refcount; kill the knowledge process at zero.
-
-        Knowledge processes are per-project, so the
-        refcount-to-zero typically only happens at BE shutdown.
-        """
-        key = (project_hash, "artifacts")
+    async def stop_store(self, project_hash: str, instance: str) -> bool:
+        """Decrement the refcount; stop the store at zero."""
+        key = (project_hash, _store_key(instance))
         async with self._lock:
             state = self._processes.get(key)
             if state is None:
@@ -716,21 +738,21 @@ class Neo4jRuntime:
             if state.refcount > 0:
                 return False
             popped = self._processes.pop(key)
-        return await self._shutdown_one(popped, project_hash, "artifacts")
+        return await self._shutdown_one(popped, project_hash, _store_key(instance))
 
-    def endpoints_for_knowledge(self, project_hash: str) -> Neo4jEndpoints | None:
-        state = self._processes.get((project_hash, "artifacts"))
+    def store_endpoints(self, project_hash: str, instance: str) -> Neo4jEndpoints | None:
+        state = self._processes.get((project_hash, _store_key(instance)))
         return state.endpoints if state is not None else None
 
-    def _discover_knowledge(self, project_hash: str) -> Neo4jEndpoints | None:
-        """Read the per-project knowledge runtime.json."""
-        path = self._runtime_path_knowledge(project_hash)
+    def _discover_store(self, project_hash: str, instance: str) -> Neo4jEndpoints | None:
+        """Read a named store's runtime.json."""
+        path = self._runtime_path_store(project_hash, instance)
         if not path.exists():
             return None
         try:
             data = json.loads(path.read_text(encoding="utf-8"))
         except (json.JSONDecodeError, OSError, UnicodeDecodeError) as exc:
-            logger.warning("neo4j knowledge file at %s unreadable: %s", path, exc)
+            logger.warning("neo4j store file at %s unreadable: %s", path, exc)
             return None
         if not isinstance(data, dict):
             return None
@@ -743,31 +765,33 @@ class Neo4jRuntime:
                 password_file=Path(str(data["password_file"])),
             )
         except (KeyError, ValueError, TypeError) as exc:
-            logger.warning("neo4j knowledge file %s schema check: %s", path, exc)
+            logger.warning("neo4j store file %s schema check: %s", path, exc)
             return None
 
-    async def _spawn_one_knowledge(self, project_hash: str, neo4j_bin: Path) -> _ProjectCommitState:
-        """Spawn the per-project knowledge Neo4j process.
+    async def _spawn_one_store(
+        self, project_hash: str, instance: str, neo4j_bin: Path
+    ) -> _ProjectCommitState:
+        """Spawn a named store's Neo4j process.
 
         Same shape as :meth:`_spawn_one` but writes to the
-        per-project knowledge state dir (which is stable
-        across commit switches).
+        per-project ``<project>-<instance>`` state dir, which is
+        stable across commit switches.
         """
-        state_dir = self._state_dir_knowledge(project_hash)
+        state_dir = self._state_dir_store(project_hash, instance)
         state_dir.mkdir(parents=True, exist_ok=True)
 
         bolt_port = _pick_free_port(self._host)
         http_port = _pick_free_port(self._host)
-        password = self._ensure_password(self._auth_path_knowledge(project_hash))
+        password = self._ensure_password(self._auth_path_store(project_hash, instance))
         user = "neo4j"
 
         # Before the config is written: the paths go *into* it.
-        data_dir = self._data_path_knowledge(project_hash)
+        data_dir = self._data_path_store(project_hash, instance)
         data_dir.mkdir(parents=True, exist_ok=True)
-        logs_dir = self._logs_path_knowledge(project_hash)
+        logs_dir = self._logs_path_store(project_hash, instance)
         logs_dir.mkdir(parents=True, exist_ok=True)
 
-        config_path = self._config_path_knowledge(project_hash)
+        config_path = self._config_path_store(project_hash, instance)
         config_path.write_text(
             self._build_config(bolt_port, http_port, password, data_dir, logs_dir),
             encoding="utf-8",
@@ -784,8 +808,9 @@ class Neo4jRuntime:
 
         stderr_file = logs_dir / "neo4j.stderr"
         logger.info(
-            "spawning neo4j knowledge for (project=%s): bolt=%d http=%d data=%s",
+            "spawning neo4j store (project=%s instance=%s): bolt=%d http=%d data=%s",
             project_hash,
+            instance,
             bolt_port,
             http_port,
             data_dir,
@@ -816,15 +841,15 @@ class Neo4jRuntime:
                 http_uri=f"http://{self._host}:{http_port}",
                 pid=proc.pid,
                 user=user,
-                password_file=self._auth_path_knowledge(project_hash),
+                password_file=self._auth_path_store(project_hash, instance),
             ),
             refcount=1,
             state_dir=state_dir,
-            auth_file=self._auth_path_knowledge(project_hash),
+            auth_file=self._auth_path_store(project_hash, instance),
             config_file=config_path,
             logs_dir=logs_dir,
             data_dir=data_dir,
-            runtime_file=self._runtime_path_knowledge(project_hash),
+            runtime_file=self._runtime_path_store(project_hash, instance),
         )
 
     async def stop_all(self) -> None:
@@ -849,30 +874,29 @@ class Neo4jRuntime:
     def _state_dir(self, project_hash: str, commit_sha: str) -> Path:
         return self._state_root / _pair_slug(project_hash, commit_sha)
 
-    def _state_dir_knowledge(self, project_hash: str) -> Path:
-        """Per-project state dir for the knowledge process.
+    def _state_dir_store(self, project_hash: str, instance: str) -> Path:
+        """Per-project state dir for a named store.
 
-        Knowledge is per-project (not per-commit) — knowledge
-        data survives commit switches. The state dir uses
-        ``<project>-knowledge`` as the slug, distinguishable
-        from ``<project>-<commit>``.
+        ``<project>-<instance>``: per-project, so it survives commit
+        switches, and never shaped like ``<project>-<sha>`` — see
+        :func:`_check_instance`.
         """
-        return self._state_root / f"{project_hash}-knowledge"
+        return self._state_root / f"{project_hash}-{instance}"
 
-    def _data_path_knowledge(self, project_hash: str) -> Path:
-        return self._state_dir_knowledge(project_hash) / "data"
+    def _data_path_store(self, project_hash: str, instance: str) -> Path:
+        return self._state_dir_store(project_hash, instance) / "data"
 
-    def _logs_path_knowledge(self, project_hash: str) -> Path:
-        return self._state_dir_knowledge(project_hash) / "logs"
+    def _logs_path_store(self, project_hash: str, instance: str) -> Path:
+        return self._state_dir_store(project_hash, instance) / "logs"
 
-    def _auth_path_knowledge(self, project_hash: str) -> Path:
-        return self._state_dir_knowledge(project_hash) / "auth.txt"
+    def _auth_path_store(self, project_hash: str, instance: str) -> Path:
+        return self._state_dir_store(project_hash, instance) / "auth.txt"
 
-    def _config_path_knowledge(self, project_hash: str) -> Path:
-        return self._state_dir_knowledge(project_hash) / "neo4j.conf"
+    def _config_path_store(self, project_hash: str, instance: str) -> Path:
+        return self._state_dir_store(project_hash, instance) / "neo4j.conf"
 
-    def _runtime_path_knowledge(self, project_hash: str) -> Path:
-        return self._state_dir_knowledge(project_hash) / "runtime.json"
+    def _runtime_path_store(self, project_hash: str, instance: str) -> Path:
+        return self._state_dir_store(project_hash, instance) / "runtime.json"
 
     def _data_path(self, project_hash: str, commit_sha: str) -> Path:
         return self._state_dir(project_hash, commit_sha) / "data"
@@ -1328,7 +1352,7 @@ class _ExternalProcessHandle:
 
     It also needs ``returncode``, which this used not to have. Three
     liveness checks read ``state.proc.returncode`` — including the one
-    in :meth:`Neo4jRuntime.start_for_artifacts` — so adopting a
+    in :meth:`Neo4jRuntime.start_store` — so adopting a
     process rather than spawning it raised ``AttributeError`` there
     and the caller logged "neo4j attach failed; continuing without
     it". The visible symptom was a session whose artifacts were

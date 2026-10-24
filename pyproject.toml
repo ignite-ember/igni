@@ -59,23 +59,17 @@ dependencies = [
     "tokenizers~=0.22.2",
     "tiktoken~=0.13.0",
     "ripgrep~=15.1.0",
-    "beautifulsoup4~=4.15.0",
     # Ed25519 verification of extension bundle signatures
     # (``extensions/signature.py``). It was already importable as a
     # transitive dependency, which a security control may not rely on.
     "cryptography~=50.0",
-    # ``~=6.16`` not ``~=6.16.1``: the tighter form caps the next patch and
-    # this pin has now capped a security fix twice — PYSEC-2026-3910/3911
-    # need 6.16.1 and 3913 needs 6.16.0, all of them out of reach of
-    # ``~=6.15.0``.
-    "pypdf~=6.16",
-    "python-docx~=1.2.0",
-    "python-pptx~=1.0.2",
-    "openpyxl~=3.1.5",
     "aiofiles~=25.1.0",
-    "youtube_transcript_api~=1.2.4",
-    "arxiv~=4.0.0",
-    "wikipedia~=1.4.0",
+    # The document readers — pypdf, python-docx, python-pptx, openpyxl,
+    # beautifulsoup4, youtube_transcript_api, arxiv, wikipedia — and
+    # weasyprint for PDF export were here because the document store
+    # lived here. It is the Artifacts extension now, and they are its
+    # dependencies: a machine that never installs it never installs a
+    # PDF parser. Nothing left in igni imports any of them.
     "dateparser~=1.4.0",
     # ``~=5.5.1`` capped PYSEC-2026-4164, whose fix is 5.6.0. Widened
     # to the minor the way ``pypdf`` was, for the same reason: a patch
@@ -87,7 +81,6 @@ dependencies = [
     "laya~=0.4.4",
     "websockets~=16.0",
     "neo4j~=5.27.0",
-    "weasyprint>=70.0",
     # Server discovery reads a TXT record in the customer's own zone,
     # for deployments that would rather publish DNS than serve a file
     # at their email domain's web root. Pure Python, no system

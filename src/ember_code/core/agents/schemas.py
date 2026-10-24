@@ -284,14 +284,6 @@ class Broadcast(Protocol):
 
 
 @runtime_checkable
-class ArtifactManager(Protocol):
-    """The session-level knowledge manager wrapper. Only used to
-    dispatch through to :class:`ArtifactTools`; we don't call its
-    methods directly here."""
-
-    ...
-
-
 @runtime_checkable
 class DbHandle(Protocol):
     """Opaque Agno ``AsyncBaseDb`` handle. Threaded through so
@@ -382,7 +374,6 @@ class AgentBuildContext(BaseModel):
     settings: Any
     base_dir: str | None = None
     mcp_clients: dict[str, Any] | None = None
-    artifact_mgr: Any | None = None
     db: Any | None = None
     broadcast: Any | None = None
     #: Resolves the session's ``CodeIndex`` when a specialist first queries it.
@@ -401,7 +392,6 @@ __all__ = [
     "AgentPriority",
     "Broadcast",
     "DbHandle",
-    "ArtifactManager",
     "LoadError",
     "LoadReport",
     "McpClient",

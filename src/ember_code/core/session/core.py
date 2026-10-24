@@ -52,11 +52,10 @@ import asyncio
 import contextlib
 import getpass
 import logging
-import threading
 import uuid
 from collections.abc import Awaitable, Callable
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 from agno.agent import Agent
 from agno.compression.manager import CompressionManager
@@ -64,8 +63,6 @@ from agno.compression.manager import CompressionManager
 from ember_code.backend.schemas_codeindex_rpc import RefreshAvailabilityResult
 from ember_code.backend.schemas_model import ModelSwitchResult
 from ember_code.core.agents import AgentPool
-from ember_code.core.artifacts.capture import RetrievalLedger
-from ember_code.core.artifacts.session_manager import SessionArtifactManager
 from ember_code.core.auth.credentials import CloudCredentials
 from ember_code.core.broadcast_schema import BroadcastEvent
 from ember_code.core.code_index import CodeIndex, CodeIndexSyncManager
@@ -73,7 +70,6 @@ from ember_code.core.code_index.embedder import LiveEmbedder
 from ember_code.core.config.models import ModelRegistry
 from ember_code.core.config.settings import Settings
 from ember_code.core.config.tool_permissions import ToolPermissions
-from ember_code.core.data_paths import resolve_project_id
 from ember_code.core.guardrails.runner import GuardrailRunner
 from ember_code.core.hooks.events import HookEvent
 from ember_code.core.hooks.executor import HookExecutor
@@ -141,11 +137,6 @@ from ember_code.core.utils.response import extract_response_text  # noqa: F401 �
 from ember_code.core.utils.rules_index import RulesIndex
 from ember_code.core.workspace import WorkspaceManager
 
-if TYPE_CHECKING:
-    # Imported for the annotation only. The runtime import stays local
-    # to ``attach_shared_artifacts`` — see the cycle note there.
-    from ember_code.core.artifacts.project import WorkingCopyProject
-
 logger = logging.getLogger(__name__)
 
 
@@ -192,7 +183,6 @@ class Session:
         project_dir: Path | None = None,
         resume_session_id: str | None = None,
         additional_dirs: list[Path] | None = None,
-        pre_artifacts: Any | None = None,
     ):
         self.settings = settings
 
@@ -239,8 +229,6 @@ class Session:
 
         # ── Storage (Agno AsyncBaseDb) ────────────────────────────────
         self.db = StorageManager.build_db(settings, project_dir=self.project_dir)
-
-        self._init_knowledge(settings, pre_artifacts)
 
         # ── Audit Logger ─────────────────────────────────────────────
         self.audit = AuditLogger(settings)
@@ -305,18 +293,11 @@ class Session:
         # ── Delegated managers ───────────────────────────────────────
         self.persistence = SessionPersistence(self.db, self.session_id)
         self.memory_mgr = SessionMemoryManager(self.db, settings, self.user_id)
-        # One ledger for the session, handed to every index built for
-        # it. A ledger per index means a runtime swap forgets what the
-        # agent read a minute ago, and the next write captures nothing.
-        self._retrieval_ledger = RetrievalLedger()
-        self.artifact_mgr = SessionArtifactManager(
-            self.artifacts,
-            settings,
-            self.project_dir,
-            session_id=self.session_id,
-        )
-        # Share artifact_mgr with the pool so all sub-agents get the toolkit.
-        self.pool.attach_artifact_manager(self.artifact_mgr if self.artifacts else None)
+        # A `SessionArtifactManager` was built here and shared with
+        # the pool, so every sub-agent got the artifact toolkit.
+        # Both are gone with the capability: the archivist ships
+        # inside the Artifacts extension and its tools reach the
+        # agent over MCP, which is how every other extension's do.
         # Late-bound: ``attach_codeindex_neo4j`` swaps ``self.code_index`` when a
         # Neo4j runtime attaches, which happens after the pool is configured.
         self.pool.attach_code_index_provider(lambda: self.code_index)
@@ -634,195 +615,6 @@ class Session:
             self.mcp_failures.pop(name, None)
         else:
             self.mcp_failures[name] = getattr(result, "reason", "") or ""
-
-    def _init_knowledge(self, settings: Settings, pre_artifacts: Any | None) -> None:
-        """Wire up the neo4j-backed artifact store (if enabled).
-
-        The chroma path was removed when the code_index migrated to
-        neo4j — the constructor's default is now "no knowledge
-        index" (the BE's :class:`SessionOrchestrator` calls
-        :meth:`attach_artifacts_neo4j` after the runtime is up to
-        build the real one). A pre-built ``pre_artifacts`` (tests
-        + explicit ``Session(pre_artifacts=...)`` calls) still
-        works as before.
-        """
-        # Which optional subsystems are up, and why the others are not.
-        # One record with a state, a reason and a fix, instead of a
-        # private boolean per subsystem per failure mode — see
-        # :mod:`ember_code.backend.subsystem_status`.
-        from ember_code.backend.subsystem_status import (
-            ARTIFACTS,
-            SubsystemRegistry,
-            SubsystemState,
-        )
-
-        self.subsystems = SubsystemRegistry()
-        # Which document project this working copy belongs to; set when the
-        # store attaches (see attach_artifacts_neo4j).
-        self.artifact_project: WorkingCopyProject | None = None
-        self._knowledge_ready = threading.Event()
-        self._knowledge_ready.set()
-        if pre_artifacts is not None:
-            self.artifacts = pre_artifacts
-            logger.info("Artifacts: using pre-loaded instance")
-            return
-        if not settings.artifacts.enabled:
-            self.artifacts = None
-            logger.info("Artifacts: disabled in settings")
-            return
-        # No runtime at construction time → the chroma fallback
-        # is gone, so the index is deferred until
-        # :meth:`attach_artifacts_neo4j` runs. The BE does that
-        # in the SessionOrchestrator's startup. Tests that need
-        # an index at construction pass a ``pre_artifacts`` (or
-        # a ``neo4j_client`` via ``pre_artifacts=``).
-        self.artifacts = None
-        # Say *why* there is no index, in words a user can act on, and say
-        # it where the readers look.
-        #
-        # The reason used to be written to a private ``_knowledge_error``
-        # attribute, which nothing read: the panel and
-        # ``Session.knowledge_error`` both go through :attr:`subsystems`.
-        # So every deferred session fell through to "Artifact store failed
-        # to initialize." — a sentence that names no cause and is not even
-        # true. Nothing failed; the index is deferred by design and this
-        # session never got the runtime it was deferred for.
-        #
-        # PREPARING, not FAILED: waiting on a runtime that has not
-        # attached yet is the ordinary startup case, and the orchestrator
-        # overwrites PREPARING freely once it knows better (it only
-        # declines to overwrite FAILED / DISABLED).
-        self.subsystems.set(
-            ARTIFACTS,
-            SubsystemState.PREPARING,
-            reason=(
-                "no Neo4j runtime has attached to this session yet. The "
-                "artifact store is created when CodeIndex's Neo4j comes up"
-            ),
-            fix="Open /codeindex and check that it is running and synced.",
-        )
-        logger.info(
-            "Artifacts: deferred (no neo4j runtime at construction); "
-            "call attach_artifacts_neo4j(runtime) to install"
-        )
-
-    async def attach_artifacts_neo4j(self, runtime: Any) -> None:
-        """Swap the default chroma-backed artifact store for a neo4j
-        one driven by ``runtime`` (typically a ``Neo4jRuntime``).
-
-        Called by :class:`SessionOrchestrator` after the BE's
-        runtime is up — the Session's default constructor runs
-        before any neo4j driver exists, so the chroma fallback
-        path is the constructor's choice. This method replaces
-        ``self.artifacts`` (and ``self.artifact_mgr.artifacts``)
-        with a neo4j-backed :class:`ArtifactIndex` so subsequent
-        knowledge ops go through neo4j.
-
-        Idempotent: a second call with the same client is a
-        no-op. Switching the runtime rebuilds the index.
-        """
-        from ember_code.core.artifacts.index import ArtifactIndex
-        from ember_code.core.artifacts.neo4j_client import Neo4jArtifactClient
-
-        # ``runtime`` may be a real ``Neo4jRuntime`` (production) or
-        # any duck-typed object with ``driver_for_artifacts(project_id)``
-        # (test stubs). We only depend on the protocol surface.
-        project_id = resolve_project_id(self.project_dir)
-        # The per-project process has to exist before a driver can
-        # point at it: ``driver_for_artifacts`` raises rather than
-        # starting one on demand. The call was missing and nobody
-        # noticed, because the orchestrator's guard meant this method
-        # never ran outside tests — and the test runtimes hand back a
-        # driver without needing a process. Duck-typed for exactly that
-        # reason: a stub that only implements ``driver_for_artifacts``
-        # stays valid.
-        starter = getattr(runtime, "start_for_artifacts", None)
-        if starter is not None:
-            # ``start_for_artifacts`` also waits for the bolt port
-            # (``_wait_for_bolt``), so there is no separate readiness
-            # step to compose here — returning means either a spawned
-            # process that answered, or a discovered one that was
-            # probed alive.
-            await starter(project_id)
-        driver = runtime.driver_for_artifacts(project_id)
-        client = Neo4jArtifactClient(driver, project_id)
-        await client.apply_schema()
-        embedder = LiveEmbedder()
-
-        # Idempotency guard: a second ``attach_artifacts_neo4j``
-        # with the same runtime reuses the existing index. We
-        # compare on the underlying driver (the runtime's
-        # ``driver_for_artifacts`` returns a cached driver per
-        # project, so identity is the right comparator) — not the
-        # client instance, which is constructed fresh each call.
-        existing_client = getattr(self.artifacts, "_client", None)
-        if existing_client is not None and existing_client._driver is driver:
-            return
-        index = ArtifactIndex(
-            project=self.project_dir,
-            data_dir=self.settings.storage.data_dir,
-            neo4j_client=client,
-            embedder=embedder,
-            ledger=self._retrieval_ledger,
-        )
-        await index.start()  # no-op on neo4j (client is open)
-        # The server this index writes through. Attached after
-        # construction because the collaboration client is built
-        # *with* the index — one of the two has to exist first.
-        #
-        # Built unconditionally and asked later whether it is
-        # configured: the credentials can arrive after this runs (a
-        # sign-in mid-session), and a client constructed only when a
-        # token already existed would leave the index writing to the
-        # graph alone for the rest of the process.
-        from ember_code.core.artifacts.collaboration import (  # noqa: PLC0415 — cycle
-            CollaborationSync,
-        )
-        from ember_code.core.artifacts.project import WorkingCopyProject  # noqa: PLC0415
-
-        auth = getattr(self, "cloud_auth", None)
-        sync = CollaborationSync(
-            index,
-            server_url=getattr(auth, "server_url", "") or "",
-            access_token=getattr(auth, "access_token", None) or "",
-        )
-        # Every write and search carries this working copy's project, so a
-        # search here never returns another repository's documents. Checked
-        # before each call — a remote changed mid-session is caught on the
-        # next one. See core/artifacts/project.py.
-        self.artifact_project = WorkingCopyProject(self.project_dir, sync.resolve_project)
-        sync.project_provider = self.artifact_project.project_id
-        index.attach_shared(sync)
-        self.artifacts = index
-        # ``artifact_mgr`` is constructed in __init__ against whatever
-        # index existed then (usually ``None``); it caches the
-        # reference, so update it or every later call goes to the
-        # index that was replaced.
-        if self.artifact_mgr is not None:
-            self.artifact_mgr.artifacts = index
-        # And tell the pool, which took its copy in ``__init__`` when
-        # ``self.artifacts`` was still ``None`` — so every agent it
-        # built got ``artifact_mgr=None`` and the archivist, the one
-        # agent the toolkit exists for, came up without it. It read
-        # its own system prompt describing tools it did not have and
-        # reported the store unreachable, which is exactly what it
-        # looked like from the outside.
-        self.pool.attach_artifact_manager(self.artifact_mgr)
-        # The deferred-state explanation recorded in the constructor is no
-        # longer true. Leaving it would have ``/artifacts`` telling a
-        # working session to go and start the runtime it is already
-        # using. (The backend's orchestrator also records READY; this
-        # covers the embedded / test callers that attach a runtime
-        # directly.)
-        from ember_code.backend.subsystem_status import ARTIFACTS, SubsystemState  # noqa: PLC0415
-
-        self.subsystems.set(ARTIFACTS, SubsystemState.READY)
-        # The pool hands each agent its tools when the team is built, so
-        # attaching the manager changes nothing for the team already
-        # built — rebuild it, or the archivist keeps the toolkit-less
-        # agent it was constructed as.
-        self._rebuild_main_team()
-        logger.info("Artifacts: switched to neo4j backend (project=%s)", project_id)
 
     def group_dir_for(self, kind: str) -> Path:
         """Where the policy cache puts this kind's entries.
@@ -1343,12 +1135,14 @@ class Session:
         return armed
 
     def start_all_background_services(self) -> None:
-        """Kick off knowledge + codeindex background services.
+        """Kick off the codeindex background service.
 
-        Idempotent-safe — each subsystem's ``start_*_background``
-        entry is guarded against a double-start.
+        Idempotent-safe — the subsystem's ``start_*_background``
+        entry is guarded against a double-start. A knowledge warmup
+        used to run beside it, opening the local artifact index;
+        Artifacts is an extension now and igni starts its service
+        the way it starts any other.
         """
-        self.start_knowledge_background()
         self.start_codeindex_background()
 
     def start_boot_background_services(self) -> None:
@@ -1535,36 +1329,6 @@ class Session:
         commands. Forwards to
         :attr:`SessionLearningManager.effective_machine`."""
         return self.learning_mgr.effective_machine
-
-    @property
-    def knowledge_error(self) -> str | None:
-        """Human-readable reason the artifact store is not up.
-
-        Reads through to :attr:`subsystems`, which is the record. Kept
-        as a property because callers and tests already ask the session
-        this question directly, and because "what went wrong with
-        knowledge" is a fair thing to ask a session.
-        """
-        from ember_code.backend.subsystem_status import ARTIFACTS, SubsystemState
-
-        status = self.subsystems.get(ARTIFACTS)
-        if status is None or status.state is not SubsystemState.FAILED:
-            return None
-        return status.reason or None
-
-    @property
-    def knowledge_preparing(self) -> bool:
-        """Whether the knowledge backend is still coming up.
-
-        Distinguishes "not ready yet" from "tried and failed", which
-        the panel could not previously tell apart — and so called a
-        healthy first launch a failure for the minutes its one-time
-        download takes.
-        """
-        from ember_code.backend.subsystem_status import ARTIFACTS, SubsystemState
-
-        status = self.subsystems.get(ARTIFACTS)
-        return status is not None and status.state is SubsystemState.PREPARING
 
     @property
     def _mcp_initialized(self) -> bool:
@@ -1983,16 +1747,6 @@ class Session:
             coord = SessionStartupCoordinator(self)
             self.startup = coord
         return coord
-
-    def start_knowledge_background(self) -> None:
-        """Delegate to
-        :meth:`SessionStartupCoordinator.start_knowledge_background`."""
-        self._startup_coord().start_knowledge_background()
-
-    async def _ensure_knowledge(self) -> None:
-        """Delegate to
-        :meth:`SessionStartupCoordinator.ensure_knowledge_started`."""
-        await self._startup_coord().ensure_knowledge_started()
 
     def start_codeindex_background(self) -> None:
         """Delegate to

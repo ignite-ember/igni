@@ -49,6 +49,8 @@ from pathlib import Path
 from typing import Any
 
 from ember_code.core.agents.variants import VariantRegistry
+from ember_code.core.prompts.conditionals import ConditionalRegistry
+from ember_code.core.prompts.conditionals import conditionals as default_conditionals
 from ember_code.core.agents.variants import variants as default_variants
 from ember_code.core.contributed_commands import ContributedCommands
 from ember_code.core.contributed_commands import (
@@ -81,6 +83,7 @@ class ExtensionContributions:
         bundles: dict[str, Path] | None = None,
         fragments: PromptFragments | None = None,
         variants: VariantRegistry | None = None,
+        conditionals: ConditionalRegistry | None = None,
         commands: ContributedCommands | None = None,
     ) -> None:
         """
@@ -96,6 +99,7 @@ class ExtensionContributions:
         self._bundles = bundles if bundles is not None else {}
         self._fragments = fragments if fragments is not None else default_fragments
         self._variants = variants if variants is not None else default_variants
+        self._conditionals = conditionals or default_conditionals
         self._commands = commands if commands is not None else default_commands
         self._pending: set[asyncio.Task] = set()
 
@@ -122,6 +126,10 @@ class ExtensionContributions:
             # cannot answer.
             self._fragments.remove_owner(extension_id)
             self._variants.deactivate(extension_id)
+            # A capability whose service has died stops answering
+            # yes: the prompt drops its section rather than telling
+            # the model about a tool that is not there.
+            self._conditionals.remove_owner(extension_id)
             # A command whose extension cannot answer is worse than
             # one that was never offered: it is in the completion
             # list, the user picks it, and it fails.
@@ -131,6 +139,7 @@ class ExtensionContributions:
         """Uninstalled. Forget it entirely."""
         self._fragments.remove_owner(extension_id)
         self._variants.remove_owner(extension_id)
+        self._conditionals.remove_owner(extension_id)
         self._commands.remove_owner(extension_id)
 
     def _schedule(self, entry: InstalledExtension) -> None:
@@ -164,6 +173,7 @@ class ExtensionContributions:
     async def apply(self, manifest: ExtensionManifest) -> None:
         """Register everything this extension contributes."""
         self._apply_variants(manifest)
+        self._apply_conditionals(manifest)
         self._apply_commands(manifest)
         for fragment in manifest.contributes.promptFragments:
             text = await self._fetch(manifest, fragment.anchor, fragment.source, fragment.from_)
@@ -175,6 +185,10 @@ class ExtensionContributions:
                 # than last-write-wins: whichever prompt was loaded
                 # last would otherwise decide what the model was told.
                 logger.warning("extension %s: %s", manifest.id, refusal)
+
+    def _apply_conditionals(self, manifest: ExtensionManifest) -> None:
+        """Record which prompt sections this extension turns on."""
+        self._conditionals.declare(manifest.id, manifest.contributes.promptConditionals)
 
     def _apply_variants(self, manifest: ExtensionManifest) -> None:
         names = manifest.contributes.promptVariants

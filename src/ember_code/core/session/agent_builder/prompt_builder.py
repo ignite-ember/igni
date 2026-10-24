@@ -23,6 +23,8 @@ from typing import Any, ClassVar
 
 from ember_code.core.code_index.manifest import Manifest
 from ember_code.core.code_index.project_map import ProjectMap
+from ember_code.core.prompts.conditionals import ConditionalRegistry
+from ember_code.core.prompts.conditionals import conditionals as default_conditionals
 
 logger = logging.getLogger(__name__)
 
@@ -57,13 +59,13 @@ class PromptBuilder:
         agent_catalog: str,
         skill_descriptions: str,
         prompt_loader: Callable[[str], str],
-        artifacts_available: bool = False,
+        conditionals: ConditionalRegistry | None = None,
         user_memory_available: bool = True,
     ) -> None:
         self._project_dir = project_dir
         self._settings = settings
         self._codeindex_available = codeindex_available
-        self._artifacts_available = artifacts_available
+        self._conditionals = conditionals or default_conditionals
         self._user_memory_available = user_memory_available
         self._agent_catalog = agent_catalog
         self._skill_descriptions = skill_descriptions
@@ -169,8 +171,13 @@ class PromptBuilder:
         One entry per name in :attr:`_CONDITIONALS`; adding a capability
         is a line here and a pair of markers in the markdown.
         """
+        live = self._conditionals.live()
         return {
-            "artifacts": self._artifacts_available,
+            # Declared by whoever satisfies it. igni owned a
+            # document store once and could answer for itself; the
+            # capability is an extension now and the host does not
+            # know what is installed, nor should it.
+            "artifacts": "artifacts" in live,
             "codeindex": self._codeindex_available,
             # agno attaches ``update_user_memory`` only when the session
             # has a LearningMachine *and* ``learning.user_memory`` is on,
@@ -182,7 +189,10 @@ class PromptBuilder:
             # persist" rules only mean anything next to a surface that
             # could take the fact; with neither they are a list of
             # things not to do with a tool nobody has.
-            "can-persist": self._artifacts_available or self._user_memory_available,
+            # Derived: somewhere to persist *to*. Two extensions
+            # both offering one both make this true, and neither
+            # has to know about the other.
+            "can-persist": "can-persist" in live or self._user_memory_available,
         }
 
     def append_project_map(self, prompt: str) -> str:
