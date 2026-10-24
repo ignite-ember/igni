@@ -27,7 +27,6 @@ from types import MappingProxyType
 from typing import TYPE_CHECKING
 
 from ember_code.backend.cmd_agents import cmd_agents
-from ember_code.backend.cmd_artifacts import cmd_artifacts
 from ember_code.backend.cmd_auth import cmd_login, cmd_logout, cmd_whoami
 from ember_code.backend.cmd_codeindex import cmd_codeindex
 from ember_code.backend.cmd_config import cmd_config
@@ -149,7 +148,6 @@ class BuiltinCommandRegistry:
             BuiltinCommand("/rename", "Rename the current session", cmd_rename),
             BuiltinCommand("/fork", "Fork the current session under a new id", cmd_fork),
             BuiltinCommand("/memory", "Inspect or optimise learned memories", cmd_memory),
-            BuiltinCommand("/artifacts", "Open the documents page", cmd_artifacts),
             BuiltinCommand("/codeindex", "Manage the semantic code index", cmd_codeindex),
             BuiltinCommand("/config", "Show current settings", cmd_config),
             BuiltinCommand("/model", "Switch the active model", cmd_model),

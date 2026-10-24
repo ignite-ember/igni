@@ -103,8 +103,7 @@ is the focused one whenever a window has focus — and
 it is framed in.
 
 **Below the route.** The model names the page; a page's own levels —
-the document open within Artifacts, the plugin within Plugins, a page's
-tab and filter — are still the page's. They are the next to move, into
+the plugin within Plugins, a page's tab and filter — are still the page's. They are the next to move, into
 the route's `params`, and the rule below lists them as such.
 
 ## Every write is a signal
@@ -232,7 +231,7 @@ extension's row and above its page.
 | The person's igni session and any credential (`login`, `reload_cloud_credentials`, `clear_cloud_credentials`, `set_server`, `discover_server` values, `cancel_login`) | An extension never holds the session (service-identity §9). It can start or end the person's sign-in through `host.account`, but never read what it produces. |
 | Posting *as the person* (`UserMessage` from an extension) | Decided: an extension's messages are labelled as the extension's (`host.chat.post`). |
 | `shutdown` | Quitting igni is the person's decision. |
-| `artifact_*`, `get_artifact_status`, `public_document`, `codeindex_*` | These are not the floor. They belong to the Artifacts and CodeIndex extensions, and they leave the host as those extensions take them over. |
+| `codeindex_*` | These are not the floor. They belong to the CodeIndex extension, and they leave the host as it takes them over. |
 | The model's own plumbing: the `host_model` and `window_model` RPCs, and the `host_signal` and `window_model_changed` pushes | They are how the model reaches a page and a window, not things igni does. |
 
 Anything else missing from this table is a bug in it.

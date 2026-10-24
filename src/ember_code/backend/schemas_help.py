@@ -194,19 +194,6 @@ class HelpTopicCatalog(BaseModel):
                     ),
                 ),
                 HelpTopic(
-                    name="artifacts",
-                    markdown=(
-                        "## Knowledge Base\n\n"
-                        "Store and search project knowledge with embeddings.\n\n"
-                        "**Commands:**\n"
-                        "- `/artifacts` — show status (collection, doc count, embedder)\n"
-                        "- `/artifacts add <url>` — add a URL\n"
-                        "- `/artifacts add <path>` — add a file or directory\n"
-                        "- `/artifacts add <text>` — add inline text\n"
-                        "- `/artifacts search <query>` — search the artifact store\n"
-                    ),
-                ),
-                HelpTopic(
                     name="codeindex",
                     markdown=(
                         "## CodeIndex\n\n"

@@ -109,7 +109,7 @@ class Page(BaseModel):
     model_config = ConfigDict(extra="allow")
 
     kind: str
-    """`plugins`, `artifacts`, an extension's page kind, …"""
+    """`plugins`, `extensions`, an extension's page kind, …"""
     label: str
     params: dict[str, str] = Field(default_factory=dict)
 

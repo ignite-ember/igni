@@ -247,7 +247,7 @@ class TestARejectedCallLooksRejected:
 
     def test_read_only_tools_are_not_checked(self, project):
         judge = FakeJudge(0.99)
-        assert _run(_guard(project, judge=judge), "artifact_search", query="x") is None
+        assert _run(_guard(project, judge=judge), "grep", pattern="x") is None
         assert judge.calls == 0
 
     def test_an_unknown_tool_is_checked_not_trusted(self, project):

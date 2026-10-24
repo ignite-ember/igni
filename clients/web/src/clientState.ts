@@ -593,9 +593,3 @@ export function useWindowField<K extends WindowField>(
   return useSyncExternalStore(subscribe, read, read);
 }
 
-/** How many times a field changed, bound. */
-export function useWindowChanges(model: WindowModel, field: WindowField): number {
-  const subscribe = useCallback((fn: () => void) => model.subscribe(fn), [model]);
-  const read = useCallback(() => model.changes(field), [model, field]);
-  return useSyncExternalStore(subscribe, read, read);
-}

@@ -19,6 +19,7 @@ from ember_code.extensions.service_token import IgniSession, NotSignedIn
 from ember_code.notifications.schemas import (
     MarkReadRequest,
     NotificationCounts,
+    PortalMe,
     ServerNotification,
     ServerNotificationPage,
 )
@@ -62,6 +63,8 @@ class IgniNotificationsClient:
     LIST_PATH = "/v1/notifications"
     COUNTS_PATH = "/v1/notifications/counts"
     READ_PATH = "/v1/notifications/read"
+    #: Who the person is — read for the organisations they belong to.
+    ME_PATH = "/v1/portal/me"
     #: How many rows one listing asks for.
     PAGE = 50
 
@@ -90,6 +93,14 @@ class IgniNotificationsClient:
             return NotificationCounts.model_validate_json(response.content)
         except ValidationError as exc:
             raise NotificationsUnavailable(f"the notification counts are malformed: {exc}") from exc
+
+    async def organisations(self) -> dict[str, str]:
+        """Every organisation the person belongs to, id to name."""
+        response = await self._call("GET", self.ME_PATH)
+        try:
+            return PortalMe.model_validate_json(response.content).names()
+        except ValidationError as exc:
+            raise NotificationsUnavailable(f"the account is malformed: {exc}") from exc
 
     async def mark_read(self, request: MarkReadRequest) -> None:
         await self._call("POST", self.READ_PATH, json=request.body())

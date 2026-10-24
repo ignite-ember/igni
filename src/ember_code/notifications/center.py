@@ -89,6 +89,10 @@ class NotificationCenter:
         self._server_rows: list[ServerNotification] = []
         self._server_counts = NotificationCounts()
         self._server_error = ""
+        # The organisations the signed-in person belongs to, id to name,
+        # read once per sign-in: it is what puts an organisation's name
+        # on a row when there is more than one.
+        self._organisations: dict[str, str] | None = None
         # One refresh in flight at most, and at most one queued behind
         # it: ten wakes during a slow read are one more read, not ten.
         self._refreshing: asyncio.Task[None] | None = None
@@ -111,6 +115,7 @@ class NotificationCenter:
 
     async def signed_in(self) -> None:
         """Somebody signed in: read their list, follow their stream."""
+        self._organisations = None
         self.wake()
         await self._follower.restart()
 
@@ -124,6 +129,7 @@ class NotificationCenter:
         self._server_rows = []
         self._server_counts = NotificationCounts()
         self._server_error = ""
+        self._organisations = None
         self._announce(self.counts())
 
     async def stop(self) -> None:
@@ -199,7 +205,8 @@ class NotificationCenter:
     async def listing(self) -> NotificationsListResult:
         """Both halves, newest first, read from igni server now."""
         await self.refresh()
-        merged = [FloorNotification.from_server(row) for row in self._server_rows]
+        organisations = await self._organisation_names() if self._server_rows else {}
+        merged = [FloorNotification.from_server(row, organisations) for row in self._server_rows]
         merged.extend(self._local.listing(limit=self.LIMIT))
         merged.sort(key=self._newest_first, reverse=True)
         return NotificationsListResult(
@@ -207,6 +214,20 @@ class NotificationCenter:
             counts=self.counts(),
             server_error=self._server_error,
         )
+
+    async def _organisation_names(self) -> dict[str, str]:
+        """The person's organisations, read once per sign-in.
+
+        Not reading them costs a name on a row, never the list: a failure
+        answers nothing and is asked again next time.
+        """
+        if self._organisations is None:
+            try:
+                self._organisations = await self._client.organisations()
+            except (NotSignedIn, NotificationsUnavailable) as exc:
+                logger.info("organisations not read: %s", exc)
+                return {}
+        return self._organisations
 
     @staticmethod
     def _newest_first(notification: FloorNotification) -> datetime:

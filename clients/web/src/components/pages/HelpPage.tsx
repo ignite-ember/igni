@@ -27,8 +27,8 @@ const GROUPS: { title: string; blurb: string; commands: string[] }[] = [
   },
   {
     title: "What the agent can reach",
-    blurb: "The tools, artifacts and extensions available to a run.",
-    commands: ["/agents", "/skills", "/plugins", "/plugin", "/mcp", "/artifacts", "/codeindex", "/hooks"],
+    blurb: "The tools and extensions available to a run.",
+    commands: ["/agents", "/skills", "/plugins", "/plugin", "/mcp", "/codeindex", "/hooks"],
   },
   {
     title: "Running work",

@@ -169,7 +169,6 @@ class TipRegistry(BaseModel):
         'Use "/agents" to see all loaded agents and their tools.',
         "The Orchestrator picks the best team mode automatically. Just describe your task.",
         'Use "--verbose" to see which agents and team mode the Orchestrator picks.',
-        'Use "/artifacts add <url|path|text>" to add content to your artifact store.',
         "Agents can spawn sub-teams on the fly — no depth limit.",
         'Resume a previous session with "ignite-ember --resume".',
         'Use "/sessions" to browse and resume past sessions.',

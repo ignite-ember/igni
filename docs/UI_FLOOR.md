@@ -88,7 +88,7 @@ extension writes the same six lines, differently.
 | `OverflowMenu` | ✅ | Submenus, focus, tick state. |
 | `ContextMenu` | ❌ | Right-click *and* `Shift+F10`/context key, which is the half always omitted. |
 | `CommandPalette` | 🔧 in-app | Filtering, roving focus, announced result count. |
-| `Tree` | ⛔ | 855 lines in `ArtifactTreeView`, mostly artifact-specific. Every consumer wants a different quarter of lazy-load / multi-select / drag / filter-while-collapsed. Publish the **roving-tabindex recipe** and a selected state instead. |
+| `Tree` | ⛔ | 855 lines in `ArtifactTreeView` (Artifacts' own page now), mostly artifact-specific. Every consumer wants a different quarter of lazy-load / multi-select / drag / filter-while-collapsed. Publish the **roving-tabindex recipe** and a selected state instead. |
 
 ### 2.3 Data display
 

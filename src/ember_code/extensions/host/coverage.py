@@ -53,9 +53,9 @@ NOT_REACHABLE: tuple[Unreachable, ...] = (
     ),
     Unreachable(
         key="capabilities",
-        what="`artifact_*`, `get_artifact_status`, `public_document`, `codeindex_*`",
-        why="These are not the floor. They belong to the Artifacts and CodeIndex "
-        "extensions, and they leave the host as those extensions take them over.",
+        what="`codeindex_*`",
+        why="These are not the floor. They belong to the CodeIndex extension, and "
+        "they leave the host as it takes them over.",
     ),
     Unreachable(
         key="channel",
@@ -171,15 +171,12 @@ RPC_UNREACHABLE: dict[RpcMethod, str] = {
     RpcMethod.RELOAD_CLOUD_CREDENTIALS: "credentials",
     RpcMethod.CLEAR_CLOUD_CREDENTIALS: "credentials",
     RpcMethod.SHUTDOWN: "shutdown",
-    RpcMethod.PUBLIC_DOCUMENT: "capabilities",
-    RpcMethod.GET_ARTIFACT_STATUS: "capabilities",
     RpcMethod.HOST_MODEL: "channel",
     RpcMethod.WINDOW_MODEL: "channel",
 }
 
 #: Prefixes whose every method is unreachable, by row.
 RPC_UNREACHABLE_PREFIXES: dict[str, str] = {
-    "artifact_": "capabilities",
     "codeindex_": "capabilities",
 }
 

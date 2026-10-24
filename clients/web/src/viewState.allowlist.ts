@@ -54,8 +54,8 @@ export const CATEGORIES = {
     "A preference of this device rather than of the window, kept in the browser's " +
     "storage: the light/dark toggle, the FPS overlay.",
   page:
-    "A page's own working state below ui.route: the sub-view it shows (a document within " +
-    "Artifacts, a plugin within Plugins), its tab, its filter. The route names the page; " +
+    "A page's own working state below ui.route: the sub-view it shows (a plugin within " +
+    "Plugins), its tab, its filter. The route names the page; " +
     "these levels are the page's. Known remainder: carrying them in the route's params " +
     "makes them the model's, and this category shrinks as pages move.",
 } as const;
@@ -88,19 +88,6 @@ export const BECAUSE: Record<string, Record<string, string>> = {
   "components/Composer.tsx": {
     attachments: "Uploads in flight, as placeholders; a landed file joins the draft as @path.",
     draft: "What was typed before ArrowUp started recalling history, to come back to.",
-  },
-  "components/panels/ArtifactPanel.tsx": {
-    draft: "A document's server-side draft, as the Artifacts service reports it.",
-    mode: "How a source is being added (url, file, …) in the add-source form.",
-  },
-  "components/panels/ArtifactSearch.tsx": {
-    mode: "Which kind of search the page runs.",
-  },
-  "components/panels/ArtifactTreeView.tsx": {
-    draft: "A tree node's new name while it is being renamed.",
-  },
-  "components/panels/DocumentComment.tsx": {
-    focused: "The comment thread focused within a document, not window focus.",
   },
   "components/panels/ExtensionsPanel.tsx": {
     draft: "An extension's settings as edited, before they are saved.",
@@ -172,9 +159,6 @@ export const VIEW_STATE: Record<string, Partial<Record<Category, string[]>>> = {
     data: ["rows", "unread"],
     pending: ["failed"],
   },
-  "components/PublicDocument.tsx": {
-    data: ["answer"],
-  },
   "components/RetryBanner.tsx": {
     data: ["retries"],
     animation: ["countdownPercent"],
@@ -188,9 +172,6 @@ export const VIEW_STATE: Record<string, Partial<Record<Category, string[]>>> = {
     field: ["email", "server"],
     data: ["found"],
     pending: ["busy", "failed"],
-  },
-  "components/SpecBlock.tsx": {
-    pending: ["View"],
   },
   "components/StatusBits.tsx": {
     animation: ["copied"],
@@ -223,95 +204,16 @@ export const VIEW_STATE: Record<string, Partial<Record<Category, string[]>>> = {
     page: ["selected"],
     pending: ["busy"],
   },
-  "components/panels/ArtifactCommentReview.tsx": {
-    data: ["rows"],
-    pending: ["error", "busy", "syncing"],
-    field: ["drafts"],
-    disclosure: ["peeking"],
-  },
-  "components/panels/ArtifactCompare.tsx": {
-    field: ["fromN", "toN"],
-    data: ["diff"],
-    pending: ["error"],
-  },
-  "components/panels/ArtifactGraphSearch.tsx": {
-    field: ["question"],
-    data: ["cypher", "result"],
-    pending: ["busy"],
-  },
-  "components/panels/ArtifactPanel.tsx": {
-    data: ["status", "docs", "removeBlocked", "exported", "versionCount", "staleIds", "doc", "versions", "lineage", "draft", "provenance", "locked", "evidence", "verdict", "proposed"],
-    page: ["view", "selected", "addMode", "treeVersion", "confirmingRemove", "editing", "comparing", "reviewing", "tracing", "sharing", "askingIn", "sharedReach", "shareUrl", "detailNonce", "asideView", "version", "lineageNonce", "docNonce", "mode"],
-    pending: ["busy", "addError", "arrival", "notice", "loading", "draftAsked", "editBusy", "editDirty", "asking", "loading", "thinking", "busy"],
-    field: ["addParent", "addParentName", "editState", "pendingQuestion", "editNote", "value"],
-    animation: ["copied"],
-    disclosure: ["openArchived"],
-    menu: ["open", "open"],
-  },
-  "components/panels/ArtifactSearch.tsx": {
-    field: ["query"],
-    page: ["kind", "mode"],
-    data: ["hits"],
-    pending: ["busy"],
-  },
-  "components/panels/ArtifactShareDialog.tsx": {
-    field: ["visibility", "recipients"],
-    data: ["result"],
-    pending: ["busy"],
-  },
-  "components/panels/ArtifactStaleReview.tsx": {
-    data: ["rows", "diff", "drift", "verdict"],
-    pending: ["error", "error", "busy", "thinking", "asking"],
-  },
-  "components/panels/ArtifactTreeView.tsx": {
-    data: ["nodes", "blocked"],
-    pending: ["error", "note"],
-    disclosure: ["collapsed", "showArchived"],
-    hover: ["dragging", "over"],
-    page: ["renaming"],
-    field: ["draft"],
-    menu: ["menu"],
-  },
   "components/panels/CodeIndexPanel.tsx": {
     data: ["status", "breakdown", "activity"],
     pending: ["busy", "runningVerb"],
     hover: ["hover", "hover"],
-  },
-  "components/panels/CommentDocumentPeek.tsx": {
-    data: ["peek"],
-  },
-  "components/panels/CommentReplyBox.tsx": {
-    field: ["body"],
-    pending: ["busy", "note", "error"],
-    measure: ["caret"],
   },
   "components/panels/DirectoryPicker.tsx": {
     data: ["listing"],
     field: ["pathInput"],
     disclosure: ["showHidden"],
     pending: ["loading"],
-  },
-  "components/panels/DocumentCitations.tsx": {
-    data: ["evidence", "citations"],
-    disclosure: ["open"],
-    hover: ["grazed"],
-  },
-  "components/panels/DocumentComment.tsx": {
-    page: ["path", "filter", "focused"],
-    data: ["threads", "stored", "answer", "allowed", "asked", "authority", "known", "ghosts"],
-    pending: ["settling", "filtering", "loading", "granting", "grantError"],
-    menu: ["menu", "active"],
-    measure: ["at", "span"],
-    field: ["reach", "body"],
-    disclosure: ["open"],
-  },
-  "components/panels/DocumentEditor.tsx": {
-    pending: ["dirty"],
-    menu: ["slash"],
-  },
-  "components/panels/DriftReviewPage.tsx": {
-    data: ["drift", "diff"],
-    pending: ["applied", "thinking", "working", "error"],
   },
   "components/panels/ExtensionsPanel.tsx": {
     field: ["draft"],
@@ -320,9 +222,6 @@ export const VIEW_STATE: Record<string, Partial<Record<Category, string[]>>> = {
   "components/panels/HooksPanel.tsx": {
     data: ["rows"],
     pending: ["error"],
-  },
-  "components/panels/LockedDocument.tsx": {
-    pending: ["note"],
   },
   "components/panels/LoginPanel.tsx": {
     data: ["statusText"],
@@ -337,19 +236,11 @@ export const VIEW_STATE: Record<string, Partial<Record<Category, string[]>>> = {
     data: ["servers"],
     pending: ["busy"],
   },
-  "components/panels/PeoplePicker.tsx": {
-    field: ["query"],
-    data: ["directory"],
-    pending: ["looking"],
-  },
   "components/panels/PluginsPanel.tsx": {
     data: ["plugins", "markets", "contents"],
     page: ["tab", "selected", "view"],
     field: ["installRef", "marketUrl", "query"],
     pending: ["busy", "error", "loading"],
-  },
-  "components/panels/ProvenanceView.tsx": {
-    data: ["linked"],
   },
   "components/panels/SchedulePanel.tsx": {
     menu: ["open"],
@@ -364,12 +255,6 @@ export const VIEW_STATE: Record<string, Partial<Record<Category, string[]>>> = {
     data: ["rows", "logsByPid"],
     page: ["selectedPid", "filter", "autoScroll"],
     animation: ["now"],
-  },
-  "components/panels/useDocumentRoom.ts": {
-    data: ["roster", "here"],
-  },
-  "components/panels/useSharedDraft.ts": {
-    pending: ["ready", "live"],
   },
   "extensions/ExtensionIndicator.tsx": {
     data: ["state"],

@@ -1,6 +1,6 @@
 """Which prompt conditionals are true, and who says so.
 
-A prompt carries ``{{#artifacts}}…{{/artifacts}}`` sections that
+A prompt carries ``<!-- project-documents:only -->`` sections that
 are kept or dropped depending on what the session can actually do.
 A list of things not to do with a tool nobody has is worse than
 silence, so the answers have to be right.
@@ -8,10 +8,9 @@ silence, so the answers have to be right.
 igni used to know them because it owned the capabilities: the
 session built a document store, so it could answer "is there one".
 Now a capability is an extension, and the host does not know what
-is installed — nor should it. The alternative to this module was a
-line in ``backend/app.py`` reading ``if extension_id ==
-"igni.artifacts"``, which is igni knowing one extension by name:
-the exact thing an extension platform exists to stop.
+is installed — nor should it. The alternative to this module was
+igni checking for one extension's id by name: the exact thing an
+extension platform exists to stop.
 
 So an extension *declares* which conditionals it satisfies, and
 this is the table it declares into. ``core`` owns it and anyone

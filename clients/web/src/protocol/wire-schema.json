@@ -423,6 +423,8 @@
       "created_at",
       "id",
       "kind",
+      "org_id",
+      "org_name",
       "origin",
       "read",
       "source",

@@ -44,7 +44,6 @@ export const BUILTIN_COMMANDS: SlashCommand[] = [
   { name: "/agents", description: "Agent pool" },
   { name: "/skills", description: "Skill workflows" },
   { name: "/plugins", description: "Installed plugins and marketplaces" },
-  { name: "/artifacts", description: "Project artifacts" },
   { name: "/codeindex", description: "Semantic code index" },
   { name: "/hooks", description: "Configured hooks" },
   { name: "/loop", description: "Repeat a prompt until done" },

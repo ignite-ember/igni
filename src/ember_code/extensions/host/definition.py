@@ -145,7 +145,7 @@ TYPES = (
     typedef(
         "Page",
         "One level of a window's page stack.",
-        field("kind", "str", "`plugins`, `artifacts`, an extension's page kind, …"),
+        field("kind", "str", "`plugins`, `extensions`, an extension's page kind, …"),
         field("label", "str"),
         field("params", "dict[str, str]", optional=True),
     ),
@@ -924,7 +924,7 @@ OBJECTS = (
             method(
                 "navigate",
                 "Open a page at the top of the stack, as a header link does.",
-                param("page", "str", "A page kind: `plugins`, `artifacts`, an extension's page."),
+                param("page", "str", "A page kind: `plugins`, `extensions`, an extension's page."),
                 param("params", "dict[str, str]", "The page's parameters.", optional=True),
                 result="list[Page]",
             ),

@@ -7,8 +7,9 @@
  * `docs/service-identity.md` §10), every extension has its own kinds,
  * and a host that kept a vocabulary for each would be a host that has
  * to ship whenever an extension does. So each row says what the
- * notification itself says: which extension it is from, its title, its
- * line of body, who did it, and when.
+ * notification itself says: which extension it is from (and which
+ * organisation, for somebody in more than one), its title, its line of
+ * body, who did it, and when.
  *
  * **Reading is not doing.** Opening a row goes to the extension page it
  * names, where the thing can be answered. A queue that also did the
@@ -72,7 +73,12 @@ export function NotificationList({
                 <Monogram name={row.actor || from} size={22} />
               </span>
               <span className="notify-said">
-                <span className="notify-source">{from}</span>
+                <span className="notify-source">
+                  {from}
+                  {/* Which organisation, when there is more than one to
+                      come from: the backend names it only then. */}
+                  {row.org_name && <span className="notify-org"> · {row.org_name}</span>}
+                </span>
                 <span className="notify-line">
                   <strong>{row.title || row.kind}</strong>
                 </span>

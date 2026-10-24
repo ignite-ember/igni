@@ -354,13 +354,12 @@ class Contributes(Strict):
     #: Prompt conditionals this extension satisfies while it is
     #: READY.
     #:
-    #: A prompt has ``{{#artifacts}}…{{/artifacts}}`` sections that
-    #: are kept or dropped depending on what the session can do. The
-    #: host knew the answers because it owned the capabilities; now
-    #: it does not, and the alternative to this was a line in
-    #: ``backend/app.py`` reading ``if extension_id ==
-    #: "igni.artifacts"`` — igni knowing one extension by name,
-    #: which is the thing an extension platform exists to stop.
+    #: A prompt has ``<!-- project-documents:only -->`` sections
+    #: that are kept or dropped depending on what the session can
+    #: do. The host knew the answers because it owned the
+    #: capabilities; now it does not, and the alternative to this
+    #: was igni checking for one extension's id by name, which is
+    #: the thing an extension platform exists to stop.
     #:
     #: Declared, not inferred: an extension says which questions it
     #: answers yes to, and the host merges whatever it is told with
@@ -374,9 +373,8 @@ class Contributes(Strict):
     #:
     #: **Agents, skills and hooks are not contribution types, and
     #: this is why they do not need to be.** A capability usually
-    #: brings agents — Artifacts has the archivist, which is the
-    #: only agent allowed to touch the document store, and CodeIndex
-    #: has ten variant files. igni already has a way to deliver
+    #: brings agents — a document store has the one agent allowed to
+    #: touch it, and CodeIndex has ten variant files. igni already has a way to deliver
     #: those, and adding ``contributes.agents`` beside it would be
     #: the second path this contract says not to build.
     #:

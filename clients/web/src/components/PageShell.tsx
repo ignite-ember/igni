@@ -72,14 +72,14 @@ export function PageShell({
   onClose: () => void;
   children: ReactNode;
 }) {
-  // Depth the rendered panel owns — `ArtifactPanel` selecting a
-  // document, `PluginsPanel` opening a plugin — so there is one trail
+  // Depth the rendered panel owns — `PluginsPanel` opening a
+  // plugin — so there is one trail
   // rather than the chrome's and the panel's stacked on top of it.
   const panelCrumbs = levels?.labels ?? [];
 
   // Back goes up one *crumb*, wherever that crumb came from: out of a
-  // document before out of Artifacts. Without this, Esc inside a
-  // document would leave the destination entirely and skip the level
+  // plugin before out of Plugins. Without this, Esc inside a
+  // plugin would leave the destination entirely and skip the level
   // the user was actually in.
   const back = () => {
     if (panelCrumbs.length) levels?.onTruncate(panelCrumbs.length - 2);

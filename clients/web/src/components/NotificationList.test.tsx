@@ -46,6 +46,28 @@ describe("what a row says", () => {
     expect(screen.getByText(/just now/)).toBeTruthy();
   });
 
+  it("names the organisation it came from, when the backend sends one", () => {
+    // The backend sends `org_name` only for somebody in more than one
+    // organisation; with one, every row is from it.
+    render(
+      <NotificationList
+        rows={[row({ org_id: "org-globex", org_name: "Globex" })]}
+        sourceName={nameOf}
+      />,
+    );
+
+    expect(screen.getByText(/Globex/).textContent).toBe(" · Globex");
+    expect(screen.getByText(/Artifacts/).textContent).toBe("Artifacts · Globex");
+  });
+
+  it("says nothing about the organisation when there is only one", () => {
+    const { container } = render(
+      <NotificationList rows={[row({ org_id: "org-acme", org_name: "" })]} sourceName={nameOf} />,
+    );
+
+    expect(container.querySelector(".notify-org")).toBeNull();
+  });
+
   it("names an extension it has no name for by its id", () => {
     render(<NotificationList rows={[row({ source: "acme.scanner" })]} sourceName={nameOf} />);
 

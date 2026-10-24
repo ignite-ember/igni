@@ -557,10 +557,10 @@
             "pattern": "^[a-z][a-z0-9-]*$"
           },
           "default": [],
-          "description": "Prompt conditionals you satisfy while you are READY. A prompt has `{{#artifacts}}…{{/artifacts}}` sections kept or dropped depending on what the session can do, and igni used to know the answers because it owned the capabilities. It does not any more, and the alternative to this was igni checking for your extension id by name. Declared rather than inferred: you say which questions you answer yes to, and a name igni has no marker for is harmless.",
+          "description": "Prompt conditionals you satisfy while you are READY. A prompt has `<!-- project-documents:only -->` sections kept or dropped depending on what the session can do, and igni used to know the answers because it owned the capabilities. It does not any more, and the alternative to this was igni checking for your extension id by name. Declared rather than inferred: you say which questions you answer yes to, and a name igni has no marker for is harmless.",
           "examples": [
             [
-              "artifacts",
+              "project-documents",
               "can-persist"
             ]
           ]

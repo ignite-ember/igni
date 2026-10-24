@@ -46,6 +46,9 @@ class ServerNotification(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
     id: str
+    #: The organisation it happened in. igni server lists every
+    #: organisation the person belongs to in one feed.
+    org_id: str = ""
     #: The extension the notifying service ships, recorded by igni server.
     source: str
     kind: str = ""
@@ -56,6 +59,28 @@ class ServerNotification(BaseModel):
     created_at: datetime | None = None
     delivered_at: datetime | None = None
     read_at: datetime | None = None
+
+
+class OrganisationMembership(BaseModel):
+    """One organisation the person belongs to, from ``GET /v1/portal/me``."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    id: str
+    display_name: str = ""
+
+
+class PortalMe(BaseModel):
+    """The part of ``GET /v1/portal/me`` the notifications read: where the
+    person is a member."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    organizations: list[OrganisationMembership] = Field(default_factory=list)
+
+    def names(self) -> dict[str, str]:
+        """Organisation id to the name people know it by."""
+        return {org.id: org.display_name or org.id for org in self.organizations}
 
 
 class ServerNotificationPage(BaseModel):
@@ -135,12 +160,25 @@ class FloorNotification(BaseModel):
     target: NotificationTarget | None = None
     created_at: datetime | None = None
     read: bool = False
+    #: The organisation it happened in — server rows only.
+    org_id: str = ""
+    #: That organisation's name, **only when the person belongs to more
+    #: than one**: with one, every row is from it and saying so is noise.
+    #: The client shows the name when there is one.
+    org_name: str = ""
 
     @classmethod
-    def from_server(cls, row: ServerNotification) -> FloorNotification:
+    def from_server(
+        cls, row: ServerNotification, organisations: dict[str, str] | None = None
+    ) -> FloorNotification:
+        """``organisations`` is the person's, id to name. A name is put on
+        the row only when there is more than one of them."""
+        several = organisations is not None and len(organisations) > 1
         return cls(
             id=row.id,
             origin=NotificationOrigin.SERVER,
+            org_id=row.org_id,
+            org_name=(organisations or {}).get(row.org_id, "") if several else "",
             source=row.source,
             kind=row.kind,
             title=row.title,

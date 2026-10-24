@@ -7,6 +7,15 @@ is real — and finding out after the move is finding out too late.
 
 Everything here was measured from the tree, not remembered.
 
+> **Status (2026-10-25): Artifacts is out.** The store and its RPCs
+> moved to `igni__artifacts/extension` first; its panels followed into
+> the extension's own page (`extension/page`, framed by igni and talking
+> to `ext.igni.artifacts.*` through `@igni/extension-bridge`), and the
+> prompt text about its documents and its archivist into the extension's
+> `promptFragments`. igni has no `artifact_*` RPC, no Artifacts panel,
+> no `/artifacts` builtin and no prompt text naming either. What is
+> below is the record of how it was measured and planned.
+
 ---
 
 ## 1. The size of the thing

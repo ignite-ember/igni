@@ -68,9 +68,6 @@ const LANDS: Record<string, Lands> = {
   // A client-side intercept, not a backend command — it appends an
   // info line listing what it found.
   "/workflows": "transcript",
-  // Opens the panel when the index is up, explains itself when it is
-  // not. Both are correct answers; silence is not.
-  "/artifacts": "either",
 };
 
 /** The header tools menu, in `App.tsx`'s `TOOLS_MENU` order. */
@@ -80,7 +77,6 @@ const TOOLS = [
   "Agents",
   "Skills",
   "Plugins",
-  "Artifacts",
   "Hooks",
   "Loop",
   "Scheduled tasks",
@@ -97,7 +93,6 @@ const TOOL_COMMAND: Record<string, string> = {
   Agents: "/agents",
   Skills: "/skills",
   Plugins: "/plugins",
-  Artifacts: "/artifacts",
   Hooks: "/hooks",
   Loop: "/loop",
   "Scheduled tasks": "/schedule",
@@ -118,7 +113,6 @@ const CARDS = [
   "/loop",
   "/mcp",
   "/plugins",
-  "/artifacts",
 ];
 
 async function connected(page: Page) {

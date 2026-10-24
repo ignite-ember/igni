@@ -44,7 +44,7 @@ class PromptBuilder:
     #: here and a matching entry in :meth:`_capabilities` to make a new
     #: capability switchable.
     _CONDITIONALS: ClassVar[tuple[str, ...]] = (
-        "artifacts",
+        "project-documents",
         "codeindex",
         "user-memory",
         "can-persist",
@@ -113,9 +113,10 @@ class PromptBuilder:
         """Keep the spans that match this session and drop the rest.
 
         A capability that can be absent needs both branches written and
-        exactly one of them shown. ``<!-- artifacts:only -->`` survives
-        when the store is up, ``<!-- artifacts:absent -->`` when it is
-        not, and the markers themselves never reach the model.
+        exactly one of them shown. ``<!-- project-documents:only -->``
+        survives when something keeps the project's documents,
+        ``<!-- project-documents:absent -->`` when nothing does, and the
+        markers themselves never reach the model.
 
         Spans live in the markdown rather than in separate per-state
         files because the guidance is interleaved with guidance that
@@ -173,11 +174,11 @@ class PromptBuilder:
         """
         live = self._conditionals.live()
         return {
-            # Declared by whoever satisfies it. igni owned a
-            # document store once and could answer for itself; the
-            # capability is an extension now and the host does not
-            # know what is installed, nor should it.
-            "artifacts": "artifacts" in live,
+            # Declared by whoever satisfies it: an extension that keeps
+            # the project's documents says so, and supplies the
+            # ``PROJECT_DOCUMENTS_*`` anchors the ``only`` branches hold.
+            # The host does not know what is installed, nor should it.
+            "project-documents": "project-documents" in live,
             "codeindex": self._codeindex_available,
             # agno attaches ``update_user_memory`` only when the session
             # has a LearningMachine *and* ``learning.user_memory`` is on,

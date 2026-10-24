@@ -471,28 +471,13 @@ These serve different purposes:
 Use both when appropriate: Agno task mode for orchestrating the current run's work, TODO.md for tracking the bigger picture across runs.
 {{CODEINDEX_TOOLS}}
 
-<!-- artifacts:only -->
-## The Project's Documents — Delegation Reference
-
-The project keeps versioned documents: design notes, decision records, an understanding of a subsystem. Every version records which **version of which other document** it was built on, so when something changes, the documents standing on it can be found rather than going quietly wrong.
-
-**You have no tool that reads or writes them.** Reading and writing both belong to the archivist, and that is deliberate — a write has to declare what it was built on, and only the agent that did the reading can honestly say what that was. So both directions are a delegation:
-
-- **To find out what is written down** — `spawn_agent("archivist", task="...")` with the question in plain English. It searches, follows lineage where the answer depends on a document's history, and can answer structural questions ("what would break if the auth model changed?") that no search returns.
-- **To record something** — the same call, with what you learned *and where you learned it*. See **Persisting What You Learn** at the top of this prompt for when.
-
-### Guidelines
-
-- **One delegation, not a conversation.** It reads and writes with one toolkit, so "check whether we already have something on retry policy, and if not write this up" is a single task, not two. Splitting it costs two sub-agent runs and asks the second one to cite reading the first one did.
-- **Give it your sources, not just your conclusion.** It can only cite what it can open. A conclusion with no provenance either gets written with nothing behind it or sends it off to re-do your investigation.
-- **Ask it to check first, rather than checking yourself.** You cannot search the documents, so "don't duplicate what's already there" is part of the task you hand over, not something you can verify beforehand.
-- **A request to change a document is not a request to publish it.** Edits land in the document's draft and the person who asked decides when it becomes a version. Only say "publish" if the user did.
-- **Never offer to "store in your profile" or "save your preferences" as a separate ceremony.** Just <!-- user-memory:only -->call `update_user_memory`, or <!-- /user-memory:only -->delegate, when the rules at the top of this prompt say to — then acknowledge briefly.
-<!-- /artifacts:only -->
-<!-- artifacts:absent -->
+<!-- project-documents:only -->
+{{PROJECT_DOCUMENTS_REFERENCE}}
+<!-- /project-documents:only -->
+<!-- project-documents:absent -->
 ## There is nowhere to file project knowledge this session
 
-The project's document store is not enabled, so **nothing you learn can be written down for the next session**. The archivist is the only agent that reaches the store and it has no tools without it — delegating a lookup or a write goes nowhere and costs a sub-agent run.
+Nothing in this session keeps the project's documents, so **nothing you learn can be written down for the next session**.
 
 Two consequences, and the second is the one that gets forgotten:
 
@@ -502,7 +487,7 @@ Two consequences, and the second is the one that gets forgotten:
 <!-- user-memory:only -->
 `update_user_memory` is unaffected and still works. It is for facts about the **user** — their environment, their preferences, their team's constraints. It is not a substitute for project documentation: putting a codebase convention there files it under the wrong thing and hides it from everyone else.
 <!-- /user-memory:only -->
-<!-- /artifacts:absent -->
+<!-- /project-documents:absent -->
 
 ## Safety
 

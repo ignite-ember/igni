@@ -2,7 +2,7 @@ import ReactMarkdown from "react-markdown";
 import { Drawer } from "./Drawer";
 
 /**
- * Generic markdown panel for /agents, /skills, /plugins, /artifacts,
+ * Generic markdown panel for /agents, /skills, /plugins,
  * /hooks — the BE CommandHandler already renders rich markdown for
  * these; the TUI shows bespoke widgets, the web shows the markdown.
  */

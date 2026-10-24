@@ -1,10 +1,11 @@
-"""The prompt promises the artifact store only when there is one.
+"""The prompt promises a document store only when there is one.
 
-Artifacts switch off like CodeIndex does. When they do,
-``attach_artifact_manager(None)`` runs, the archivist's grant in
-``agents/builder.py`` never fires, and it holds no artifact tool —
-so a prompt telling the orchestrator to hand project knowledge to it
-describes a capability the session does not have.
+A document store is an extension, and it switches off like CodeIndex
+does. While it is READY it declares ``project-documents`` and supplies
+the ``PROJECT_DOCUMENTS_*`` anchors — the text about the store and the
+agent that keeps it. When it is not, a prompt telling the orchestrator
+to hand project knowledge to that agent describes a capability the
+session does not have.
 
 That defect has shipped twice already. ``knowledge_*`` was taught in
 7,542 system prompts against zero manifests and called zero times, and
@@ -16,8 +17,8 @@ one cost 7,875 repaired prompts in the training corpus.
 So these tests check both directions, because only checking the
 present branch is how the absent branch rots:
 
-* artifacts ON  → the delegation section is there, the absent notice is not
-* artifacts OFF → the absent notice is there, and nothing tells the agent to delegate
+* documents ON  → the extension's delegation text is there, the absent notice is not
+* documents OFF → the absent notice is there, and nothing tells the agent to delegate
 
 The absent branch is deliberately not empty. A missing capability is
 not only a deletion: the agent still has to know where a project
@@ -27,29 +28,50 @@ not offer to record what it cannot record.
 
 from __future__ import annotations
 
+from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
 
 import ember_code
+from ember_code.core.prompts import fragments, load_prompt
 from ember_code.core.prompts.conditionals import ConditionalRegistry
 from ember_code.core.session.agent_builder.prompt_builder import PromptBuilder
 
+#: A stand-in for the extension that keeps the documents. igni's prompts
+#: name none, so neither does this.
+_DOCS = "acme.docs"
 
-def _with_artifacts(live: bool) -> ConditionalRegistry:
-    """A registry in which an installed extension satisfies ``artifacts``
-    — what the documents extension declares while it runs — or nobody does."""
+_ANCHORS = {
+    "PROJECT_DOCUMENTS_PERSISTING": (
+        '- **`spawn_agent("docs-keeper", ...)`** — hand it to the docs keeper.'
+    ),
+    "PROJECT_DOCUMENTS_WHEN_TO_PERSIST": "- A root cause → the docs keeper.",
+    "PROJECT_DOCUMENTS_READING": "Ask the docs keeper why.",
+    "PROJECT_DOCUMENTS_REFERENCE": "## The Project's Documents\n\nDelegate to the docs keeper.",
+}
+
+
+@pytest.fixture(autouse=True)
+def _documents_text() -> Iterator[None]:
+    for anchor, text in _ANCHORS.items():
+        assert fragments.register(anchor, _DOCS, lambda text=text: text) is None
+    yield
+    fragments.remove_owner(_DOCS)
+
+
+def _with_documents(live: bool) -> ConditionalRegistry:
+    """A registry in which an installed extension keeps the project's
+    documents — declares ``project-documents`` — or nobody does."""
     registry = ConditionalRegistry()
     if live:
-        registry.declare("igni.artifacts", {"artifacts", "can-persist"})
+        registry.declare(_DOCS, {"project-documents", "can-persist"})
     return registry
 
 
-PROMPTS = Path(ember_code.__file__).parent / "core" / "prompts"
-
-
 def _loader(name: str) -> str:
-    return (PROMPTS / f"{name}.md").read_text(encoding="utf-8")
+    """The prompt as a session loads it: anchors filled by their suppliers."""
+    return load_prompt(name)
 
 
 def _render(*, codeindex: bool, artifacts: bool) -> str:
@@ -57,7 +79,7 @@ def _render(*, codeindex: bool, artifacts: bool) -> str:
         project_dir=Path("."),
         settings=None,
         codeindex_available=codeindex,
-        conditionals=_with_artifacts(artifacts),
+        conditionals=_with_documents(artifacts),
         agent_catalog="(catalog)",
         skill_descriptions="",
         prompt_loader=_loader,
@@ -66,7 +88,7 @@ def _render(*, codeindex: bool, artifacts: bool) -> str:
 
 
 COMBINATIONS = [
-    pytest.param(ci, art, id=f"codeindex={ci}-artifacts={art}")
+    pytest.param(ci, art, id=f"codeindex={ci}-documents={art}")
     for ci in (False, True)
     for art in (False, True)
 ]
@@ -93,7 +115,7 @@ class TestWithTheStore:
     def test_it_says_to_delegate(self, codeindex):
         rendered = _render(codeindex=codeindex, artifacts=True)
 
-        assert 'spawn_agent("archivist"' in rendered
+        assert 'spawn_agent("docs-keeper"' in rendered
 
     @pytest.mark.parametrize("codeindex", [False, True])
     def test_it_does_not_also_say_there_is_nowhere_to_file(self, codeindex):
@@ -104,12 +126,12 @@ class TestWithTheStore:
 class TestWithoutTheStore:
     @pytest.mark.parametrize("codeindex", [False, True])
     def test_nothing_tells_the_agent_to_delegate(self, codeindex):
-        """The archivist may be *named* — the absent branch explains
-        why it is useless — but never as an instruction to use it."""
+        """Nothing of the extension's text survives without it, and igni's
+        own text names no agent to delegate to."""
         rendered = _render(codeindex=codeindex, artifacts=False)
 
-        assert 'spawn_agent("archivist"' not in rendered
-        assert "hand it to the archivist" not in rendered.lower()
+        assert "docs keeper" not in rendered and "docs-keeper" not in rendered
+        assert "archivist" not in rendered.lower()
 
     @pytest.mark.parametrize("codeindex", [False, True])
     def test_it_says_where_project_knowledge_goes_instead(self, codeindex):
@@ -153,7 +175,7 @@ class TestNoDeadToolSurvivesInEitherBranch:
 
         for line in rendered.splitlines():
             if "`artifact_" in line:
-                assert "archivist" in rendered[: rendered.index(line)][-4000:], (
+                assert "docs keeper" in rendered[: rendered.index(line)][-4000:], (
                     f"an artifact tool is named outside the archivist's context: {line[:120]}"
                 )
 
@@ -161,7 +183,7 @@ class TestNoDeadToolSurvivesInEitherBranch:
 class TestTheSwitchIsTheOneTheExtensionDeclares:
     def test_the_coordinator_does_not_decide_it(self):
         """Whether the store is there is the extension's to say, by
-        declaring ``artifacts`` while it runs. A host flag — a settings
+        declaring ``project-documents`` while it runs. A host flag — a settings
         read, a check on a manager the session holds — could disagree
         with the extension, and would be igni naming one extension."""
         from pathlib import Path as _Path
@@ -182,7 +204,7 @@ class TestTheSwitchIsTheOneTheExtensionDeclares:
             project_dir=Path("."),
             settings=None,
             codeindex_available=False,
-            conditionals=_with_artifacts(True),
+            conditionals=_with_documents(True),
             agent_catalog="x",
             skill_descriptions="",
             prompt_loader=lambda name: (_ for _ in ()).throw(FileNotFoundError(name)),
@@ -202,26 +224,29 @@ class TestUnbalancedMarkersRaise:
             project_dir=Path("."),
             settings=None,
             codeindex_available=False,
-            conditionals=_with_artifacts(artifacts),
+            conditionals=_with_documents(artifacts),
             agent_catalog="x",
             skill_descriptions="",
             prompt_loader=_loader,
         )
 
         with pytest.raises(ValueError, match="unbalanced"):
-            builder.resolve_conditionals("<!-- artifacts:only -->orphan")
+            builder.resolve_conditionals("<!-- project-documents:only -->orphan")
 
     def test_a_balanced_span_round_trips(self):
         builder = PromptBuilder(
             project_dir=Path("."),
             settings=None,
             codeindex_available=False,
-            conditionals=_with_artifacts(True),
+            conditionals=_with_documents(True),
             agent_catalog="x",
             skill_descriptions="",
             prompt_loader=_loader,
         )
-        text = "a <!-- artifacts:only -->b<!-- /artifacts:only --><!-- artifacts:absent -->c<!-- /artifacts:absent --> d"
+        text = (
+            "a <!-- project-documents:only -->b<!-- /project-documents:only -->"
+            "<!-- project-documents:absent -->c<!-- /project-documents:absent --> d"
+        )
 
         assert builder.resolve_conditionals(text) == "a b d"
 
@@ -230,12 +255,15 @@ class TestUnbalancedMarkersRaise:
             project_dir=Path("."),
             settings=None,
             codeindex_available=False,
-            conditionals=_with_artifacts(False),
+            conditionals=_with_documents(False),
             agent_catalog="x",
             skill_descriptions="",
             prompt_loader=_loader,
         )
-        text = "a <!-- artifacts:only -->b<!-- /artifacts:only --><!-- artifacts:absent -->c<!-- /artifacts:absent --> d"
+        text = (
+            "a <!-- project-documents:only -->b<!-- /project-documents:only -->"
+            "<!-- project-documents:absent -->c<!-- /project-documents:absent --> d"
+        )
 
         assert builder.resolve_conditionals(text) == "a c d"
 
@@ -247,7 +275,7 @@ class TestUnbalancedMarkersRaise:
             project_dir=Path("."),
             settings=None,
             codeindex_available=False,
-            conditionals=_with_artifacts(True),
+            conditionals=_with_documents(True),
             agent_catalog="x",
             skill_descriptions="",
             prompt_loader=_loader,

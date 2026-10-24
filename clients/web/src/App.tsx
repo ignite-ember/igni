@@ -29,6 +29,7 @@ import {
 import { applyVisualizationDelta } from "./chat/visualizationStream";
 import { nextObserverBusyState } from "./chat/observerBusy";
 import { planSessionBinding } from "./chat/sessionBinding";
+import { Arrivals } from "./chat/arrival";
 import {
   current as currentPage,
   openRoot,
@@ -65,7 +66,6 @@ import {
 import {
   WindowModel,
   ensureClientId,
-  useWindowChanges,
   useWindowField,
   type ComposerMode,
   type Panel,
@@ -97,7 +97,6 @@ import { MenuIcon as Glyph } from "@igni/ui-react";
 import { NotificationsPanel } from "./components/NotificationsPanel";
 import { unreadFor, useNotificationCounts } from "./notifications/model";
 import { ScrollIndicator } from "./components/ScrollIndicator";
-import { PublicDocument } from "./components/PublicDocument";
 import { SignInWall } from "./components/SignInWall";
 import { Sidebar, type SessionEntry } from "./components/Sidebar";
 import { AgentsPanel } from "./components/panels/AgentsPanel";
@@ -105,7 +104,6 @@ import { CodeIndexPanel } from "./components/panels/CodeIndexPanel";
 import { FilePreview } from "./components/FilePreview";
 import { FirstRunSetup } from "./components/FirstRunSetup";
 import { HooksPanel } from "./components/panels/HooksPanel";
-import { ArtifactPanel } from "./components/panels/ArtifactPanel";
 import { Toasts } from "./components/Toasts";
 import { HostDialog } from "./components/HostDialog";
 import { UpdatePrompt } from "./components/UpdatePrompt";
@@ -188,7 +186,6 @@ const BASE_SIDEBAR_LINKS: { kind: PageKind; label: string }[] = [
   { kind: "plugins", label: "Plugins" },
   { kind: "mcp", label: "MCPs" },
   { kind: "extensions", label: "Extensions" },
-  { kind: "artifacts", label: "Artifacts" },
 ];
 
 /** Entries for the header tools menu — each opens its feature's UI
@@ -204,7 +201,6 @@ const BASE_TOOLS_MENU: { label: string; command: string; desc: string }[] = [
     command: "/extensions",
     desc: "installed extensions & their settings",
   },
-  { label: "Artifacts", command: "/artifacts", desc: "project artifacts" },
   { label: "Hooks", command: "/hooks", desc: "pre/post tool hooks" },
   { label: "Loop", command: "/loop", desc: "recurring prompt status" },
   {
@@ -653,46 +649,33 @@ export default function App() {
     () => new URLSearchParams(window.location.search).get("dir") ?? "",
     [],
   );
-  // A shared document to open, from the link that opened this window.
-  // Read once: following a link is an arrival, and re-reading the URL
-  // later would reopen the document every time the app re-rendered.
-  const sharedSlug = useMemo(
-    () => new URLSearchParams(window.location.search).get("doc") ?? "",
-    [],
-  );
+  // A page to open, from the link that opened this window
+  // (`?open=<page>&…`, see `chat/arrival.ts`) — an extension's service
+  // links to its own page this way. Read once: following a link is an
+  // arrival, and re-reading the URL later would reopen the page every
+  // time the app re-rendered.
+  const arrival = useMemo(() => Arrivals.fromSearch(window.location.search), []);
 
-  // And taken out of the address bar once it has been read.
+  // And taken out of the address bar once it has been read — after
+  // sign-in, because before it the link is still where this window is
+  // going.
   //
   // A link is an arrival, not a place. Left in the URL it went on
-  // being true for ever: every reload read it again and put the
-  // window back on that document, so navigating anywhere else and
-  // refreshing undid the navigation — the app appeared to have one
-  // page it always returned to. Reading it once was not enough while
-  // the thing being read was still there.
-  //
-  // ``replaceState`` rather than a push: the URL with the parameter
-  // is not a step in this window's history, it is how the window
-  // opened, and a Back that returned to it would reopen the
-  // document.
-  //
-  // Only ``doc``. ``dir`` says which folder this window belongs to,
-  // which stays true for as long as the window does.
-  //
-  // Kept while signed out, because then the link is not an arrival —
-  // it is the whole page. A recipient reading a public document has
-  // no workspace behind it to be returned to, and taking the slug
-  // out of the address bar meant a reload landed them on the sign-in
-  // wall having lost the document they were sent.
+  // being true for ever: every reload read it again and put the window
+  // back on that page, so navigating anywhere else and refreshing
+  // undid the navigation. ``replaceState`` rather than a push: the URL
+  // with the parameter is not a step in this window's history, it is
+  // how the window opened. ``dir`` stays: it says which folder this
+  // window belongs to, which stays true for as long as the window does.
   useEffect(() => {
-    if (!sharedSlug || !status?.cloud_email) return;
+    if (!arrival || !status?.cloud_email) return;
     const url = new URL(window.location.href);
-    url.searchParams.delete("doc");
     window.history.replaceState(
       null,
       "",
-      `${url.pathname}${url.search}${url.hash}`,
+      `${url.pathname}${Arrivals.withoutArrival(url.search)}${url.hash}`,
     );
-  }, [sharedSlug, status?.cloud_email]);
+  }, [arrival, status?.cloud_email]);
   const sidebar = useWindowField(windowModel, "sidebar");
   const sidebarOpen = sidebar.open;
   const setSidebarOpen = useCallback(
@@ -762,23 +745,6 @@ export default function App() {
     conn === "connected",
   );
   const waiting = notificationCounts.unread;
-  /** Changes whenever a page is asked for from outside it — the
-   *  sidebar, a link, an extension's ``navigate``. A panel showing one
-   *  of its own sub-views takes it as "back to your top level". It is
-   *  the route's change count, so asking for the page already open
-   *  counts too. */
-  const pageHome = useWindowChanges(windowModel, "route");
-
-  // Artifacts keeps a document's comments in step by following its
-  // service's comment stream, which starts here once somebody is
-  // signed in. Comments only: what is waiting is counted above.
-  useEffect(() => {
-    if (!status?.cloud_connected) return;
-    void client.rpc("artifact_watch_comments").catch(() => {
-      // Offline, or Artifacts is not installed. Comments then refresh
-      // when a document is opened, which is what they did before.
-    });
-  }, [client, status?.cloud_connected]);
 
   // The directory this window's session is locked to (tools + shell
   // cwd) — the window model's, beside the session.
@@ -1199,12 +1165,14 @@ export default function App() {
               });
             }
             // A link wins over wherever this window was last. Somebody
-            // following one asked for a document; putting them back on
+            // following one asked for that page; putting them back on
             // the chat they had open a week ago answers a question
-            // nobody asked, and the document they came for is then two
+            // nobody asked, and the page they came for is then two
             // clicks away with no sign it is there.
-            if (sharedSlug) {
-              windowModel.write("route", [{ kind: "artifacts", label: "Artifacts" }]);
+            if (arrival) {
+              windowModel.write("route", [
+                { kind: arrival.page, label: arrival.page, params: arrival.params },
+              ]);
             }
             // Say whether this window has focus, now that it is open.
             windowModel.write("focused", document.hasFocus());
@@ -1783,6 +1751,20 @@ export default function App() {
             console.warn(`[extensions] ${refusal.owner}: ${refusal.reason}`);
           }
         }
+        // A page a link opened before its extension was listed carries
+        // its kind for a label (see ``arrival``); it has a name now.
+        const named = new Map(
+          result.extensions.flatMap((e) => e.pages.map((p) => [p.kind, p.label] as const)),
+        );
+        const route = windowModel.get("route");
+        if (route.some((r) => r.label === r.kind && named.has(r.kind))) {
+          windowModel.write(
+            "route",
+            route.map((r) =>
+              r.label === r.kind && named.has(r.kind) ? { ...r, label: named.get(r.kind) ?? r.label } : r,
+            ),
+          );
+        }
       })
       .catch((error: unknown) => {
         // A backend without extension support, or an older one that
@@ -1796,7 +1778,7 @@ export default function App() {
       alive = false;
       for (const owner of owners) contributions.uninstall(owner);
     };
-  }, [client, conn]);
+  }, [client, conn, windowModel]);
 
   // Navigation. Every move is a write of ``ui.route`` — the window's
   // model, which an extension's ``navigate`` writes too — so what is
@@ -2771,9 +2753,6 @@ export default function App() {
           case "extensions":
             goPage({ kind: "extensions", label: "Extensions" });
             return;
-          case "artifacts":
-            goPage({ kind: "artifacts", label: "Artifacts" });
-            return;
           case "hooks":
             goPage({ kind: "hooks", label: "Hooks" });
             return;
@@ -3018,33 +2997,6 @@ export default function App() {
         (status.context_tokens / Math.max(status.max_context, 1)) * 100,
       )
     : 0;
-
-  // A link is not the same as opening igni with nothing to open. A
-  // public document was published to be read, and demanding an
-  // account on the *sender's* server before a recipient may read it
-  // makes the link not a link — so an arrival with a slug lands on
-  // the document, inside the app, rather than on the wall.
-  if (knowYet && !signedIn && sharedSlug) {
-    return (
-      <>
-        <PublicDocument
-          client={client}
-          slug={sharedSlug}
-          onSignIn={() => setPanel({ kind: "login" })}
-        />
-        {panel.kind === "login" && (
-          <LoginPanel
-            client={client}
-            onDone={(ok, detail) => {
-              setPanel({ kind: "none" });
-              if (ok) void refreshStatus();
-              else append(errorItem(`Login failed: ${detail}`));
-            }}
-          />
-        )}
-      </>
-    );
-  }
 
   if (knowYet && !signedIn) {
     return (
@@ -3468,7 +3420,6 @@ export default function App() {
                         ["/loop", "Repeat a prompt across a batch until done"],
                         ["/mcp", "Plug in external tools and data sources"],
                         ["/plugins", "Install skills, agents and hooks"],
-                        ["/artifacts", "A artifacts carried in git"],
                       ] as const
                     ).map(([cmd, desc]) => (
                       <div
@@ -3624,26 +3575,6 @@ export default function App() {
                 // than merging one row into state it does not own.
                 onChanged={setExtensions}
                 onClose={goChat}
-              />
-            )}
-            {/* No ``onAsk`` here: commenting on a document runs the
-                turn on the document's own page, so the reply lands
-                under the comment instead of taking the reader off the
-                thing they were reading. The run still reaches this
-                chat — it is one session. */}
-            {page.kind === "artifacts" && (
-              <ArtifactPanel
-                client={client}
-                onClose={goChat}
-                goHome={pageHome}
-                /* A link that opened this window, naming a document
-                   by the server's slug. A notification opens the
-                   extension's own page instead, with its params. */
-                openSlug={sharedSlug}
-                /* Whose caret to draw in a shared draft. The same
-                   name and colour the header shows, so the person
-                   typing is recognisable as themselves. */
-                account={accountName}
               />
             )}
             {page.kind === "codeindex" && (

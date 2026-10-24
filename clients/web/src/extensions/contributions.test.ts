@@ -82,12 +82,12 @@ describe("refusing", () => {
     const c = fresh();
 
     const refused = c.install("acme.scanner", {
-      pages: [{ kind: "artifacts", label: "Artifacts" }],
+      pages: [{ kind: "codeindex", label: "CodeIndex" }],
     });
 
     expect(refused).toHaveLength(1);
     expect(refused[0].reason).toContain("igni's own pages");
-    expect(c.pages.ownerOf("artifacts")).toBeNull();
+    expect(c.pages.ownerOf("codeindex")).toBeNull();
   });
 
   it("will not let one extension take another's page kind", () => {
@@ -120,7 +120,7 @@ describe("refusing", () => {
 
     const refused = c.install("acme.scanner", {
       pages: [
-        { kind: "artifacts", label: "Shadowing" },
+        { kind: "hooks", label: "Shadowing" },
         { kind: "acme.scan", label: "Scanner", sidebar: true },
       ],
     });

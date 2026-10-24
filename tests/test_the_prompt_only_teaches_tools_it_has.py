@@ -26,28 +26,56 @@ with it.
 
 from __future__ import annotations
 
+import json
+from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
 
-from ember_code.core.prompts import load_prompt
+from ember_code.core.prompts import fragments, load_prompt
 from ember_code.core.prompts.conditionals import ConditionalRegistry
 from ember_code.core.session.agent_builder.prompt_builder import PromptBuilder
+from ember_code.extensions.manifest import ExtensionManifest
+
+#: Who supplies the project-documents text in these tests. Not a real
+#: extension: igni's prompts name no extension, so neither does this.
+_DOCS = "acme.docs"
+
+#: The anchors the core prompts leave for whatever keeps the project's
+#: documents, each with stand-in text that says where it came from.
+_ANCHORS = {
+    "PROJECT_DOCUMENTS_PERSISTING": 'Hand project facts to `spawn_agent("docs-keeper")`.',
+    "PROJECT_DOCUMENTS_WHEN_TO_PERSIST": "- A root cause you found → the docs keeper.",
+    "PROJECT_DOCUMENTS_READING": "Ask the docs keeper why; read the code for what.",
+    "PROJECT_DOCUMENTS_REFERENCE": "## The Project's Documents\n\nDelegate to the docs keeper.",
+}
 
 
-def _with_artifacts(live: bool) -> ConditionalRegistry:
-    """A registry in which an installed extension satisfies ``artifacts``
-    — what the documents extension declares while it runs — or nobody does."""
+def _with_documents(live: bool) -> ConditionalRegistry:
+    """A registry in which an installed extension keeps the project's
+    documents — declares ``project-documents`` — or nobody does."""
     registry = ConditionalRegistry()
     if live:
-        registry.declare("igni.artifacts", {"artifacts", "can-persist"})
+        registry.declare(_DOCS, {"project-documents", "can-persist"})
     return registry
 
 
-# The names the main-agent prompt uses for the artifact store.
-# Every artifact tool. The main agent holds none of them — only the
-# archivist gets the toolkit (agents/builder.py) — so none may appear in
-# the main prompt, store or no store.
+@pytest.fixture(autouse=True)
+def _documents_text() -> Iterator[None]:
+    """The extension's text for the anchors, as an installed one supplies it.
+
+    Registered whatever the test asks for: an anchor with a supplier and a
+    conditional that is false must still not reach the model, which is
+    what the ``only`` spans around each anchor are for.
+    """
+    for anchor, text in _ANCHORS.items():
+        assert fragments.register(anchor, _DOCS, lambda text=text: text) is None
+    yield
+    fragments.remove_owner(_DOCS)
+
+
+# The names the main-agent prompt must never use: the document store's
+# tools. The main agent holds none of them, store or no store.
 _ARTIFACT_TOOLS = (
     "artifact_add",
     "artifact_create",
@@ -76,7 +104,7 @@ def _build(*, knowledge: bool, codeindex: bool = False, user_memory: bool = True
         project_dir=Path("/nonexistent"),
         settings=_Settings,
         codeindex_available=codeindex,
-        conditionals=_with_artifacts(knowledge),
+        conditionals=_with_documents(knowledge),
         user_memory_available=user_memory,
         agent_catalog="- researcher: reads things",
         skill_descriptions="",
@@ -89,9 +117,11 @@ class TestTheTwoConditionsAgree:
     def test_with_a_knowledge_base_the_tools_are_taught(self, codeindex):
         prompt = _build(knowledge=True, codeindex=codeindex)
 
-        # The store is reached through the archivist, so that is what is
-        # taught — and never an artifact tool, which the main agent lacks.
-        assert 'spawn_agent("archivist"' in prompt
+        # What is taught is the extension's text — and never a store
+        # tool, which the main agent lacks.
+        for text in _ANCHORS.values():
+            assert text.split("\n")[-1] in prompt
+        assert "{{PROJECT_DOCUMENTS_" not in prompt
         assert not [tool for tool in _ARTIFACT_TOOLS if tool in prompt]
 
     def test_without_one_they_are_not_mentioned_at_all(self, codeindex):
@@ -101,6 +131,8 @@ class TestTheTwoConditionsAgree:
 
         offenders = [tool for tool in _ARTIFACT_TOOLS if tool in prompt]
         assert not offenders, f"prompt still teaches {offenders} with no knowledge base"
+        assert "docs keeper" not in prompt and "docs-keeper" not in prompt
+        assert "{{PROJECT_DOCUMENTS_" not in prompt
 
     def test_the_user_memory_half_survives_either_way(self, codeindex):
         """The two surfaces are described together, so a crude cut would take
@@ -113,7 +145,7 @@ class TestTheTwoConditionsAgree:
     def test_no_marker_reaches_the_model(self, codeindex):
         for knowledge in (True, False):
             prompt = _build(knowledge=knowledge, codeindex=codeindex)
-            assert "artifacts:" not in prompt
+            assert "project-documents:" not in prompt
             assert "<!--" not in prompt.replace("<!-- This file gives", "")
 
     def test_the_absent_branch_says_what_to_do_instead(self, codeindex):
@@ -122,7 +154,16 @@ class TestTheTwoConditionsAgree:
         silence, and the model invents something."""
         prompt = _build(knowledge=False, codeindex=codeindex)
 
-        assert "document store is not enabled" in prompt
+        assert "Nothing in this session keeps the project's documents" in prompt
+
+    def test_igni_names_no_document_extension_or_its_agent(self, codeindex):
+        """The text about a document store is the store's to supply. igni's
+        own prompts, with nothing installed, name neither the extension that
+        usually keeps the documents nor the agent it ships."""
+        for user_memory in (True, False):
+            prompt = _build(knowledge=False, codeindex=codeindex, user_memory=user_memory)
+            assert "archivist" not in prompt.lower()
+            assert "artifacts" not in prompt.lower()
 
     def test_the_two_renders_actually_differ(self, codeindex):
         """Guards against the whole scheme quietly no-opping: if the markers
@@ -132,7 +173,7 @@ class TestTheTwoConditionsAgree:
         without = _build(knowledge=False, codeindex=codeindex)
 
         assert with_kb != without
-        assert len(with_kb) > len(without)
+        assert "docs keeper" in with_kb and "docs keeper" not in without
 
 
 class TestTheResolverFailsLoudly:
@@ -141,7 +182,7 @@ class TestTheResolverFailsLoudly:
             project_dir=Path("/nonexistent"),
             settings=_Settings,
             codeindex_available=False,
-            conditionals=_with_artifacts(knowledge),
+            conditionals=_with_documents(knowledge),
             user_memory_available=user_memory,
             agent_catalog="",
             skill_descriptions="",
@@ -151,7 +192,7 @@ class TestTheResolverFailsLoudly:
     def test_an_unclosed_span_raises(self):
         """The alternative is a prompt that silently loses everything after the
         opening marker, which is the exact class of bug this row is about."""
-        broken = "intro\n<!-- artifacts:only -->\nsome guidance\n"
+        broken = "intro\n<!-- project-documents:only -->\nsome guidance\n"
 
         with pytest.raises(ValueError, match="unbalanced"):
             self._builder(knowledge=True).resolve_conditionals(broken)
@@ -161,14 +202,15 @@ class TestTheResolverFailsLoudly:
         or `knowledge_add`". Dropping the clause must leave the sentence."""
         text = (
             "respond without calling `update_user_memory`"
-            "<!-- artifacts:only --> or delegating to the archivist<!-- /artifacts:only -->."
+            "<!-- project-documents:only --> or delegating to the docs keeper"
+            "<!-- /project-documents:only -->."
         )
 
         assert self._builder(knowledge=False).resolve_conditionals(text) == (
             "respond without calling `update_user_memory`."
         )
         assert self._builder(knowledge=True).resolve_conditionals(text) == (
-            "respond without calling `update_user_memory` or delegating to the archivist."
+            "respond without calling `update_user_memory` or delegating to the docs keeper."
         )
 
 
@@ -211,7 +253,7 @@ class TestTheUserMemoryToolIsTaughtOnlyWhenAttached:
         for user_memory in (True, False):
             prompt = _build(knowledge=True, codeindex=codeindex, user_memory=user_memory)
 
-            assert 'spawn_agent("archivist"' in prompt
+            assert 'spawn_agent("docs-keeper")' in prompt
 
     def test_with_neither_the_section_goes_too(self, codeindex):
         """Nothing to persist to, so "Persisting What You Learn" followed by
@@ -222,7 +264,7 @@ class TestTheUserMemoryToolIsTaughtOnlyWhenAttached:
         assert "When NOT to persist" not in prompt
         assert "When to persist proactively" not in prompt
         # What stays is the honest part: nothing can be filed, so say so.
-        assert "document store is not enabled" in prompt
+        assert "Nothing in this session keeps the project's documents" in prompt
 
     def test_the_absent_branch_says_what_to_do_instead(self, codeindex):
         """Same standard the knowledge-base absent branch is held to: removing
@@ -241,7 +283,7 @@ class TestTheUserMemoryToolIsTaughtOnlyWhenAttached:
                 prompt = _build(knowledge=knowledge, codeindex=codeindex, user_memory=user_memory)
 
                 assert "user-memory:" not in prompt
-                assert "artifacts:" not in prompt
+                assert "project-documents:" not in prompt
                 assert "<!--" not in prompt.replace("<!-- This file gives", "")
 
     def test_all_four_renders_differ(self, codeindex):
@@ -257,7 +299,8 @@ class TestTheUserMemoryToolIsTaughtOnlyWhenAttached:
         }
 
         assert len(set(renders.values())) == 4
-        assert len(renders[True, True]) > len(renders[False, False])
+        assert "docs keeper" in renders[True, True]
+        assert "docs keeper" not in renders[False, False]
 
 
 class TestTheFlagIsComputedFromRealConfigFields:
@@ -279,3 +322,55 @@ class TestTheFlagIsComputedFromRealConfigFields:
 
         assert LearningConfig(user_memory=False).to_user_memory_input() is False
         assert LearningConfig(user_memory=True).to_user_memory_input() is not False
+
+
+#: The Artifacts extension, when its checkout sits beside this one.
+_ARTIFACTS_EXTENSION = Path(__file__).resolve().parents[2] / "igni__artifacts" / "extension"
+
+
+@pytest.mark.skipif(
+    not (_ARTIFACTS_EXTENSION / "manifest.json").is_file(),
+    reason="no igni__artifacts checkout beside this one",
+)
+@pytest.mark.parametrize("codeindex", [False, True], ids=["plain", "codeindex"])
+def test_the_document_extensions_text_fills_every_anchor(codeindex):
+    """The extension that does keep the project's documents supplies text for
+    every anchor the core prompts leave, declares the conditional that shows
+    it, and its text resolves cleanly inside them — markers balanced, nothing
+    left in braces, and its agent taught by name."""
+    manifest = json.loads((_ARTIFACTS_EXTENSION / "manifest.json").read_text())
+    ExtensionManifest.model_validate(manifest)
+    contributes = manifest["contributes"]
+    assert "project-documents" in contributes["promptConditionals"]
+    supplied = {
+        f["anchor"]: (_ARTIFACTS_EXTENSION / f["from"]).read_text()
+        for f in contributes["promptFragments"]
+        if f["source"] == "file"
+    }
+    assert set(_ANCHORS) <= set(supplied)
+
+    owner = "igni.artifacts"
+    fragments.remove_owner(_DOCS)
+    for anchor in _ANCHORS:
+        text = supplied[anchor]
+        assert fragments.register(anchor, owner, lambda text=text: text) is None
+    try:
+        registry = ConditionalRegistry()
+        registry.declare(owner, set(contributes["promptConditionals"]))
+        prompt = PromptBuilder(
+            project_dir=Path("/nonexistent"),
+            settings=_Settings,
+            codeindex_available=codeindex,
+            conditionals=registry,
+            user_memory_available=True,
+            agent_catalog="",
+            skill_descriptions="",
+            prompt_loader=load_prompt,
+        ).render()
+    finally:
+        fragments.remove_owner(owner)
+
+    assert 'spawn_agent("archivist"' in prompt
+    assert "{{" not in prompt
+    assert "<!--" not in prompt.replace("<!-- This file gives", "")
+    assert not [tool for tool in _ARTIFACT_TOOLS if tool in prompt]

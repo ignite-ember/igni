@@ -335,32 +335,14 @@ Git operations are handled via `EmberShellTools` with git/gh commands. The Git A
 
 ## Knowledge Base
 
-### Knowledge (ArtifactManager)
+### Project documents
 
-Built-in vector knowledge base backed by the Neo4j sidecar and a local embedding model (all-MiniLM-L6-v2 — no API call, nothing leaves the machine). Unlike CodeIndex (which provides pre-processed semantic code intelligence), the Knowledge system is a general-purpose document store that users can populate with any content.
-
-```yaml
-knowledge:
-  enabled: true
-  collection_name: "my_project"
-  # No `embedder` key: embeddings are local (all-MiniLM-L6-v2, 384-dim)
-  # and not selectable. This line named a cloud embedder and an
-  # `/v1/embeddings` endpoint, neither of which exists.
-```
-
-**Slash commands:**
-- `/knowledge` — show knowledge base status (document count, collection info)
-- `/knowledge add <url|path|text>` — add content to the knowledge base
-- `/knowledge search <query>` — search the knowledge base
-
-**How it works:**
-1. `Embedder` (`src/ember_code/core/embeddings.py`) loads `sentence-transformers/all-MiniLM-L6-v2` in-process and embeds locally — 384 dimensions, no network call
-2. Documents are chunked by `NewlinePreservingChunker` and stored, with their vectors, in the Neo4j sidecar via `Neo4jKnowledgeClient`
-3. Agents can search the knowledge base automatically during execution via Agno's `Knowledge` integration
-
-**Data models (Pydantic):** `ArtifactWriteResult`, `ArtifactSearchResponse`, `KnowledgeFilter`, `ArtifactStatus`
-
-**Requires:** nothing extra. The embedder and the Neo4j client are core dependencies. This line used to send readers off to install a `knowledge` extra that pulls in `chromadb`. There is no such extra in `pyproject.toml`, and `chromadb` has not been a dependency since the vectors moved to Neo4j — pip only *warns* about an extra that does not exist, so the instruction appeared to work while installing nothing.
+igni keeps no knowledge store of its own. Project documents — versioned,
+with lineage, comments and their page — are the Artifacts extension's
+(`igni__artifacts`): its archivist agent reads and writes them, and the
+extension supplies the prompt text that teaches the main agent when to
+delegate to it (`PROJECT_DOCUMENTS_*` anchors, shown only while it is
+installed and READY).
 
 ---
 

@@ -33,6 +33,11 @@ export interface FloorNotification {
   target: NotificationTarget | null;
   created_at: string | null;
   read: boolean;
+  /** The organisation it happened in — server rows only. */
+  org_id?: string;
+  /** That organisation's name, sent only when the person belongs to more
+   *  than one: with one, every row is from it. */
+  org_name?: string;
 }
 
 /** Unread, in all and per extension. The badge on each extension. */

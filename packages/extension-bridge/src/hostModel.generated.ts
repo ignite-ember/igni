@@ -68,7 +68,7 @@ export interface WindowInfo {
 
 /** One level of a window's page stack. */
 export interface Page {
-  /** `plugins`, `artifacts`, an extension's page kind, … */
+  /** `plugins`, `extensions`, an extension's page kind, … */
   kind: string;
   label: string;
   params?: Record<string, string>;

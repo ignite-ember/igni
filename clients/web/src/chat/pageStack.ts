@@ -1,13 +1,13 @@
 /**
  * Where a window is, as a stack.
  *
- * The thirteen browsable destinations — plugins, artifacts, codeindex,
+ * The browsable destinations — plugins, extensions, codeindex,
  * mcp, watcher, hooks, schedule, agents, skills, workflows, and the
  * three that came later: loop, help, context. They used to share one
  * slot of `PanelState` and render as a centre-screen modal. One slot
  * means no
- * history: `ArtifactPanel` walks collections into documents and had no
- * way to say where you were or to go back one level, because there was
+ * history: a panel that walks into its own detail views had no way to
+ * say where you were or to go back one level, because there was
  * nowhere to put the trail.
  *
  * A stack is that trail. The last entry is what renders; everything
@@ -27,7 +27,7 @@
 /**
  * The destinations that are pages. Dialogs stay in `PanelState`.
  *
- * A string, not a union of the thirteen this build happens to ship.
+ * A string, not a union of the ones this build happens to ship.
  * An extension contributes pages, and a closed union cannot admit one:
  * the set of destinations is decided at install time by what an
  * administrator put on the machine, not at compile time by us.
@@ -43,7 +43,6 @@ export type PageKind = string;
 export const BASE_PAGE_KINDS = [
   "plugins",
   "extensions",
-  "artifacts",
   "codeindex",
   "mcp",
   "watcher",
@@ -57,7 +56,7 @@ export const BASE_PAGE_KINDS = [
   "context",
 ] as const;
 
-/** One of the fourteen above — still exact, for the app's own code. */
+/** One of the thirteen above — still exact, for the app's own code. */
 export type BasePageKind = (typeof BASE_PAGE_KINDS)[number];
 
 /**
@@ -145,7 +144,7 @@ export function current(stack: readonly PageRoute[]): PageRoute | null {
  * Go to a destination — a header link, or a tools-menu entry.
  *
  * Always a fresh trail. Destinations are siblings, not nested: a
- * breadcrumb reading `Plugins / Artifacts` would claim Artifacts lives
+ * breadcrumb reading `Plugins / Hooks` would claim Hooks lives
  * inside Plugins, and clicking "Plugins" while three levels deep in
  * Plugins should land at the top of Plugins rather than add a fourth
  * level to it.

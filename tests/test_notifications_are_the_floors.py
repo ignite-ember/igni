@@ -181,6 +181,49 @@ async def test_signed_out_lists_only_this_machines_own(tmp_path, rows):
     assert result.server_error == ""
 
 
+async def test_a_row_names_its_organisation_when_the_person_is_in_several(tmp_path):
+    floor = Floor(
+        tmp_path,
+        [
+            server_row("s-acme", org_id="org-acme", minutes_ago=1),
+            server_row("s-globex", org_id="org-globex", minutes_ago=2),
+        ],
+    )
+    floor.server.organizations = [
+        {"id": "org-acme", "display_name": "Acme", "slug": "acme", "role": "member"},
+        {"id": "org-globex", "display_name": "Globex", "slug": "globex", "role": "admin"},
+    ]
+
+    result = await floor.handler.notifications_list({})
+
+    assert [(n.org_id, n.org_name) for n in result.notifications] == [
+        ("org-acme", "Acme"),
+        ("org-globex", "Globex"),
+    ]
+    # Read once per sign-in, not on every listing.
+    await floor.handler.notifications_list({})
+    assert floor.server.calls("/v1/portal/me") == 1
+
+
+async def test_with_one_organisation_no_row_names_it(tmp_path):
+    floor = Floor(tmp_path, [server_row("s-acme", org_id="org-acme")])
+
+    result = await floor.handler.notifications_list({})
+
+    assert [(n.org_id, n.org_name) for n in result.notifications] == [("org-acme", "")]
+
+
+async def test_not_knowing_the_organisations_costs_the_name_not_the_list(tmp_path):
+    floor = Floor(tmp_path, [server_row("s-acme", org_id="org-acme")])
+    floor.server.me_status = 503
+
+    result = await floor.handler.notifications_list({})
+
+    assert [n.id for n in result.notifications] == ["s-acme"]
+    assert result.notifications[0].org_name == ""
+    assert result.server_error == ""
+
+
 # ── One count per extension ─────────────────────────────────────────
 
 

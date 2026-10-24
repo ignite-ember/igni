@@ -191,12 +191,12 @@ describe("the rest of the surface", () => {
 
   it("asks the host to navigate", async () => {
     const { host, bridge } = await connected();
-    bridge.navigate("artifacts");
+    bridge.navigate("plugins");
 
     expect(host.posted).toContainEqual(
       expect.objectContaining({
         kind: "navigate",
-        to: "artifacts",
+        to: "plugins",
         nonce: NONCE,
       }),
     );

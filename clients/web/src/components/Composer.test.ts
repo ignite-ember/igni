@@ -82,7 +82,6 @@ describe("BUILTIN_COMMANDS — structural contract", () => {
       "/skills",
       "/plugin",
       "/plugins",
-      "/artifacts",
       "/codeindex",
       "/hooks",
       "/loop",

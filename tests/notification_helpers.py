@@ -76,6 +76,10 @@ class FakeNotificationServer:
         self.stream_status = 200
         #: Answer list and counts with this status.
         self.status = 200
+        #: The organisations ``GET /v1/portal/me`` says the person is in.
+        self.organizations: list[dict[str, Any]] = [{"id": "org-acme", "display_name": "Acme"}]
+        #: Answer ``GET /v1/portal/me`` with this status.
+        self.me_status = 200
         self._connection: asyncio.Queue[bytes | None] | None = None
         self.connected = asyncio.Event()
 
@@ -121,6 +125,17 @@ class FakeNotificationServer:
         self.authorizations.append(request.headers.get("authorization", ""))
         if path == "/v1/notifications/stream":
             return self._stream(request)
+        if path == "/v1/portal/me":
+            if self.me_status != 200:
+                return httpx.Response(self.me_status)
+            return httpx.Response(
+                200,
+                json={
+                    "user_id": "u-ada",
+                    "email": "ada@acme.com",
+                    "organizations": self.organizations,
+                },
+            )
         if self.status != 200:
             return httpx.Response(self.status, json={"detail": "nope"})
         if path == "/v1/notifications" and request.method == "GET":

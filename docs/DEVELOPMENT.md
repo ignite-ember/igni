@@ -29,7 +29,6 @@ ember-code/
 │   │   ├── guardrails/     # one rule per file (PII, injection, moderation) behind one runner
 │   │   ├── hooks/          # hook discovery, matcher, executor, tool-event pipeline
 │   │   ├── init/           # first-run and per-project initialization, hook provisioning
-│   │   ├── artifacts/      # the artifact store client: versions, lineage, passages, sync with the server
 │   │   ├── loop/           # `/loop` state — caps, stored prompt, per-iteration tool results
 │   │   ├── lsp/            # language-server client and per-project manager
 │   │   ├── mcp/            # MCP client, transports, `.mcp.json` config, approval, tool filter
@@ -177,7 +176,6 @@ class EmberEmbedder(Embedder):
     dimensions: int = 384
 ```
 
-`ArtifactManager` creates an Agno `Knowledge` with ChromaDB as the vector store. All data models are Pydantic: `ArtifactWriteResult`, `ArtifactSearchResponse`, `KnowledgeFilter`, `ArtifactStatus`.
 
 ### 5. Backend Architecture (backend/)
 

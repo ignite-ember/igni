@@ -384,45 +384,6 @@ for (const { cmd, shows } of ANSWERS) {
   });
 }
 
-test("/artifacts says why it is unavailable", async ({ page, liveBe }) => {
-  // Either it opens the panel, or it explains itself. What it must
-  // not do is the third thing, which is what it did: "Knowledge base
-  // failed to initialize." — no cause, and not a failure. The index
-  // is deferred until CodeIndex's Neo4j attaches, and this branch
-  // exists to say so. `Session._knowledge_error` was never assigned,
-  // so it could not.
-  await page.goto(`/?ws=${encodeURIComponent(liveBe.wsUrl)}`);
-  await connected(page);
-  await page.getByRole("button", { name: /New chat/i }).click();
-
-  // ``/knowledge`` until the store became versioned documents; the
-  // command went with the name and the backend answers "Unknown
-  // command" for it now, which this test read as the panel declining
-  // to explain itself.
-  await runCommand(page, "/artifacts");
-  await shot(page, "ans-artifacts");
-
-  const opened = await page
-    .locator(".drawer")
-    .first()
-    .isVisible()
-    .catch(() => false);
-  if (opened) return;
-
-  const conversation = page.locator(".conversation");
-  await expect(conversation).toContainText(/artifact/i, { timeout: 30_000 });
-  // A cause, in words that point somewhere.
-  // ``setting up|local database`` are the subsystem-state wording: knowledge
-  // now reports PREPARING while the sidecar starts, where it used to report
-  // only the reasons it was off. Both name a cause, which is the property this
-  // test is for — the line below still holds the fallback to account, and that
-  // is what "says why" means here.
-  await expect(conversation).toContainText(
-    /neo4j|codeindex|disabled|config|setting up|local database|sign|account/i,
-  );
-  await expect(conversation).not.toContainText(/failed to initialize\.?\s*$/i);
-});
-
 for (const { cmd, becomes } of MODES) {
   test(`${cmd} switches the permission mode and back`, async ({
     page,
