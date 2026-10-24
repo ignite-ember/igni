@@ -34,7 +34,7 @@ from ember_code.extensions.host.spec import (
 )
 
 #: The model's version. Semver; see the module docstring.
-SCHEMA_VERSION = "1.0.0"
+SCHEMA_VERSION = "1.1.0"
 
 # ── Permissions ───────────────────────────────────────────────────
 
@@ -138,7 +138,7 @@ TYPES = (
         field("id", "str", "Stable across reloads of the same window."),
         field("kind", "str", "`tauri`, `vscode`, `jetbrains` or `web`."),
         field("connected", "bool"),
-        field("focused", "bool", "Stage 2: false until the window reports focus."),
+        field("focused", "bool", "Whether the person is using this window: it has focus."),
         field("session_id", "str | None", "The session it shows.", optional=True),
         field("project_dir", "str | None", optional=True),
     ),
@@ -157,13 +157,14 @@ TYPES = (
     ),
     typedef(
         "Panel",
-        "The side panel open in a window.",
+        "The panel open over a window's chat: `notifications`, `search` (find in the "
+        "conversation), `login` or `dir-picker`. One at a time.",
         field("kind", "str"),
         field("params", "dict[str, json]", optional=True),
     ),
     typedef(
         "PanelChange",
-        "A window's side panel opened or closed.",
+        "A window's panel opened or closed.",
         field("window", "str"),
         field("panel", "Panel | None", optional=True),
     ),
@@ -171,8 +172,13 @@ TYPES = (
         "Sidebar",
         "A window's sidebar.",
         field("open", "bool"),
-        field("width", "int | None", "Stage 2: not reported yet.", optional=True),
-        field("section", "str | None", "Stage 2: not reported yet.", optional=True),
+        field("width", "int | None", "Its width in pixels; `None` for igni's own.", optional=True),
+        field(
+            "section",
+            "str | None",
+            "The part of it in view: `links` (the destinations) or `sessions`.",
+            optional=True,
+        ),
     ),
     typedef(
         "SidebarChange",
@@ -182,7 +188,7 @@ TYPES = (
     ),
     typedef(
         "Preview",
-        "The file or document previewed in a window.",
+        "The file previewed in a window.",
         field("path", "str"),
     ),
     typedef(
@@ -193,10 +199,18 @@ TYPES = (
     ),
     typedef(
         "SelectionState",
-        "What is highlighted or selected in a window.",
-        field("message_id", "str | None", optional=True),
-        field("text", "str | None", optional=True),
-        field("file", "str | None", optional=True),
+        "What is selected in a window. Each part is independent; `None` for nothing.",
+        field(
+            "message_id",
+            "str | None",
+            "The highlighted message, by the run it belongs to (`run_id` in "
+            "`chat.messages` and the run signals).",
+            optional=True,
+        ),
+        field("text", "str | None", "Text selected in the transcript.", optional=True),
+        field(
+            "file", "str | None", "The file last picked: a file pill, a reference.", optional=True
+        ),
     ),
     typedef(
         "SelectionChange",
@@ -207,9 +221,19 @@ TYPES = (
     typedef(
         "Composer",
         "A window's composer.",
-        field("text", "str", "The draft."),
-        field("attachments", "list[str]", "Stage 2: not reported yet.", optional=True),
-        field("mode", "str | None", "Stage 2: not reported yet.", optional=True),
+        field("text", "str", "The draft, without the mode's `/` or `$`."),
+        field(
+            "attachments",
+            "list[str]",
+            "The files the draft refers to (`@path`), in order.",
+            optional=True,
+        ),
+        field(
+            "mode",
+            "str | None",
+            "`chat`, `command` (a slash command) or `shell` (a `$` line).",
+            optional=True,
+        ),
     ),
     typedef(
         "ComposerChange",
@@ -221,8 +245,13 @@ TYPES = (
         "Toast",
         "A transient message on screen.",
         field("id", "str"),
-        field("text", "str"),
+        field("text", "str", "Its first line."),
         field("kind", "str", "`info`, `success`, `warning` or `error`."),
+        field("body", "str | None", "A second line.", optional=True),
+        field("target", "Page | None", "Where clicking it goes.", optional=True),
+        field(
+            "source", "str | None", "The extension that showed it; `None` for igni.", optional=True
+        ),
     ),
     typedef(
         "ToastChange",
@@ -232,22 +261,37 @@ TYPES = (
     ),
     typedef(
         "Dialog",
-        "A dialog on screen.",
+        "A dialog on screen: igni's own (`spec.kind` is `update`) or an extension's "
+        "(`show_dialog`). One at a time; a new one replaces the last, which closes "
+        "unanswered.",
         field("id", "str"),
         field("spec", "json"),
+        field("source", "str | None", "The extension that asked; `None` for igni.", optional=True),
     ),
     typedef(
         "DialogChange",
         "A dialog opened or closed.",
         field("window", "str"),
         field("dialog", "Dialog"),
-        field("answer", "json", "What the person answered, when it closed.", optional=True),
+        field(
+            "answer",
+            "json",
+            "What the person answered, when it closed: `{button, value}`; `None` when "
+            "it was dismissed or replaced.",
+            optional=True,
+        ),
     ),
     typedef(
         "Scroll",
         "Where a window's transcript is scrolled to.",
-        field("message_id", "str | None", optional=True),
-        field("at_bottom", "bool"),
+        field(
+            "message_id",
+            "str | None",
+            "The message at the top of the view, by its run; `None` for none.",
+            optional=True,
+        ),
+        field("at_bottom", "bool", "Following the newest message."),
+        field("window", "str | None", "The window, in a signal.", optional=True),
     ),
     typedef(
         "SessionInfo",
@@ -778,21 +822,27 @@ OBJECTS = (
             prop(
                 "focused",
                 "str | None",
-                "The window the person is using.",
+                "The window the person is using — the one with focus; `None` when igni "
+                "is in the background.",
                 changed_by=["focus_changed"],
-                stage=2,
             ),
         ),
         signals=(
             signal("opened", "WindowInfo", "A window connected."),
             signal("closed", "WindowInfo", "A window went away."),
-            signal("focus_changed", "WindowInfo", "Another window took focus.", stage=2),
+            signal(
+                "focus_changed",
+                "WindowInfo",
+                "A window took focus or lost it; `focused` says which.",
+            ),
         ),
     ),
     ObjectSpec(
         path="ui",
-        doc="What a window shows. `host.ui` is the active window — the one the person "
-        "last used; `host.windows.ui(id)` any window.",
+        doc="What a window shows — the model its views bind to. `host.ui` is the "
+        "active window, the one the person last used; `host.windows.ui(id)` any "
+        "window. igni's own views write here too, by the same path, so every change "
+        "below is a signal whoever made it.",
         permission="ui",
         per_window=True,
         properties=(
@@ -806,66 +856,69 @@ OBJECTS = (
             prop(
                 "panel",
                 "Panel | None",
-                "The side panel open.",
+                "The panel open over the chat. Writable: setting it opens one, `None` closes it.",
                 changed_by=["panel_changed"],
-                stage=2,
+                writable=True,
             ),
             prop(
                 "sidebar",
                 "Sidebar",
-                "The sidebar. Writable: `open` is applied.",
+                "The sidebar. Writable.",
                 changed_by=["sidebar_changed"],
                 writable=True,
             ),
             prop(
                 "preview",
                 "Preview | None",
-                "The file or document previewed.",
+                "The file previewed. Writable: `None` closes it.",
                 changed_by=["preview_changed"],
-                stage=2,
+                writable=True,
             ),
             prop(
                 "selection",
                 "SelectionState",
-                "What is selected.",
+                "What is selected. Writable.",
                 changed_by=["selection_changed"],
-                stage=2,
+                writable=True,
             ),
             prop(
                 "composer",
                 "Composer",
-                "The draft in the composer. Writable: the text is applied.",
+                "The composer: draft, the files it refers to, its mode. Writable.",
                 changed_by=["composer_changed"],
                 writable=True,
             ),
             prop(
                 "toasts",
                 "list[Toast]",
-                "Toasts on screen.",
+                "Toasts on screen, oldest first.",
                 changed_by=["toast_shown", "toast_dismissed"],
-                stage=2,
             ),
             prop(
                 "dialog",
                 "Dialog | None",
                 "The open dialog.",
                 changed_by=["dialog_opened", "dialog_closed"],
-                stage=2,
             ),
-            prop("scroll", "Scroll", "Where the transcript is.", changed_by=["scrolled"], stage=2),
+            prop("scroll", "Scroll", "Where the transcript is.", changed_by=["scrolled"]),
         ),
         signals=(
             signal("navigated", "Route", "The page stack changed."),
-            signal("panel_changed", "PanelChange", "A side panel opened or closed.", stage=2),
+            signal("panel_changed", "PanelChange", "A panel opened or closed."),
             signal("sidebar_changed", "SidebarChange", "The sidebar changed."),
-            signal("preview_changed", "PreviewChange", "The preview changed.", stage=2),
-            signal("selection_changed", "SelectionChange", "The selection changed.", stage=2),
+            signal("preview_changed", "PreviewChange", "The preview opened, changed or closed."),
+            signal("selection_changed", "SelectionChange", "The selection changed."),
             signal("composer_changed", "ComposerChange", "The draft changed."),
-            signal("toast_shown", "ToastChange", "A toast appeared.", stage=2),
-            signal("toast_dismissed", "ToastChange", "A toast went away.", stage=2),
-            signal("dialog_opened", "DialogChange", "A dialog opened.", stage=2),
-            signal("dialog_closed", "DialogChange", "A dialog closed, with the answer.", stage=2),
-            signal("scrolled", "Scroll", "The transcript scrolled.", stage=2),
+            signal("toast_shown", "ToastChange", "A toast appeared."),
+            signal("toast_dismissed", "ToastChange", "A toast went away."),
+            signal("dialog_opened", "DialogChange", "A dialog opened."),
+            signal("dialog_closed", "DialogChange", "A dialog closed, with the answer."),
+            signal(
+                "scrolled",
+                "Scroll",
+                "The transcript came to rest somewhere else, or started or stopped "
+                "following the newest message.",
+            ),
         ),
         methods=(
             method(
@@ -880,60 +933,82 @@ OBJECTS = (
             ),
             method(
                 "open_panel",
-                "Open a side panel.",
-                param("kind", "str"),
+                "Open a panel over the chat, closing the one that was open.",
+                param("kind", "str", "`notifications`, `search`, `login` or `dir-picker`."),
                 param("params", "dict[str, json]", optional=True),
-                stage=2,
+                result="Panel",
             ),
-            method("close_panel", "Close the side panel.", stage=2),
+            method("close_panel", "Close the panel."),
             method(
                 "set_sidebar",
-                "Open or close the sidebar.",
+                "Open or close the sidebar, and size it or bring a section into view.",
                 param("open", "bool"),
-                param("width", "int", "Stage 2.", optional=True),
-                param("section", "str", "Stage 2.", optional=True),
+                param("width", "int", "In pixels, 180 to 600.", optional=True),
+                param("section", "str", "`links` or `sessions`.", optional=True),
                 result="Sidebar",
             ),
             method(
                 "open_preview",
-                "Preview a file. (`preview` is the property.)",
+                "Preview a file of the project. (`preview` is the property.)",
                 param("path", "str"),
-                stage=2,
+                result="Preview",
             ),
+            method("close_preview", "Close the preview."),
             method(
                 "select",
-                "Select a message, text or file.",
+                "Select a message, text or file. The parts left out are cleared.",
                 param("selection", "SelectionState"),
-                stage=2,
+                result="SelectionState",
             ),
             method(
                 "set_composer",
                 "Replace the draft.",
                 param("text", "str"),
-                param("attachments", "list[str]", "Stage 2.", optional=True),
+                param(
+                    "attachments",
+                    "list[str]",
+                    "Files to refer to: each becomes an `@path` the draft does not already have.",
+                    optional=True,
+                ),
+                param(
+                    "mode",
+                    "str",
+                    "`chat`, `command` or `shell`; unchanged if left out.",
+                    optional=True,
+                ),
                 result="Composer",
             ),
             method(
                 "toast",
-                "Show a transient message.",
+                "Show a transient message, labelled as this extension's.",
                 param("text", "str"),
                 param(
                     "kind", "str", "`info` (default), `success`, `warning`, `error`.", optional=True
                 ),
-                stage=2,
+                param("body", "str", "A second line.", optional=True),
+                param("target", "Page", "Where clicking it goes.", optional=True),
+                result="Toast",
+            ),
+            method(
+                "dismiss_toast",
+                "Take one of this extension's toasts away.",
+                param("toast_id", "str"),
             ),
             method(
                 "show_dialog",
-                "Show a dialog and wait for the answer. (`dialog` is the property.)",
+                "Show a dialog and wait for the person's answer. `spec` is "
+                "`{title, body, buttons: [{id, label, primary}], input: {label, "
+                "placeholder, value}}` — `buttons` defaults to one OK, `input` is "
+                "optional. Answers `{button, value}`, or `None` when the dialog was "
+                "dismissed, or replaced by another. (`dialog` is the property.)",
                 param("spec", "json"),
                 result="json",
-                stage=2,
             ),
             method(
                 "scroll_to",
-                "Scroll the transcript to a message.",
+                "Scroll the transcript to a message, by its run; `bottom` for the newest.",
                 param("message_id", "str"),
-                stage=2,
+                result="Scroll",
             ),
         ),
     ),

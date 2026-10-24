@@ -349,6 +349,7 @@ class HostRig:
         self.model: HostModel | None = None
         self.orchestrator: RigOrchestrator | None = None
         self.channel: HostChannel | None = None
+        self._requests = 0
 
     async def start(self, *, strict: bool = True) -> HostRig:
         loop = asyncio.get_running_loop()
@@ -421,28 +422,42 @@ class HostRig:
     async def window(
         self, window_id: str = "w-main", *, connection: str = "ws-1", session: str = ""
     ) -> str:
-        """A window connects and reads its state, as ``clientState.ts`` does."""
+        """A window connects and hydrates its model, as ``clientState.ts`` does."""
         assert self.orchestrator is not None
         if session:
             self.orchestrator.client_state.set_value(window_id, "session-id", session)
-        await self.orchestrator.dispatch(
-            msg.RPCRequest(
-                id=f"hydrate-{window_id}",
-                method="get_client_state",
-                args={"client_id": window_id, "connection_id": connection, "kind": "tauri"},
-            )
-        )
+        await self.window_model(window_id, "hydrate", connection_id=connection, kind="tauri")
         return window_id
 
-    async def window_writes(self, window_id: str, key: str, value: str) -> None:
+    async def window_writes(
+        self, window_id: str, field: str, value: Any, *, token: str = ""
+    ) -> Any:
+        """The window's own views write one field of its model."""
+        return await self.window_model(window_id, "write", field=field, value=value, token=token)
+
+    async def window_model(self, window_id: str, op: str, **args: Any) -> Any:
+        """One ``window_model`` request from a window; its answer, or
+        the error string when the model refused it."""
         assert self.orchestrator is not None
+        self._requests += 1
+        request_id = f"wm-{op}-{self._requests}"
         await self.orchestrator.dispatch(
             msg.RPCRequest(
-                id=f"w-{key}",
-                method="set_client_state",
-                args={"client_id": window_id, "key": key, "value": value},
+                id=request_id, method="window_model", args={"op": op, "window": window_id, **args}
             )
         )
+        [answer] = [m for m in self.windows.of(msg.RPCResponse) if m.id == request_id]
+        return answer.error or answer.result
+
+    async def window_pushes(self, window_id: str | None = None) -> list[dict[str, Any]]:
+        """Every ``window_model_changed`` push so far, optionally for one
+        window. Pushes are broadcast on the loop, so it settles first."""
+        await self.settle()
+        return [
+            p.payload
+            for p in self.windows.pushes("window_model_changed")
+            if window_id is None or p.payload["window"] == window_id
+        ]
 
     async def settle(self) -> None:
         """Let background dispatches and signal deliveries run."""

@@ -6,7 +6,7 @@
  * backend (`host_model`) and posts the reply back. Here the window is a
  * stub that answers like that forwarding would.
  */
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { connect } from "./bridge";
 import { HostError } from "./hostModel";
@@ -104,6 +104,27 @@ describe("bridge.host", () => {
     });
     page.reply(request.id, { ok: true });
     await writing;
+  });
+
+  it("waits for a dialog's answer as long as the person takes", async () => {
+    const page = framedPage();
+    const bridge = await page.connected();
+    vi.useFakeTimers();
+    try {
+      const asking = bridge.host.ui.show_dialog({ title: "Ship it?" });
+      const reading = bridge.host.chat.processing.get();
+      const failed = reading.catch((e: unknown) => e);
+      // Long past the bridge's limit for anything else…
+      vi.advanceTimersByTime(10 * 60_000);
+      expect(await failed).toBeInstanceOf(HostError);
+      // …the dialog is still waiting, and gets its answer.
+      const [dialog] = page.posted;
+      expect(dialog).toMatchObject({ op: "call", path: "ui.show_dialog" });
+      page.reply(dialog.id, { ok: true, result: { button: "ok", value: null } });
+      await expect(asking).resolves.toEqual({ button: "ok", value: null });
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("rejects a refusal with the host's code", async () => {

@@ -372,9 +372,7 @@ The window around the conversation.
 
 | Function | Edge cases | Status |
 |---|---|---|
-| `get_client_state` | First run, no stored state. | `verified` |
-| `set_client_state` | Two windows writing concurrently. Sweep: **answers** (`--mutating`). | `answers` |
-| `delete_client_state` | Deleting while the UI reads it. Sweep: **answers** (`--mutating`). | `answers` |
+| `window_model` | `tests/test_a_window_is_a_view_of_its_model.py`. A window hydrating its model (first run, nothing stored; after a restart, what lasts); a write from the window and from an extension racing (the model's order wins, every push carries the revision and the writer's token); a write that does not fit the field's type; toasts and dialogs by their own operations, an answer to a dialog no longer open. The web client's half: `clients/web/src/clientState.test.tsx` and `clients/web/e2e/window-model.spec.ts`. | `answers` |
 | `get_hooks_details` | A hook file that does not parse. Sweep: **answers** (default run). | `answers` |
 | `reload_hooks` | Reloading while a hook is executing. Sweep: **answers** (`--mutating`). | `answers` |
 | `get_group_policy` | No group — the footer shows "Group none" today. | `verified` |

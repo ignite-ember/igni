@@ -27,7 +27,6 @@ import pytest
 
 from ember_code.core.mcp.client import MCPClientManager
 from ember_code.core.mcp.naming import bare_tool_name
-from ember_code.extensions.events import EVENT_SINK_TOOL
 from ember_code.extensions.installer import ExtensionInstaller, InstallError
 from ember_code.extensions.manifest import ExtensionManifest
 from ember_code.extensions.origin import ExtensionOrigins
@@ -127,14 +126,6 @@ def test_this_check_speaks_the_server_s_own_names():
 
     by_bare = {bare_tool_name(server, name): name for name in registered}
     assert permissions.tools.refused(by_bare) == ["shell"]
-
-
-def test_the_event_sink_is_refused_however_it_is_declared():
-    """`igni_on_event` is how igni tells a service something
-    happened. A model able to call it could tell an extension that
-    HEAD moved when it had not."""
-    permissions = Permissions(manifest_of(permissions={"tools": [EVENT_SINK_TOOL]}))
-    assert permissions.tools.allowed(EVENT_SINK_TOOL) is False
 
 
 def test_declaring_no_tools_refuses_all_of_them():

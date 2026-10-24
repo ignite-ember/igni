@@ -68,8 +68,6 @@ export interface ExtensionPageProps {
   /** The frame asked to leave. */
   onClose?: () => void;
   onNavigate?: (to: string) => void;
-  /** Events the backend addressed to this extension. */
-  events?: { topic: string; payload: Record<string, unknown>; n: number }[];
   /** Host-model signals the backend addressed to this extension. */
   signals?: { signal: string; value: unknown; n: number }[];
   /** Forwards a host-model request (`bridge.host…`) as this extension. */
@@ -94,7 +92,6 @@ export function ExtensionPage({
   theme,
   onClose,
   onNavigate,
-  events,
   signals,
   onHost,
   params,
@@ -163,7 +160,6 @@ export function ExtensionPage({
       onClose={onClose}
       onNavigate={onNavigate}
       onLocation={onLocation}
-      events={events}
       signals={signals}
       onHost={onHost}
       params={params}

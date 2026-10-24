@@ -228,20 +228,6 @@ class AttachSessionResult(BaseModel):
     project_dir: str
 
 
-class GetClientStateResult(BaseModel):
-    """Wire shape for the ``get_client_state`` RPC — every stored
-    key/value the client's opaque ``client_id`` has ever written."""
-
-    state: dict[str, str]
-
-
-class WriteClientStateResult(BaseModel):
-    """Wire shape for ``set_client_state`` / ``delete_client_state``
-    — write-side ack."""
-
-    ok: bool
-
-
 # ── Boot-time payloads ────────────────────────────────────────────
 
 

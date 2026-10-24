@@ -25,9 +25,10 @@ translator that knows Pydantic's internals:
 Every member is either built (``stage=1``) or defined and refused
 (``stage=2``). A stage-2 member is in the schema and in both SDKs, so
 an extension can be written against it today; calling it answers
-:attr:`ErrorCode.STAGE_2` with a sentence saying why. It exists so the
-model's shape is decided once, before the UI state that would back it
-moves out of the web client's components.
+:attr:`ErrorCode.STAGE_2` with a sentence saying why. It exists so a
+member's shape can be decided once, before what backs it is built —
+which is how the window's model was added: defined in 1.0.0, built in
+1.1.0. No member is stage 2 today.
 """
 
 from __future__ import annotations

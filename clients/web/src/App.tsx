@@ -33,10 +33,9 @@ import {
   current as currentPage,
   openRoot,
   pop as popPage,
-  restore as restorePages,
   basePages,
-  serialise as serialisePages,
   truncateTo,
+  visible as visiblePages,
   type PageKind,
   type PageRoute,
 } from "./chat/pageStack";
@@ -63,7 +62,14 @@ import {
   shouldShowSpinner,
   type RunPhase,
 } from "./chat/runPhase";
-import { ClientStateStore, ensureClientId } from "./clientState";
+import {
+  WindowModel,
+  ensureClientId,
+  useWindowChanges,
+  useWindowField,
+  type ComposerMode,
+  type Panel,
+} from "./clientState";
 import { useExtensionTraffic } from "./extensions/useExtensionTraffic";
 import { Virtuoso, type VirtuosoHandle } from "react-virtuoso";
 import { ChatItemView } from "./components/ChatItems";
@@ -100,7 +106,8 @@ import { FilePreview } from "./components/FilePreview";
 import { FirstRunSetup } from "./components/FirstRunSetup";
 import { HooksPanel } from "./components/panels/HooksPanel";
 import { ArtifactPanel } from "./components/panels/ArtifactPanel";
-import { Toasts, type Toast } from "./components/Toasts";
+import { Toasts } from "./components/Toasts";
+import { HostDialog } from "./components/HostDialog";
 import { UpdatePrompt } from "./components/UpdatePrompt";
 import { RetryBanner } from "./components/RetryBanner";
 import { host } from "./lib/host";
@@ -125,26 +132,43 @@ import type {
 } from "./protocol/messages";
 import { withDetails } from "./chat/hitlDetails";
 import { countOf } from "./lib/plural";
+import { indexOfRun, runAt } from "./chat/runIndex";
+import { ExtensionNamesContext } from "./extensions/extensionNames";
 
 /**
- * The things that are dialogs.
+ * What is open over the chat — the window model's `ui.panel`.
  *
  * Everything the app could open used to live in this one slot and
  * render as a centre-screen modal. The destinations moved out to
  * ``chat/pageStack.ts`` — they are places you browse, and a single
- * slot cannot hold a trail. What is left is what a dialog actually
- * is: pick one thing and go (``dir-picker``), get through a flow
- * (``login``), or glance at a status and act on it (``loop``).
+ * slot cannot hold a trail. What is left is one thing at a time over
+ * the chat: pick one thing and go (``dir-picker``), get through a flow
+ * (``login``), glance at what is waiting (``notifications``), or find
+ * in the conversation (``search``).
  *
  * The HITL prompt is not here either, and never was — it renders as
  * ``hitlSlot`` inside the Composer, anchored to the run it is asking
- * about.
+ * about. Dialogs that ask the person something are `ui.dialog`.
  */
 type PanelState =
   | { kind: "none" }
   | { kind: "login" }
   | { kind: "dir-picker" }
-  | { kind: "notifications" };
+  | { kind: "notifications" }
+  | { kind: "search" };
+
+/** `ui.panel` as the render code below reads it. */
+function panelState(panel: Panel | null): PanelState {
+  return panel ? ({ kind: panel.kind } as PanelState) : { kind: "none" };
+}
+
+/** A composer pre-fill, split into the mode its prefix asks for — the
+ *  same rule as typing it (`/` a command, `$` a shell line). */
+function composerFrom(entry: string): { text: string; mode: ComposerMode } {
+  if (entry.startsWith("/")) return { text: entry.slice(1), mode: "command" };
+  if (entry.startsWith("$")) return { text: entry.slice(1).trimStart(), mode: "shell" };
+  return { text: entry, mode: "chat" };
+}
 
 interface UpdateInfo {
   available: boolean;
@@ -246,6 +270,24 @@ function findAssistantTextForStats(
 
 export default function App() {
   const client = useMemo(() => new IgniClient(), []);
+  // This window's model: the page it is on, the panel over its chat,
+  // its sidebar, the preview, the selection, the composer, toasts, the
+  // dialog, where the transcript is, focus, and the session it shows.
+  // The host owns it (``host.ui`` to an extension); the views below
+  // bind to it and write to it, and keep no copy of their own. See
+  // ``clientState.ts``.
+  //
+  // Keyed by ``host.viewKey`` so two Tauri windows — which share an
+  // origin, and so share localStorage — are two distinct windows with
+  // two distinct models, rather than one fighting itself.
+  const windowModel = useMemo(
+    () =>
+      new WindowModel(client, ensureClientId(host.viewKey), 250, host.kind, {
+        // Until the model answers: a wide window with its sidebar out.
+        sidebar: { open: window.innerWidth > 700, width: null, section: null },
+      }),
+    [client],
+  );
   const [conn, setConn] = useState<ConnectionState>("connecting");
   const [items, setItems] = useState<ChatItem[]>([]);
   // Mirror of ``items`` for callbacks whose deps don't include
@@ -276,10 +318,14 @@ export default function App() {
   const [runPhase, setRunPhaseState] = useState<RunPhase>("idle");
   const [status, setStatus] = useState<StatusUpdate | null>(null);
   const [hitl, setHitl] = useState<HITLRequest[] | null>(null);
-  const [panel, setPanel] = useState<PanelState>({ kind: "none" });
-  // Where this window is. Empty means the chat is showing. Persisted
-  // per window under PAGE_KEY — see the hydrate block below.
-  const [pages, setPages] = useState<PageRoute[]>([]);
+  const panel = panelState(useWindowField(windowModel, "panel"));
+  const setPanel = useCallback(
+    (next: PanelState) =>
+      windowModel.write("panel", next.kind === "none" ? null : { kind: next.kind }),
+    [windowModel],
+  );
+  // Where this window is: ``ui.route``. Empty means the chat is showing.
+  const route = useWindowField(windowModel, "route");
   /**
    * The installed extensions, as the backend reports them.
    *
@@ -291,22 +337,51 @@ export default function App() {
   // Read by the message handler, which is not rebuilt when this changes.
   const extensionsRef = useRef(extensions);
   extensionsRef.current = extensions;
+  // Names to label an extension's chat messages with — they carry its id.
+  const extensionNames = useMemo(
+    () => new Map(extensions.map((e) => [e.id, e.name])),
+    [extensions],
+  );
+  // The part of the route this window can draw — an extension's page
+  // appears once its extension is listed.
+  const pages = useMemo(
+    () => visiblePages(route, contributions.pages),
+    // ``extensions`` is what changes ``contributions.pages``.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [route, extensions],
+  );
   // Followed rather than read once: the app keeps its theme on the
   // document, so without this an extension frame would be told the
   // theme at mount and never again.
   const frameTheme = useDocumentTheme();
-  const [composerSeed, setComposerSeed] = useState<{
-    text: string;
-    n: number;
-  } | null>(null);
+  // Put text in the composer and hand the person the caret: a skill
+  // picked from a panel, a selection sent from the IDE. The text is the
+  // model's (``ui.composer``); the caret is the editor's, reached
+  // through the handle the Composer fills in.
+  const composerFocus = useRef<(() => void) | null>(null);
+  const seedComposer = useCallback(
+    (entry: string) => {
+      windowModel.write(
+        "composer",
+        { ...composerFrom(entry), attachments: [] },
+        { force: true },
+      );
+      composerFocus.current?.();
+    },
+    [windowModel],
+  );
   // Plain-browser fallback for host.openFile — bridge-equipped hosts
-  // (Tauri / VSCode / JetBrains) handle the open themselves and never
-  // set this. Tracked at the App level so any panel can call
-  // host.openFile and get a consistent result.
-  const [previewPath, setPreviewPath] = useState<string | null>(null);
+  // (Tauri / VSCode / JetBrains) handle the open themselves. The
+  // preview is ``ui.preview``, so an extension can open one too.
+  const preview = useWindowField(windowModel, "preview");
   useEffect(() => {
-    host.setPreviewFallback((p) => setPreviewPath(p));
-  }, []);
+    host.setPreviewFallback((p) => windowModel.write("preview", { path: p }));
+    // A file opened — in the editor or in the preview — is the file
+    // picked: ``ui.selection.file``.
+    return host.onOpen((p) =>
+      windowModel.write("selection", { ...windowModel.get("selection"), file: p }),
+    );
+  }, [windowModel]);
 
   // Host-aware CSS hook. The Tauri shell sets these via its
   // ``initialization_script`` at page-load time, but Tauri 2 doesn't
@@ -356,13 +431,10 @@ export default function App() {
             ? `:${line}${endLine != null && endLine !== line ? `-${endLine}` : ""}`
             : "";
         const ref = path ? `@${path}${range}\n` : "";
-        setComposerSeed({
-          text: `${ref}\`\`\`\n${text}\n\`\`\``,
-          n: Date.now(),
-        });
+        seedComposer(`${ref}\`\`\`\n${text}\n\`\`\``);
       } else if (type === "ember:attachFile") {
         const path = payload.path ? String(payload.path) : null;
-        if (path) setComposerSeed({ text: `@${path}`, n: Date.now() });
+        if (path) seedComposer(`@${path}`);
       } else if (type === "ember:menu") {
         // Native-menu items routed through the host bridge. Tauri
         // and (future) JetBrains menu hooks both emit these. ``id``
@@ -449,15 +521,24 @@ export default function App() {
   // Toast stack — non-conversational notifications (scheduled tasks
   // completing, background runs finishing) land here so they survive
   // conversation switches and don't pollute the active chat. Persists
-  // top-right; auto-dismiss inside each card.
-  const [toasts, setToasts] = useState<Toast[]>([]);
-  const toastIdRef = useRef(1);
-  const addToast = useCallback((toast: Omit<Toast, "id">) => {
-    setToasts((prev) => [...prev, { id: toastIdRef.current++, ...toast }]);
-  }, []);
-  const dismissToast = useCallback((id: number) => {
-    setToasts((prev) => prev.filter((t) => t.id !== id));
-  }, []);
+  // top-right; auto-dismiss inside each card. ``ui.toasts``: an
+  // extension's toasts arrive in the same stack.
+  const toasts = useWindowField(windowModel, "toasts");
+  const addToast = useCallback(
+    (toast: { title: string; body?: string; target?: PageRoute }) => {
+      windowModel.toast({
+        text: toast.title,
+        kind: "info",
+        body: toast.body ?? null,
+        target: toast.target ?? null,
+      });
+    },
+    [windowModel],
+  );
+  const dismissToast = useCallback(
+    (id: string) => windowModel.dismissToast(id),
+    [windowModel],
+  );
   // Single dispatch for user-facing notifications. Tries the native
   // host bridge first (Tauri → macOS Notification Center; VSCode →
   // ``window.showInformationMessage``; JetBrains → balloon). Only
@@ -467,7 +548,8 @@ export default function App() {
     async (payload: {
       title: string;
       body?: string;
-      onClick?: () => void;
+      /** Where clicking the in-app toast goes. */
+      target?: PageRoute;
       data?: Record<string, unknown>;
     }) => {
       const delivered = await host.notify({
@@ -479,17 +561,20 @@ export default function App() {
       addToast({
         title: payload.title,
         body: payload.body,
-        onClick: payload.onClick,
+        target: payload.target,
       });
     },
     [addToast],
   );
-  // In-app modal sheet for the update action surface. The
-  // alerting surface is the host OS notification — see
-  // ``announceUpdate``. ``null`` means no update pending or the
-  // user picked "Later".
+  // The update waiting, as the last check reported it. The in-app
+  // sheet for acting on it is a dialog (``ui.dialog``); the alerting
+  // surface is the host OS notification — see ``announceUpdate``.
   const [pendingUpdate, setPendingUpdate] = useState<UpdateInfo | null>(null);
-  const [showUpdateModal, setShowUpdateModal] = useState(false);
+  const dialog = useWindowField(windowModel, "dialog");
+  const showUpdate = useCallback(
+    (info: UpdateInfo) => windowModel.openDialog({ kind: "update", ...info }),
+    [windowModel],
+  );
   // Ref to the latest ``checkForUpdate`` closure so the once-mounted
   // ``ember-host`` listener (deps ``[]``) can call the current version.
   const checkForUpdateRef = useRef<
@@ -498,7 +583,7 @@ export default function App() {
   const announceUpdate = useCallback((info: UpdateInfo) => {
     if (info.available) {
       setPendingUpdate(info);
-      setShowUpdateModal(true);
+      showUpdate(info);
       // OS-level alert so the user sees it even if the app is
       // backgrounded. The modal sheet takes over once they
       // refocus the window.
@@ -507,7 +592,7 @@ export default function App() {
         body: `igni ${info.latest_version} is ready to install.`,
       });
     }
-  }, []);
+  }, [showUpdate]);
   // Re-runnable update check used by the native "Check for Updates…"
   // menu item and the version chip click. ``silent=false`` surfaces
   // an OS notification when there's no update, so the menu click
@@ -562,31 +647,6 @@ export default function App() {
       download_url: "https://github.com/ignite-ember/igni/releases/latest",
     });
   }, [announceUpdate]);
-  // Per-client UI state — hydrated from the BE on connect. Lives in
-  // a memoized store so all three keys (session-id, sidebar, draft)
-  // round-trip the same way regardless of host (browser / VSCode /
-  // JetBrains). See clientState.ts.
-  //
-  // Keyed by ``host.viewKey`` so two Tauri windows — which share an
-  // origin, and so share localStorage — are two distinct clients
-  // bound to two distinct sessions, rather than one client fighting
-  // itself over the session binding and the composer draft.
-  const clientState = useMemo(
-    () =>
-      new ClientStateStore(client, ensureClientId(host.viewKey), 250, host.kind),
-    [client],
-  );
-  const SESSION_KEY = "session-id";
-  // The folder the stored session belongs to. Stored so a window
-  // label reused across app runs can tell "my session" from "some
-  // other repo's session that had this label last time".
-  const PROJECT_DIR_KEY = "project-dir";
-  // Which page this window is on. Per-window because it is keyed by
-  // client_id like everything else here: two windows on one session
-  // navigate independently, and a reused ``w-2`` label comes back
-  // where it left off.
-  const PAGE_KEY = "page";
-  const SIDEBAR_KEY = "sidebar-open";
   // The folder this window was opened onto, from New Window. Empty
   // for the first window, which uses the backend's default session.
   const windowProjectDir = useMemo(
@@ -633,19 +693,24 @@ export default function App() {
       `${url.pathname}${url.search}${url.hash}`,
     );
   }, [sharedSlug, status?.cloud_email]);
-  const [sidebarOpen, setSidebarOpenState] = useState(window.innerWidth > 700);
+  const sidebar = useWindowField(windowModel, "sidebar");
+  const sidebarOpen = sidebar.open;
   const setSidebarOpen = useCallback(
     (next: boolean | ((prev: boolean) => boolean)) => {
-      setSidebarOpenState((prev) => {
-        const resolved = typeof next === "function" ? next(prev) : next;
-        clientState.set(SIDEBAR_KEY, String(resolved));
-        return resolved;
-      });
+      const current = windowModel.get("sidebar");
+      const resolved = typeof next === "function" ? next(current.open) : next;
+      windowModel.write("sidebar", { ...current, open: resolved });
     },
-    [clientState],
+    [windowModel],
   );
   const [sessions, setSessions] = useState<SessionEntry[]>([]);
-  const [sessionId, setSessionId] = useState("");
+  // The session this window shows — ``sessions.current`` to an
+  // extension. The model's, so an extension can move the window.
+  const sessionId = useWindowField(windowModel, "session");
+  const setSessionId = useCallback(
+    (id: string) => windowModel.write("session", id),
+    [windowModel],
+  );
   const [skills, setSkills] = useState<SlashCommand[]>([]);
   // What the backend says exists. `null` until the RPC answers (or
   // for a backend too old to have it), which is the signal for the
@@ -697,10 +762,12 @@ export default function App() {
     conn === "connected",
   );
   const waiting = notificationCounts.unread;
-  /** Bumped whenever a page is asked for from outside it — the
-   *  sidebar, a link. A panel showing one of its own sub-views takes
-   *  it as "back to your top level". */
-  const [pageHome, setPageHome] = useState(0);
+  /** Changes whenever a page is asked for from outside it — the
+   *  sidebar, a link, an extension's ``navigate``. A panel showing one
+   *  of its own sub-views takes it as "back to your top level". It is
+   *  the route's change count, so asking for the page already open
+   *  counts too. */
+  const pageHome = useWindowChanges(windowModel, "route");
 
   // Artifacts keeps a document's comments in step by following its
   // service's comment stream, which starts here once somebody is
@@ -713,9 +780,13 @@ export default function App() {
     });
   }, [client, status?.cloud_connected]);
 
-  // Live draft from another attached view (mirroring).
-  // The directory this session is locked to (tools + shell cwd).
-  const [projectDir, setProjectDir] = useState("");
+  // The directory this window's session is locked to (tools + shell
+  // cwd) — the window model's, beside the session.
+  const projectDir = useWindowField(windowModel, "project_dir");
+  const setProjectDir = useCallback(
+    (dir: string) => windowModel.write("project_dir", dir),
+    [windowModel],
+  );
 
   // Tauri title-bar bridge. macOS Finder convention: the window
   // title is the folder name; the org goes after a middle dot.
@@ -857,7 +928,7 @@ export default function App() {
     } catch {
       /* older BE */
     }
-  }, [client]);
+  }, [client, setProjectDir]);
 
   // Tracks an acceptEdits flip that was triggered by the HITL
   // dialog's *"Accept all edits during this session"* shortcut. The
@@ -1113,28 +1184,30 @@ export default function App() {
       if (s === "connected") {
         void (async () => {
           try {
-            // Hydrate per-client state from the BE before any
-            // session-binding decisions — the stored session-id is
-            // what tells us whether to attach to an existing session
-            // or fall through to the BE's default.
-            await clientState.hydrate();
-            const storedSidebar = clientState.get(SIDEBAR_KEY);
-            if (storedSidebar === "true") setSidebarOpenState(true);
-            else if (storedSidebar === "false") setSidebarOpenState(false);
-            // Put the window back on the page it was on. ``restore``
-            // yields an empty stack for anything it cannot read, so a
-            // value written by an older release opens the chat rather
-            // than failing the whole hydrate.
+            // Read this window's model before any session-binding
+            // decision — the session it shows is what tells us whether
+            // to attach to an existing session or fall through to the
+            // BE's default. The page it was on, its sidebar and its
+            // draft come back with it.
+            await windowModel.hydrate();
+            // Nothing stored for the sidebar: a wide window opens with
+            // it out, a narrow one without.
+            if (windowModel.unset().includes("sidebar")) {
+              windowModel.write("sidebar", {
+                ...windowModel.get("sidebar"),
+                open: window.innerWidth > 700,
+              });
+            }
             // A link wins over wherever this window was last. Somebody
             // following one asked for a document; putting them back on
             // the chat they had open a week ago answers a question
             // nobody asked, and the document they came for is then two
             // clicks away with no sign it is there.
-            setPages(
-              sharedSlug
-                ? [{ kind: "artifacts", label: "Artifacts" }]
-                : restorePages(clientState.get(PAGE_KEY), contributions.pages),
-            );
+            if (sharedSlug) {
+              windowModel.write("route", [{ kind: "artifacts", label: "Artifacts" }]);
+            }
+            // Say whether this window has focus, now that it is open.
+            windowModel.write("focused", document.hasFocus());
             // Adopt a session for this view. An already-bound
             // sessionId wins outright (reconnect mid-session — don't
             // churn it); otherwise the plan comes from the window's
@@ -1144,8 +1217,8 @@ export default function App() {
             if (!client.sessionId) {
               const plan = planSessionBinding({
                 wantedDir: windowProjectDir,
-                storedSession: clientState.get(SESSION_KEY) ?? "",
-                storedDir: clientState.get(PROJECT_DIR_KEY) ?? "",
+                storedSession: windowModel.get("session"),
+                storedDir: windowModel.get("project_dir"),
               });
               const attach = async (args: Record<string, string>) => {
                 const res = await client.rpc<{
@@ -1154,7 +1227,6 @@ export default function App() {
                 }>("attach_session", args);
                 client.sessionId = res.session_id;
                 setProjectDir(res.project_dir);
-                clientState.set(PROJECT_DIR_KEY, res.project_dir);
               };
               try {
                 switch (plan.kind) {
@@ -1181,7 +1253,6 @@ export default function App() {
                 client.sessionId = await client.rpc<string>("get_session_id");
               }
             }
-            clientState.set(SESSION_KEY, client.sessionId);
             setSessionId(client.sessionId);
             // Resumed BE session (--resume-session / crash restart):
             // show its history instead of an empty welcome. The
@@ -1268,10 +1339,8 @@ export default function App() {
         // An extension's message (``host.chat.post``) is nobody's echo:
         // every view paints it, labelled as the extension's.
         if (m.extension_id) {
-          const from =
-            extensionsRef.current.find((e) => e.id === m.extension_id)
-              ?.name ?? m.extension_id;
-          append(userItem(m.text, from));
+          // Its id, as a reload restores it; the bubble shows the name.
+          append(userItem(m.text, m.extension_id));
           if (m.queued)
             append(infoItem("Queued — will run after the current turn."));
           return;
@@ -1357,25 +1426,17 @@ export default function App() {
           void notifyHost({
             title,
             body,
-            onClick: () =>
-              goPage({ kind: "schedule", label: "Scheduled tasks" }),
+            target: { kind: "schedule", label: "Scheduled tasks" },
             data: { channel: m.channel, task_id: m.payload.task_id },
           });
-        } else if (m.channel === "client_state_changed") {
-          // An extension changed this window through ``host.ui`` /
-          // ``host.sessions``: the backend stored it and says so. Applied
-          // as if this window had made the change itself.
-          const body = m.payload as {
-            client_id?: unknown;
-            key?: unknown;
-            value?: unknown;
-          };
-          if (
-            body.client_id === clientState.clientId &&
-            typeof body.key === "string"
-          ) {
-            clientState.applyRemote(body.key, String(body.value ?? ""));
-          }
+        } else if (m.channel === "window_model_changed") {
+          // A change to a window's model — this window's own echo,
+          // another window's, or an extension's through ``host.ui``.
+          // The model applies what is about this window; the views
+          // re-render from it.
+          windowModel.applyPush(
+            m.payload as unknown as Parameters<WindowModel["applyPush"]>[0],
+          );
         } else if (m.channel === "file_edited") {
           // BE edit_file / edit_file_replace_all / create_file just
           // wrote to disk. Forward to the host (JetBrains for now)
@@ -1737,31 +1798,22 @@ export default function App() {
     };
   }, [client, conn]);
 
-  // Navigation. Every mutation goes through these so the persisted
-  // copy cannot drift from the rendered one — the same reason
-  // ``setRunPhase`` exists rather than setting the phase directly.
-  // One writer. The state updater stays pure — StrictMode invokes it
-  // twice in development, and a ``clientState.set`` inside it would
-  // fire twice with it.
+  // Navigation. Every move is a write of ``ui.route`` — the window's
+  // model, which an extension's ``navigate`` writes too — so what is
+  // rendered, what is stored and what is signalled cannot drift.
   const navigate = useCallback(
-    (next: PageRoute[]) => {
-      clientState.set(PAGE_KEY, serialisePages(next));
-      setPages(next);
-    },
-    [clientState],
+    (next: PageRoute[]) => windowModel.write("route", next),
+    [windowModel],
   );
 
+  // "Take me to X" means the top of X, even when X is already on
+  // screen showing one of its own sub-views. The write counts even
+  // when the route is the same (see ``pageHome``): without that the
+  // sidebar link for the page you are on is a control that does
+  // nothing, and Add source or a document you were reading stays
+  // exactly where it was.
   const goPage = useCallback(
-    (route: PageRoute) => {
-      navigate(openRoot(route));
-      // "Take me to X" means the top of X, even when X is already on
-      // screen showing one of its own sub-views. Without this the
-      // sidebar link for the page you are on is a control that does
-      // nothing: the route has not changed, so nothing re-renders,
-      // and Add source or a document you were reading stays exactly
-      // where it was.
-      setPageHome((n) => n + 1);
-    },
+    (route: PageRoute) => navigate(openRoot(route)),
     [navigate],
   );
   const goBack = useCallback(() => navigate(popPage(pages)), [navigate, pages]);
@@ -1876,18 +1928,41 @@ export default function App() {
   // the view glued to the tail whenever the user is already there;
   // when they've scrolled up to read history it leaves the position
   // alone (no jumping mid-read).
-  const [stickToBottom, setStickToBottom] = useState(true);
+  //
+  // Where the transcript is, is ``ui.scroll``: whether it follows the
+  // newest message, and the message at the top once it comes to rest.
+  // Both are told to the model as they happen — a transition, a
+  // settle — never per pixel.
+  const scroll = useWindowField(windowModel, "scroll");
+  const stickToBottom = scroll.at_bottom;
   const virtuosoRef = useRef<VirtuosoHandle>(null);
+  // The scroller element, for the indicator to measure: a DOM handle,
+  // not something the window shows.
   const [scrollEl, setScrollEl] = useState<HTMLElement | null>(null);
   // Keep the legacy ``scrollRef`` populated so anything still reaching
   // for it (debug, tests) sees the real scroller.
   useEffect(() => {
     scrollRef.current = scrollEl as HTMLDivElement | null;
   }, [scrollEl]);
+  // The first item in view, as Virtuoso last reported it — measured,
+  // and told to the model when scrolling stops.
+  const topIndexRef = useRef(0);
+  const itemsForScroll = useRef(items);
+  itemsForScroll.current = items;
+  const tellScroll = useCallback(
+    (atBottom: boolean) =>
+      windowModel.write("scroll", {
+        message_id: atBottom
+          ? null
+          : runAt(itemsForScroll.current, topIndexRef.current),
+        at_bottom: atBottom,
+      }),
+    [windowModel],
+  );
   const scrollToBottom = useCallback(() => {
     virtuosoRef.current?.scrollToIndex({ index: "LAST", behavior: "auto" });
-    setStickToBottom(true);
-  }, []);
+    tellScroll(true);
+  }, [tellScroll]);
 
   // ── Boot scroll: land the resumed session at its most recent
   // message instead of the very first user prompt. Fires once,
@@ -1904,14 +1979,13 @@ export default function App() {
     scrollToBottom();
   }, [items.length, scrollToBottom]);
   // Find-in-conversation. Cmd/Ctrl+F opens the bar; a small icon
-  // button near the chat header opens it too. ``highlightedItemId``
-  // applies a pulse class to the jumped-to message via the new
-  // ChatItemView prop so the user's eye lands on it after the scroll.
-  const [searchOpen, setSearchOpen] = useState(false);
-  const [highlightedItemId, setHighlightedItemId] = useState<number | null>(
-    null,
-  );
-  const highlightTimerRef = useRef<number | null>(null);
+  // button near the chat header opens it too. It is the ``search``
+  // panel of ``ui.panel``.
+  const searchOpen = panel.kind === "search";
+  const toggleSearch = useCallback(() => {
+    const open = windowModel.get("panel")?.kind === "search";
+    windowModel.write("panel", open ? null : { kind: "search" });
+  }, [windowModel]);
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const cmdLike = e.metaKey || e.ctrlKey;
@@ -1919,12 +1993,45 @@ export default function App() {
         // Only intercept when there's something to search.
         if (items.length === 0) return;
         e.preventDefault();
-        setSearchOpen((v) => !v);
+        toggleSearch();
       }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [items.length]);
+  }, [items.length, toggleSearch]);
+
+  // The picked-out message is ``ui.selection.message_id`` — a search
+  // result jumped to, or an extension's ``select``. When it changes the
+  // row pulses, so the eye lands on it; the pulse is an animation with
+  // a timer, and so the view's own (``pulsingItemId``).
+  const selection = useWindowField(windowModel, "selection");
+  const [pulsingItemId, setPulsingItemId] = useState<number | null>(null);
+  const pulseTimerRef = useRef<number | null>(null);
+  const pulse = useCallback((itemId: number) => {
+    setPulsingItemId(itemId);
+    if (pulseTimerRef.current !== null) window.clearTimeout(pulseTimerRef.current);
+    pulseTimerRef.current = window.setTimeout(() => setPulsingItemId(null), 2400);
+  }, []);
+  // Set when this window pulsed the row itself (a search jump lands on
+  // the hit, which may be the answer rather than the question).
+  const pulsedRunRef = useRef<string | null>(null);
+  useEffect(() => {
+    const run = selection.message_id;
+    if (!run) return;
+    if (pulsedRunRef.current === run) {
+      pulsedRunRef.current = null;
+      return;
+    }
+    const index = indexOfRun(itemsForScroll.current, run);
+    if (index >= 0) pulse(itemsForScroll.current[index].id);
+  }, [selection.message_id, pulse]);
+  useEffect(
+    () => () => {
+      if (pulseTimerRef.current !== null)
+        window.clearTimeout(pulseTimerRef.current);
+    },
+    [],
+  );
   const onSearchJump = useCallback(
     (itemIndex: number) => {
       virtuosoRef.current?.scrollToIndex({
@@ -1933,25 +2040,73 @@ export default function App() {
         behavior: "auto",
       });
       const target = items[itemIndex];
-      if (target) {
-        setHighlightedItemId(target.id);
-        if (highlightTimerRef.current !== null)
-          window.clearTimeout(highlightTimerRef.current);
-        highlightTimerRef.current = window.setTimeout(
-          () => setHighlightedItemId(null),
-          2400,
-        );
+      if (!target) return;
+      const run = runAt(items, itemIndex);
+      // A result in a run is the message picked out; one before any run
+      // (an info line) can only pulse.
+      if (run && windowModel.get("selection").message_id !== run) {
+        pulsedRunRef.current = run;
+        windowModel.write("selection", { ...windowModel.get("selection"), message_id: run });
       }
+      pulse(target.id);
     },
-    [items],
+    [items, pulse, windowModel],
   );
+
+  // An extension's ``scroll_to``: the model says where, this window goes.
   useEffect(
-    () => () => {
-      if (highlightTimerRef.current !== null)
-        window.clearTimeout(highlightTimerRef.current);
-    },
-    [],
+    () =>
+      windowModel.onRemote((change) => {
+        if (change.field !== "scroll") return;
+        const where = change.value as { message_id: string | null; at_bottom: boolean };
+        if (where.at_bottom) {
+          virtuosoRef.current?.scrollToIndex({ index: "LAST", behavior: "auto" });
+          return;
+        }
+        const index = where.message_id
+          ? indexOfRun(itemsForScroll.current, where.message_id)
+          : -1;
+        if (index >= 0) {
+          virtuosoRef.current?.scrollToIndex({ index, align: "start", behavior: "auto" });
+        }
+      }),
+    [windowModel],
   );
+
+  // Text selected in the transcript is ``ui.selection.text``, told when
+  // the gesture that made it ends rather than at every step of a drag.
+  useEffect(() => {
+    const settle = () => {
+      const picked = window.getSelection();
+      const frame = document.querySelector(".conversation-frame");
+      const inside =
+        picked && picked.rangeCount > 0 && frame
+          ? frame.contains(picked.getRangeAt(0).commonAncestorContainer)
+          : false;
+      const text = inside ? picked!.toString().trim() : "";
+      const current = windowModel.get("selection");
+      const next = text || null;
+      if (current.text !== next) windowModel.write("selection", { ...current, text: next });
+    };
+    document.addEventListener("mouseup", settle);
+    document.addEventListener("keyup", settle);
+    return () => {
+      document.removeEventListener("mouseup", settle);
+      document.removeEventListener("keyup", settle);
+    };
+  }, [windowModel]);
+
+  // Whether this window has focus is ``windows.focused``.
+  useEffect(() => {
+    const focus = () => windowModel.write("focused", true);
+    const blur = () => windowModel.write("focused", false);
+    window.addEventListener("focus", focus);
+    window.addEventListener("blur", blur);
+    return () => {
+      window.removeEventListener("focus", focus);
+      window.removeEventListener("blur", blur);
+    };
+  }, [windowModel]);
 
   // Memoize the Virtuoso ``components`` map so its identity is
   // stable across App re-renders that don't change the footer
@@ -2215,15 +2370,12 @@ export default function App() {
     async (assistantItemId: number) => {
       const precedingUser = findPrecedingUserItem(items, assistantItemId);
       if (!precedingUser) return;
-      // Trim first (FE-local), then seed the Composer with the
-      // original prompt text so the user can re-edit it. The
-      // ``n`` counter on the seed makes the Composer's seed-
-      // effect refire even if the user re-uses the same prompt
-      // text twice in a row.
+      // Trim first (FE-local), then put the original prompt back in
+      // the composer so the user can re-edit it.
       await truncateAndTrim(precedingUser);
-      setComposerSeed({ text: precedingUser.text, n: Date.now() });
+      seedComposer(precedingUser.text);
     },
-    [items, truncateAndTrim, setComposerSeed],
+    [items, truncateAndTrim, seedComposer],
   );
 
   // Stable per-item callbacks. The `items.map` below passes these to
@@ -2447,10 +2599,12 @@ export default function App() {
        *  unrelated conversation is its own hazard. */
       const carryDraft = (from: string, to: string) => {
         if (!from || !to || from === to) return;
-        const draft = clientState.get(`draft:${from}`);
-        if (!draft) return;
-        clientState.set(`draft:${to}`, draft);
-        clientState.delete(`draft:${from}`);
+        const draft = windowModel.get("composer");
+        // Binding the new session shows that session's (empty) draft;
+        // the draft is then written onto it — forced, because to this
+        // window's eye it is already showing.
+        setSessionId(to);
+        if (draft.text) windowModel.write("composer", draft, { force: true });
       };
       // ── The window between issuing a view-clearing command and its
       // answer coming back ────────────────────────────────────────────
@@ -2511,9 +2665,8 @@ export default function App() {
               // /clear renews the runtime's session id — rebind so
               // this view follows the fresh conversation.
               renewed = await client.rpc<string>("get_session_id");
-              carryDraft(retiring, renewed);
               client.sessionId = renewed;
-              clientState.set(SESSION_KEY, renewed);
+              carryDraft(retiring, renewed);
               setSessionId(renewed);
             } catch {
               /* ignore */
@@ -2559,9 +2712,9 @@ export default function App() {
             // end of the cloned conversation where they were typed.
             setItems((prev) => prev.filter((it) => it.id > itemBoundary));
             setHistoryIndexToItemIndex([]);
-            carryDraft(client.sessionId, newId);
+            const forkedFrom = client.sessionId;
             client.sessionId = newId;
-            clientState.set(SESSION_KEY, newId);
+            carryDraft(forkedFrom, newId);
             setSessionId(newId);
             try {
               const loaded = await fetchHistoryItems(newId);
@@ -2788,9 +2941,8 @@ export default function App() {
           project_dir: string;
         }>("attach_session", { project_dir: dir });
         client.sessionId = res.session_id;
-        clientState.set(SESSION_KEY, res.session_id);
-        setSessionId(res.session_id);
         setProjectDir(res.project_dir);
+        setSessionId(res.session_id);
         setItems([]);
         setHistoryIndexToItemIndex([]);
         append(infoItem(`Session locked to ${res.project_dir}`));
@@ -2813,7 +2965,6 @@ export default function App() {
         // parallel. First contact can take a few seconds (Session
         // construction), hence the loading note.
         client.sessionId = id;
-        clientState.set(SESSION_KEY, id);
         setSessionId(id);
         setItems([]);
         // Show the first 8 hex chars only — full UUIDs are noisy in
@@ -2834,19 +2985,17 @@ export default function App() {
     [client],
   );
 
-  // A change an extension made to this window (``host.ui``,
-  // ``host.sessions``), already stored by the backend: applied as this
-  // window's own would be. The draft is the composer's to apply.
+  // An extension moved this window to another session
+  // (``host.sessions.current``). Everything else it changes is drawn
+  // from the model as it arrives; a session also has a transcript to
+  // load, which is what picking it does.
   useEffect(
     () =>
-      clientState.onRemote((key, value) => {
-        if (key === SIDEBAR_KEY) setSidebarOpenState(value === "true");
-        else if (key === PAGE_KEY)
-          setPages(restorePages(value, contributions.pages));
-        else if (key === SESSION_KEY && value && value !== client.sessionId)
-          void pickSession(value);
+      windowModel.onRemote((change) => {
+        const id = change.field === "session" ? String(change.value ?? "") : "";
+        if (id && id !== client.sessionId) void pickSession(id);
       }),
-    [clientState, client, pickSession],
+    [windowModel, client, pickSession],
   );
 
   const pickModel = useCallback(
@@ -2929,7 +3078,17 @@ export default function App() {
   }
 
   return (
-    <div className="shell">
+    <ExtensionNamesContext.Provider value={extensionNames}>
+    <div
+      className="shell"
+      // ``ui.sidebar.width``: an extension (or a future resize handle)
+      // sizes the sidebar; ``null`` keeps the stylesheet's.
+      style={
+        sidebar.width
+          ? ({ "--sidebar-w": `${sidebar.width}px` } as React.CSSProperties)
+          : undefined
+      }
+    >
       {/* Live FPS overlay — hidden by default. Toggle with
           ``Ctrl+Alt+Shift+F`` (or ``Cmd+Alt+Shift+F`` on macOS).
           State persists per-origin via localStorage so the
@@ -2962,6 +3121,10 @@ export default function App() {
         onNewChat={() => void runCommand("/clear", false)}
         onPick={(id) => void pickSession(id)}
         onClose={() => setSidebarOpen(false)}
+        section={sidebar.section}
+        onSection={(section) =>
+          windowModel.write("sidebar", { ...windowModel.get("sidebar"), section })
+        }
       />
 
       <div className={`main${page ? " main--paged" : ""}`}>
@@ -3031,7 +3194,7 @@ export default function App() {
               className={`chip chip-search${searchOpen ? " active" : ""}`}
               title="Find in conversation (⌘F)"
               aria-label="Find in conversation"
-              onClick={() => setSearchOpen((v) => !v)}
+              onClick={toggleSearch}
             >
               <svg
                 width="14"
@@ -3119,8 +3282,8 @@ export default function App() {
               }
               aria-label="Notifications"
               onClick={() =>
-                setPanel((open) =>
-                  open.kind === "notifications"
+                setPanel(
+                  panel.kind === "notifications"
                     ? { kind: "none" }
                     : { kind: "notifications" },
                 )
@@ -3247,7 +3410,7 @@ export default function App() {
             historyIndexToItemIndex={historyIndexToItemIndex}
             liveItemCount={items.length}
             onJumpTo={onSearchJump}
-            onClose={() => setSearchOpen(false)}
+            onClose={() => setPanel({ kind: "none" })}
           />
         )}
         <div className="conversation-frame">
@@ -3354,7 +3517,15 @@ export default function App() {
               // "I scrolled up to read history" intent — pinned by
               // ``e2e/chat-scroll.spec.ts``.
               atBottomThreshold={50}
-              atBottomStateChange={setStickToBottom}
+              atBottomStateChange={tellScroll}
+              rangeChanged={(range) => {
+                topIndexRef.current = range.startIndex;
+              }}
+              // Come to rest: where the top of the view is, for
+              // ``ui.scroll``. Told once per stop, not per frame.
+              isScrolling={(moving) => {
+                if (!moving) tellScroll(windowModel.get("scroll").at_bottom);
+              }}
               scrollerRef={(el) => setScrollEl(el as HTMLElement | null)}
               increaseViewportBy={{ top: 400, bottom: 800 }}
               itemContent={(idx, item) => {
@@ -3364,7 +3535,7 @@ export default function App() {
                   processing &&
                   idx === items.length - 1 &&
                   item.kind === "assistant";
-                const isSearchTarget = item.id === highlightedItemId;
+                const isSearchTarget = item.id === pulsingItemId;
                 return (
                   <div
                     className={`chat-row${isStreamingTail ? " streaming" : ""}${isSearchTarget ? " search-target" : ""}`}
@@ -3498,7 +3669,7 @@ export default function App() {
                   // object, and the phase list is what tells you
                   // whether you want this one at all.
                   goChat();
-                  setComposerSeed({ text: command, n: Date.now() });
+                  seedComposer(command);
                 }}
                 onClose={goChat}
               />
@@ -3511,7 +3682,7 @@ export default function App() {
                   // reading help is not deciding to run something, and
                   // several of these take arguments.
                   goChat();
-                  setComposerSeed({ text: name, n: Date.now() });
+                  seedComposer(name);
                 }}
                 onClose={goChat}
               />
@@ -3564,7 +3735,6 @@ export default function App() {
                   // when one is what opened it.
                   params={page.params}
                   theme={frameTheme}
-                  events={extensionTraffic.events[extension.id]}
                   signals={extensionTraffic.signals[extension.id]}
                   // `bridge.host…`: the host object model, as this
                   // extension, from the window it is framed in — the
@@ -3576,10 +3746,13 @@ export default function App() {
                         ok: boolean;
                         result?: unknown;
                         error?: { code: string; message: string };
-                      }>("host_model", {
-                        ...request,
-                        home_window: clientState.clientId,
-                      })
+                      }>(
+                        "host_model",
+                        { ...request, home_window: windowModel.clientId },
+                        // A dialog waits on the person, for as long as
+                        // they take.
+                        request.path === "ui.show_dialog" ? 24 * 3_600_000 : undefined,
+                      )
                   }
                   onClose={goChat}
                   // Every call carries its caller, which is what lets
@@ -3598,7 +3771,7 @@ export default function App() {
                 onClose={goChat}
                 onAddServer={(seed) => {
                   goChat();
-                  setComposerSeed({ text: seed, n: Date.now() });
+                  seedComposer(seed);
                 }}
               />
             )}
@@ -3610,7 +3783,7 @@ export default function App() {
                   // the user can add arguments and send when ready. No
                   // trailing space, so the autocomplete menu stays open.
                   goChat();
-                  setComposerSeed({ text: cmd, n: Date.now() });
+                  seedComposer(cmd);
                 }}
                 onClose={goChat}
               />
@@ -3648,9 +3821,8 @@ export default function App() {
           skills={skills}
           backendCommands={backendCommands}
           tools={contributions.tools()}
-          seed={composerSeed}
-          sessionId={sessionId}
-          clientState={clientState}
+          focusRef={composerFocus}
+          windowModel={windowModel}
           model={status?.model}
           modelMenuSignal={modelMenuSignal}
           onPickModel={(name) => void pickModel(name)}
@@ -3764,7 +3936,7 @@ export default function App() {
               type="button"
               className="brand-update"
               title={`Update to v${pendingUpdate.latest_version}`}
-              onClick={() => setShowUpdateModal(true)}
+              onClick={() => showUpdate(pendingUpdate)}
             >
               Update to v{pendingUpdate.latest_version}
             </button>
@@ -3772,19 +3944,31 @@ export default function App() {
         </div>
       </div>
 
-      {previewPath && (
+      {preview && (
         <FilePreview
           client={client}
-          path={previewPath}
-          onClose={() => setPreviewPath(null)}
+          path={preview.path}
+          onClose={() => windowModel.write("preview", null)}
         />
       )}
-      <Toasts items={toasts} onDismiss={dismissToast} />
+      <Toasts items={toasts} onDismiss={dismissToast} onOpen={goPage} />
       <RetryBanner />
-      {showUpdateModal && pendingUpdate && (
+      {dialog?.spec.kind === "update" && (
         <UpdatePrompt
-          info={pendingUpdate}
-          onDismiss={() => setShowUpdateModal(false)}
+          info={dialog.spec as unknown as UpdateInfo}
+          onDismiss={() => windowModel.answerDialog(dialog.id, null)}
+        />
+      )}
+      {dialog?.spec.kind === "extension" && (
+        <HostDialog
+          key={dialog.id}
+          dialog={dialog}
+          sourceName={
+            extensions.find((e) => e.id === dialog.source)?.name ??
+            dialog.source ??
+            ""
+          }
+          onAnswer={(answer) => windowModel.answerDialog(dialog.id, answer)}
         />
       )}
       {panel.kind === "dir-picker" && (
@@ -3839,5 +4023,6 @@ export default function App() {
         />
       )}
     </div>
+    </ExtensionNamesContext.Provider>
   );
 }

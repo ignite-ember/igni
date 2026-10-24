@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 /**
- * The window's routing of what the backend addressed to extensions:
- * `extension_event` for `onEvent`, `host_signal` for `bridge.on`.
+ * The window's routing of what the backend addressed to extensions'
+ * pages: `host_signal`, for `bridge.on`.
  */
 import { act, cleanup, renderHook } from "@testing-library/react";
 import { afterEach, describe, expect, it } from "vitest";
@@ -30,13 +30,12 @@ function fakeClient() {
 }
 
 describe("useExtensionTraffic", () => {
-  it("queues each extension's signals and events separately, in order", () => {
+  it("queues each extension's signals separately, in order", () => {
     const { client, push } = fakeClient();
     const { result } = renderHook(() => useExtensionTraffic(client, true));
 
     push("host_signal", { extension_id: "acme.one", signal: "chat.run_started", value: { run_id: "r1" } });
     push("host_signal", { extension_id: "acme.two", signal: "session.switched", value: {} });
-    push("extension_event", { extension_id: "acme.one", topic: "ext.acme.one.done", payload: { n: 1 } });
     push("host_signal", { extension_id: "acme.one", signal: "chat.run_completed", value: {} });
 
     expect(result.current.signals["acme.one"].map((s) => [s.signal, s.n])).toEqual([
@@ -44,9 +43,6 @@ describe("useExtensionTraffic", () => {
       ["chat.run_completed", 2],
     ]);
     expect(result.current.signals["acme.two"]).toHaveLength(1);
-    expect(result.current.events["acme.one"]).toEqual([
-      { topic: "ext.acme.one.done", payload: { n: 1 }, n: 1 },
-    ]);
   });
 
   it("is bounded, so a closed frame does not grow a queue nobody reads", () => {
@@ -65,7 +61,8 @@ describe("useExtensionTraffic", () => {
     const { result } = renderHook(() => useExtensionTraffic(client, true));
     push("host_signal", { signal: "chat.run_started" });
     push("notifications_changed", { extension_id: "acme.one" });
+    // The retired event push is not routed anywhere.
+    push("extension_event", { extension_id: "acme.one", topic: "workspace.head-changed", payload: {} });
     expect(result.current.signals).toEqual({});
-    expect(result.current.events).toEqual({});
   });
 });

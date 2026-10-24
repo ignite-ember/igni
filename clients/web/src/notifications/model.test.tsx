@@ -68,7 +68,7 @@ describe("the counts", () => {
         payload: { counts: { unread: 2, by_source: { "acme.scanner": 2 } } },
       }),
     );
-    act(() => push({ type: "push_notification", channel: "extension_event", payload: {} }));
+    act(() => push({ type: "push_notification", channel: "host_signal", payload: {} }));
 
     expect(result.current[0]).toEqual({ unread: 2, by_source: { "acme.scanner": 2 } });
     expect(rpc).toHaveBeenCalledTimes(1);

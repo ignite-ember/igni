@@ -26,8 +26,6 @@ import json
 import logging
 from typing import Any, Protocol, runtime_checkable
 
-from ember_code.core.mcp.naming import bare_tool_name
-
 logger = logging.getLogger(__name__)
 
 
@@ -48,19 +46,6 @@ class ExtensionService(Protocol):
         """
         ...
 
-    def offers(self, tool: str) -> bool:
-        """Whether this service exposes ``tool`` at all.
-
-        Asked before igni calls something the extension did not have
-        to implement — ``igni_on_event`` is the one. Calling it
-        blindly would make "this service does not do events" look
-        like "this service is broken", once per event, forever.
-
-        Synchronous and best-effort: a service that is not connected
-        answers ``False``, and the next event asks again.
-        """
-        ...
-
 
 class McpExtensionService:
     """An extension's service, reached as MCP tool calls.
@@ -78,24 +63,6 @@ class McpExtensionService:
     @property
     def server_name(self) -> str:
         return self._server_name
-
-    def offers(self, tool: str) -> bool:
-        """Whether the connected server lists ``tool``.
-
-        Read through the manager rather than cached at install,
-        because a sidecar restarts and an endpoint redeploys: the
-        answer is about the connection that exists now.
-
-        Includes tools disabled for the agent, which is the point —
-        ``igni_on_event`` is always disabled there, and igni still
-        has to be able to call it.
-        """
-        try:
-            registered = self._manager.get_tools(self._server_name)
-            return any(bare_tool_name(self._server_name, name) == tool for name in registered)
-        except Exception:
-            logger.debug("listing tools for %s failed", self._server_name, exc_info=True)
-            return False
 
     async def call(self, method: str, args: dict[str, Any]) -> Any:
         client = self._manager.get_client(self._server_name)

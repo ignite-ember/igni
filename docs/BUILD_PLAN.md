@@ -102,7 +102,7 @@ The cost was the prop type. It read `client: IgniClient`, the concrete class —
 
 **Still named off `IgniClient`** rather than a hand-written interface, so a change to `rpc`'s signature breaks the panel and the bridge together. A parallel declaration would drift instead.
 
-**What this gate did not prove.** CodeIndex is the easy case — one method. A panel wanting `onEvent` or `runMessage` would widen the `Pick`, and at some point the bridge has to implement those, which is work rather than a type. The harder evidence arrives when Artifacts ports.
+**What this gate did not prove.** CodeIndex is the easy case — one method. A panel wanting signals (`bridge.on`) or `runMessage` would widen the `Pick`, and at some point the bridge has to implement those, which is work rather than a type. The harder evidence arrives when Artifacts ports.
 
 ### A4 — contribution points
 

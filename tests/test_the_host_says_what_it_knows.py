@@ -1,13 +1,11 @@
-"""The producers: what actually makes a host event happen.
+"""The producers: what actually makes a workspace signal happen.
 
-The transport was finished before any of it fired. The router knew
-who was entitled, the push channel carried an addressed envelope,
-and the frame had an `onEvent` — and the only event in the system
-was `extension.state-changed`, because the registry was the one
-thing the host already watched. `workspace.head-changed` is the one
-that matters: it is why CodeIndex polls `git rev-parse` once a
-second, and an extension platform whose whole pitch is "stop
-writing this" should not make every extension write it.
+`workspace.head_changed` is the signal that matters: it is why
+CodeIndex polled `git rev-parse` once a second, and an extension
+platform whose whole pitch is "stop writing this" should not make
+every extension write it. The four signals that predate the host
+object model keep their old topic strings as wire names
+(`docs/HOST_OBJECT_MODEL.md`, *The existing events*).
 
 Two rules are under test here, and the second is the one that is
 easy to get wrong:
@@ -16,81 +14,61 @@ easy to get wrong:
    announces what it has just learned tells every newly installed
    extension that HEAD "moved" to where it has been all along.
 
-2. **The grant is not the content.** `permissions.events` says an
-   extension may be told about `workspace.files-changed`. It does
-   not say which files. Handing the unfiltered list to an extension
-   granted `docs/**` tells it every path in the repository — and
-   the grant check passed, so nothing looked wrong.
+2. **The grant is not the content.** `permissions.workspace` says an
+   extension may hear `workspace.files_changed`. It does not say
+   which files. Handing the unfiltered list to an extension granted
+   `docs/**` tells it every path in the repository — and the grant
+   check passed, so nothing looked wrong.
 """
 
 from __future__ import annotations
 
 import asyncio
 import subprocess
+from collections.abc import AsyncIterator
 from pathlib import Path
 
 import pytest
+from pydantic import ValidationError
 
-from ember_code.backend.host_events import HostEvents
+from ember_code.backend.workspace_signals import WorkspaceSignals
 from ember_code.backend.workspace_watch import (
     FileStamp,
     GitWorkspace,
     Head,
     WorkspaceWatcher,
 )
-from ember_code.extensions.events import EventRouter, HostTopic
-from ember_code.extensions.installer import ExtensionInstaller
+from ember_code.extensions.events import HostTopic
+from ember_code.extensions.host.definition import HOST_SCHEMA
 from ember_code.extensions.manifest import ExtensionManifest
-from ember_code.extensions.registry import ExtensionRegistry
+from tests.host_model_helpers import HostRig, Sink
+
+FILES = HostTopic.WORKSPACE_FILES_CHANGED.value
+HEAD = HostTopic.WORKSPACE_HEAD_CHANGED.value
 
 
-def manifest(
-    extension_id: str,
-    *,
-    events: list[str],
-    workspace: str = "read",
-    paths: list[str] | None = None,
-) -> ExtensionManifest:
-    return ExtensionManifest.model_validate(
-        {
-            "id": extension_id,
-            "version": "1.0.0",
-            "contract": ">=1.0 <2",
-            "trust": "unsigned",
-            "dev": {"command": ["true"]},
-            "permissions": {
-                "events": events,
-                "workspace": workspace,
-                "workspacePaths": paths or [],
-            },
-        }
-    )
+@pytest.fixture
+async def rig(tmp_path: Path) -> AsyncIterator[HostRig]:
+    rig = await HostRig(tmp_path).start()
+    try:
+        yield rig
+    finally:
+        await rig.stop()
 
 
-class Heard:
-    """Every event one extension was handed, in order."""
-
-    def __init__(self) -> None:
-        self.events: list[tuple[str, dict]] = []
-
-    def __call__(self, topic: str, payload: dict) -> None:
-        self.events.append((topic, payload))
-
-    def topics(self) -> list[str]:
-        return [topic for topic, _ in self.events]
+def listening(rig: HostRig, extension_id: str, *signals: str) -> Sink:
+    """`extension_id`'s process, subscribed to `signals`."""
+    assert rig.model is not None
+    sink = Sink()
+    rig.model.bus.subscribe(rig.model.bus.attach(extension_id, sink), list(signals))
+    return sink
 
 
-def wired(*installed: ExtensionManifest) -> tuple[HostEvents, dict[str, Heard]]:
-    """A `HostEvents` over a registry, with every frame listening."""
-    registry = ExtensionRegistry()
-    for one in installed:
-        registry.install(one)
-    router = EventRouter(registry)
-    heard = {}
-    for one in installed:
-        heard[one.id] = Heard()
-        router.connect(one.id, heard[one.id])
-    return HostEvents(router=router, project_dir=Path("/nonexistent")), heard
+def producer(rig: HostRig) -> WorkspaceSignals:
+    assert rig.model is not None
+    signals = WorkspaceSignals(project_dir=rig.project)
+    signals.attach_model(rig.model)
+    return signals
 
 
 # ── A fake workspace, so the rules are testable without a repo ─────
@@ -262,97 +240,92 @@ async def test_an_unchanged_dirty_set_says_nothing():
 # ── Rule 2: the grant is not the content ───────────────────────────
 
 
-def test_files_changed_is_filtered_to_each_listener():
-    docs = manifest("acme.docs", events=["workspace.*"], paths=["docs/*"])
-    code = manifest("acme.code", events=["workspace.*"], paths=["src/*"])
-    host, heard = wired(docs, code)
+async def test_files_changed_is_filtered_to_each_listener(rig: HostRig):
+    docs = rig.install("acme.docs", workspace="read", workspacePaths=["docs/*"])
+    code = rig.install("acme.code", workspace="read", workspacePaths=["src/*"])
+    heard_docs, heard_code = listening(rig, docs, FILES), listening(rig, code, FILES)
 
-    host.files_changed(frozenset({"docs/a.md", "src/b.py"}))
+    producer(rig).files_changed(frozenset({"docs/a.md", "src/b.py"}))
 
-    assert heard["acme.docs"].events == [
-        ("workspace.files-changed", {"paths": ["docs/a.md"], "truncated": False})
-    ]
-    assert heard["acme.code"].events == [
-        ("workspace.files-changed", {"paths": ["src/b.py"], "truncated": False})
-    ]
+    assert heard_docs.values(FILES) == [{"paths": ["docs/a.md"], "truncated": False}]
+    assert heard_code.values(FILES) == [{"paths": ["src/b.py"], "truncated": False}]
 
 
-def test_nothing_i_can_see_moved_is_a_skip_not_an_empty_event():
-    """An event an extension has to ignore is still an event it had
-    to be given — which is the poll we just removed, arriving from
-    the other end."""
-    docs = manifest("acme.docs", events=["workspace.*"], paths=["docs/*"])
-    host, heard = wired(docs)
-    host.files_changed(frozenset({"src/b.py"}))
-    assert heard["acme.docs"].events == []
+async def test_nothing_i_can_see_moved_is_a_skip_not_an_empty_signal(rig: HostRig):
+    """A signal an extension has to ignore is still one it had to be
+    given — which is the poll we just removed, arriving from the
+    other end."""
+    docs = rig.install("acme.docs", workspace="read", workspacePaths=["docs/*"])
+    heard = listening(rig, docs, FILES)
+    producer(rig).files_changed(frozenset({"src/b.py"}))
+    assert heard.got == []
 
 
-def test_no_workspace_grant_hears_no_workspace_event():
-    """The topic was granted and the workspace was not. A path list
-    is the contents of a directory this extension was never told
-    the location of."""
-    nosy = manifest("acme.nosy", events=["workspace.*"], workspace="none")
-    host, heard = wired(nosy)
-    host.files_changed(frozenset({"src/b.py"}))
-    host.head_changed(Head(commit_sha="aaa", branch="feat/acquisition"))
-    assert heard["acme.nosy"].events == []
+async def test_no_workspace_grant_hears_no_workspace_signal(rig: HostRig):
+    """Granted every host object, and not the workspace. A path list is
+    the contents of a directory this extension was never told the
+    location of."""
+    everything = [p.name for p in HOST_SCHEMA.permissions if p.name != "workspace"]
+    nosy = rig.install("acme.nosy", workspace="none", host=everything)
+    heard = listening(rig, nosy, FILES, HEAD)
+    signals = producer(rig)
+    signals.files_changed(frozenset({"src/b.py"}))
+    signals.head_changed(Head(commit_sha="aaa", branch="feat/acquisition"))
+    assert heard.got == []
 
 
-def test_head_changed_needs_the_workspace_too():
+async def test_head_changed_needs_the_workspace_too(rig: HostRig):
     """A branch name is workspace information. `feat/acquisition-of-x`
     is the example that makes it obvious."""
-    seeing = manifest("acme.sees", events=["workspace.head-changed"])
-    blind = manifest("acme.blind", events=["workspace.head-changed"], workspace="none")
-    host, heard = wired(seeing, blind)
-    host.head_changed(Head(commit_sha="aaa", branch="main"))
-    assert heard["acme.sees"].topics() == ["workspace.head-changed"]
-    assert heard["acme.blind"].topics() == []
+    seeing = listening(rig, rig.install("acme.sees", workspace="read"), HEAD)
+    blind = listening(rig, rig.install("acme.blind", workspace="none"), HEAD)
+    producer(rig).head_changed(Head(commit_sha="aaa", branch="main"))
+    assert seeing.values(HEAD) == [{"commit_sha": "aaa", "branch": "main"}]
+    assert blind.got == []
 
 
-def test_a_long_list_is_capped_and_says_so():
+async def test_a_long_list_is_capped_and_says_so(rig: HostRig):
     """A branch switch can dirty tens of thousands of paths. An
     extension handed all of them has been handed a directory
     listing; `truncated` is its cue to rescan instead."""
-    wide = manifest("acme.wide", events=["workspace.*"])
-    host, heard = wired(wide)
-    host.files_changed(frozenset(f"src/f{n}.py" for n in range(HostEvents.MAX_PATHS + 50)))
-    ((_, payload),) = heard["acme.wide"].events
-    assert payload["truncated"] is True
-    assert len(payload["paths"]) == HostEvents.MAX_PATHS
+    heard = listening(rig, rig.install("acme.wide", workspace="read"), FILES)
+    paths = frozenset(f"src/f{n}.py" for n in range(WorkspaceSignals.MAX_PATHS + 50))
+    producer(rig).files_changed(paths)
+    [value] = heard.values(FILES)
+    assert value["truncated"] is True
+    assert len(value["paths"]) == WorkspaceSignals.MAX_PATHS
 
 
-def test_an_ungranted_topic_is_still_not_heard():
-    """The content rule is extra, not instead of. Workspace access
-    does not grant a topic nobody asked for."""
-    quiet = manifest("acme.quiet", events=[])
-    host, heard = wired(quiet)
-    host.files_changed(frozenset({"src/b.py"}))
-    assert heard["acme.quiet"].events == []
+async def test_the_poll_runs_only_while_someone_entitled_listens(rig: HostRig):
+    """The cost of an unused signal is zero: no subscriber with the
+    workspace, no git."""
+    signals = producer(rig)
+    blind = rig.install("acme.blind", workspace="none")
+    listening(rig, blind, HEAD)
+    assert not signals._wanted(HostTopic.WORKSPACE_HEAD_CHANGED)  # noqa: SLF001
+    listening(rig, rig.install("acme.sees", workspace="read"), HEAD)
+    assert signals._wanted(HostTopic.WORKSPACE_HEAD_CHANGED)  # noqa: SLF001
+    assert not signals._wanted(HostTopic.WORKSPACE_FILES_CHANGED)  # noqa: SLF001
 
 
-# ── Session ────────────────────────────────────────────────────────
+# ── The old grant is gone ──────────────────────────────────────────
 
 
-def test_a_reload_is_not_a_session_switch():
-    """`attach_session` is what a client sends when it reconnects.
-    Without the dedupe every page refresh looks like the user moved
-    to a different session, and every extension re-fetches."""
-    one = manifest("acme.one", events=["session.switched"])
-    host, heard = wired(one)
-    host.session_switched("s1")
-    host.session_switched("s1")
-    host.session_switched("s2")
-    assert [payload["session_id"] for _, payload in heard["acme.one"].events] == ["s1", "s2"]
-
-
-def test_session_switched_does_not_need_the_workspace():
-    """The content rule is about workspace events. A session id is
-    not workspace information, and gating it on `workspace` would
-    be a rule applied past where it means anything."""
-    one = manifest("acme.one", events=["session.switched"], workspace="none")
-    host, heard = wired(one)
-    host.session_switched("s1")
-    assert heard["acme.one"].topics() == ["session.switched"]
+def test_a_manifest_declaring_the_retired_event_grant_does_not_validate():
+    """`permissions.events` duplicated `permissions.host` and was
+    retired. A manifest that still declares it is refused, rather than
+    approved and then delivered nothing."""
+    with pytest.raises(ValidationError, match="events"):
+        ExtensionManifest.model_validate(
+            {
+                "id": "acme.old",
+                "version": "1.0.0",
+                "contract": ">=1.0 <2",
+                "trust": "unsigned",
+                "dev": {"command": ["true"]},
+                "permissions": {"events": ["workspace.head-changed"], "workspace": "read"},
+            }
+        )
 
 
 # ── The real thing ─────────────────────────────────────────────────
@@ -472,29 +445,3 @@ async def test_the_loop_polls_and_stops():
     settled = workspace.head_calls
     await asyncio.sleep(0.05)
     assert workspace.head_calls == settled
-
-
-# ── What the author is told at install ─────────────────────────────
-
-
-def test_a_workspace_event_without_the_workspace_is_called_out(caplog):
-    """The author's only other evidence is an event that never
-    arrives. A grant that reads like a subscription and behaves
-    like silence is the worst shape a permission can have."""
-    ExtensionInstaller._check_events(
-        manifest("acme.quiet", events=["workspace.head-changed"], workspace="none")
-    )
-    assert "was not granted the workspace" in caplog.text
-
-
-def test_a_topic_igni_does_not_publish_is_called_out(caplog):
-    ExtensionInstaller._check_events(manifest("acme.future", events=["session.renamed"]))
-    assert "events igni does not publish" in caplog.text
-    assert "session.renamed" in caplog.text
-
-
-def test_a_well_formed_manifest_is_told_nothing(caplog):
-    ExtensionInstaller._check_events(
-        manifest("acme.good", events=["workspace.*"], workspace="read")
-    )
-    assert caplog.text == ""

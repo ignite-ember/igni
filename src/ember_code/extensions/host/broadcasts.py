@@ -74,14 +74,10 @@ class BroadcastSignals:
         self.model.emit(
             "chat.typing", {"session_id": m.session_id, "text": m.text, "window": window}
         )
-        if window is None:
-            return
-        self.model.windows.touch(window)
-        self.state.drafts[window] = m.text
-        self.model.emit(
-            "ui.composer_changed",
-            {"window": window, "composer": {"text": m.text, "attachments": [], "mode": None}},
-        )
+        if window is not None:
+            # Typing is using the window. The draft itself is the
+            # window's model, written by the window (``ui.composer``).
+            self.model.windows.touch(window)
 
     def _on_content_delta(self, m: msg.ContentDelta) -> None:
         self.model.emit(

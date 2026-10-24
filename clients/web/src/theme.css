@@ -671,6 +671,22 @@ button {
   justify-content: flex-end;
 }
 
+/* An extension's dialog (``host.ui.show_dialog``) wears the same sheet,
+   labelled with whose question it is. */
+.host-dialog-from {
+  font-size: var(--text-sm);
+  color: var(--fg-faint);
+  margin-bottom: var(--space-3);
+}
+.host-dialog-field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  font-size: var(--text-sm);
+  color: var(--fg-muted);
+  margin-bottom: 18px;
+}
+
 /* ── Update pill (statusline) ─────────────────────────────────
    Geometry matches ``.codeindex-pill`` / ``.session-chip`` so the
    row reads as one consistent strip of pills. The accent color

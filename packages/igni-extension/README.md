@@ -143,8 +143,22 @@ await ext.host.windows.ui(window_id).navigate("plugins")  # any window
 granted by `permissions.workspace`. An object not granted raises
 `HostError` with `code == "not_granted"`, and its signals never arrive.
 Other codes: `not_found`, `invalid`, `read_only`, `refused` (the person
-could not have done it either), `stage_2` (defined, not yet available —
-a few members of `host.ui`), `failed`.
+could not have done it either), `stage_2` (defined, not yet built — no
+member today), `failed`.
+
+`ext.host.ui` is the window the person last used: its page, panel,
+sidebar, preview, selection, composer, toasts, dialog and scroll — the
+same model igni's own views bind to, so a write shows in the window and
+whatever the person does there is a signal. A dialog waits for the
+person:
+
+```python
+answer = await ext.host.ui.show_dialog(
+    {"title": "Ship it?", "buttons": [{"id": "yes", "label": "Ship", "primary": True}]}
+)
+if answer and answer["button"] == "yes":
+    await ext.host.ui.toast("Shipping.", "success")
+```
 
 `ext.host` travels on a loopback socket igni gives the process
 (`IGNI_HOST_URL`, `IGNI_HOST_SECRET`). `ext.run()` connects and stays

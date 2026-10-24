@@ -1,6 +1,6 @@
 """Pool-level RPC guard handler.
 
-The pool-level RPCs (``attach_session``, ``{get,set,delete}_client_state``)
+The pool-level RPCs (``attach_session``, ``host_model``, ``window_model``)
 are intercepted by :class:`SessionOrchestrator` BEFORE per-runtime
 dispatch. If any code path skips that guard and dispatches to these
 methods through the RPC table, the guard raises a loud
@@ -24,10 +24,8 @@ from ember_code.protocol.rpc import RpcMethod
 POOL_LEVEL_RPCS: frozenset[RpcMethod] = frozenset(
     {
         RpcMethod.ATTACH_SESSION,
-        RpcMethod.GET_CLIENT_STATE,
-        RpcMethod.SET_CLIENT_STATE,
-        RpcMethod.DELETE_CLIENT_STATE,
         RpcMethod.HOST_MODEL,
+        RpcMethod.WINDOW_MODEL,
     }
 )
 
@@ -43,6 +41,6 @@ class PoolGuardRpcHandler(RpcHandler):
     def _pool_level_guard(self, args: dict) -> None:
         raise RuntimeError(
             "pool-level RPC dispatched through per-runtime table — "
-            "SessionOrchestrator must intercept ATTACH_SESSION + "
-            "{GET,SET,DELETE}_CLIENT_STATE before this point"
+            "SessionOrchestrator must intercept ATTACH_SESSION, HOST_MODEL "
+            "and WINDOW_MODEL before this point"
         )

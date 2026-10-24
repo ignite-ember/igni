@@ -104,17 +104,6 @@ export interface ExtensionFrameProps {
    * the frame not to read it.
    */
   /**
-   * Events waiting for this frame, oldest first, each with a
-   * monotonic `n`.
-   *
-   * A queue rather than "the latest one", because two pushes that
-   * land in the same React batch collapse into one render — so a
-   * single slot silently drops whichever arrived first. With three
-   * producers that is no longer theoretical: a commit moves HEAD
-   * and changes the dirty set at the same moment.
-   */
-  events?: { topic: string; payload: Record<string, unknown>; n: number }[];
-  /**
    * Answers a host-model request (`bridge.host…`) from the frame.
    *
    * The caller forwards it to the backend as this extension — the
@@ -131,7 +120,12 @@ export interface ExtensionFrameProps {
   }>;
   /**
    * Host-model signals for this extension, oldest first, each with a
-   * monotonic `n` — queued for the same reason `events` is.
+   * monotonic `n`.
+   *
+   * A queue rather than "the latest one", because two pushes that
+   * land in the same React batch collapse into one render — so a
+   * single slot silently drops whichever arrived first. A commit
+   * moves HEAD and changes the dirty set at the same moment.
    */
   signals?: { signal: string; value: unknown; n: number }[];
   /** Launch parameters, passed through on `hello`. */
@@ -184,7 +178,6 @@ export function ExtensionFrame({
   onClose,
   onLocation,
   onHost,
-  events,
   signals,
   params,
   settings,
@@ -334,14 +327,9 @@ export function ExtensionFrame({
    * host's own watcher follows — a first observation is not a
    * change.
    */
-  const deliveredUpTo = useRef<number | null>(null);
-  // Mirrored so `onLoad` can read the queue without taking it as a
-  // dependency and rebuilding the greeting on every event.
-  const queued = useRef<NonNullable<ExtensionFrameProps["events"]>>([]);
-  queued.current = events ?? [];
-
-  // The same, for host-model signals.
   const signalsUpTo = useRef<number | null>(null);
+  // Mirrored so `onLoad` can read the queue without taking it as a
+  // dependency and rebuilding the greeting on every signal.
   const queuedSignals = useRef<NonNullable<ExtensionFrameProps["signals"]>>([]);
   queuedSignals.current = signals ?? [];
 
@@ -350,9 +338,6 @@ export function ExtensionFrame({
   const onLoad = useCallback(() => {
     const sent = params ?? {};
     delivered.current = sent;
-    const waiting = queued.current;
-    deliveredUpTo.current =
-      waiting.length === 0 ? 0 : waiting[waiting.length - 1].n;
     const waitingSignals = queuedSignals.current;
     signalsUpTo.current =
       waitingSignals.length === 0
@@ -397,30 +382,10 @@ export function ExtensionFrame({
   /*
     Everything the frame has not been given yet, in order.
 
-    Keyed on `n` rather than on the payload: two identical events
-    are two events, and a guest waiting for "the file changed
+    Keyed on `n` rather than on the value: two identical signals
+    are two signals, and a guest waiting for "the file changed
     again" must hear it again. Skipped before `hello`, because a
     frame that has not been greeted has no nonce and no listener.
-  */
-  useEffect(() => {
-    const upTo = deliveredUpTo.current;
-    if (events === undefined || upTo === null) return;
-    const pending = events.filter((one) => one.n > upTo);
-    if (pending.length === 0) return;
-    deliveredUpTo.current = pending[pending.length - 1].n;
-    for (const one of pending) {
-      post({
-        igni: BRIDGE_VERSION,
-        kind: "event",
-        topic: one.topic,
-        payload: one.payload,
-      });
-    }
-  }, [events, post]);
-
-  /*
-    Host-model signals, as events are: in order, nothing before
-    `hello`, nothing the frame was not addressed.
   */
   useEffect(() => {
     const upTo = signalsUpTo.current;

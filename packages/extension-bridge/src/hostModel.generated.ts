@@ -1,11 +1,11 @@
-// GENERATED from the igni host schema 1.0.0 by ember_code.extensions.host.codegen — do not edit. Run `make host-sdks` after changing the schema.
+// GENERATED from the igni host schema 1.1.0 by ember_code.extensions.host.codegen — do not edit. Run `make host-sdks` after changing the schema.
 //
 // `bridge.host` as an extension's page sees it. Read
 // `docs/HOST_OBJECT_MODEL.md` in igni for what each object is.
 
 import { HostObject, Property, Signal, type HostLink, type JsonValue } from "./hostModel";
 
-export const SCHEMA_VERSION = "1.0.0";
+export const SCHEMA_VERSION = "1.1.0";
 
 /** One change anywhere in the model, as `host.changed` reports it. */
 export interface Change {
@@ -59,7 +59,7 @@ export interface WindowInfo {
   /** `tauri`, `vscode`, `jetbrains` or `web`. */
   kind: string;
   connected: boolean;
-  /** Stage 2: false until the window reports focus. */
+  /** Whether the person is using this window: it has focus. */
   focused: boolean;
   /** The session it shows. */
   session_id?: string | null;
@@ -80,13 +80,13 @@ export interface Route {
   pages: Page[];
 }
 
-/** The side panel open in a window. */
+/** The panel open over a window's chat: `notifications`, `search` (find in the conversation), `login` or `dir-picker`. One at a time. */
 export interface Panel {
   kind: string;
   params?: Record<string, JsonValue>;
 }
 
-/** A window's side panel opened or closed. */
+/** A window's panel opened or closed. */
 export interface PanelChange {
   window: string;
   panel?: Panel | null;
@@ -95,9 +95,9 @@ export interface PanelChange {
 /** A window's sidebar. */
 export interface Sidebar {
   open: boolean;
-  /** Stage 2: not reported yet. */
+  /** Its width in pixels; `None` for igni's own. */
   width?: number | null;
-  /** Stage 2: not reported yet. */
+  /** The part of it in view: `links` (the destinations) or `sessions`. */
   section?: string | null;
 }
 
@@ -107,7 +107,7 @@ export interface SidebarChange {
   sidebar: Sidebar;
 }
 
-/** The file or document previewed in a window. */
+/** The file previewed in a window. */
 export interface Preview {
   path: string;
 }
@@ -118,10 +118,13 @@ export interface PreviewChange {
   preview?: Preview | null;
 }
 
-/** What is highlighted or selected in a window. */
+/** What is selected in a window. Each part is independent; `None` for nothing. */
 export interface SelectionState {
+  /** The highlighted message, by the run it belongs to (`run_id` in `chat.messages` and the run signals). */
   message_id?: string | null;
+  /** Text selected in the transcript. */
   text?: string | null;
+  /** The file last picked: a file pill, a reference. */
   file?: string | null;
 }
 
@@ -133,11 +136,11 @@ export interface SelectionChange {
 
 /** A window's composer. */
 export interface Composer {
-  /** The draft. */
+  /** The draft, without the mode's `/` or `$`. */
   text: string;
-  /** Stage 2: not reported yet. */
+  /** The files the draft refers to (`@path`), in order. */
   attachments?: string[];
-  /** Stage 2: not reported yet. */
+  /** `chat`, `command` (a slash command) or `shell` (a `$` line). */
   mode?: string | null;
 }
 
@@ -150,9 +153,16 @@ export interface ComposerChange {
 /** A transient message on screen. */
 export interface Toast {
   id: string;
+  /** Its first line. */
   text: string;
   /** `info`, `success`, `warning` or `error`. */
   kind: string;
+  /** A second line. */
+  body?: string | null;
+  /** Where clicking it goes. */
+  target?: Page | null;
+  /** The extension that showed it; `None` for igni. */
+  source?: string | null;
 }
 
 /** A toast appeared or went away. */
@@ -161,24 +171,30 @@ export interface ToastChange {
   toast: Toast;
 }
 
-/** A dialog on screen. */
+/** A dialog on screen: igni's own (`spec.kind` is `update`) or an extension's (`show_dialog`). One at a time; a new one replaces the last, which closes unanswered. */
 export interface Dialog {
   id: string;
   spec: JsonValue;
+  /** The extension that asked; `None` for igni. */
+  source?: string | null;
 }
 
 /** A dialog opened or closed. */
 export interface DialogChange {
   window: string;
   dialog: Dialog;
-  /** What the person answered, when it closed. */
+  /** What the person answered, when it closed: `{button, value}`; `None` when it was dismissed or replaced. */
   answer?: JsonValue;
 }
 
 /** Where a window's transcript is scrolled to. */
 export interface Scroll {
+  /** The message at the top of the view, by its run; `None` for none. */
   message_id?: string | null;
+  /** Following the newest message. */
   at_bottom: boolean;
+  /** The window, in a signal. */
+  window?: string | null;
 }
 
 /** One session, as the session list shows it. */
@@ -763,13 +779,13 @@ export class HostWindows extends HostObject {
   static readonly PATH = "windows";
   /** Every window connected now. */
   readonly list: Property<WindowInfo[]>;
-  /** The window the person is using. */
+  /** The window the person is using — the one with focus; `None` when igni is in the background. */
   readonly focused: Property<string | null>;
   /** A window connected. */
   readonly opened: Signal<WindowInfo>;
   /** A window went away. */
   readonly closed: Signal<WindowInfo>;
-  /** Another window took focus. */
+  /** A window took focus or lost it; `focused` says which. */
   readonly focus_changed: Signal<WindowInfo>;
 
   constructor(link: HostLink, window: string | null = null) {
@@ -787,22 +803,22 @@ export class HostWindows extends HostObject {
   }
 }
 
-/** What a window shows. `host.ui` is the active window — the one the person last used; `host.windows.ui(id)` any window. */
+/** What a window shows — the model its views bind to. `host.ui` is the active window, the one the person last used; `host.windows.ui(id)` any window. igni's own views write here too, by the same path, so every change below is a signal whoever made it. */
 export class HostUi extends HostObject {
   static readonly PATH = "ui";
   /** The page stack; empty when the chat is showing. Writable: setting it navigates. */
   readonly route: Property<Page[]>;
-  /** The side panel open. */
+  /** The panel open over the chat. Writable: setting it opens one, `None` closes it. */
   readonly panel: Property<Panel | null>;
-  /** The sidebar. Writable: `open` is applied. */
+  /** The sidebar. Writable. */
   readonly sidebar: Property<Sidebar>;
-  /** The file or document previewed. */
+  /** The file previewed. Writable: `None` closes it. */
   readonly preview: Property<Preview | null>;
-  /** What is selected. */
+  /** What is selected. Writable. */
   readonly selection: Property<SelectionState>;
-  /** The draft in the composer. Writable: the text is applied. */
+  /** The composer: draft, the files it refers to, its mode. Writable. */
   readonly composer: Property<Composer>;
-  /** Toasts on screen. */
+  /** Toasts on screen, oldest first. */
   readonly toasts: Property<Toast[]>;
   /** The open dialog. */
   readonly dialog: Property<Dialog | null>;
@@ -810,11 +826,11 @@ export class HostUi extends HostObject {
   readonly scroll: Property<Scroll>;
   /** The page stack changed. */
   readonly navigated: Signal<Route>;
-  /** A side panel opened or closed. */
+  /** A panel opened or closed. */
   readonly panel_changed: Signal<PanelChange>;
   /** The sidebar changed. */
   readonly sidebar_changed: Signal<SidebarChange>;
-  /** The preview changed. */
+  /** The preview opened, changed or closed. */
   readonly preview_changed: Signal<PreviewChange>;
   /** The selection changed. */
   readonly selection_changed: Signal<SelectionChange>;
@@ -828,16 +844,16 @@ export class HostUi extends HostObject {
   readonly dialog_opened: Signal<DialogChange>;
   /** A dialog closed, with the answer. */
   readonly dialog_closed: Signal<DialogChange>;
-  /** The transcript scrolled. */
+  /** The transcript came to rest somewhere else, or started or stopped following the newest message. */
   readonly scrolled: Signal<Scroll>;
 
   constructor(link: HostLink, window: string | null = null) {
     super(link, "ui", window);
     this.route = new Property(this, "route", true);
-    this.panel = new Property(this, "panel", false);
+    this.panel = new Property(this, "panel", true);
     this.sidebar = new Property(this, "sidebar", true);
-    this.preview = new Property(this, "preview", false);
-    this.selection = new Property(this, "selection", false);
+    this.preview = new Property(this, "preview", true);
+    this.selection = new Property(this, "selection", true);
     this.composer = new Property(this, "composer", true);
     this.toasts = new Property(this, "toasts", false);
     this.dialog = new Property(this, "dialog", false);
@@ -865,49 +881,59 @@ export class HostUi extends HostObject {
     return this.call<Page[]>("back", {});
   }
 
-  /** Open a side panel. */
-  open_panel(kind: string, params?: Record<string, JsonValue>): Promise<void> {
-    return this.call<void>("open_panel", { kind, params });
+  /** Open a panel over the chat, closing the one that was open. */
+  open_panel(kind: string, params?: Record<string, JsonValue>): Promise<Panel> {
+    return this.call<Panel>("open_panel", { kind, params });
   }
 
-  /** Close the side panel. */
+  /** Close the panel. */
   close_panel(): Promise<void> {
     return this.call<void>("close_panel", {});
   }
 
-  /** Open or close the sidebar. */
+  /** Open or close the sidebar, and size it or bring a section into view. */
   set_sidebar(open: boolean, width?: number, section?: string): Promise<Sidebar> {
     return this.call<Sidebar>("set_sidebar", { open, width, section });
   }
 
-  /** Preview a file. (`preview` is the property.) */
-  open_preview(path: string): Promise<void> {
-    return this.call<void>("open_preview", { path });
+  /** Preview a file of the project. (`preview` is the property.) */
+  open_preview(path: string): Promise<Preview> {
+    return this.call<Preview>("open_preview", { path });
   }
 
-  /** Select a message, text or file. */
-  select(selection: SelectionState): Promise<void> {
-    return this.call<void>("select", { selection });
+  /** Close the preview. */
+  close_preview(): Promise<void> {
+    return this.call<void>("close_preview", {});
+  }
+
+  /** Select a message, text or file. The parts left out are cleared. */
+  select(selection: SelectionState): Promise<SelectionState> {
+    return this.call<SelectionState>("select", { selection });
   }
 
   /** Replace the draft. */
-  set_composer(text: string, attachments?: string[]): Promise<Composer> {
-    return this.call<Composer>("set_composer", { text, attachments });
+  set_composer(text: string, attachments?: string[], mode?: string): Promise<Composer> {
+    return this.call<Composer>("set_composer", { text, attachments, mode });
   }
 
-  /** Show a transient message. */
-  toast(text: string, kind?: string): Promise<void> {
-    return this.call<void>("toast", { text, kind });
+  /** Show a transient message, labelled as this extension's. */
+  toast(text: string, kind?: string, body?: string, target?: Page): Promise<Toast> {
+    return this.call<Toast>("toast", { text, kind, body, target });
   }
 
-  /** Show a dialog and wait for the answer. (`dialog` is the property.) */
+  /** Take one of this extension's toasts away. */
+  dismiss_toast(toast_id: string): Promise<void> {
+    return this.call<void>("dismiss_toast", { toast_id });
+  }
+
+  /** Show a dialog and wait for the person's answer. `spec` is `{title, body, buttons: [{id, label, primary}], input: {label, placeholder, value}}` — `buttons` defaults to one OK, `input` is optional. Answers `{button, value}`, or `None` when the dialog was dismissed, or replaced by another. (`dialog` is the property.) */
   show_dialog(spec: JsonValue): Promise<JsonValue> {
     return this.call<JsonValue>("show_dialog", { spec });
   }
 
-  /** Scroll the transcript to a message. */
-  scroll_to(message_id: string): Promise<void> {
-    return this.call<void>("scroll_to", { message_id });
+  /** Scroll the transcript to a message, by its run; `bottom` for the newest. */
+  scroll_to(message_id: string): Promise<Scroll> {
+    return this.call<Scroll>("scroll_to", { message_id });
   }
 }
 

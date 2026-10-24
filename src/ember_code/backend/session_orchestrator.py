@@ -6,7 +6,7 @@ used to be welded into ``__main__._run``:
 * the :class:`SessionPool` + its :class:`SessionRuntime` factory,
 * the session-id → project-dir registry,
 * the per-client UI state store,
-* the pool-level RPCs (``attach_session``, ``{get,set,delete}_client_state``),
+* the pool-level RPCs (``attach_session``, ``host_model``, ``window_model``),
 * the ``_dispatch`` fan-out that picks the right runtime for each
   message,
 * the in-flight task set for graceful drain on shutdown.
@@ -27,20 +27,21 @@ import uuid
 from pathlib import Path
 from typing import Any
 
+from pydantic import ValidationError
+
 from ember_code.backend.login_coordinator import LoginCoordinator
 from ember_code.backend.message_dispatcher import MessageDispatcher
 from ember_code.backend.push_bridge import PushNotificationBridge
 from ember_code.backend.rpc_router import POOL_LEVEL_RPCS, RpcRouter
 from ember_code.backend.schemas_rpc import (
     AttachSessionResult,
-    GetClientStateResult,
     SessionPoolConfig,
-    WriteClientStateResult,
 )
 from ember_code.backend.session_pool import SessionPool, SessionRuntime
 from ember_code.backend.session_stamping_transport import SessionStampingTransport
 from ember_code.core.session.client_state import ClientStateStore
 from ember_code.core.session.session_directories import SessionDirectoryStore
+from ember_code.extensions.host.windows import WindowModelError, WindowRequest
 from ember_code.extensions.registry import ExtensionRegistry
 from ember_code.extensions.rpc import ExtensionRpc
 from ember_code.protocol import messages as msg
@@ -104,7 +105,6 @@ class SessionOrchestrator:
         login: LoginCoordinator,
         extensions: ExtensionRpc | None = None,
         origins: Any = None,
-        host_events: Any = None,
         notifications: Any = None,
         queue: list[str],
     ) -> None:
@@ -134,12 +134,6 @@ class SessionOrchestrator:
         # router so each session answers ``notifications_*`` from the
         # same one.
         self._notifications = notifications
-        # :class:`~ember_code.backend.host_events.HostEvents`, when
-        # there is one. Defaulted for the same reason ``extensions``
-        # is: the tests that build an orchestrator directly want a
-        # pool, not an extension platform, and a session switch that
-        # nobody is listening to is not an error.
-        self._host_events = host_events
         self._queue = queue
         self._boot_rpc_table = rpc_table
         # Constructed in ``setup_pool``. Kept on self so
@@ -314,7 +308,7 @@ class SessionOrchestrator:
 
     @property
     def client_state(self) -> ClientStateStore:
-        """Every window's UI state — the store ``{get,set,delete}_client_state`` use."""
+        """The store every window's lasting model fields are kept in."""
         assert self._client_state is not None, "setup_pool must be called first"
         return self._client_state
 
@@ -441,12 +435,10 @@ class SessionOrchestrator:
             session_id = str(uuid.uuid4())[:8]
         assert self._pool is not None
         rt = await self._pool.get_or_create(session_id)
-        if self._host_events is not None:
-            # The pool-level "the user is now looking at this one".
-            # Fires on reconnect too, so ``HostEvents`` drops a
-            # repeat of the same id rather than every extension
-            # having to learn that a page reload is not a switch.
-            self._host_events.session_switched(rt.backend.session_id)
+        # Attaching is not looking: a window says which session it
+        # shows by writing its model's ``session``, and that write is
+        # ``sessions.current_changed`` — once, since writing the same
+        # session again on a reload changes nothing.
         return AttachSessionResult(
             session_id=rt.backend.session_id,
             project_dir=str(rt.backend.project_dir),
@@ -467,44 +459,29 @@ class SessionOrchestrator:
             return
         await self._transport.send(msg.RPCResponse(id=message.id or "", result=result.model_dump()))
 
-    async def _handle_client_state_rpc(self, message: Any) -> None:
-        """Read/write per-client UI state. Not tied to any session
-        — clients only need a stable ``client_id`` to round-trip
-        their preferences."""
-        assert self._client_state is not None
-        args = message.args or {}
-        client_id = str(args.get("client_id") or "").strip()
-        method = message.method
-        try:
-            if method == RpcMethod.GET_CLIENT_STATE:
-                snapshot = self._client_state.get_for_client(client_id)
-                payload: dict[str, Any] = GetClientStateResult(state=snapshot).model_dump()["state"]
-                await self._transport.send(msg.RPCResponse(id=message.id or "", result=payload))
-                if self._host_model is not None and client_id:
-                    # A window reads its state when it connects: it is
-                    # open. It says which connection it is on so the
-                    # host can tell when it goes away.
-                    self._host_model.window_attached(
-                        client_id,
-                        connection_id=str(args.get("connection_id") or ""),
-                        kind=str(args.get("kind") or ""),
-                    )
-                return
-            key = str(args.get("key") or "")
-            if method == RpcMethod.SET_CLIENT_STATE:
-                value = str(args.get("value") or "")
-                self._client_state.set_value(client_id, key, value)
-            else:  # DELETE_CLIENT_STATE
-                value = ""
-                self._client_state.delete_value(client_id, key)
-            if self._host_model is not None and client_id and key:
-                self._host_model.window_wrote(client_id, key, value)
-            ack = WriteClientStateResult(ok=True).model_dump()
-            await self._transport.send(msg.RPCResponse(id=message.id or "", result=ack))
-        except Exception as exc:
+    async def _handle_window_model(self, message: Any) -> None:
+        """``window_model``: a window reading or writing its own model.
+
+        Not tied to any session — a window spans them. The host model
+        owns every window's model (:class:`~ember_code.extensions.host.
+        windows.Windows`); this only carries the request there and the
+        answer back. A refused write is an RPC error, so the window
+        drops its optimistic copy and shows the model's.
+        """
+        if self._host_model is None:
             await self._transport.send(
-                msg.RPCResponse(id=message.id or "", error=f"client_state: {exc}")
+                msg.RPCResponse(id=message.id or "", error="window_model: no host model")
             )
+            return
+        try:
+            request = WindowRequest.model_validate(dict(message.args or {}))
+            result = self._host_model.handle_window(request)
+        except (ValidationError, WindowModelError) as exc:
+            await self._transport.send(
+                msg.RPCResponse(id=message.id or "", error=f"window_model: {exc}")
+            )
+            return
+        await self._transport.send(msg.RPCResponse(id=message.id or "", result=result))
 
     async def _handle_host_model(self, message: Any) -> None:
         """``host_model``: an extension's page reaching the host object model.
@@ -588,7 +565,7 @@ class SessionOrchestrator:
     async def dispatch(self, message: Any) -> None:
         """Route one message to the right runtime + handler.
 
-        Pool-level RPCs (``attach_session``, ``{get,set,delete}_client_state``)
+        Pool-level RPCs (``attach_session``, ``host_model``, ``window_model``)
         bypass per-runtime routing; ``SessionList`` is forced onto
         the default runtime (see the long-form justification in the
         original ``__main__._dispatch``); everything else routes by
@@ -603,7 +580,7 @@ class SessionOrchestrator:
                 elif message.method == RpcMethod.HOST_MODEL:
                     await self._handle_host_model(message)
                 else:
-                    await self._handle_client_state_rpc(message)
+                    await self._handle_window_model(message)
                 return
             for watcher in self._inbound_watchers:
                 watcher(message)

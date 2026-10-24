@@ -150,13 +150,13 @@ shipping without it costs nothing.
 
 | # | State | Note |
 |---|---|---|
-| H1 | ✅ | `HostTopic`, a `StrEnum` like `RpcMethod`, with `validate_vocabulary()` as the analogue of `validate_rpc_table`. Four topics. |
-| H2 | ✅ | `permissions.events`, checked at dispatch and never at delivery. An extension's own `ext.<id>.` topics need no grant; another's are unreachable. |
-| H3 | ✅ | An `event` envelope kind and `bridge.onEvent`, additive like `params` and `location`. |
-| H4 | ✅ | Delivery: `EventRouter` → `extension_event` push → the one frame it was addressed to. `emit_to` for events that are *about* an extension. |
-| H5 | ✅ | Producers. `WorkspaceWatcher` polls `git rev-parse` at 1 Hz and `git status` at half that — and does neither while nobody is entitled to the result. `session.switched` fires from the pool's `attach_session`, deduped, because a page reload is not a switch. |
-| H6 | ✅ | The content rule. `HostEvents.emit_each` gives each listener its own payload: `workspace.*` requires `permissions.workspace` as well as the topic, and `files-changed` is filtered to each extension's `workspacePaths`. The grant says whether you are addressed; it does not say what you are handed. |
-| H7 | ✅ | Services too. A service implementing the reserved `igni_on_event(topic, payload)` is called when an event fires, so an extension with no page — or a closed one — still hears. One call in flight per extension, a 5s timeout, sixteen queued behind it, oldest dropped and counted. Never offered to the agent, whatever `permissions.tools` says. |
+| H1 | ✅ | `HostTopic`, a `StrEnum` like `RpcMethod`: the wire names of the four signals that predate the host object model. |
+| H2 | ✅ | Granted by `permissions.host` (and `permissions.workspace` for the workspace signals), checked at dispatch and never at delivery. The `permissions.events` grant that duplicated it is retired; a manifest declaring it does not validate. |
+| H3 | ✅ | `bridge.on(signal, fn)` in a page, `@ext.on(signal)` in a process — the host object model's signals. The `event` envelope kind and `bridge.onEvent` are retired. |
+| H4 | ✅ | Delivery: the host model's `SignalBus` → a process's loopback channel, or the `host_signal` push → the frames of the extension it was addressed to. `only=` for signals that are *about* one extension. |
+| H5 | ✅ | Producers. `WorkspaceWatcher` polls `git rev-parse` at 1 Hz and `git status` at half that — and does neither while nobody entitled is subscribed. `session.switched` fires from a window's session binding, deduped, because a page reload is not a switch. |
+| H6 | ✅ | The content rule. Each listener gets its own value: the workspace signals require `permissions.workspace`, and `files-changed` is filtered to each extension's `workspacePaths`. The grant says whether you are addressed; it does not say what you are handed. |
+| H7 | — | Retired. A service used to be told through the reserved `igni_on_event(topic, payload)` tool; a process now subscribes over its host channel. An `endpoint` service with no page hears nothing. |
 | H8 | ✅ | `permissions.tools` enforces something for the first time. `get_tools` returns registered names and a manifest declares the server's own; `_restrict_tools` compared them directly, so *every* tool was refused including the declared ones. Safe direction, which is why it looked like it worked — and the unit test agreed because it passed bare names. `bare_tool_name` is the conversion, pinned against a real server. |
 
 ## Gate G — more than one person

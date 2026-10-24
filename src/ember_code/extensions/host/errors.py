@@ -34,10 +34,9 @@ class HostModelError(Exception):
     def stage_two(cls, member: str) -> HostModelError:
         return cls(
             ErrorCode.STAGE_2,
-            f"'{member}' is defined but not yet available: the UI state behind it still "
-            "lives inside igni's web client, and moves into the host model in stage 2 "
-            "(docs/HOST_OBJECT_MODEL.md). Write against it; it will start answering "
-            "without a change to your code.",
+            f"'{member}' is defined but not yet available: igni has not built what is "
+            "behind it yet (docs/HOST_OBJECT_MODEL.md). Write against it; it will start "
+            "answering without a change to your code.",
         )
 
 

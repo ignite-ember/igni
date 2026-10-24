@@ -124,12 +124,27 @@ class TestTheSchemaIsTheAuthority:
         ext = rig.install(host=EVERYTHING)
         refused(await rig.ask(ext, "get", "chat.nothing"), "not_found")
 
-    async def test_a_stage_two_member_says_it_is_not_yet_available(self, rig: HostRig) -> None:
-        ext = rig.install(host=["ui"])
-        await rig.window()
-        message = refused(await rig.ask(ext, "get", "ui.panel"), "stage_2")
-        assert "stage 2" in message
-        refused(await rig.ask(ext, "call", "ui.toast", text="hi"), "stage_2")
+    async def test_a_member_defined_and_not_built_says_so(self, rig: HostRig) -> None:
+        # No member is stage 2 today; the mechanism is held to its
+        # promise against a schema where one is.
+        assert rig.model is not None
+        app = HOST_SCHEMA.object("app")
+        assert app is not None
+        unbuilt = tuple(
+            p.model_copy(update={"stage": 2}) if p.name == "version" else p for p in app.properties
+        )
+        rig.model.schema = HOST_SCHEMA.model_copy(
+            update={
+                "objects": tuple(
+                    o.model_copy(update={"properties": unbuilt}) if o.path == "app" else o
+                    for o in HOST_SCHEMA.objects
+                )
+            }
+        )
+        ext = rig.install(host=["app"])
+        message = refused(await rig.ask(ext, "get", "app.version"), "stage_2")
+        assert "not yet available" in message
+        assert not HOST_SCHEMA.stage_two()
 
     async def test_a_property_that_is_not_writable_cannot_be_set(self, rig: HostRig) -> None:
         ext = rig.install(host=["chat.read"])
@@ -332,9 +347,9 @@ class TestWindowsAndUi:
         pages = ok(await rig.ask(ext, "call", "ui.navigate", page="plugins"))
         assert pages == [{"kind": "plugins", "label": "plugins", "params": {}}]
         await rig.settle()
-        [push] = rig.windows.pushes("client_state_changed")
-        assert push.payload["client_id"] == "w-1" and push.payload["key"] == "page"
-        assert json.loads(push.payload["value"])[0]["kind"] == "plugins"
+        [push] = await rig.window_pushes("w-1")
+        assert push["field"] == "route" and push["value"][0]["kind"] == "plugins"
+        assert push["token"] == ""  # nobody's echo: the window applies it
         assert ok(await rig.ask(ext, "call", "ui.back")) == []
 
     async def test_what_the_window_does_is_a_signal(self, rig: HostRig) -> None:
@@ -345,10 +360,10 @@ class TestWindowsAndUi:
             rig.model.bus.attach(ext, sink), ["ui.sidebar_changed", "session.switched", "changed"]
         )
         await rig.window("w-1")
-        await rig.window_writes("w-1", "sidebar-open", "true")
-        await rig.window_writes("w-1", "session-id", "boot")
+        await rig.window_writes("w-1", "sidebar", {"open": True})
+        await rig.window_writes("w-1", "session", "boot")
         # The same value again — a reload re-saving it — is not a change.
-        await rig.window_writes("w-1", "sidebar-open", "true")
+        await rig.window_writes("w-1", "sidebar", {"open": True})
         [sidebar] = sink.values("ui.sidebar_changed")
         assert sidebar == {
             "window": "w-1",
@@ -362,13 +377,13 @@ class TestWindowsAndUi:
         ext = rig.install(host=["ui"])
         await rig.window("w-1", connection="ws-a")
         await rig.window("w-2", connection="ws-b")
-        await rig.window_writes("w-2", "sidebar-open", "true")  # w-2 is the active window
-        await rig.window_writes("w-1", "sidebar-open", "false")
-        await rig.window_writes("w-2", "sidebar-open", "false")
+        await rig.window_writes("w-2", "sidebar", {"open": True})  # w-2 is the active window
+        await rig.window_writes("w-1", "sidebar", {"open": False})
+        await rig.window_writes("w-2", "sidebar", {"open": False})
         reply = await rig.ask(ext, "call", "ui.set_sidebar", open=True, home_window="w-1")
         assert ok(reply)["open"] is True
         await rig.settle()
-        assert rig.windows.pushes("client_state_changed")[-1].payload["client_id"] == "w-1"
+        assert (await rig.window_pushes())[-1]["window"] == "w-1"
 
     async def test_any_window_by_id(self, rig: HostRig) -> None:
         ext = rig.install(host=["ui", "sessions"])
@@ -376,7 +391,7 @@ class TestWindowsAndUi:
         await rig.window("w-2", connection="ws-b")
         ok(await rig.ask(ext, "call", "ui.set_sidebar", open=True, window="w-1"))
         await rig.settle()
-        assert rig.windows.pushes("client_state_changed")[-1].payload["client_id"] == "w-1"
+        assert (await rig.window_pushes())[-1]["window"] == "w-1"
         refused(await rig.ask(ext, "get", "ui.route", window="w-9"), "not_found")
         refused(await rig.ask(ext, "get", "sessions.current", window="w-1"), "invalid")
 
@@ -539,4 +554,4 @@ class TestAPageReachesTheSameModel:
         )
         assert reply.result["ok"]
         await rig.settle()
-        assert rig.windows.pushes("client_state_changed")[-1].payload["client_id"] == "w-1"
+        assert (await rig.window_pushes())[-1]["window"] == "w-1"

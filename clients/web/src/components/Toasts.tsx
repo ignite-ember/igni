@@ -7,64 +7,78 @@
  * outside the chat scroll, persist across conversation switches, and
  * auto-dismiss after a few seconds.
  *
- * Stays pure-state-via-callback: ``App`` owns the toast list and the
- * click action; this component only renders.
+ * The list is the window model's ``ui.toasts`` — igni's own toasts and
+ * an extension's (``host.ui.toast``) alike. This component renders it
+ * and reports the person dismissing one or clicking through to where it
+ * points; the closing animation is its own.
  */
 
 import { useEffect, useState } from "react";
 
-export interface Toast {
-  id: number;
-  title: string;
-  body?: string;
-  /** Optional handler when the user clicks the toast body. */
-  onClick?: () => void;
-  /** Auto-dismiss after this many ms. Defaults to 8000. */
-  ttlMs?: number;
-}
+import type { ModelToast } from "../clientState";
+import type { PageRoute } from "../chat/pageStack";
 
-const DEFAULT_TTL = 8000;
+/** Auto-dismiss after this many ms. */
+export const TOAST_TTL_MS = 8000;
 
 export function Toasts({
   items,
   onDismiss,
+  onOpen,
 }: {
-  items: Toast[];
-  onDismiss: (id: number) => void;
+  items: readonly ModelToast[];
+  onDismiss: (id: string) => void;
+  /** Clicking a toast that points somewhere goes there. */
+  onOpen?: (target: PageRoute) => void;
 }) {
   if (items.length === 0) return null;
   return (
     <div className="toasts" role="region" aria-label="Notifications">
       {items.map((t) => (
-        <ToastCard key={t.id} toast={t} onDismiss={() => onDismiss(t.id)} />
+        <ToastCard
+          key={t.id}
+          toast={t}
+          onDismiss={() => onDismiss(t.id)}
+          onOpen={onOpen}
+        />
       ))}
     </div>
   );
 }
 
-function ToastCard({ toast, onDismiss }: { toast: Toast; onDismiss: () => void }) {
+function ToastCard({
+  toast,
+  onDismiss,
+  onOpen,
+}: {
+  toast: ModelToast;
+  onDismiss: () => void;
+  onOpen?: (target: PageRoute) => void;
+}) {
+  // The exit animation, between the person's click (or the timer) and
+  // the toast leaving the model.
   const [closing, setClosing] = useState(false);
   useEffect(() => {
-    const ttl = toast.ttlMs ?? DEFAULT_TTL;
     const t = window.setTimeout(() => {
       setClosing(true);
       // Wait for the exit animation, then drop from the list.
       window.setTimeout(onDismiss, 200);
-    }, ttl);
+    }, TOAST_TTL_MS);
     return () => window.clearTimeout(t);
-  }, [toast.ttlMs, onDismiss]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [toast.id]);
   return (
     <div className={`toast${closing ? " is-closing" : ""}`}>
       <button
         type="button"
         className="toast-body-btn"
         onClick={() => {
-          toast.onClick?.();
+          if (toast.target) onOpen?.(toast.target);
           setClosing(true);
           window.setTimeout(onDismiss, 150);
         }}
       >
-        <div className="toast-title">{toast.title}</div>
+        <div className="toast-title">{toast.text}</div>
         {toast.body && <div className="toast-body">{toast.body}</div>}
       </button>
       <button

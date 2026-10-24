@@ -110,28 +110,29 @@ same product.
 extension cannot work around — layout can be hand-rolled, a missing
 event cannot.
 
-**Shipped.** `permissions.events` grants host topics from a
-published `HostTopic` vocabulary; an extension's own events, under
-`ext.<id>.`, need no grant and another's are unreachable. The check
-happens at dispatch rather than delivery, because a host that posted
-everything and asked each frame to discard what was not its own
-would be trusting the frame to discard it.
+**Shipped, as the host object model's signals**
+(`docs/HOST_OBJECT_MODEL.md`). An extension subscribes at runtime —
+`@ext.on(ext.host.workspace.head_changed)` from its process,
+`bridge.on(…)` from its page — and each signal is granted by
+`permissions.host` with the rest of its object. The check happens at
+dispatch rather than delivery, because a host that posted everything
+and asked each extension to discard what was not its own would be
+trusting it to discard it. The earlier `permissions.events` grant, with
+its `onEvent` and `igni_on_event` delivery, duplicated that and is gone.
 
-All four host topics now have producers: a git watcher behind the
-two `workspace.*` ones, the pool's `attach_session` behind
-`session.switched`, the registry behind `extension.state-changed`.
-Each listener gets its own payload, so a `workspace.files-changed`
-is filtered to that extension's `workspacePaths` before it is sent.
+The four topics that predate the model are signals whose wire names
+are those topics, and all have producers: a git watcher behind the two
+`workspace.*` ones, a window's session binding behind
+`session.switched`, the registry behind `extension.state-changed`. A
+`workspace.files-changed` is filtered to each extension's
+`workspacePaths` before it is sent.
 
-Delivery reaches both surfaces: a frame through the bridge, a
-service through the reserved `igni_on_event`, so an extension with
-no page — or a closed one — still hears.
+A signal reaches a process igni started and a page igni frames. An
+`endpoint` service with no page hears nothing.
 
 What Artifacts still needs is its *own* events relayed from its
-service to its frame — the `ext.<id>.` half — which the envelope
-carries and nothing yet produces. That is the opposite direction
-from `igni_on_event`: this is igni calling the service, and that
-would be the service telling igni.
+service to its frame — the service telling igni something, the opposite
+direction from a signal. Nothing carries that yet.
 
 ### 3.4 Cross-user realtime
 

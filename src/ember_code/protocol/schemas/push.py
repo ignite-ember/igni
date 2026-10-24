@@ -89,23 +89,6 @@ def _push(channel: PushChannel, payload: Any) -> PushNotification:
 # ``msg.PushNotification(channel="…", payload=X.model_dump())``.
 
 
-def push_extension_event(
-    *, extension_id: str, topic: str, payload: dict[str, Any]
-) -> PushNotification:
-    """One extension's event, addressed to that extension's frame.
-
-    The audience was decided before this — see
-    :class:`~ember_code.extensions.events.EventRouter`, which checks
-    the grant where the event is dispatched. ``extension_id`` here
-    is an address, not a filter: the client posts it into that one
-    frame and no other.
-    """
-    return _push(
-        PushChannel.EXTENSION_EVENT,
-        {"extension_id": extension_id, "topic": topic, "payload": payload},
-    )
-
-
 def push_scheduler_started(payload: Any) -> PushNotification:
     """``SchedulerStartedPayload`` → wire push."""
     return _push(PushChannel.SCHEDULER_STARTED, payload)

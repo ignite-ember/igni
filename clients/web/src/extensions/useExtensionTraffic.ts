@@ -1,13 +1,10 @@
 /**
  * What the backend addresses to installed extensions' frames.
  *
- * Two pushes, both already addressed by the backend, which decided who
- * was entitled to hear each one — this only routes:
- *
- *   * `extension_event` — a host event or the extension's own, for the
- *     bridge's `onEvent`;
- *   * `host_signal` — a host-model signal its page subscribed to, for
- *     the bridge's `on(signal, fn)` (`docs/HOST_OBJECT_MODEL.md`).
+ * The `host_signal` push: a host-model signal an extension's page
+ * subscribed to, for the bridge's `on(signal, fn)`
+ * (`docs/HOST_OBJECT_MODEL.md`). The backend already decided who was
+ * entitled to hear each one; this only routes it.
  *
  * Kept as per-extension queues with a monotonic `n` rather than "the
  * latest one", because two pushes that land in the same React batch
@@ -22,12 +19,6 @@ import type { IgniClient } from "../protocol/client";
 
 /** How many undelivered items one extension's queue keeps. */
 export const EXTENSION_TRAFFIC_BACKLOG = 64;
-
-export interface ExtensionEventItem {
-  topic: string;
-  payload: Record<string, unknown>;
-  n: number;
-}
 
 export interface ExtensionSignalItem {
   signal: string;
@@ -52,12 +43,8 @@ export function useExtensionTraffic(
   client: IgniClient,
   connected: boolean,
 ): {
-  events: Record<string, ExtensionEventItem[]>;
   signals: Record<string, ExtensionSignalItem[]>;
 } {
-  const [events, setEvents] = useState<Record<string, ExtensionEventItem[]>>(
-    {},
-  );
   const [signals, setSignals] = useState<
     Record<string, ExtensionSignalItem[]>
   >({});
@@ -72,19 +59,7 @@ export function useExtensionTraffic(
       const body = (push.payload ?? {}) as Record<string, unknown>;
       const id = body.extension_id;
       if (typeof id !== "string") return;
-      if (push.channel === "extension_event") {
-        if (typeof body.topic !== "string") return;
-        const payload =
-          typeof body.payload === "object" && body.payload !== null
-            ? (body.payload as Record<string, unknown>)
-            : {};
-        setEvents((current) =>
-          enqueue<ExtensionEventItem>(current, id, {
-            topic: body.topic as string,
-            payload,
-          }),
-        );
-      } else if (push.channel === "host_signal") {
+      if (push.channel === "host_signal") {
         if (typeof body.signal !== "string") return;
         setSignals((current) =>
           enqueue<ExtensionSignalItem>(current, id, {
@@ -96,5 +71,5 @@ export function useExtensionTraffic(
     });
   }, [client, connected]);
 
-  return { events, signals };
+  return { signals };
 }

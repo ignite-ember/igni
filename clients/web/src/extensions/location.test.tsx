@@ -277,10 +277,12 @@ describe("location from the frame", () => {
   });
 });
 
-// ── Events ─────────────────────────────────────────────────────────
+// ── Signals ────────────────────────────────────────────────────────
 
 describe("the event message", () => {
-  it("is accepted with a topic and a payload", () => {
+  it("is gone: host events are signals of the host model now", () => {
+    // `permissions.events` and the bridge's `onEvent` were retired;
+    // the four topics travel as signal wire names (`kind: "signal"`).
     expect(
       isHostMessage({
         igni: BRIDGE_VERSION,
@@ -288,28 +290,37 @@ describe("the event message", () => {
         topic: "workspace.head-changed",
         payload: { commit_sha: "abc" },
       }),
-    ).toBe(true);
-  });
-
-  it("is refused without a topic", () => {
-    expect(
-      isHostMessage({ igni: BRIDGE_VERSION, kind: "event", payload: {} }),
     ).toBe(false);
-  });
-
-  it("is refused when the payload is not an object", () => {
     expect(
       isHostMessage({
         igni: BRIDGE_VERSION,
-        kind: "event",
-        topic: "a.b",
-        payload: "nope",
+        kind: "signal",
+        signal: "workspace.head-changed",
+        value: { commit_sha: "abc" },
       }),
-    ).toBe(false);
+    ).toBe(true);
   });
 });
 
-describe("events reaching a frame", () => {
+type PostedSignal = { kind: string; signal?: string; value?: { commit_sha?: string } };
+
+function frameWith(signals: { signal: string; value: unknown; n: number }[]) {
+  return (
+    <ExtensionFrame
+      extensionId="acme.scanner"
+      origin="http://127.0.0.1:41234"
+      allow={[]}
+      onCall={() => Promise.resolve(null)}
+      signals={signals}
+    />
+  );
+}
+
+function sentSignals(posted: unknown[]): PostedSignal[] {
+  return (posted as PostedSignal[]).filter((m) => m.kind === "signal");
+}
+
+describe("signals reaching a frame", () => {
   it("posts one in, once the frame has been greeted", async () => {
     const { posted, frame, rerender } = mountFrame();
     frame?.dispatchEvent(new Event("load"));
@@ -318,42 +329,28 @@ describe("events reaching a frame", () => {
     );
 
     rerender(
-      <ExtensionFrame
-        extensionId="acme.scanner"
-        origin="http://127.0.0.1:41234"
-        allow={[]}
-        onCall={() => Promise.resolve(null)}
-        events={[
-          {
-            topic: "workspace.head-changed",
-            payload: { commit_sha: "a" },
-            n: 1,
-          },
-        ]}
-      />,
+      frameWith([
+        { signal: "workspace.head-changed", value: { commit_sha: "a" }, n: 1 },
+      ]),
     );
 
     await waitFor(() => {
-      const sent = (posted as { kind: string; topic?: string }[]).filter(
-        (m) => m.kind === "event",
-      );
+      const sent = sentSignals(posted);
       expect(sent).toHaveLength(1);
-      expect(sent[0].topic).toBe("workspace.head-changed");
+      expect(sent[0].signal).toBe("workspace.head-changed");
     });
   });
 
   it("sends nothing before the frame has been greeted", () => {
-    // A frame with no nonce has no listener, and an event posted
+    // A frame with no nonce has no listener, and a signal posted
     // into it is one the guest never sees.
     const { posted } = mountFrame({
-      events: [{ topic: "workspace.head-changed", payload: {}, n: 1 }],
+      signals: [{ signal: "workspace.head-changed", value: {}, n: 1 }],
     });
-    expect((posted as Posted[]).filter((m) => m.kind === "event")).toHaveLength(
-      0,
-    );
+    expect(sentSignals(posted)).toHaveLength(0);
   });
 
-  it("delivers the same event twice when it happens twice", async () => {
+  it("delivers the same signal twice when it happens twice", async () => {
     // Counted rather than compared: a guest waiting for "the file
     // changed again" has to hear it again.
     const { posted, frame, rerender } = mountFrame();
@@ -364,24 +361,14 @@ describe("events reaching a frame", () => {
 
     const send = (n: number) =>
       rerender(
-        <ExtensionFrame
-          extensionId="acme.scanner"
-          origin="http://127.0.0.1:41234"
-          allow={[]}
-          onCall={() => Promise.resolve(null)}
-          events={[
-            { topic: "workspace.files-changed", payload: { paths: [] }, n },
-          ]}
-        />,
+        frameWith([
+          { signal: "workspace.files-changed", value: { paths: [] }, n },
+        ]),
       );
 
     send(1);
     send(2);
-    await waitFor(() =>
-      expect(
-        (posted as Posted[]).filter((m) => m.kind === "event"),
-      ).toHaveLength(2),
-    );
+    await waitFor(() => expect(sentSignals(posted)).toHaveLength(2));
   });
 
   it("delivers both when two arrive in one render", async () => {
@@ -396,27 +383,14 @@ describe("events reaching a frame", () => {
     );
 
     rerender(
-      <ExtensionFrame
-        extensionId="acme.scanner"
-        origin="http://127.0.0.1:41234"
-        allow={[]}
-        onCall={() => Promise.resolve(null)}
-        events={[
-          { topic: "workspace.files-changed", payload: { paths: ["a"] }, n: 1 },
-          {
-            topic: "workspace.head-changed",
-            payload: { commit_sha: "b" },
-            n: 2,
-          },
-        ]}
-      />,
+      frameWith([
+        { signal: "workspace.files-changed", value: { paths: ["a"] }, n: 1 },
+        { signal: "workspace.head-changed", value: { commit_sha: "b" }, n: 2 },
+      ]),
     );
 
     await waitFor(() => {
-      const sent = (posted as { kind: string; topic?: string }[]).filter(
-        (m) => m.kind === "event",
-      );
-      expect(sent.map((m) => m.topic)).toEqual([
+      expect(sentSignals(posted).map((m) => m.signal)).toEqual([
         "workspace.files-changed",
         "workspace.head-changed",
       ]);
@@ -426,55 +400,29 @@ describe("events reaching a frame", () => {
   it("does not replay the backlog to a frame that just opened", async () => {
     // A panel the user closed and reopened is not owed what it
     // missed. It is about to read the current state itself, and
-    // three-minute-old events arriving as news is the same mistake
+    // three-minute-old signals arriving as news is the same mistake
     // the host's watcher avoids by never announcing its first
     // observation.
+    const head = (sha: string, n: number) => ({
+      signal: "workspace.head-changed",
+      value: { commit_sha: sha },
+      n,
+    });
     const { posted, frame, rerender } = mountFrame({
-      events: [
-        { topic: "workspace.head-changed", payload: { commit_sha: "a" }, n: 1 },
-        { topic: "workspace.head-changed", payload: { commit_sha: "b" }, n: 2 },
-      ],
+      signals: [head("a", 1), head("b", 2)],
     });
     frame?.dispatchEvent(new Event("load"));
     await waitFor(() =>
       expect((posted as Posted[]).some((m) => m.kind === "hello")).toBe(true),
     );
-    expect((posted as Posted[]).filter((m) => m.kind === "event")).toHaveLength(
-      0,
-    );
+    expect(sentSignals(posted)).toHaveLength(0);
 
-    rerender(
-      <ExtensionFrame
-        extensionId="acme.scanner"
-        origin="http://127.0.0.1:41234"
-        allow={[]}
-        onCall={() => Promise.resolve(null)}
-        events={[
-          {
-            topic: "workspace.head-changed",
-            payload: { commit_sha: "a" },
-            n: 1,
-          },
-          {
-            topic: "workspace.head-changed",
-            payload: { commit_sha: "b" },
-            n: 2,
-          },
-          {
-            topic: "workspace.head-changed",
-            payload: { commit_sha: "c" },
-            n: 3,
-          },
-        ]}
-      />,
-    );
+    rerender(frameWith([head("a", 1), head("b", 2), head("c", 3)]));
 
     await waitFor(() => {
-      const sent = (
-        posted as { kind: string; payload?: { commit_sha?: string } }[]
-      ).filter((m) => m.kind === "event");
+      const sent = sentSignals(posted);
       expect(sent).toHaveLength(1);
-      expect(sent[0].payload?.commit_sha).toBe("c");
+      expect(sent[0].value?.commit_sha).toBe("c");
     });
   });
 });

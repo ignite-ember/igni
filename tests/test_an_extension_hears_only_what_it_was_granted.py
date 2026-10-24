@@ -1,254 +1,140 @@
-"""Host events, and the isolation rule that defines them.
+"""Signals, and the isolation rule that defines them.
 
-An extension could call and could be told nothing: the bridge was
-`hello | theme | params | result`, so following anything meant
-polling. Artifacts broadcast `artifact_waiting` and two host
-components subscribed — an extension had no such thing.
+The rule that shapes the whole design: **subscription is a grant, not
+a filter.** The check happens where a signal is dispatched, never where
+it is received. Anything that posted to every extension and asked each
+to discard what was not its own would be trusting the extension to
+discard it, and the extension is the untrusted party.
 
-The rule that shapes the whole design: **subscription is a grant,
-not a filter.** The check happens where an event is dispatched,
-never where it is received. Anything that posted to every frame and
-asked each to discard what was not its own would be trusting the
-frame to discard it, and the frame is the untrusted party.
+The four host events that predate the host object model are signals of
+it now, granted by ``permissions.host`` like every other; their topic
+strings are the signals' wire names (``docs/HOST_OBJECT_MODEL.md``,
+*The existing events*).
 """
 
 from __future__ import annotations
 
+from collections.abc import AsyncIterator
+from pathlib import Path
+from typing import Any
+
 import pytest
 
-from ember_code.extensions.events import (
-    BY_TOPIC,
-    VOCABULARY,
-    EventRouter,
-    HostTopic,
-    UnknownTopic,
-    granted,
-    unknown_grants,
-    validate_vocabulary,
-)
-from ember_code.extensions.manifest import ExtensionManifest
-from ember_code.extensions.registry import ExtensionRegistry
+from ember_code.extensions.events import HostTopic
+from ember_code.extensions.host.definition import HOST_SCHEMA
+from ember_code.extensions.host.wire import SignalMessage
+from ember_code.extensions.registry import ExtensionState
+from ember_code.protocol import messages as msg
+from tests.host_model_helpers import HostRig, Sink
+
+STATE = HostTopic.EXTENSION_STATE_CHANGED.value
 
 
-def manifest(extension_id: str, events: list[str]) -> ExtensionManifest:
-    return ExtensionManifest.model_validate(
-        {
-            "id": extension_id,
-            "version": "1.0.0",
-            "contract": ">=1.0 <2",
-            "trust": "unsigned",
-            "dev": {"command": ["true"]},
-            "permissions": {"events": events},
-        }
+@pytest.fixture
+async def rig(tmp_path: Path) -> AsyncIterator[HostRig]:
+    rig = await HostRig(tmp_path).start()
+    try:
+        yield rig
+    finally:
+        await rig.stop()
+
+
+def listening(rig: HostRig, extension_id: str, *signals: str) -> Sink:
+    assert rig.model is not None
+    sink = Sink()
+    rig.model.bus.subscribe(rig.model.bus.attach(extension_id, sink), list(signals))
+    return sink
+
+
+# ── The topics are wire names, not a second vocabulary ─────────────
+
+
+def test_every_old_topic_is_a_signal_of_the_model():
+    for topic in HostTopic:
+        assert HOST_SCHEMA.signal_by_wire(topic.value) is not None, topic
+
+
+# ── Grants ─────────────────────────────────────────────────────────
+
+
+async def test_an_exact_grant_is_heard(rig: HostRig):
+    heard = listening(rig, rig.install("acme.one", host=["chat.read"]), "chat.run_started")
+    await rig.transport.send(msg.RunStarted(session_id="boot", run_id="r1"))
+    assert [v["run_id"] for v in heard.values("chat.run_started")] == ["r1"]
+
+
+async def test_a_prefix_grant_covers_a_family(rig: HostRig):
+    heard = listening(rig, rig.install("acme.one", host=["chat.*"]), "chat.run_started")
+    await rig.transport.send(msg.RunStarted(session_id="boot", run_id="r1"))
+    assert len(heard.values("chat.run_started")) == 1
+
+
+async def test_what_was_not_granted_is_not_heard(rig: HostRig):
+    heard = listening(rig, rig.install("acme.one", host=["sessions"]), "chat.run_started")
+    await rig.transport.send(msg.RunStarted(session_id="boot", run_id="r1"))
+    assert heard.got == []
+
+
+async def test_two_extensions_do_not_overhear_each_other(rig: HostRig):
+    """Each is told its own health; neither is told the other's
+    without the `extensions` grant."""
+    one, two = rig.install("acme.one"), rig.install("acme.two")
+    heard_one = listening(rig, one, "self.state_changed", STATE)
+    heard_two = listening(rig, two, "self.state_changed", STATE)
+    rig.registry.set_state(one, ExtensionState.FAILED, "its service died")
+    assert [v["extension_id"] for v in heard_one.values("self.state_changed")] == [one]
+    assert heard_two.got == []
+    assert heard_one.values(STATE) == []
+
+
+async def test_only_the_audience_is_delivered_to(rig: HostRig):
+    assert rig.model is not None
+    one = rig.install("acme.one", host=["chat.read"])
+    rig.install("acme.two", host=["chat.read"])
+    rig.install("acme.three", host=[])
+    listening(rig, one, "chat.run_started")
+    listening(rig, "acme.three", "chat.run_started")
+    told = rig.model.emit(
+        "chat.run_started",
+        {"session_id": "boot", "run_id": "r1", "parent_run_id": "", "agent_name": "", "model": ""},
     )
-
-
-def router(*installed: ExtensionManifest) -> EventRouter:
-    registry = ExtensionRegistry()
-    for one in installed:
-        registry.install(one)
-    return EventRouter(registry)
-
-
-# ── The vocabulary is a list, not a convention ─────────────────────
-
-
-def test_every_topic_is_described():
-    """The analogue of `validate_rpc_table`: a member added without
-    a description reaches an author as a topic nobody can explain."""
-    validate_vocabulary()
-    assert len(VOCABULARY) == len(list(HostTopic))
-    assert set(BY_TOPIC) == {str(t) for t in HostTopic}
-
-
-def test_a_topic_is_a_symbol_not_a_string():
-    """`RpcMethod` is a StrEnum because typos surface only at
-    runtime. A misspelled topic is an event somebody waits for
-    forever."""
-    assert HostTopic.WORKSPACE_HEAD_CHANGED == "workspace.head-changed"
-
-
-# ── Who hears what ─────────────────────────────────────────────────
-
-
-def test_an_exact_grant_is_heard():
-    one = manifest("acme.one", ["workspace.head-changed"])
-    assert router(one).audience(HostTopic.WORKSPACE_HEAD_CHANGED) == ["acme.one"]
-
-
-def test_a_prefix_grant_covers_a_family():
-    one = manifest("acme.one", ["workspace.*"])
-    heard = router(one)
-    assert heard.audience(HostTopic.WORKSPACE_HEAD_CHANGED) == ["acme.one"]
-    assert heard.audience(HostTopic.WORKSPACE_FILES_CHANGED) == ["acme.one"]
-
-
-def test_what_was_not_granted_is_not_heard():
-    one = manifest("acme.one", ["workspace.*"])
-    assert router(one).audience(HostTopic.SESSION_SWITCHED) == []
-
-
-def test_granting_nothing_hears_nothing():
-    """Deny by default, like every other permission."""
-    one = manifest("acme.one", [])
-    assert router(one).audience(HostTopic.WORKSPACE_HEAD_CHANGED) == []
-
-
-# ── The isolation rule ─────────────────────────────────────────────
-
-
-def test_an_extension_hears_its_own_without_a_grant():
-    """It is always allowed to talk to itself."""
-    assert granted("ext.acme.one.comment", extension_id="acme.one", grants=[])
-
-
-def test_an_extension_never_hears_another():
-    """Not by a wildcard, and not by naming it exactly. The topic is
-    unreachable rather than merely ungranted."""
-    for grant in (["ext.*"], ["ext.other.two.*"], ["ext.other.two.comment"]):
-        assert not granted("ext.other.two.comment", extension_id="acme.one", grants=grant), grant
-
-
-def test_two_extensions_do_not_overhear_each_other():
-    one = manifest("acme.one", ["workspace.*"])
-    two = manifest("other.two", [])
-    heard = router(one, two)
-
-    assert heard.audience(HostTopic.WORKSPACE_HEAD_CHANGED) == ["acme.one"]
-    assert heard.audience("ext.acme.one.thing") == ["acme.one"]
-    assert heard.audience("ext.other.two.thing") == ["other.two"]
-
-
-# ── Emitting ───────────────────────────────────────────────────────
-
-
-def test_only_the_audience_is_delivered_to():
-    one = manifest("acme.one", ["workspace.*"])
-    two = manifest("other.two", [])
-    heard = router(one, two)
-
-    got: dict[str, list[str]] = {"acme.one": [], "other.two": []}
-    heard.connect("acme.one", lambda topic, _p: got["acme.one"].append(topic))
-    heard.connect("other.two", lambda topic, _p: got["other.two"].append(topic))
-
-    heard.emit(HostTopic.WORKSPACE_HEAD_CHANGED, {"commit_sha": "abc"})
-    assert got == {"acme.one": ["workspace.head-changed"], "other.two": []}
-
-
-def test_one_dead_frame_does_not_cost_the_others_an_event():
-    one = manifest("acme.one", ["workspace.*"])
-    two = manifest("other.two", ["workspace.*"])
-    heard = router(one, two)
-
-    def explode(_topic: str, _payload: dict[str, object]) -> None:
-        raise RuntimeError("that frame is gone")
-
-    delivered: list[str] = []
-    heard.connect("acme.one", explode)
-    heard.connect("other.two", lambda t, _p: delivered.append(t))
-
-    told = heard.emit(HostTopic.WORKSPACE_HEAD_CHANGED, {})
-    assert told == ["other.two"]
-    assert delivered == ["workspace.head-changed"]
-
-
-def test_an_unconnected_extension_is_in_the_audience_and_not_told():
-    """`audience` answers "who may hear this", which is what an
-    administrator asking "why did my extension not see that" needs —
-    separately from whether a frame happened to be mounted."""
-    one = manifest("acme.one", ["workspace.*"])
-    heard = router(one)
-    assert heard.audience(HostTopic.WORKSPACE_HEAD_CHANGED) == ["acme.one"]
-    assert heard.emit(HostTopic.WORKSPACE_HEAD_CHANGED, {}) == []
-
-
-# ── Emitting something that is not a topic ─────────────────────────
-
-
-def test_an_unpublished_topic_is_refused_at_emit():
-    """At emit, not at subscribe. A typo in a grant is an extension
-    asking for something that does not exist, which is harmless. A
-    typo in an emitted topic is igni failing to deliver."""
-    with pytest.raises(UnknownTopic, match="published vocabulary"):
-        router().audience("workspace.nope")
-
-
-def test_a_wildcard_is_not_a_topic():
-    """Wildcards are grant syntax. An emitted event names exactly
-    one thing."""
-    with pytest.raises(UnknownTopic, match="not a topic"):
-        router().audience("workspace.*")
-
-
-def test_a_grant_matching_nothing_is_reported_not_refused():
-    """A manifest asking for an event igni does not have is usually
-    one written against a newer igni. Refusing the install over it
-    would make every new event a breaking change for whoever guessed
-    early."""
-    assert unknown_grants(["workspace.*"]) == []
-    assert unknown_grants(["nope.thing"]) == ["nope.thing"]
-
-
-# ── The wire ───────────────────────────────────────────────────────
-
-
-def test_an_event_is_addressed_to_one_extension_on_the_wire():
-    """One channel for all of them, and the payload names the frame.
-
-    Addressed rather than broadcast: who was entitled was decided by
-    the router before this, so the client posts it into one frame
-    and nothing has to be filtered on the way.
-    """
-    from ember_code.protocol.schemas.push import push_extension_event
-
-    push = push_extension_event(
-        extension_id="acme.one",
-        topic=str(HostTopic.WORKSPACE_HEAD_CHANGED),
-        payload={"commit_sha": "abc"},
-    )
-    assert push.channel == "extension_event"
-    assert push.payload == {
-        "extension_id": "acme.one",
-        "topic": "workspace.head-changed",
-        "payload": {"commit_sha": "abc"},
-    }
-
-
-def test_an_extensions_own_state_change_reaches_only_itself():
-    """The bug this test was written badly enough to find.
-
-    `extension.state-changed` is *one* extension's health. The
-    first emitter broadcast it to everyone who had granted the
-    topic, which would have told every extension about every other
-    one — the isolation rule failing in the place it is easiest to
-    miss, because the grant *was* checked and the audience was
-    still wrong.
-
-    `emit_to` is the fix: an event that is about somebody goes to
-    that somebody.
-    """
-    one = manifest("acme.one", ["extension.state-changed"])
-    two = manifest("other.two", ["extension.state-changed"])
-    heard = router(one, two)
-
-    told: list[str] = []
-    heard.connect("acme.one", lambda t, _p: told.append(f"acme.one:{t}"))
-    heard.connect("other.two", lambda t, _p: told.append(f"other.two:{t}"))
-
-    # acme.one's health changed, so acme.one hears about it.
-    assert heard.emit_to("acme.one", HostTopic.EXTENSION_STATE_CHANGED, {"state": "FAILED"})
-    assert told == ["acme.one:extension.state-changed"]
-
-
-def test_a_targeted_event_still_needs_the_grant():
-    """Addressing is not authorisation. An extension that did not
-    ask to hear about itself is not told."""
-    one = manifest("acme.one", [])
-    heard = router(one)
-    heard.connect("acme.one", lambda _t, _p: None)
-    assert not heard.emit_to("acme.one", HostTopic.EXTENSION_STATE_CHANGED, {"state": "FAILED"})
-
-
-def test_a_targeted_event_to_an_uninstalled_extension_goes_nowhere():
-    heard = router()
-    assert not heard.emit_to("never.installed", HostTopic.EXTENSION_STATE_CHANGED, {})
+    # acme.two is entitled and not subscribed; acme.three is subscribed
+    # and not entitled.
+    assert told == [one]
+
+
+async def test_one_failing_delivery_does_not_cost_the_others_a_signal(rig: HostRig):
+    class Broken:
+        def deliver(self, message: SignalMessage) -> None:
+            raise RuntimeError("its process went away")
+
+    assert rig.model is not None
+    broken = rig.install("acme.broken", host=["chat.read"])
+    rig.model.bus.subscribe(rig.model.bus.attach(broken, Broken()), ["chat.run_started"])
+    heard = listening(rig, rig.install("acme.fine", host=["chat.read"]), "chat.run_started")
+    await rig.transport.send(msg.RunStarted(session_id="boot", run_id="r1"))
+    assert len(heard.values("chat.run_started")) == 1
+
+
+async def test_an_uninstalled_extension_is_told_nothing(rig: HostRig):
+    assert rig.model is not None
+    gone = rig.install("acme.gone", host=["chat.read"])
+    heard = listening(rig, gone, "chat.run_started")
+    rig.registry.remove(gone)
+    await rig.transport.send(msg.RunStarted(session_id="boot", run_id="r1"))
+    assert heard.got == []
+
+
+async def test_a_signal_about_one_extension_reaches_only_that_one(rig: HostRig):
+    """`self.state_changed` is addressed: the grant was checked and the
+    audience could still be wrong, which is the isolation rule failing
+    in the one place it is easiest to miss."""
+    assert rig.model is not None
+    one, two = rig.install("acme.one"), rig.install("acme.two")
+    heard_one = listening(rig, one, "self.state_changed")
+    heard_two = listening(rig, two, "self.state_changed")
+    change: dict[str, Any] = {"extension_id": one, "state": "READY", "reason": ""}
+    told = rig.model.emit("self.state_changed", change, only=one)
+    assert told == [one]
+    assert heard_one.values("self.state_changed") == [change]
+    assert heard_two.got == []

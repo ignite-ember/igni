@@ -252,7 +252,7 @@ class HostModelWiring:
         store: ExtensionStore | None = None,
         notifications: Any = None,
         notices: Any = None,
-        host_events: Any = None,
+        workspace_signals: Any = None,
         strict: bool = False,
     ) -> HostModel:
         backend = OrchestratorHostBackend(
@@ -275,9 +275,8 @@ class HostModelWiring:
         orchestrator.watch_inbound(watch.inbound)
         transport.observe(watch.outbound)
         registry.watch(model.extension_changed)
-        if host_events is not None:
-            host_events.attach_model(model)
-            model.on_session_switched.append(host_events.session_switched)
+        if workspace_signals is not None:
+            workspace_signals.attach_model(model)
         watch_connections = getattr(transport.inner, "watch_connections", None)
         if watch_connections is not None:
 

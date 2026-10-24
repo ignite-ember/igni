@@ -48,8 +48,7 @@ Everything below is a key under `contributes` in the manifest, and the list is e
 | `commands` | slash commands the extension answers | — . Dispatched to the tool with the command's own name, the rest of the line arriving as `args`. Declaring one *is* the grant, separately from `permissions.rpc`: that list is what the extension's UI may call, and a slash command is the user invoking something igni offered them. |
 | `menu` | entries in the header tools menu | — |
 | `pages` | **optional** UI — a surface the extension renders in its own frame | MCP has no UI concept |
-| `events` (in `permissions`) | being told when something happens, instead of polling for it | MCP carries no push to a UI. Two kinds, one envelope: **host events** from a published vocabulary, which need a grant, and an extension's **own** events under `ext.<id>.`, which do not. |
-| `host` (in `permissions`) | reaching igni itself — sessions, the chat, the UI, plugins, models, everything igni's own UI can do — and being told everything that happens in it | MCP runs host→server and knows nothing of igni. The **host object model** (`docs/HOST_OBJECT_MODEL.md`): objects with properties, signals and methods, granted per object. See below. |
+| `host` (in `permissions`) | reaching igni itself — sessions, the chat, the UI, plugins, models, everything igni's own UI can do — and being told everything that happens in it, instead of polling for it | MCP runs host→server and knows nothing of igni. The **host object model** (`docs/HOST_OBJECT_MODEL.md`): objects with properties, signals and methods, granted per object. See below. |
 | `indicators` | a status chip in igni's own chrome, beside igni's | MCP has no UI concept. Data rather than a frame: a chip is twenty pixels and an iframe is not what twenty pixels costs. The host draws it; the extension decides what it says, because what "preparing" means for an index is not what it means for a document store. |
 
 `menu` rather than `tools`, because `permissions.tools` already means the MCP tool names an extension may register with the agent. See §2.
@@ -64,90 +63,60 @@ Everything is namespaced by extension id. A collision with a base name is a vali
 
 ### Events
 
-**The vocabulary is published; igni's bus is not.** "Listen to host
-events" cannot mean "subscribe to our broadcast bus" — that bus is a
-refactoring surface, and an extension pinned to it would mean igni
-could never change it. `HostTopic` is the promise, a `StrEnum` for
-the same reason `RpcMethod` is one: the value is what travels, and
-an emitter naming a renamed member fails at import rather than
-delivering to nobody.
+Being told when something happens is the host object model's signals
+(below): an extension subscribes with `@ext.on(ext.host.<object>.<signal>)`
+from its process or `bridge.on(bridge.host.<object>.<signal>, fn)` from
+its page, and every signal is granted by `permissions.host` like the rest
+of its object. There is no second mechanism. The `permissions.events`
+grant, the bridge's `onEvent` and a service's `igni_on_event` tool that
+carried these before the model are gone, and a manifest that declares
+`permissions.events` does not validate.
+
+Four signals predate the model and keep their old topic strings as wire
+names. `HostTopic` is that list, a `StrEnum` for the same reason
+`RpcMethod` is one: the value is what travels, and an emitter naming a
+renamed member fails at import rather than delivering to nobody.
 
 | Topic | Payload | When |
 |---|---|---|
-| `session.switched` | `{ session_id }` | the user moved to a different session |
-| `workspace.head-changed` | `{ commit_sha, branch }` | the project's git HEAD moved — the event CodeIndex exists to wait for, so it does not poll `git rev-parse` itself |
-| `workspace.files-changed` | `{ paths, truncated }` | files changed, as git sees them, filtered to your `workspacePaths` and coalesced so a build is not ten thousand events. `truncated` means the list was capped — rescan rather than trust it |
-| `extension.state-changed` | `{ state, reason }` | *this* extension's own health moved |
+| `session.switched` | `{ session_id, window }` | `sessions.current_changed`: a window moved to a different session |
+| `workspace.head-changed` | `{ commit_sha, branch }` | `workspace.head_changed`: the project's git HEAD moved — the signal CodeIndex exists to wait for, so it does not poll `git rev-parse` itself |
+| `workspace.files-changed` | `{ paths, truncated }` | `workspace.files_changed`: files changed, as git sees them, filtered to your `workspacePaths` and coalesced so a build is not ten thousand signals. `truncated` means the list was capped — rescan rather than trust it |
+| `extension.state-changed` | `{ extension_id, state, reason }` | `extensions.state_changed`: an extension's health moved (needs `extensions`; `self.state_changed` is your own, always) |
 
-Short on purpose. A missing event costs an extension a poll; a wrong
-one costs igni a shape it can never change. Additive is never
-breaking, so it grows on demand.
-
-**The grant is not the content.** `permissions.events` decides
-whether you are addressed. It does not decide what you are handed,
-and for the two `workspace.*` topics the second question has a
-second answer: they also require `permissions.workspace`, and
-`workspace.files-changed` is filtered to your `workspacePaths`
-before it is sent. An extension granted `docs/**` that was handed
-the unfiltered list would have just been told every path in the
-repository — with the grant check passing, so nothing would have
-looked wrong. An extension with `workspace: none` hears neither
-topic however they were granted: a branch name is something the
+**The grant is not the content.** The two workspace signals belong to
+`host.workspace`, granted by `permissions.workspace`, and
+`workspace.files-changed` is filtered to your `workspacePaths` before it
+is sent. An extension granted `docs/**` that was handed the unfiltered
+list would have just been told every path in the repository — with the
+grant check passing, so nothing would have looked wrong. An extension
+with `workspace: none` hears neither: a branch name is something the
 repository knows about itself.
 
-A manifest that asks for a `workspace.*` event without the workspace
-is **warned about at install, not refused** — a grant that reads like
-a subscription and behaves like silence is the worst shape a
-permission can have, and the author's only other evidence would be
-an event that never arrives.
+**What the two workspace signals can and cannot see.** They are built on
+`git`, polled: `git rev-parse` at 1 Hz and `git status` at half that,
+both skipped entirely while no extension entitled to the result is
+subscribed. So an ignored file is invisible, and a project that is not a
+repository produces no workspace signals at all. The alternative was a
+filesystem watcher that would have had to learn `.gitignore` before it
+was usable, and would have reported every write inside `node_modules`
+until it did.
 
-**What the two workspace events can and cannot see.** They are built
-on `git`, polled: `git rev-parse` at 1 Hz and `git status` at half
-that, both skipped entirely while no installed extension is entitled
-to the result. So an ignored file is invisible, and a project that is
-not a repository produces no workspace events at all. The alternative
-was a filesystem watcher that would have had to learn `.gitignore`
-before it was usable, and would have reported every write inside
-`node_modules` until it did.
+**A first observation is not a change.** The watcher learns where HEAD
+is without announcing it, and forgets again when the last listener goes
+away — otherwise a freshly subscribed extension is told HEAD "moved" to
+where it has been since before it existed.
 
-**A first observation is not a change.** The watcher learns where
-HEAD is without announcing it, and forgets again when the last
-listener goes away — otherwise a freshly installed extension is told
-HEAD "moved" to where it has been since before it existed.
+**Who hears a signal.** A process hears it over its loopback channel;
+a page hears it through the window it is framed in. An extension with
+neither — an `endpoint` service with no page — hears nothing: being told
+is something igni does to a process it started or a page it frames.
 
-**Two surfaces, one event.** A frame is told by a `postMessage`
-through the bridge. A *service* is told by being called — MCP runs
-host→server, so there is no other direction — on the reserved tool
-`igni_on_event(topic, payload)`. Implement it and your service
-hears host events whether or not you have a page, and whether or
-not that page is open; the frame redraws, the service invalidates,
-and they are different consumers of the same fact.
-
-`igni_on_event` is **never offered to the agent**, whatever
-`permissions.tools` says. A model that could call it could tell an
-extension that HEAD moved when it had not, and a control channel
-the agent can drive is not a control channel.
-
-A sink should **acknowledge and work afterwards**. igni sends one
-event at a time per extension, waits five seconds, and holds at
-most sixteen behind it — a service that reindexes inside
-`igni_on_event` is one the next event queues behind, and past
-sixteen the oldest is dropped and logged. An extension granted
-events with neither a page nor a sink is warned about at install,
-for the same reason as the workspace case: the grant is approved
-and every event lands in nothing.
-
-**Subscription is a grant, not a filter.** The check happens where
-an event is dispatched, never where it is received — anything that
-posted to every frame and asked each to discard what was not its own
-would be trusting the frame to discard it, and the frame is the
+**Subscription is a grant, not a filter.** The check happens where a
+signal is dispatched, never where it is received — anything that posted
+to every extension and asked each to discard what was not its own would
+be trusting the extension to discard it, and the extension is the
 untrusted party.
-
-**An extension never hears another.** Not by `ext.*`, not by naming
-one exactly: another extension's topics are unreachable rather than
-merely ungranted. Its own, under `ext.<id>.`, need no grant — it is
-always allowed to talk to itself. And events go host→extension only;
-an extension cannot emit into another.
 
 ### The host object model
 
@@ -195,10 +164,9 @@ told who sent it before it answers; nothing posts as the person.
 `host.chat.append(view)` shows a json-render block that is never sent to
 the model.
 
-The four host events above are signals in the model, under the same
-topic strings (`sessions.current_changed` travels as `session.switched`),
-granted there by `permissions.host`; their delivery to `onEvent` and
-`igni_on_event`, granted by `permissions.events`, is unchanged.
+The four topics under *Events* above are signals of the model whose wire
+names are those topic strings (`sessions.current_changed` travels as
+`session.switched`).
 
 ### Shipping one: from its service, through igni
 
@@ -583,10 +551,10 @@ Optional, and packaging-independent *within a single-user backend*: the client i
 > The second reason is the one that decides the bridge. A `postMessage` from an opaque origin arrives at the host as `origin: "null"`, so the host cannot tell one extension from another, and the origin check every inbound message depends on has nothing to check. With a port each, `e.origin` is that extension's own `http://127.0.0.1:<port>`.
 >
 > These two bullets used to specify an opaque origin *and* `default-src 'self'`. They were coherent only while every extension shared one port, where an opaque origin was the only isolation on offer.
-- **Bridge API, as built**: `rpc`, `navigate`, `close`, `params`/`onParams`, `settings`, `onEvent`, `setLocation`, `theme`/`onTheme`, `tokens`. Origin, source window and per-session nonce checked on every inbound message.
+- **Bridge API, as built**: `rpc`, `navigate`, `close`, `params`/`onParams`, `settings`, `host`/`on` (the host object model and its signals), `setLocation`, `theme`/`onTheme`, `tokens`. Origin, source window and per-session nonce checked on every inbound message.
 
   `settings` is what `contributes.settings` is configured to, as an administrator left it. It is fixed for the life of the frame — a change applies at the next mount — so there is no `onSettings`. It is a separate namespace from `params` on purpose: `params` is *where you are*, replayed from `setLocation`, and this is *how you are set up*. One namespace would make a setting named `doc` and a link carrying `?doc=` the same key.
-- **Bridge API, not built**: `subscribe`, `identity`, `setTitle`, `setStatus`, `notify`, `storage`, and per-call budgets or cancellation. This list used to be written in the present tense alongside the one above, which told an author that live push was solved. `HostMessage` is `hello | theme | params | event | result`: host events and an extension's own both arrive through `onEvent`, so following a long-running job no longer has to mean polling. What is still missing from that list is a *subscription* API — an extension asks for topics in its manifest, not at runtime.
+- **Bridge API, not built**: `identity`, `setTitle`, `setStatus`, `storage`, and per-call budgets or cancellation. This list used to be written in the present tense alongside the one above, which told an author that live push was solved. `HostMessage` is `hello | theme | params | result | host-reply | signal`: a page subscribes to host-model signals at runtime with `bridge.on(signal, fn)`, granted by `permissions.host`, so following what happens in igni does not mean polling.
 
   `notify` means a message in *igni's* chrome. An extension's own toasts, inside its own frame, are published as `ToastHost`/`useToast` — the two are not interchangeable, and only something the user must see after navigating away belongs to the host.
 

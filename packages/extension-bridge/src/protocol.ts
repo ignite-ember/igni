@@ -111,36 +111,6 @@ export interface LocationMessage {
   state: Record<string, string>;
 }
 
-/**
- * Host → guest: something happened.
- *
- * Two kinds travel in one envelope, because the guest handles them
- * identically — a topic and a payload — and two mechanisms for one
- * job is two things to keep in step.
- *
- * **Host events** are things igni knows: the session changed, HEAD
- * moved. Their topics come from a published vocabulary and an
- * extension must be granted them in `permissions.events`.
- *
- * **An extension's own events** come from its own service, relayed
- * to its own frame, under `ext.<id>.`. No grant: an extension is
- * always allowed to talk to itself, and is never permitted to hear
- * another.
- *
- * The grant is checked where the event is dispatched, never here. A
- * host that posted everything and relied on this file to discard
- * what was not ours would be relying on the untrusted party to
- * discard it.
- */
-export interface EventMessage {
-  igni: typeof BRIDGE_VERSION;
-  kind: "event";
-  /** Dotted and lowercase. Never a wildcard — that is grant syntax. */
-  topic: string;
-  /** Shape is defined per topic by the published vocabulary. */
-  payload: Record<string, unknown>;
-}
-
 /** Guest → host: call a backend RPC. */
 export interface CallMessage {
   igni: typeof BRIDGE_VERSION;
@@ -229,7 +199,6 @@ export type HostMessage =
   | HelloMessage
   | ThemeMessage
   | ParamsMessage
-  | EventMessage
   | ResultMessage
   | HostReplyMessage
   | HostSignalMessage;
@@ -338,14 +307,6 @@ export function isHostMessage(data: unknown): data is HostMessage {
         typeof m.params === "object" &&
         m.params !== null &&
         !Array.isArray(m.params)
-      );
-    case "event":
-      return (
-        typeof m.topic === "string" &&
-        m.topic.length > 0 &&
-        typeof m.payload === "object" &&
-        m.payload !== null &&
-        !Array.isArray(m.payload)
       );
     case "result":
       return typeof m.id === "string" && typeof m.ok === "boolean";

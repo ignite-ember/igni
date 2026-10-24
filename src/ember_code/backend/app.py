@@ -20,12 +20,10 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
 from ember_code.backend.host_backend import HostModelWiring, ObservedTransport
-from ember_code.backend.host_events import HostEvents
 from ember_code.backend.login_coordinator import LoginCoordinator
 from ember_code.backend.push_bridge import PushNotificationBridge
 from ember_code.backend.rpc_router import RpcRouter
@@ -33,11 +31,11 @@ from ember_code.backend.schemas_rpc import BackendReadyLine
 from ember_code.backend.server import BackendServer
 from ember_code.backend.session_orchestrator import SessionOrchestrator
 from ember_code.backend.supervisor import BackendSupervisor
+from ember_code.backend.workspace_signals import WorkspaceSignals
 from ember_code.core.config.settings import Settings, load_settings
 from ember_code.core.plugins.installer import PluginInstaller
 from ember_code.extensions.contributions import ExtensionContributions
 from ember_code.extensions.distribution import ExtensionDistribution
-from ember_code.extensions.events import EventRouter
 from ember_code.extensions.health import ExtensionHealth
 from ember_code.extensions.host.channel import HostChannel
 from ember_code.extensions.host.model import HostModel
@@ -48,7 +46,6 @@ from ember_code.extensions.profile import DeploymentProfile, DevelopmentFlag
 from ember_code.extensions.python_env import PythonEnvironments
 from ember_code.extensions.registry import ExtensionRegistry
 from ember_code.extensions.rpc import ExtensionRpc
-from ember_code.extensions.service_events import ServiceEvents
 from ember_code.extensions.service_token import (
     CredentialsSession,
     ServiceTokenEndpoint,
@@ -286,19 +283,10 @@ class BackendApp:
             registry=self._extensions.registry, rpc=self._extensions
         )
         self._extension_contributions.attach()
-        # Who hears what. The grant is checked here, at dispatch,
-        # and the client posts each event into one frame — so an
-        # extension never receives another's even in transit.
-        self._extension_events = EventRouter(self._extensions.registry)
-        # What igni knows, said in the published vocabulary. Owns
-        # the workspace poll, which does no git work until some
-        # extension is actually entitled to hear the result.
-        self._host_events = HostEvents(router=self._extension_events, project_dir=self._project_dir)
-        # The half of delivery that does not end at a frame. An
-        # extension with no page, or with its page closed, is told
-        # by being called — which is the only direction MCP runs.
-        self._service_events = ServiceEvents(rpc=self._extensions)
-        self._wire_extension_events()
+        # The project's git state, as the host model's workspace
+        # signals. Owns the poll, which does no git work until some
+        # extension entitled to the workspace is subscribed.
+        self._workspace_signals = WorkspaceSignals(project_dir=self._project_dir)
         notifications = self._build_notifications(settings)
         self._notifications = notifications
         self._rpc_router = RpcRouter(
@@ -345,7 +333,6 @@ class BackendApp:
             queue=self._queue,
             extensions=self._extensions,
             origins=self._origins,
-            host_events=self._host_events,
             notifications=self._notifications,
         )
         pool = self._orchestrator.setup_pool()
@@ -418,7 +405,7 @@ class BackendApp:
             # After the installs, for the same reason health is:
             # the first poll asks "is anyone listening", and before
             # this point the answer is always no.
-            await self._host_events.start()
+            await self._workspace_signals.start()
             logger.info("FE connected, processing messages")
             await self._orchestrator.serve(self._supervisor.shutdown_event)
         except Exception as exc:
@@ -427,8 +414,7 @@ class BackendApp:
             await notifications.stop()
             if self._host_channel is not None:
                 await self._host_channel.stop()
-            await self._service_events.stop()
-            await self._host_events.stop()
+            await self._workspace_signals.stop()
             await self._extension_health.stop()
             if self._distribution is not None:
                 await self._distribution.stop()
@@ -483,46 +469,10 @@ class BackendApp:
             store=ExtensionStore(),
             notifications=self._notifications,
             notices=self._notices,
-            host_events=self._host_events,
+            workspace_signals=self._workspace_signals,
         )
         self._host_model = model
         self._host_channel = HostChannel(model)
-
-    def _wire_extension_events(self) -> None:
-        """Deliver events, and emit the one igni always knows.
-
-        ``extension.state-changed`` is the event the host can always
-        produce, because the registry is the host's. It is also the
-        one that matters most to a frame: an extension whose service
-        has died can stop asking and say so, instead of discovering
-        it on its next call.
-        """
-        router = self._extension_events
-
-        def deliver(extension_id: str) -> Callable[[str, dict[str, Any]], None]:
-            def post(topic: str, payload: dict[str, Any]) -> None:
-                # Both surfaces, because they are different
-                # consumers of the same fact: the frame redraws, the
-                # service invalidates. Each no-ops when it is not
-                # there, so an extension with one surface pays
-                # nothing for the other.
-                self._push_bridge.extension_event(
-                    extension_id=extension_id, topic=topic, payload=payload
-                )
-                self._service_events.tell(extension_id, topic, payload)
-
-            return post
-
-        def on_change(entry: Any, extension_id: str) -> None:
-            if entry is None:
-                router.disconnect(extension_id)
-                return
-            router.connect(extension_id, deliver(extension_id))
-            self._host_events.extension_state_changed(
-                extension_id, state=entry.state.value, reason=entry.reason
-            )
-
-        self._extensions.registry.watch(on_change)
 
     async def _start_extensions(self) -> None:
         """Start what is installed, then bring it up to date.

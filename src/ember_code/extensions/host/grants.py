@@ -59,10 +59,10 @@ class HostGrants:
     def unknown(grants: list[str], known: set[str]) -> list[str]:
         """Entries that match no permission the model has.
 
-        Noted at install, not refused, for the reason
-        :func:`~ember_code.extensions.events.unknown_grants` gives: a
-        manifest asking for something newer than this igni is usually
-        early, not wrong.
+        Noted at install, not refused: a manifest asking for something
+        newer than this igni is usually early, not wrong, and refusing
+        it would make every new member a breaking change for everybody
+        who guessed early.
         """
         stray: list[str] = []
         for grant in grants:

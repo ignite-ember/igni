@@ -1,7 +1,8 @@
 """Every ``HostTopic`` is written down, and something fires it.
 
-An extension author chooses what to subscribe to from
-``docs/EXTENSIBILITY.md``. A topic missing from that page is a topic
+``HostTopic`` is the wire names of the four host-model signals that
+predate the model. An extension author chooses what to subscribe to
+from ``docs/EXTENSIBILITY.md``. A topic missing from that page is a topic
 nobody asks for however well it works, and a topic on the page that
 nothing emits is worse — it is an extension waiting forever for
 something that was promised.
@@ -33,7 +34,7 @@ from ember_code.extensions.events import HostTopic
 
 _ROOT = Path(__file__).resolve().parent.parent
 _DOC = _ROOT / "docs/EXTENSIBILITY.md"
-_PRODUCERS = _ROOT / "src/ember_code/backend/host_events.py"
+_PRODUCERS = _ROOT / "src/ember_code/extensions/host/model.py"
 _SRC = _ROOT / "src/ember_code"
 _VOCABULARY = _SRC / "extensions/events.py"
 
@@ -91,13 +92,13 @@ class TestEveryTopicHasAProducer:
     def test_something_emits_each_one(self):
         """A topic nothing fires is an extension waiting forever.
 
-        ``HostEvents`` is the only module allowed to produce, so
-        "is there a producer" is answerable by reading one file.
+        ``HostModel`` is where they are emitted, so "is there a
+        producer" is answerable by reading one file.
         """
         produced = _PRODUCERS.read_text()
         missing = [topic.name for topic in HostTopic if f"HostTopic.{topic.name}" not in produced]
         assert not missing, (
-            f"no producer in host_events.py for: {sorted(missing)}. Publishing "
+            f"no producer in host/model.py for: {sorted(missing)}. Publishing "
             "a topic nothing fires is worse than not publishing it — the "
             "extension waits instead of polling."
         )

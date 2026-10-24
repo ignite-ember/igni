@@ -9,6 +9,7 @@ import { formatStats, type AssistantInterrupted, ASSISTANT_INTERRUPTED_LABELS, t
 import type { DiffRow } from "../protocol/messages";
 import type { Spec } from "@json-render/core";
 import { ChevronIcon } from "./Icons";
+import { useExtensionName } from "../extensions/extensionNames";
 import { FilePill } from "./FilePill";
 import { JsonRenderView } from "./JsonRenderView";
 import { WorkflowRun } from "./WorkflowRun";
@@ -1280,6 +1281,9 @@ const UserMessage = memo(function UserMessage({
   // truncate by run_id). Without runId, the operation has no target —
   // hide the controls so the user doesn't get a confusing failure.
   const canMutate = !!item.runId && (onEdit || onDelete);
+  // The posting extension's name: the item keeps its id, and a name
+  // looked up now is right on a reload too.
+  const fromName = useExtensionName(item.fromExtension);
 
   if (editing && onEdit) {
     const submit = () => {
@@ -1349,7 +1353,7 @@ const UserMessage = memo(function UserMessage({
       {item.fromExtension && (
         // Posted by an extension (``host.chat.post``), never by the
         // person — said on the bubble, every time.
-        <div className="msg-user-from">from {item.fromExtension}</div>
+        <div className="msg-user-from">from {fromName}</div>
       )}
       {body}
       {canMutate && (

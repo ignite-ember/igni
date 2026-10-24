@@ -55,11 +55,6 @@ SLUG = re.compile(r"^[a-z][a-z0-9-]*$")
 #: A settings key, as code reads it.
 SETTING_KEY = re.compile(r"^[a-z][a-zA-Z0-9_]*$")
 
-#: An event grant: an exact topic, or a ``*``-suffixed prefix. Same
-#: grammar as an RPC grant, for the same reason — this list is read
-#: by whoever approves the install.
-EVENT_GRANT = re.compile(r"^[a-z][a-z0-9.-]*\*?$")
-
 #: A host-model grant: a permission name from the model
 #: (``chat.read``), or a ``*``-suffixed prefix (``chat.*``).
 HOST_GRANT = re.compile(r"^[a-z][a-z0-9_.]*\*?$")
@@ -245,17 +240,6 @@ class Permissions(Strict):
     #: all. igni checks it by where an agent's file lives, so it does
     #: not need to know which extension, or which agent, is meant.
     toolAudience: Literal["all-agents", "own-agents"] = "all-agents"
-    #: Host events this extension may be told about, from the
-    #: published vocabulary. Its *own* events need no grant and
-    #: another extension's cannot be granted at all — see
-    #: :mod:`ember_code.extensions.events`.
-    #:
-    #: Granting a topic does not decide the *content*: the two
-    #: ``workspace.*`` topics also require ``workspace``, and
-    #: ``workspace.files-changed`` is filtered to ``workspacePaths``
-    #: before it is sent. See
-    #: :class:`~ember_code.backend.host_events.HostEvents`.
-    events: list[Annotated[str, Field(pattern=EVENT_GRANT.pattern)]] = Field(default_factory=list)
     #: Objects of the host object model this extension may reach —
     #: ``docs/HOST_OBJECT_MODEL.md``. One name per object (``chat.read``,
     #: ``sessions``, ``ui``…), or a ``*``-suffixed prefix. An object

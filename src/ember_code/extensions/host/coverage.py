@@ -59,11 +59,9 @@ NOT_REACHABLE: tuple[Unreachable, ...] = (
     ),
     Unreachable(
         key="channel",
-        what="The model's own plumbing: the `host_model` RPC, and the `host_signal`, "
-        "`client_state_changed` and `extension_event` pushes",
-        why="They are how the model reaches a page and a window, not things igni does. "
-        "`extension_event` also carries an extension's own events to its frame, which "
-        "need no member.",
+        what="The model's own plumbing: the `host_model` and `window_model` RPCs, and the "
+        "`host_signal` and `window_model_changed` pushes",
+        why="They are how the model reaches a page and a window, not things igni does.",
     ),
 )
 
@@ -81,11 +79,6 @@ RPC: dict[RpcMethod, str] = {
     RpcMethod.GET_MCP_SERVERS: "mcp.servers",
     RpcMethod.GET_MCP_SERVER_DETAILS: "mcp.details",
     RpcMethod.SET_MCP_TOOL_ENABLED: "mcp.set_tool_enabled",
-    # A window's UI state lives in client_state today; an extension's
-    # own keys live there too, under its own client id.
-    RpcMethod.GET_CLIENT_STATE: "app.state.get",
-    RpcMethod.SET_CLIENT_STATE: "app.state.set",
-    RpcMethod.DELETE_CLIENT_STATE: "app.state.delete",
     RpcMethod.GET_SESSION_ID: "chat.session_id",
     RpcMethod.GET_RUN_TIMEOUT: "chat.timeout",
     RpcMethod.GET_STATUS: "chat.status",
@@ -181,6 +174,7 @@ RPC_UNREACHABLE: dict[RpcMethod, str] = {
     RpcMethod.PUBLIC_DOCUMENT: "capabilities",
     RpcMethod.GET_ARTIFACT_STATUS: "capabilities",
     RpcMethod.HOST_MODEL: "channel",
+    RpcMethod.WINDOW_MODEL: "channel",
 }
 
 #: Prefixes whose every method is unreachable, by row.
@@ -300,9 +294,8 @@ PUSH: dict[PushChannel, str] = {
 }
 
 PUSH_UNREACHABLE: dict[PushChannel, str] = {
-    PushChannel.EXTENSION_EVENT: "channel",
     PushChannel.HOST_SIGNAL: "channel",
-    PushChannel.CLIENT_STATE_CHANGED: "channel",
+    PushChannel.WINDOW_MODEL_CHANGED: "channel",
 }
 
 #: ``UNKNOWN`` is the enum's catch-all for a channel nobody listed,

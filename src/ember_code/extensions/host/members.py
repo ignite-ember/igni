@@ -20,11 +20,13 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, TypeVar
 
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
+
 from ember_code import __version__
 from ember_code.extensions.host.errors import HostModelError
 from ember_code.extensions.host.grants import HostGrants
 from ember_code.extensions.host.spec import ErrorCode
-from ember_code.extensions.host.windows import UiKeys
+from ember_code.extensions.host.windows import WindowModelError, references
 from ember_code.protocol import messages as msg
 from ember_code.protocol.rpc import RpcMethod
 
@@ -215,38 +217,42 @@ class WindowMembers(Members):
     async def window_list(self, c: Call) -> Any:
         return self.model.windows.describe_all()
 
+    @get("windows.focused")
+    async def focused(self, c: Call) -> Any:
+        return self.model.windows.focused()
+
 
 class UiMembers(Members):
+    """``host.ui``: one window's model, written through the same
+    :class:`~ember_code.extensions.host.windows.Windows` the window
+    itself writes — so an extension's change is pushed to the window,
+    and signalled, exactly as the person's is."""
+
     def window(self, c: Call) -> str:
         if c.window is None:
             raise HostModelError(ErrorCode.NOT_FOUND, "no igni window is open")
         return c.window
 
+    def read(self, c: Call, name: str) -> Any:
+        return self.model.windows.get(self.window(c), name)
+
+    def write(self, c: Call, name: str, value: Any) -> Any:
+        window = self.window(c)
+        try:
+            self.model.windows.write(window, name, value)
+        except WindowModelError as exc:
+            raise HostModelError(ErrorCode.INVALID, str(exc)) from None
+        return self.model.windows.get(window, name)
+
+    # ── route ─────────────────────────────────────────────────────
+
     @get("ui.route")
     async def route(self, c: Call) -> Any:
-        return self.model.windows.route(self.window(c))
+        return self.read(c, "route")
 
     @put("ui.route")
     async def set_route(self, c: Call) -> Any:
-        pages = c.value or []
-        await self.go(c, pages)
-
-    async def go(self, c: Call, pages: list[dict[str, Any]]) -> list[dict[str, Any]]:
-        window = self.window(c)
-        cleaned = [
-            {
-                "kind": str(p["kind"]),
-                "label": str(p.get("label") or p["kind"]),
-                **(
-                    {"params": {str(k): str(v) for k, v in p["params"].items()}}
-                    if p.get("params")
-                    else {}
-                ),
-            }
-            for p in pages
-        ]
-        self.model.windows.write(window, UiKeys.PAGE, json.dumps(cleaned) if cleaned else "")
-        return self.model.windows.route(window)
+        self.write(c, "route", c.value or [])
 
     @call("ui.navigate")
     async def navigate(self, c: Call) -> Any:
@@ -255,58 +261,233 @@ class UiMembers(Members):
             "label": c.params["page"],
             "params": c.params.get("params") or {},
         }
-        return await self.go(c, [page])
+        return self.write(c, "route", [page])
 
     @call("ui.back")
     async def back(self, c: Call) -> Any:
-        return await self.go(c, self.model.windows.route(self.window(c))[:-1])
+        return self.write(c, "route", self.read(c, "route")[:-1])
+
+    # ── panel ─────────────────────────────────────────────────────
+
+    @get("ui.panel")
+    async def panel(self, c: Call) -> Any:
+        return self.read(c, "panel")
+
+    @put("ui.panel")
+    async def set_panel(self, c: Call) -> Any:
+        self.write(c, "panel", c.value)
+
+    @call("ui.open_panel")
+    async def open_panel(self, c: Call) -> Any:
+        kind = str(c.params["kind"])
+        if kind not in PANELS:
+            raise HostModelError(
+                ErrorCode.INVALID, f"no panel {kind!r}: one of {', '.join(sorted(PANELS))}"
+            )
+        return self.write(c, "panel", {"kind": kind, "params": c.params.get("params") or {}})
+
+    @call("ui.close_panel")
+    async def close_panel(self, c: Call) -> Any:
+        self.write(c, "panel", None)
+
+    # ── sidebar ───────────────────────────────────────────────────
 
     @get("ui.sidebar")
     async def sidebar(self, c: Call) -> Any:
-        return self.model.windows.sidebar(self.window(c))
+        return self.read(c, "sidebar")
 
     @put("ui.sidebar")
     async def set_sidebar_value(self, c: Call) -> Any:
-        value = c.value if isinstance(c.value, dict) else {}
-        await self.apply_sidebar(c, bool(value.get("open")))
+        self.write(c, "sidebar", c.value)
 
     @call("ui.set_sidebar")
     async def set_sidebar(self, c: Call) -> Any:
-        if c.params.get("width") is not None or c.params.get("section") is not None:
-            raise HostModelError.stage_two("ui.set_sidebar(width, section)")
-        return await self.apply_sidebar(c, bool(c.params["open"]))
+        current = self.read(c, "sidebar")
+        width = c.params.get("width")
+        section = c.params.get("section")
+        return self.write(
+            c,
+            "sidebar",
+            {
+                "open": bool(c.params["open"]),
+                "width": current.get("width") if width is None else width,
+                "section": current.get("section") if section is None else section,
+            },
+        )
 
-    async def apply_sidebar(self, c: Call, open_: bool) -> dict[str, Any]:
-        window = self.window(c)
-        self.model.windows.write(window, UiKeys.SIDEBAR, "true" if open_ else "false")
-        return self.model.windows.sidebar(window)
+    # ── preview ───────────────────────────────────────────────────
+
+    @get("ui.preview")
+    async def preview(self, c: Call) -> Any:
+        return self.read(c, "preview")
+
+    @put("ui.preview")
+    async def set_preview(self, c: Call) -> Any:
+        if c.value is not None:
+            self.within_workspace(c, str(c.value.get("path", "")))
+        self.write(c, "preview", c.value)
+
+    @call("ui.open_preview")
+    async def open_preview(self, c: Call) -> Any:
+        path = str(c.params["path"])
+        self.within_workspace(c, path)
+        return self.write(c, "preview", {"path": path})
+
+    @call("ui.close_preview")
+    async def close_preview(self, c: Call) -> Any:
+        self.write(c, "preview", None)
+
+    def within_workspace(self, c: Call, path: str) -> None:
+        """A preview shows a file's contents to the person, not to the
+        extension — but it is still the extension pointing at the
+        project, so the path must be one ``workspacePaths`` allows."""
+        if not c.grants.workspace.granted or not c.grants.workspace.permits(path):
+            raise HostModelError(
+                ErrorCode.REFUSED,
+                f"'{path}' is outside what '{c.extension_id}' was granted of the workspace",
+            )
+
+    # ── selection ─────────────────────────────────────────────────
+
+    @get("ui.selection")
+    async def selection(self, c: Call) -> Any:
+        return self.read(c, "selection")
+
+    @put("ui.selection")
+    async def set_selection(self, c: Call) -> Any:
+        self.write(c, "selection", c.value)
+
+    @call("ui.select")
+    async def select(self, c: Call) -> Any:
+        return self.write(c, "selection", c.params["selection"])
+
+    # ── composer ──────────────────────────────────────────────────
 
     @get("ui.composer")
     async def composer(self, c: Call) -> Any:
-        window = self.window(c)
-        live = self.model.state.drafts.get(window)
-        text = live if live is not None else self.model.windows.draft(window)
-        return {"text": text, "attachments": [], "mode": None}
+        return self.read(c, "composer")
 
     @put("ui.composer")
     async def set_composer_value(self, c: Call) -> Any:
-        value = c.value if isinstance(c.value, dict) else {}
-        await self.apply_composer(c, str(value.get("text") or ""))
+        self.write(c, "composer", c.value)
 
     @call("ui.set_composer")
     async def set_composer(self, c: Call) -> Any:
-        if c.params.get("attachments"):
-            raise HostModelError.stage_two("ui.set_composer(attachments)")
-        return await self.apply_composer(c, str(c.params["text"]))
+        text = str(c.params["text"])
+        for path in c.params.get("attachments") or []:
+            if path not in references(text):
+                sep = "" if not text or text.endswith((" ", "\n")) else " "
+                text = f"{text}{sep}@{path} "
+        mode = c.params.get("mode") or self.read(c, "composer").get("mode") or "chat"
+        return self.write(c, "composer", {"text": text, "mode": mode})
 
-    async def apply_composer(self, c: Call, text: str) -> dict[str, Any]:
+    # ── toasts ────────────────────────────────────────────────────
+
+    @get("ui.toasts")
+    async def toasts(self, c: Call) -> Any:
+        return self.read(c, "toasts")
+
+    @call("ui.toast")
+    async def toast(self, c: Call) -> Any:
+        kind = c.params.get("kind") or "info"
+        if kind not in TOAST_KINDS:
+            raise HostModelError(
+                ErrorCode.INVALID, f"toast kind {kind!r}: one of {', '.join(TOAST_KINDS)}"
+            )
+        return self.model.windows.toast(
+            self.window(c),
+            {
+                "text": c.params["text"],
+                "kind": kind,
+                "body": c.params.get("body"),
+                "target": c.params.get("target"),
+                "source": c.extension_id,
+            },
+        )
+
+    @call("ui.dismiss_toast")
+    async def dismiss_toast(self, c: Call) -> Any:
         window = self.window(c)
-        session = self.model.windows.session(window)
-        if not session:
-            raise HostModelError(ErrorCode.NOT_FOUND, f"window {window} shows no session yet")
-        self.model.state.drafts[window] = text
-        self.model.windows.write(window, UiKeys.draft(session), text)
-        return {"text": text, "attachments": [], "mode": None}
+        toast_id = str(c.params["toast_id"])
+        found = self.model.windows.toast_of(window, toast_id)
+        if found is None:
+            raise HostModelError(ErrorCode.NOT_FOUND, f"no toast {toast_id!r} is on screen")
+        if found.get("source") != c.extension_id:
+            raise HostModelError(ErrorCode.REFUSED, "an extension dismisses only its own toasts")
+        self.model.windows.dismiss_toast(window, toast_id)
+
+    # ── dialog ────────────────────────────────────────────────────
+
+    @get("ui.dialog")
+    async def dialog(self, c: Call) -> Any:
+        return self.read(c, "dialog")
+
+    @call("ui.show_dialog")
+    async def show_dialog(self, c: Call) -> Any:
+        spec = DialogSpec.of(c.params["spec"])
+        _dialog, answer = self.model.windows.open_dialog(
+            self.window(c), spec, source=c.extension_id
+        )
+        return await answer
+
+    # ── scroll ────────────────────────────────────────────────────
+
+    @get("ui.scroll")
+    async def scroll(self, c: Call) -> Any:
+        return self.read(c, "scroll")
+
+    @call("ui.scroll_to")
+    async def scroll_to(self, c: Call) -> Any:
+        target = str(c.params["message_id"])
+        if target == "bottom":
+            return self.write(c, "scroll", {"message_id": None, "at_bottom": True})
+        return self.write(c, "scroll", {"message_id": target, "at_bottom": False})
+
+
+#: The panels a window has, by kind.
+PANELS = frozenset({"notifications", "search", "login", "dir-picker"})
+
+#: The kinds of toast.
+TOAST_KINDS = ("info", "success", "warning", "error")
+
+
+class DialogButton(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    id: str = Field(min_length=1)
+    label: str = Field(min_length=1)
+    primary: bool = False
+
+
+class DialogInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    label: str = ""
+    placeholder: str = ""
+    value: str = ""
+
+
+class DialogSpec(BaseModel):
+    """What an extension may show in a dialog. Text only: igni draws it."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    title: str = Field(min_length=1)
+    body: str = ""
+    buttons: list[DialogButton] = Field(
+        default_factory=lambda: [DialogButton(id="ok", label="OK", primary=True)],
+        min_length=1,
+        max_length=4,
+    )
+    input: DialogInput | None = None
+
+    @classmethod
+    def of(cls, value: Any) -> dict[str, Any]:
+        try:
+            spec = cls.model_validate(value)
+        except ValidationError as exc:
+            raise HostModelError(ErrorCode.INVALID, f"ui.show_dialog(spec): {exc}") from None
+        return {"kind": "extension", **spec.model_dump(mode="json")}
 
 
 # ── host.sessions ─────────────────────────────────────────────────
@@ -348,8 +529,9 @@ class SessionMembers(Members):
         # refuses another project's session), then the window's state.
         attached = await self.model.attach(session_id, None)
         window = c.window
-        self.model.windows.write(window, UiKeys.SESSION, attached["session_id"])
-        self.model.session_switched(attached["session_id"], window)
+        # The window's model says which session it shows; the write is
+        # the signal (``session.switched``) and what moves the window.
+        self.model.windows.write(window, "session", attached["session_id"])
         return {"session_id": attached["session_id"], "window": window}
 
     @call("sessions.create")
@@ -357,9 +539,9 @@ class SessionMembers(Members):
         project_dir = c.params.get("project_dir") or str(self.backend.project_dir)
         attached = await self.model.attach("", project_dir)
         if c.window is not None:
-            self.model.windows.write(c.window, UiKeys.SESSION, attached["session_id"])
-            self.model.windows.write(c.window, UiKeys.PROJECT_DIR, attached["project_dir"])
-            self.model.session_switched(attached["session_id"], c.window)
+            # The folder first: a window moving to the session reads it.
+            self.model.windows.write(c.window, "project_dir", attached["project_dir"])
+            self.model.windows.write(c.window, "session", attached["session_id"])
         return attached
 
     @call("sessions.attach")

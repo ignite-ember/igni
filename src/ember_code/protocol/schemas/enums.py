@@ -327,12 +327,6 @@ class PushChannel(StrEnum):
     OUTPUT_STYLE_CHANGED = "output_style_changed"
     PLAN_SUBMITTED = "plan_submitted"
     FILE_EDITED = "file_edited"
-    #: One extension's event, on its way to that extension's frame.
-    #: One channel for all of them rather than one each: the
-    #: audience was already decided by
-    #: :class:`~ember_code.extensions.events.EventRouter`, and the
-    #: payload names which extension it is for.
-    EXTENSION_EVENT = "extension_event"
     #: The floor's unread counts moved — igni server's notifications,
     #: an extension's local notice, or something marked read. Every
     #: badge reads this; the list is fetched again only by whoever is
@@ -357,10 +351,11 @@ class PushChannel(StrEnum):
     #: it into that extension's frames. See
     #: :mod:`ember_code.extensions.host`.
     HOST_SIGNAL = "host_signal"
-    #: A window's client state was written by somebody other than the
-    #: window — an extension through ``host.ui`` — so the window
-    #: applies it. ``{client_id, key, value}``; an empty value deletes.
-    CLIENT_STATE_CHANGED = "client_state_changed"
+    #: A window's model changed — by the window itself, another
+    #: window, or an extension through ``host.ui``. Every window gets
+    #: it; the one it is about applies it. The payload is
+    #: :class:`~ember_code.extensions.host.windows.WindowChange`.
+    WINDOW_MODEL_CHANGED = "window_model_changed"
     UNKNOWN = "unknown"
 
     @classmethod

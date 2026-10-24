@@ -39,7 +39,6 @@ from ember_code.backend.schemas_rpc import (
     DirListResult,
     DisplayConfigResult,
     FileCompletion,
-    GetClientStateResult,
     LifecyclePhase,
     LoginStarted,
     ModelRegistryResult,
@@ -48,7 +47,6 @@ from ember_code.backend.schemas_rpc import (
     SessionPoolConfig,
     SkillDefinition,
     UpdateAvailable,
-    WriteClientStateResult,
 )
 
 __all__ = [
@@ -58,7 +56,6 @@ __all__ = [
     "DirListResult",
     "DisplayConfigResult",
     "FileCompletion",
-    "GetClientStateResult",
     "LifecyclePhase",
     "LoginStarted",
     "ModelRegistryResult",
@@ -67,7 +64,6 @@ __all__ = [
     "SessionPoolConfig",
     "SkillDefinition",
     "UpdateAvailable",
-    "WriteClientStateResult",
     "_build_rpc_table",
     "_handle_message",
     "_serialize",

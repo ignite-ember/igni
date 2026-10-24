@@ -276,23 +276,6 @@
             ]
           ]
         },
-        "events": {
-          "type": "array",
-          "description": "Host events this extension may be told about — an exact topic, or a `*`-suffixed prefix. Only topics igni publishes: its own events, under `ext.<your-id>.`, need no grant, and another extension's cannot be granted at all, not by a wildcard and not by naming it. The check happens where an event is dispatched, never where it is received, because a host that broadcast everything and asked each frame to discard what was not its own would be trusting the frame to discard it. Granting a topic does not decide what you are handed: the two `workspace.*` topics also require `permissions.workspace`, and `workspace.files-changed` is filtered to your `workspacePaths` before it is sent. Asking for one without the workspace is warned about at install, never refused — but it will be addressed to nobody. An event reaches a frame through the bridge and a service through the reserved tool `igni_on_event(topic, payload)` — implement it and your service hears whether or not you have a page. igni never offers that tool to the model.",
-          "items": {
-            "type": "string",
-            "pattern": "^[a-z][a-z0-9.-]*\\*?$"
-          },
-          "default": [],
-          "examples": [
-            [
-              "workspace.head-changed"
-            ],
-            [
-              "workspace.*"
-            ]
-          ]
-        },
         "host": {
           "type": "array",
           "description": "Objects of igni's host object model (docs/HOST_OBJECT_MODEL.md) this extension may reach — from its process through `ext.host` and from its page through `bridge.host`. One name per object: `app`, `ui`, `sessions`, `chat.read`, `chat.post`, `chat.append`, `chat.control`, `chat.approvals`, `commands`, `agents`, `workflows`, `scheduler`, `processes`, `models`, `mcp`, `plugins`, `extensions`, `hooks`, `permissions`, `policy`, `account`, `notifications` — or a `*`-suffixed prefix (`chat.*`). An object not granted does not exist for the extension: reads fail, methods are refused, and its signals never arrive. `host.workspace` is granted by `workspace` above, not here, and is limited to `workspacePaths`. Its own state (`host.app.state`), its own settings (`host.self`) and its own notifications need no grant. Shown to the super admin who approves the service, and by `igni ext install`.",

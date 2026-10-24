@@ -31,20 +31,23 @@ MAX_BODY = 1000
 MAX_TARGET_PARAMS = 32
 MAX_TARGET_BYTES = 2048
 
-ParamValue = str | int | float | bool | None
-
 
 class Target(BaseModel):
-    """Where in the extension to go: one of its pages, and that page's params."""
+    """Where in the extension to go: one of its pages, and that page's params.
+
+    `params` are strings, as a page's parameters are everywhere in igni
+    (`NotificationTarget` in the host schema, a page's route): a page
+    reads them from its location, where everything is a string.
+    """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     page: str = Field(min_length=1, max_length=MAX_KEY)
-    params: dict[str, ParamValue] = Field(default_factory=dict, max_length=MAX_TARGET_PARAMS)
+    params: dict[str, str] = Field(default_factory=dict, max_length=MAX_TARGET_PARAMS)
 
     @field_validator("params")
     @classmethod
-    def _small(cls, value: dict[str, ParamValue]) -> dict[str, ParamValue]:
+    def _small(cls, value: dict[str, str]) -> dict[str, str]:
         if len(json.dumps(value)) > MAX_TARGET_BYTES:
             raise ValueError(f"target params may be at most {MAX_TARGET_BYTES} bytes as JSON")
         return value

@@ -17,7 +17,6 @@ not granted answers ``not_granted`` and its signals never arrive.
 from __future__ import annotations
 
 import asyncio
-import contextlib
 import logging
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -43,7 +42,12 @@ from ember_code.extensions.host.spec import (
     SignalSpec,
 )
 from ember_code.extensions.host.types import SchemaTypes
-from ember_code.extensions.host.windows import UiKeys, Windows
+from ember_code.extensions.host.windows import (
+    WindowChange,
+    WindowModelError,
+    WindowRequest,
+    Windows,
+)
 from ember_code.extensions.host.wire import ErrorBody, Op, Reply, Request, SignalMessage
 from ember_code.extensions.registry import ExtensionRegistry, InstalledExtension
 from ember_code.extensions.store import ExtensionStore
@@ -66,8 +70,6 @@ class HostState:
     last_run: dict[str, str] = field(default_factory=dict)
     #: Files the current top-level run of each session edited.
     run_files: dict[str, set[str]] = field(default_factory=dict)
-    #: Live drafts, by window, from the windows' typing.
-    drafts: dict[str, str] = field(default_factory=dict)
     #: Which extension appended which view.
     view_owner: dict[str, str] = field(default_factory=dict)
     #: The last status seen, by session.
@@ -112,8 +114,8 @@ class HostModel:
         self.types = SchemaTypes(schema)
         self.state = HostState()
         self.bus = SignalBus(schema, self.grants_for)
-        self.windows = Windows(backend.client_state, push=self._push_client_state)
-        self.windows.on_state(self._window_state_changed)
+        self.windows = Windows(backend.client_state, types=self.types, push=self._push_window)
+        self.windows.on_change(self._window_model_changed)
         self.windows.on_window(self._window_changed)
         self.broadcasts = BroadcastSignals(self)
         self._impl: dict[tuple[str, str], Impl] = {}
@@ -124,9 +126,6 @@ class HostModel:
                 self._impl[key] = impl
         self._tasks: set[asyncio.Task[Any]] = set()
         self._pages: dict[str, Subscriber] = {}
-        #: Told when a session is switched without a window (the TUI's
-        #: way) — wired to :class:`~ember_code.backend.host_events.HostEvents`.
-        self.on_session_switched: list[Any] = []
 
     # ── Grants ────────────────────────────────────────────────────
 
@@ -517,9 +516,6 @@ class HostModel:
     def window_attached(self, window_id: str, *, connection_id: str = "", kind: str = "") -> None:
         self.windows.attached(window_id, connection_id=connection_id, kind=kind)
 
-    def window_wrote(self, window_id: str, key: str, value: str) -> None:
-        self.windows.written(window_id, key, value)
-
     def connection_closed(self, connection_id: str) -> None:
         self.windows.detached(connection_id)
 
@@ -552,41 +548,88 @@ class HostModel:
 
     def session_switched(self, session_id: str, window: str | None) -> None:
         self.emit(HostTopic.SESSION_SWITCHED, {"session_id": session_id, "window": window})
-        for listener in list(self.on_session_switched):
-            with contextlib.suppress(Exception):
-                listener(session_id)
 
     # ── Windows ───────────────────────────────────────────────────
 
-    def _push_client_state(self, window_id: str, key: str, value: str) -> None:
+    def handle_window(self, request: WindowRequest) -> Any:
+        """``window_model``: a window reading or writing its own model.
+
+        The same :class:`Windows` an extension's ``host.ui`` writes, so
+        a window's change and an extension's are one change. Raises
+        :class:`~ember_code.extensions.host.windows.WindowModelError`
+        for a write the model refuses.
+        """
+        windows = self.windows
+        window = request.window
+        if request.op == "hydrate":
+            windows.attached(window, connection_id=request.connection_id, kind=request.kind)
+            return {
+                "state": windows.snapshot(window),
+                "rev": windows.rev(window),
+                "unset": windows.unset(window),
+            }
+        if not windows.known(window):
+            # A write from a window that has not hydrated in this process
+            # — a reconnect racing its own hydrate. It is open.
+            windows.attached(window, connection_id=request.connection_id, kind=request.kind)
+        if request.op == "write":
+            change = windows.write(window, request.field, request.value, token=request.token)
+            return {"rev": change.rev}
+        if request.op == "toast":
+            toast = windows.toast(window, dict(request.value or {}), token=request.token)
+            return {"toast": toast, "rev": windows.rev(window)}
+        if request.op == "dismiss_toast":
+            windows.dismiss_toast(window, str(request.value or ""), token=request.token)
+            return {"rev": windows.rev(window)}
+        if request.op == "open_dialog":
+            dialog, _answer = windows.open_dialog(window, request.value, token=request.token)
+            return {"dialog": dialog, "rev": windows.rev(window)}
+        if request.op == "answer_dialog":
+            answered = windows.answer_dialog(
+                window, request.dialog_id, request.value, token=request.token
+            )
+            return {"answered": answered, "rev": windows.rev(window)}
+        raise WindowModelError(f"window_model has no op {request.op!r}")  # pragma: no cover
+
+    def _push_window(self, change: WindowChange) -> None:
         self.backend.broadcast(
             msg.PushNotification(
-                channel="client_state_changed",
-                payload={"client_id": window_id, "key": key, "value": value},
+                channel="window_model_changed", payload=change.model_dump(mode="json")
             )
         )
 
-    def _window_state_changed(self, window_id: str, key: str, value: str) -> None:
-        if key == UiKeys.PAGE:
-            self.emit("ui.navigated", {"window": window_id, "pages": self.windows.route(window_id)})
-        elif key == UiKeys.SIDEBAR:
-            self.emit(
-                "ui.sidebar_changed",
-                {"window": window_id, "sidebar": self.windows.sidebar(window_id)},
-            )
-        elif key == UiKeys.SESSION and value:
-            self.session_switched(value, window_id)
-        elif key.startswith(UiKeys.DRAFT_PREFIX) and key == UiKeys.draft(
-            self.windows.session(window_id) or ""
-        ):
-            self.state.drafts[window_id] = value
-            self.emit(
-                "ui.composer_changed",
-                {"window": window_id, "composer": {"text": value, "attachments": [], "mode": None}},
-            )
+    def _window_model_changed(self, change: WindowChange) -> None:
+        window, name, value = change.window, change.field, change.value
+        if name == "session":
+            if value:
+                self.session_switched(str(value), window)
+        elif name == "route":
+            self.emit("ui.navigated", {"window": window, "pages": value})
+        elif name in _CHANGE_SIGNALS:
+            signal, key = _CHANGE_SIGNALS[name]
+            self.emit(signal, {"window": window, key: value})
+        elif name == "scroll":
+            self.emit("ui.scrolled", {**value, "window": window})
+        elif name == "toasts" and change.event:
+            self.emit(f"ui.{change.event}", {"window": window, "toast": change.item})
+        elif name == "dialog" and change.event:
+            body: dict[str, Any] = {"window": window, "dialog": change.item}
+            if change.event == "dialog_closed":
+                body["answer"] = change.answer
+            self.emit(f"ui.{change.event}", body)
 
     def _window_changed(self, what: str, window: dict[str, Any]) -> None:
         self.emit(f"windows.{what}", window)
+
+
+#: Window-model fields whose signal carries ``{window, <key>: value}``.
+_CHANGE_SIGNALS: dict[str, tuple[str, str]] = {
+    "panel": ("ui.panel_changed", "panel"),
+    "sidebar": ("ui.sidebar_changed", "sidebar"),
+    "preview": ("ui.preview_changed", "preview"),
+    "selection": ("ui.selection_changed", "selection"),
+    "composer": ("ui.composer_changed", "composer"),
+}
 
 
 class _PageSink:

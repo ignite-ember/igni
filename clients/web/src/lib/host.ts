@@ -127,6 +127,8 @@ export class Host {
   /** When the host can't natively open files, the FE shows this
    *  preview instead. Set once at app boot. */
   private fallback: ((path: string) => void) | null = null;
+  /** Told of every file opened, whichever way it opened. */
+  private openListeners = new Set<(path: string) => void>();
 
   constructor() {
     this._kind = detectHost();
@@ -158,6 +160,15 @@ export class Host {
   /** Register the in-app preview opener used by the web fallback. */
   setPreviewFallback(fn: (path: string) => void) {
     this.fallback = fn;
+  }
+
+  /** Be told whenever a file is opened — in the host's editor or the
+   *  preview. The window's model keeps it as the file picked. */
+  onOpen(fn: (path: string) => void): () => void {
+    this.openListeners.add(fn);
+    return () => {
+      this.openListeners.delete(fn);
+    };
   }
 
   /** `true` if the host can open files in something other than the
@@ -361,6 +372,7 @@ export class Host {
 
   async openFile(path: string): Promise<boolean> {
     if (!path) return false;
+    for (const fn of this.openListeners) fn(path);
     try {
       switch (this.kind) {
         case "tauri": {

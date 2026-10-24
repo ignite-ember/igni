@@ -54,7 +54,6 @@ from ember_code.extensions.capabilities import (
     UnresolvedRequirement,
     check_dimensions_agree,
 )
-from ember_code.extensions.events import EVENT_SINK_TOOL, unknown_grants
 from ember_code.extensions.host.definition import HOST_SCHEMA
 from ember_code.extensions.host.grants import HostGrants
 from ember_code.extensions.manifest import ExtensionManifest, Workspace
@@ -204,7 +203,6 @@ class ExtensionInstaller:
         self._check_trust(manifest, distribution)
         self._check_profile(manifest)
         self._check_deliverable(manifest)
-        self._check_events(manifest)
         self._check_host_grants(manifest)
         self._check_tool_audience(manifest)
 
@@ -250,7 +248,6 @@ class ExtensionInstaller:
             return entry
 
         self._restrict_tools(manifest, config.name, permissions)
-        self._check_event_sink(manifest, config.name)
 
         self._rpc.bind(
             manifest.id,
@@ -418,53 +415,11 @@ class ExtensionInstaller:
             )
 
     @staticmethod
-    def _check_events(manifest: ExtensionManifest) -> None:
-        """Say which event grants will never deliver anything.
-
-        Noted, never refused. A manifest asking for an event igni
-        does not have is usually one written against a newer igni,
-        and refusing over it would make every added topic a
-        breaking change for everybody who guessed early.
-
-        The second note is the one worth having. A ``workspace.*``
-        grant without a ``workspace`` permission reads like a
-        subscription and behaves like silence: the topic is granted
-        and every payload is filtered to nothing, because the
-        content rule in :class:`~ember_code.backend.host_events.HostEvents`
-        asks both questions. Without this line the author's only
-        evidence is an event that never arrives.
-        """
-        stray = unknown_grants(list(manifest.permissions.events))
-        if stray:
-            logger.warning(
-                "extension %s asks for events igni does not publish: %s. "
-                "They will never fire; check the spelling, or the version "
-                "of igni this manifest was written against.",
-                manifest.id,
-                ", ".join(stray),
-            )
-        if manifest.permissions.workspace is Workspace.NONE:
-            workspace_topics = [
-                grant
-                for grant in manifest.permissions.events
-                if grant.startswith("workspace.") or grant == "workspace.*"
-            ]
-            if workspace_topics:
-                logger.warning(
-                    "extension %s asks for %s and was not granted the "
-                    "workspace. A workspace event carries workspace "
-                    "information, so it will be addressed to nobody. Add "
-                    "'workspace: read' or drop the event grant.",
-                    manifest.id,
-                    ", ".join(workspace_topics),
-                )
-
-    @staticmethod
     def _check_host_grants(manifest: ExtensionManifest) -> None:
         """Say which ``permissions.host`` entries name nothing the model has.
 
-        Noted, never refused, as an unknown event is: a manifest written
-        against a newer igni asks for objects this one does not have yet.
+        Noted, never refused: a manifest written against a newer igni asks
+        for objects this one does not have yet.
         ``workspace`` is named specifically, because it reads like a
         host grant and is decided by ``permissions.workspace``.
         """
@@ -739,34 +694,6 @@ class ExtensionInstaller:
                 len(refused),
                 refused,
             )
-
-    def _check_event_sink(self, manifest: ExtensionManifest, server: str) -> None:
-        """Say when a granted event has nowhere to land.
-
-        An event reaches a frame or it reaches the service's
-        ``igni_on_event``. An extension with neither has written a
-        subscription that will be checked, approved, and then
-        delivered into nothing — the same silence a ``workspace.*``
-        grant without the workspace produces, from the other end.
-
-        Noted after the service is up, because that is the first
-        point igni knows which tools it offers.
-        """
-        if not manifest.permissions.events:
-            return
-        if manifest.contributes.pages:
-            return
-        offered = {bare_tool_name(server, name) for name in self._mcp.get_tools(server)}
-        if EVENT_SINK_TOOL in offered:
-            return
-        logger.warning(
-            "extension %s is granted events (%s) and has nowhere to receive them: "
-            "it contributes no pages, and its service does not offer '%s'. The "
-            "grant will be approved and every event dropped.",
-            manifest.id,
-            ", ".join(manifest.permissions.events),
-            EVENT_SINK_TOOL,
-        )
 
     @staticmethod
     def _check_tool_audience(manifest: ExtensionManifest) -> None:

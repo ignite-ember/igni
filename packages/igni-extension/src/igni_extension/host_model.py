@@ -1,4 +1,4 @@
-"""GENERATED from the igni host schema 1.0.0 by ember_code.extensions.host.codegen — do not edit. Run `make host-sdks` after changing the schema.
+"""GENERATED from the igni host schema 1.1.0 by ember_code.extensions.host.codegen — do not edit. Run `make host-sdks` after changing the schema.
 
 `ext.host` as an extension's process sees it. Read
 `docs/HOST_OBJECT_MODEL.md` in igni for what each object is.
@@ -22,7 +22,7 @@ from igni_extension.members import (
 )
 from igni_extension.notifications import LocalNotification, Target
 
-SCHEMA_VERSION = "1.0.0"
+SCHEMA_VERSION = "1.1.0"
 
 NotificationTarget = Target
 
@@ -97,7 +97,7 @@ class WindowInfo(BaseModel):
     """`tauri`, `vscode`, `jetbrains` or `web`."""
     connected: bool
     focused: bool
-    """Stage 2: false until the window reports focus."""
+    """Whether the person is using this window: it has focus."""
     session_id: str | None = None
     """The session it shows."""
     project_dir: str | None = None
@@ -124,7 +124,7 @@ class Route(BaseModel):
 
 
 class Panel(BaseModel):
-    """The side panel open in a window."""
+    """The panel open over a window's chat: `notifications`, `search` (find in the conversation), `login` or `dir-picker`. One at a time."""
 
     model_config = ConfigDict(extra="allow")
 
@@ -133,7 +133,7 @@ class Panel(BaseModel):
 
 
 class PanelChange(BaseModel):
-    """A window's side panel opened or closed."""
+    """A window's panel opened or closed."""
 
     model_config = ConfigDict(extra="allow")
 
@@ -148,9 +148,9 @@ class Sidebar(BaseModel):
 
     open: bool
     width: int | None = None
-    """Stage 2: not reported yet."""
+    """Its width in pixels; `None` for igni's own."""
     section: str | None = None
-    """Stage 2: not reported yet."""
+    """The part of it in view: `links` (the destinations) or `sessions`."""
 
 
 class SidebarChange(BaseModel):
@@ -163,7 +163,7 @@ class SidebarChange(BaseModel):
 
 
 class Preview(BaseModel):
-    """The file or document previewed in a window."""
+    """The file previewed in a window."""
 
     model_config = ConfigDict(extra="allow")
 
@@ -180,13 +180,16 @@ class PreviewChange(BaseModel):
 
 
 class SelectionState(BaseModel):
-    """What is highlighted or selected in a window."""
+    """What is selected in a window. Each part is independent; `None` for nothing."""
 
     model_config = ConfigDict(extra="allow")
 
     message_id: str | None = None
+    """The highlighted message, by the run it belongs to (`run_id` in `chat.messages` and the run signals)."""
     text: str | None = None
+    """Text selected in the transcript."""
     file: str | None = None
+    """The file last picked: a file pill, a reference."""
 
 
 class SelectionChange(BaseModel):
@@ -204,11 +207,11 @@ class Composer(BaseModel):
     model_config = ConfigDict(extra="allow")
 
     text: str
-    """The draft."""
+    """The draft, without the mode's `/` or `$`."""
     attachments: list[str] = Field(default_factory=list)
-    """Stage 2: not reported yet."""
+    """The files the draft refers to (`@path`), in order."""
     mode: str | None = None
-    """Stage 2: not reported yet."""
+    """`chat`, `command` (a slash command) or `shell` (a `$` line)."""
 
 
 class ComposerChange(BaseModel):
@@ -227,8 +230,15 @@ class Toast(BaseModel):
 
     id: str
     text: str
+    """Its first line."""
     kind: str
     """`info`, `success`, `warning` or `error`."""
+    body: str | None = None
+    """A second line."""
+    target: Page | None = None
+    """Where clicking it goes."""
+    source: str | None = None
+    """The extension that showed it; `None` for igni."""
 
 
 class ToastChange(BaseModel):
@@ -241,12 +251,14 @@ class ToastChange(BaseModel):
 
 
 class Dialog(BaseModel):
-    """A dialog on screen."""
+    """A dialog on screen: igni's own (`spec.kind` is `update`) or an extension's (`show_dialog`). One at a time; a new one replaces the last, which closes unanswered."""
 
     model_config = ConfigDict(extra="allow")
 
     id: str
     spec: JsonValue
+    source: str | None = None
+    """The extension that asked; `None` for igni."""
 
 
 class DialogChange(BaseModel):
@@ -257,7 +269,7 @@ class DialogChange(BaseModel):
     window: str
     dialog: Dialog
     answer: JsonValue = None
-    """What the person answered, when it closed."""
+    """What the person answered, when it closed: `{button, value}`; `None` when it was dismissed or replaced."""
 
 
 class Scroll(BaseModel):
@@ -266,7 +278,11 @@ class Scroll(BaseModel):
     model_config = ConfigDict(extra="allow")
 
     message_id: str | None = None
+    """The message at the top of the view, by its run; `None` for none."""
     at_bottom: bool
+    """Following the newest message."""
+    window: str | None = None
+    """The window, in a signal."""
 
 
 class SessionInfo(BaseModel):
@@ -966,20 +982,20 @@ class HostWindows(HostObject):
         self.list: Property[list[WindowInfo]] = Property(self, "list", list[WindowInfo], writable=False)
         """Every window connected now."""
         self.focused: Property[str | None] = Property(self, "focused", str | None, writable=False)
-        """The window the person is using."""
+        """The window the person is using — the one with focus; `None` when igni is in the background."""
         self.opened: Signal[WindowInfo] = Signal("windows.opened", WindowInfo)
         """A window connected."""
         self.closed: Signal[WindowInfo] = Signal("windows.closed", WindowInfo)
         """A window went away."""
         self.focus_changed: Signal[WindowInfo] = Signal("windows.focus_changed", WindowInfo)
-        """Another window took focus."""
+        """A window took focus or lost it; `focused` says which."""
 
     def ui(self, window_id: str) -> HostUi:
         """`host.ui` of one window, by its id."""
         return HostUi(self._link, window_id)
 
 class HostUi(HostObject):
-    """What a window shows. `host.ui` is the active window — the one the person last used; `host.windows.ui(id)` any window."""
+    """What a window shows — the model its views bind to. `host.ui` is the active window, the one the person last used; `host.windows.ui(id)` any window. igni's own views write here too, by the same path, so every change below is a signal whoever made it."""
 
     PATH = "ui"
 
@@ -987,18 +1003,18 @@ class HostUi(HostObject):
         super().__init__(link, window)
         self.route: Property[list[Page]] = Property(self, "route", list[Page], writable=True)
         """The page stack; empty when the chat is showing. Writable: setting it navigates."""
-        self.panel: Property[Panel | None] = Property(self, "panel", Panel | None, writable=False)
-        """The side panel open."""
+        self.panel: Property[Panel | None] = Property(self, "panel", Panel | None, writable=True)
+        """The panel open over the chat. Writable: setting it opens one, `None` closes it."""
         self.sidebar: Property[Sidebar] = Property(self, "sidebar", Sidebar, writable=True)
-        """The sidebar. Writable: `open` is applied."""
-        self.preview: Property[Preview | None] = Property(self, "preview", Preview | None, writable=False)
-        """The file or document previewed."""
-        self.selection: Property[SelectionState] = Property(self, "selection", SelectionState, writable=False)
-        """What is selected."""
+        """The sidebar. Writable."""
+        self.preview: Property[Preview | None] = Property(self, "preview", Preview | None, writable=True)
+        """The file previewed. Writable: `None` closes it."""
+        self.selection: Property[SelectionState] = Property(self, "selection", SelectionState, writable=True)
+        """What is selected. Writable."""
         self.composer: Property[Composer] = Property(self, "composer", Composer, writable=True)
-        """The draft in the composer. Writable: the text is applied."""
+        """The composer: draft, the files it refers to, its mode. Writable."""
         self.toasts: Property[list[Toast]] = Property(self, "toasts", list[Toast], writable=False)
-        """Toasts on screen."""
+        """Toasts on screen, oldest first."""
         self.dialog: Property[Dialog | None] = Property(self, "dialog", Dialog | None, writable=False)
         """The open dialog."""
         self.scroll: Property[Scroll] = Property(self, "scroll", Scroll, writable=False)
@@ -1006,11 +1022,11 @@ class HostUi(HostObject):
         self.navigated: Signal[Route] = Signal("ui.navigated", Route)
         """The page stack changed."""
         self.panel_changed: Signal[PanelChange] = Signal("ui.panel_changed", PanelChange)
-        """A side panel opened or closed."""
+        """A panel opened or closed."""
         self.sidebar_changed: Signal[SidebarChange] = Signal("ui.sidebar_changed", SidebarChange)
         """The sidebar changed."""
         self.preview_changed: Signal[PreviewChange] = Signal("ui.preview_changed", PreviewChange)
-        """The preview changed."""
+        """The preview opened, changed or closed."""
         self.selection_changed: Signal[SelectionChange] = Signal("ui.selection_changed", SelectionChange)
         """The selection changed."""
         self.composer_changed: Signal[ComposerChange] = Signal("ui.composer_changed", ComposerChange)
@@ -1024,7 +1040,7 @@ class HostUi(HostObject):
         self.dialog_closed: Signal[DialogChange] = Signal("ui.dialog_closed", DialogChange)
         """A dialog closed, with the answer."""
         self.scrolled: Signal[Scroll] = Signal("ui.scrolled", Scroll)
-        """The transcript scrolled."""
+        """The transcript came to rest somewhere else, or started or stopped following the newest message."""
 
     async def navigate(self, page: str, params: dict[str, str] | None = None) -> list[Page]:
         """Open a page at the top of the stack, as a header link does."""
@@ -1034,41 +1050,49 @@ class HostUi(HostObject):
         """Go back one level; at the root, back to the chat."""
         return cast(list[Page], await self._call("back", {}, list[Page]))
 
-    async def open_panel(self, kind: str, params: dict[str, JsonValue] | None = None) -> None:
-        """Open a side panel."""
-        await self._call("open_panel", {"kind": kind, "params": params}, NO_RESULT)
+    async def open_panel(self, kind: str, params: dict[str, JsonValue] | None = None) -> Panel:
+        """Open a panel over the chat, closing the one that was open."""
+        return cast(Panel, await self._call("open_panel", {"kind": kind, "params": params}, Panel))
 
     async def close_panel(self) -> None:
-        """Close the side panel."""
+        """Close the panel."""
         await self._call("close_panel", {}, NO_RESULT)
 
     async def set_sidebar(self, open: bool, width: int | None = None, section: str | None = None) -> Sidebar:
-        """Open or close the sidebar."""
+        """Open or close the sidebar, and size it or bring a section into view."""
         return cast(Sidebar, await self._call("set_sidebar", {"open": open, "width": width, "section": section}, Sidebar))
 
-    async def open_preview(self, path: str) -> None:
-        """Preview a file. (`preview` is the property.)"""
-        await self._call("open_preview", {"path": path}, NO_RESULT)
+    async def open_preview(self, path: str) -> Preview:
+        """Preview a file of the project. (`preview` is the property.)"""
+        return cast(Preview, await self._call("open_preview", {"path": path}, Preview))
 
-    async def select(self, selection: SelectionState) -> None:
-        """Select a message, text or file."""
-        await self._call("select", {"selection": selection}, NO_RESULT)
+    async def close_preview(self) -> None:
+        """Close the preview."""
+        await self._call("close_preview", {}, NO_RESULT)
 
-    async def set_composer(self, text: str, attachments: list[str] | None = None) -> Composer:
+    async def select(self, selection: SelectionState) -> SelectionState:
+        """Select a message, text or file. The parts left out are cleared."""
+        return cast(SelectionState, await self._call("select", {"selection": selection}, SelectionState))
+
+    async def set_composer(self, text: str, attachments: list[str] | None = None, mode: str | None = None) -> Composer:
         """Replace the draft."""
-        return cast(Composer, await self._call("set_composer", {"text": text, "attachments": attachments}, Composer))
+        return cast(Composer, await self._call("set_composer", {"text": text, "attachments": attachments, "mode": mode}, Composer))
 
-    async def toast(self, text: str, kind: str | None = None) -> None:
-        """Show a transient message."""
-        await self._call("toast", {"text": text, "kind": kind}, NO_RESULT)
+    async def toast(self, text: str, kind: str | None = None, body: str | None = None, target: Page | None = None) -> Toast:
+        """Show a transient message, labelled as this extension's."""
+        return cast(Toast, await self._call("toast", {"text": text, "kind": kind, "body": body, "target": target}, Toast))
+
+    async def dismiss_toast(self, toast_id: str) -> None:
+        """Take one of this extension's toasts away."""
+        await self._call("dismiss_toast", {"toast_id": toast_id}, NO_RESULT)
 
     async def show_dialog(self, spec: JsonValue) -> JsonValue:
-        """Show a dialog and wait for the answer. (`dialog` is the property.)"""
+        """Show a dialog and wait for the person's answer. `spec` is `{title, body, buttons: [{id, label, primary}], input: {label, placeholder, value}}` — `buttons` defaults to one OK, `input` is optional. Answers `{button, value}`, or `None` when the dialog was dismissed, or replaced by another. (`dialog` is the property.)"""
         return cast(JsonValue, await self._call("show_dialog", {"spec": spec}, JsonValue))
 
-    async def scroll_to(self, message_id: str) -> None:
-        """Scroll the transcript to a message."""
-        await self._call("scroll_to", {"message_id": message_id}, NO_RESULT)
+    async def scroll_to(self, message_id: str) -> Scroll:
+        """Scroll the transcript to a message, by its run; `bottom` for the newest."""
+        return cast(Scroll, await self._call("scroll_to", {"message_id": message_id}, Scroll))
 
 class HostSessions(HostObject):
     """The sessions of this project, and which one the active window shows."""

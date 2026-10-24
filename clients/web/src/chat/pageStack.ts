@@ -186,7 +186,30 @@ export function reset(): PageRoute[] {
   return [];
 }
 
-/** Serialise for `client_state`. */
+/**
+ * The part of a stack this window can draw: up to the first page whose
+ * kind is not known right now.
+ *
+ * The stack is the window's model (`ui.route`) and outlives what is
+ * installed — an extension's page may be on it while that extension is
+ * still being listed, or after it was disabled. Truncated rather than
+ * skipped, for the reason {@link restore} gives: a trail with a hole in
+ * it says something untrue. Recomputed as the registry changes, so an
+ * extension's page appears once its extension is listed.
+ */
+export function visible(
+  stack: readonly PageRoute[],
+  known: { has(kind: string): boolean } = basePages,
+): PageRoute[] {
+  const out: PageRoute[] = [];
+  for (const route of stack) {
+    if (!known.has(route.kind)) break;
+    out.push(route);
+  }
+  return out.length === stack.length ? (stack as PageRoute[]) : out;
+}
+
+/** Serialise a stack to text. */
 export function serialise(stack: readonly PageRoute[]): string {
   return JSON.stringify(stack);
 }

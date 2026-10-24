@@ -26,6 +26,8 @@ export function Sidebar({
   onNewChat,
   onPick,
   onClose,
+  section = null,
+  onSection,
 }: {
   open: boolean;
   sessions: SessionEntry[];
@@ -43,9 +45,39 @@ export function Sidebar({
   onNewChat: () => void;
   onPick: (id: string) => void;
   onClose: () => void;
+  /** The part of the list in view — ``ui.sidebar.section``: `links`
+   *  (the destinations) or `sessions`. Set from outside, the list
+   *  scrolls there. */
+  section?: "links" | "sessions" | null;
+  /** The person scrolled the list into the other part. */
+  onSection?: (section: "links" | "sessions") => void;
 }) {
   const listRef = useRef<HTMLDivElement>(null);
   const topRef = useRef<HTMLDivElement>(null);
+  const sessionsRef = useRef<HTMLDivElement>(null);
+  // What this list last said it shows, so a section it reported itself
+  // is not scrolled to again under the person's hand.
+  const reportedRef = useRef<"links" | "sessions" | null>(null);
+
+  const sectionInView = (): "links" | "sessions" => {
+    const list = listRef.current;
+    const header = sessionsRef.current;
+    if (!list || !header) return "links";
+    const top = parseFloat(getComputedStyle(list).paddingTop) || 0;
+    return list.scrollTop + top >= header.offsetTop ? "sessions" : "links";
+  };
+
+  useEffect(() => {
+    if (!section || section === reportedRef.current) return;
+    reportedRef.current = section;
+    const list = listRef.current;
+    if (!list) return;
+    if (section === "links") list.scrollTo({ top: 0 });
+    else {
+      const top = parseFloat(getComputedStyle(list).paddingTop) || 0;
+      list.scrollTo({ top: (sessionsRef.current?.offsetTop ?? 0) - top });
+    }
+  }, [section]);
 
   // The floating cluster's height is also the list's top padding and
   // the blur strip's height — one measurement, three uses. It used to
@@ -108,7 +140,16 @@ export function Sidebar({
             native scrollbar is hidden so the cluster blur doesn't
             frost it; this renders the thumb above the blur at z:30. */}
         <ScrollIndicator scrollRef={listRef} />
-        <div className="sidebar-list" ref={listRef}>
+        <div
+          className="sidebar-list"
+          ref={listRef}
+          onScroll={() => {
+            const now = sectionInView();
+            if (now === reportedRef.current) return;
+            reportedRef.current = now;
+            onSection?.(now);
+          }}
+        >
           {/* Links and the "Sessions" label scroll with the list
               rather than riding in the pinned cluster above. They are
               the head of one surface — destinations, then the chats
@@ -138,7 +179,9 @@ export function Sidebar({
               ))}
             </nav>
           )}
-          <div className="sidebar-section">Sessions</div>
+          <div className="sidebar-section" ref={sessionsRef}>
+            Sessions
+          </div>
           {sessions.length === 0 && (
             <div className="session-item" style={{ cursor: "default" }}>
               No past sessions

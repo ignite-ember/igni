@@ -69,11 +69,6 @@ class RpcMethod(StrEnum):
     CODEINDEX_HEAD_BREAKDOWN = "codeindex_head_breakdown"
     CODEINDEX_ACTIVITY = "codeindex_activity"
 
-    # ── Per-client UI state (browser / IDE plugin) ────────────────
-    GET_CLIENT_STATE = "get_client_state"
-    SET_CLIENT_STATE = "set_client_state"
-    DELETE_CLIENT_STATE = "delete_client_state"
-
     # ── Session / status ──────────────────────────────────────────
     GET_SESSION_ID = "get_session_id"
     GET_RUN_TIMEOUT = "get_run_timeout"
@@ -382,6 +377,12 @@ class RpcMethod(StrEnum):
     # extension's process reaches over its loopback socket. Pool-level,
     # like ``attach_session``: the model spans every session.
     HOST_MODEL = "host_model"
+    # How a *window* reaches its own part of the host model: it hydrates
+    # its model, and writes every change its views make, here — the
+    # same :class:`~ember_code.extensions.host.windows.Windows` an
+    # extension's ``host.ui`` writes. Pool-level: a window spans
+    # sessions. See ``clients/web/src/clientState.ts``.
+    WINDOW_MODEL = "window_model"
 
 
 def validate_rpc_table(registered_keys: Iterable[str]) -> None:

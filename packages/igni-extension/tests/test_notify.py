@@ -90,6 +90,11 @@ def test_a_body_is_one_line() -> None:
         {"target": None},
         {"target": {"page": ""}},
         {"target": {"page": "p", "params": {"big": "x" * 2100}}},
+        # A page's params are strings, as the host schema's
+        # NotificationTarget says.
+        {"target": {"page": "p", "params": {"n": 1}}},
+        {"target": {"page": "p", "params": {"flag": True}}},
+        {"target": {"page": "p", "params": {"none": None}}},
         {"recipients": ["someone"]},
         {"actor": "someone"},
     ],

@@ -69,6 +69,10 @@ SDK → host, any number in flight; replies may arrive in any order.
 * `value` — the value of a `set`.
 * `signals` — signal **wire names** (below).
 
+An SDK may give up on a reply that does not come (both shipped SDKs do,
+after a while), with one exception: `ui.show_dialog` answers when the
+person does, so it has no limit.
+
 ## Replies
 
 ```json

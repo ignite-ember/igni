@@ -24,7 +24,6 @@ import logging
 from collections.abc import Callable
 from typing import Any
 
-from ember_code.extensions.events import EVENT_SINK_TOOL
 from ember_code.extensions.registry import (
     NAMESPACE,
     ExtensionRefused,
@@ -131,47 +130,6 @@ class ExtensionRpc:
             if self._on_failure is not None:
                 self._on_failure(extension_id)
             raise ExtensionRefused(str(exc)) from exc
-
-    async def notify(self, extension_id: str, topic: str, payload: dict[str, Any]) -> bool:
-        """Tell an extension's *service* that something happened.
-
-        The third way igni reaches a service, and the only one the
-        extension did not ask for: ``dispatch`` answers its UI,
-        ``invoke_command`` answers the user, and this answers the
-        host. Authorised before it gets here — the grant check lives
-        in :class:`~ember_code.extensions.events.EventRouter`, which
-        is the only place that can see the whole audience.
-
-        ``False`` rather than an exception for every ordinary reason
-        it does not land: not installed, not READY, no service
-        bound, or a service that does not implement the sink. None
-        of those is a fault, and an event has no caller to raise at.
-
-        **Does not report a failure to the health monitor.** A call
-        a *person* made failing is a reason to probe immediately;
-        an event failing is not, because events fire on a timer and
-        a persistently broken service would turn that into a probe
-        every two seconds. A dead service is caught by the ordinary
-        sweep.
-
-        One consequence worth naming: the READY check means a
-        service is never told it has *stopped* being READY. That is
-        the right way round — the message would be going to the
-        thing it is about — and the frame, which is who needs to
-        know, is told either way.
-        """
-        entry = self._registry.get(extension_id)
-        if entry is None or entry.state is not ExtensionState.READY:
-            return False
-        service = self._services.get(extension_id)
-        if service is None or not service.offers(EVENT_SINK_TOOL):
-            return False
-        try:
-            await service.call(EVENT_SINK_TOOL, {"topic": topic, "payload": payload})
-        except ExtensionServiceError as exc:
-            logger.warning("telling %s about %s failed: %s", extension_id, topic, exc)
-            return False
-        return True
 
     async def dispatch(self, *, caller: str | None, method: str, args: dict[str, Any]) -> Any:
         """Serve one call, or raise with a sentence naming the fix."""

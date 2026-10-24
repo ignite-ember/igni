@@ -37,6 +37,10 @@ logger = logging.getLogger(__name__)
 NOTIFY = "notifications.notify"
 
 
+#: Members whose answer is the person's, so no timeout applies to them.
+WAITS_ON_THE_PERSON = frozenset({"ui.show_dialog"})
+
+
 class HostConnection:
     """One extension process's connection to the igni host."""
 
@@ -166,7 +170,9 @@ class HostConnection:
         self._waiting[request_id] = future
         try:
             await socket.send(json.dumps({"id": request_id, **body}))
-            reply = await asyncio.wait_for(future, self.TIMEOUT)
+            # A dialog waits on the person, for as long as they take.
+            limit = None if body.get("path") in WAITS_ON_THE_PERSON else self.TIMEOUT
+            reply = await asyncio.wait_for(future, limit)
         except (OSError, WebSocketException) as exc:
             raise HostUnavailable(f"the igni host went away: {exc}") from exc
         except TimeoutError as exc:
