@@ -99,16 +99,6 @@ class NoProjectContextTip(ContextualTip):
         )
 
 
-class KnowledgeDisabledTip(ContextualTip):
-    id: str = "artifacts_disabled"
-    message: str = (
-        'Enable the artifact store with "artifacts.enabled: true" to store and search documents.'
-    )
-
-    def matches(self, ctx: TipContext) -> bool:
-        return not ctx.settings.artifacts.enabled
-
-
 class GuardrailsOffTip(ContextualTip):
     id: str = "guardrails_off"
     message: str = (
@@ -196,7 +186,6 @@ class TipRegistry(BaseModel):
         return cls(
             contextual=[
                 NoProjectContextTip(),
-                KnowledgeDisabledTip(),
                 GuardrailsOffTip(),
                 ReasoningOffTip(),
                 LearningOffTip(),

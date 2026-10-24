@@ -344,20 +344,11 @@ class BackendApp:
             )
         except Exception:
             logger.exception("neo4j cutover failed; will retry on next boot")
-        # Build the :class:`Neo4jRuntime` and switch the default
-        # session's artifact store to it, when ``knowledge.enabled``
-        # says so (see :mod:`ember_code.backend.artifact_gate`).
-        #
-        # Deliberately not awaited. On a cold machine the attach
-        # downloads Neo4j and a JDK — ~500 MB — and waits for the bolt
-        # port before returning. Awaiting it here would put that
-        # download between the user and a usable backend: the loading
-        # screen would sit there for minutes on a first launch, and on
-        # a blocked network it would sit there and then fail, with the
-        # artifact store taking the whole app down with it.
-        #
-        # This was survivable before only because the env gate meant
-        # the call almost never did anything.
+        # Build the :class:`Neo4jRuntime` for CodeIndex. Deliberately
+        # not awaited: on a cold machine the attach downloads Neo4j and
+        # a JDK — ~500 MB — and waits for the bolt port, and awaiting it
+        # here would put that download between the user and a usable
+        # backend.
         self._orchestrator.attach_neo4j_in_background()
         # Workflow runner (CC ``/workflows`` parity): the BE runs
         # ``.claude/workflows/*.mjs`` scripts in a Node subprocess

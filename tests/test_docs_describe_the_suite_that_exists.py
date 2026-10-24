@@ -106,12 +106,11 @@ _RECORDS = {
 
 #: Known offenders nobody has fixed yet, kept explicit so the rule can stay
 #: stated over the whole corpus instead of quietly narrowing its glob to the
-#: files that happen to pass. ``QUICKSTART.md`` still advertises the dead
-#: ``knowledge`` extra, and so does ``Makefile``'s ``install`` target (which
-#: is not markdown, so this rule cannot see it at all — fix both together).
-#: ``test_the_exemption_is_still_needed`` below fails once it is fixed, so
-#: this cannot outlive the bug.
-_EXTRAS_TODO = {"QUICKSTART.md"}
+#: files that happen to pass. Empty: the last one, ``QUICKSTART.md``
+#: advertising the dead ``knowledge`` extra, went with its section.
+#: ``test_the_exemption_is_still_needed`` below fails if an entry here no
+#: longer offends, so this cannot outlive a fix.
+_EXTRAS_TODO: set[str] = set()
 
 
 def _defined_extras() -> set[str]:

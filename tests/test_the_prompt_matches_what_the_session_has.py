@@ -32,7 +32,17 @@ from pathlib import Path
 import pytest
 
 import ember_code
+from ember_code.core.prompts.conditionals import ConditionalRegistry
 from ember_code.core.session.agent_builder.prompt_builder import PromptBuilder
+
+
+def _with_artifacts(live: bool) -> ConditionalRegistry:
+    """A registry in which an installed extension satisfies ``artifacts``
+    — what the documents extension declares while it runs — or nobody does."""
+    registry = ConditionalRegistry()
+    if live:
+        registry.declare("igni.artifacts", {"artifacts", "can-persist"})
+    return registry
 
 PROMPTS = Path(ember_code.__file__).parent / "core" / "prompts"
 
@@ -46,7 +56,7 @@ def _render(*, codeindex: bool, artifacts: bool) -> str:
         project_dir=Path("."),
         settings=None,
         codeindex_available=codeindex,
-        artifacts_available=artifacts,
+        conditionals=_with_artifacts(artifacts),
         agent_catalog="(catalog)",
         skill_descriptions="",
         prompt_loader=_loader,
@@ -147,12 +157,12 @@ class TestNoDeadToolSurvivesInEitherBranch:
                 )
 
 
-class TestTheSwitchIsTheOneTheToolkitReads:
-    def test_the_coordinator_gates_on_the_store_itself(self):
-        """``s.artifacts is not None`` is the same value
-        ``attach_artifact_manager`` is gated on. Anything else — a
-        separate settings read, a cached boolean — could disagree with
-        the toolkit, which is the whole failure being prevented."""
+class TestTheSwitchIsTheOneTheExtensionDeclares:
+    def test_the_coordinator_does_not_decide_it(self):
+        """Whether the store is there is the extension's to say, by
+        declaring ``artifacts`` while it runs. A host flag — a settings
+        read, a check on a manager the session holds — could disagree
+        with the extension, and would be igni naming one extension."""
         from pathlib import Path as _Path
 
         source = (
@@ -163,7 +173,7 @@ class TestTheSwitchIsTheOneTheToolkitReads:
             / "coordinator.py"
         ).read_text(encoding="utf-8")
 
-        assert "artifacts_available=s.artifacts is not None" in source
+        assert "artifacts" not in source
 
     def test_a_missing_section_file_omits_rather_than_promises(self):
         """Degrading toward silence, not toward a false promise."""
@@ -171,7 +181,7 @@ class TestTheSwitchIsTheOneTheToolkitReads:
             project_dir=Path("."),
             settings=None,
             codeindex_available=False,
-            artifacts_available=True,
+            conditionals=_with_artifacts(True),
             agent_catalog="x",
             skill_descriptions="",
             prompt_loader=lambda name: (_ for _ in ()).throw(FileNotFoundError(name)),
@@ -191,7 +201,7 @@ class TestUnbalancedMarkersRaise:
             project_dir=Path("."),
             settings=None,
             codeindex_available=False,
-            artifacts_available=artifacts,
+            conditionals=_with_artifacts(artifacts),
             agent_catalog="x",
             skill_descriptions="",
             prompt_loader=_loader,
@@ -205,7 +215,7 @@ class TestUnbalancedMarkersRaise:
             project_dir=Path("."),
             settings=None,
             codeindex_available=False,
-            artifacts_available=True,
+            conditionals=_with_artifacts(True),
             agent_catalog="x",
             skill_descriptions="",
             prompt_loader=_loader,
@@ -219,7 +229,7 @@ class TestUnbalancedMarkersRaise:
             project_dir=Path("."),
             settings=None,
             codeindex_available=False,
-            artifacts_available=False,
+            conditionals=_with_artifacts(False),
             agent_catalog="x",
             skill_descriptions="",
             prompt_loader=_loader,
@@ -236,7 +246,7 @@ class TestUnbalancedMarkersRaise:
             project_dir=Path("."),
             settings=None,
             codeindex_available=False,
-            artifacts_available=True,
+            conditionals=_with_artifacts(True),
             agent_catalog="x",
             skill_descriptions="",
             prompt_loader=_loader,

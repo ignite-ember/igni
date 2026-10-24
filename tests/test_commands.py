@@ -42,7 +42,6 @@ def _make_session():
     session.settings.guardrails.pii_detection = False
     session.settings.guardrails.prompt_injection = False
     session.settings.guardrails.moderation = False
-    session.settings.artifacts.enabled = False
     session.settings.orchestration.max_total_agents = 20
     session.settings.orchestration.max_nesting_depth = 3
     session.memory_mgr.get_memories = AsyncMock(return_value=[])

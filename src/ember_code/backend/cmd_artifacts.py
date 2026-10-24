@@ -25,8 +25,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from ember_code.protocol.messages import CommandAction
 from ember_code.backend.command_result import CommandResult
+from ember_code.protocol.messages import CommandAction
 
 if TYPE_CHECKING:
     from ember_code.backend.command_handler import CommandHandler

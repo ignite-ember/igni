@@ -9,7 +9,6 @@ from __future__ import annotations
 
 from ember_code.core.config.schemas.display import DisplayConfig
 from ember_code.core.config.schemas.llm_behavior import (
-    ArtifactsConfig,
     EvalsConfig,
     GuardrailsConfig,
     LearningConfig,
@@ -45,7 +44,6 @@ __all__ = [
     "EvalsConfig",
     "GuardrailsConfig",
     "HooksConfig",
-    "ArtifactsConfig",
     "LearningConfig",
     "MemoryConfig",
     "ModelsConfig",

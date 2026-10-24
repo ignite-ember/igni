@@ -231,8 +231,8 @@ class TestTheSidecarIsNotAttached:
 
         return SessionOrchestrator
 
-    async def _attach(self, monkeypatch, *, code_index: bool, knowledge: bool):
-        """Call ``attach_neo4j`` with the two flags set, recording whether
+    async def _attach(self, monkeypatch, *, code_index: bool):
+        """Call ``attach_neo4j`` with CodeIndex on or off, recording whether
         the runtime was constructed at all."""
         from ember_code.backend import neo4j_runtime as runtime_module
         from ember_code.backend import session_orchestrator as module
@@ -249,7 +249,6 @@ class TestTheSidecarIsNotAttached:
 
         settings = Settings()
         object.__setattr__(settings.code_index, "enabled", code_index)
-        object.__setattr__(settings.artifacts, "enabled", knowledge)
 
         orchestrator = module.SessionOrchestrator.__new__(module.SessionOrchestrator)
         orchestrator._settings = settings
@@ -258,31 +257,23 @@ class TestTheSidecarIsNotAttached:
 
         return await orchestrator.attach_neo4j(), constructed
 
-    async def test_both_disabled_means_no_runtime_at_all(self, monkeypatch):
-        runtime, constructed = await self._attach(monkeypatch, code_index=False, knowledge=False)
+    async def test_disabled_means_no_runtime_at_all(self, monkeypatch):
+        runtime, constructed = await self._attach(monkeypatch, code_index=False)
 
         assert runtime is None
         assert constructed == [], "no download, no process, no refcount"
 
-    @pytest.mark.parametrize(
-        ("code_index", "knowledge"),
-        [(True, False), (False, True), (True, True)],
-    )
-    async def test_either_feature_still_gets_the_runtime(self, monkeypatch, code_index, knowledge):
-        """Knowledge is backed by the same sidecar, and its Chroma
-        fallback was removed when the index moved to Neo4j — so
-        disabling CodeIndex must not take knowledge down with it.
-
-        The stub runtime raises, so reaching construction is the
-        observable signal that the attach was attempted.
-        """
+    async def test_enabled_still_gets_the_runtime(self, monkeypatch):
+        """The stub runtime raises, so reaching construction is the
+        observable signal that the attach was attempted."""
+        code_index = True
         from ember_code.backend import neo4j_runtime as runtime_module
         from ember_code.backend import session_orchestrator as module
 
         # conftest forces IGNI_NEO4J_RUNTIME=0 suite-wide so nothing pulls
         # half a gigabyte onto a runner; its docstring says a test that wants
         # the runtime on sets the variable itself. That switch now gates the
-        # whole sidecar, not knowledge alone.
+        # whole sidecar.
         monkeypatch.delenv("IGNI_NEO4J_DISABLED", raising=False)
         monkeypatch.setenv("IGNI_NEO4J_RUNTIME", "1")
 
@@ -297,7 +288,6 @@ class TestTheSidecarIsNotAttached:
 
         settings = Settings()
         object.__setattr__(settings.code_index, "enabled", code_index)
-        object.__setattr__(settings.artifacts, "enabled", knowledge)
 
         orchestrator = module.SessionOrchestrator.__new__(module.SessionOrchestrator)
         orchestrator._settings = settings

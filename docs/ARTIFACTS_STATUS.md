@@ -222,7 +222,8 @@ declaration names wins, which is how a pin moves forward. Candidates
 are not inherited (evidence about the version that was read, not a
 claim about its replacement), and `artifact_dismiss_source` still
 removes an edge — removal takes a decision rather than an omission.
-Locked in by `tests/test_artifact_revision_keeps_its_lineage.py`.
+Locked in by test_artifact_revision_keeps_its_lineage.py, which moved with the
+extension to igni__artifacts.
 
 **Cases were contaminating each other.** `SuiteRunner` never passed
 `session_id`, so every case ran in the agent's default session and

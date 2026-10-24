@@ -216,10 +216,10 @@ directly is the honest spelling.
 
 ## 5b. Where CodeIndex has got to
 
-`igni__code-index/extension/` exists and installs.
-`tests/test_the_codeindex_extension_runs_on_the_floor.py` drives the
-real bundle — not an example — and it is skipped when that repository
-is not checked out beside this one.
+`igni__code-index/extension/` exists and installs. Its own suite drives
+the real bundle inside igni — test_it_runs_inside_igni.py, in that
+repository's `extension/tests/` — and igni's contract tests for its
+agents read the sibling checkout when there is one.
 
 What arrives from its manifest, each replacing something hardcoded
 here: the page, the menu entry, `/codeindex`, the status chip,

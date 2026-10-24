@@ -474,8 +474,6 @@ class CodeIndex:
                     # nodes: property lookups do full scans and
                     # `db.index.vector.queryNodes('chunk_embedding', …)`
                     # fails with "no such vector schema index".
-                    # `attach_artifacts_neo4j` does the equivalent for the
-                    # knowledge DB; this closes the same gap for code_index.
                     await client.apply_schema()
                     self._clients[sha] = client
             return self._clients[sha]

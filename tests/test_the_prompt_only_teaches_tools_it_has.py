@@ -31,7 +31,17 @@ from pathlib import Path
 import pytest
 
 from ember_code.core.prompts import load_prompt
+from ember_code.core.prompts.conditionals import ConditionalRegistry
 from ember_code.core.session.agent_builder.prompt_builder import PromptBuilder
+
+
+def _with_artifacts(live: bool) -> ConditionalRegistry:
+    """A registry in which an installed extension satisfies ``artifacts``
+    — what the documents extension declares while it runs — or nobody does."""
+    registry = ConditionalRegistry()
+    if live:
+        registry.declare("igni.artifacts", {"artifacts", "can-persist"})
+    return registry
 
 # The names the main-agent prompt uses for the artifact store.
 # Every artifact tool. The main agent holds none of them — only the
@@ -65,7 +75,7 @@ def _build(*, knowledge: bool, codeindex: bool = False, user_memory: bool = True
         project_dir=Path("/nonexistent"),
         settings=_Settings,
         codeindex_available=codeindex,
-        artifacts_available=knowledge,
+        conditionals=_with_artifacts(knowledge),
         user_memory_available=user_memory,
         agent_catalog="- researcher: reads things",
         skill_descriptions="",
@@ -130,7 +140,7 @@ class TestTheResolverFailsLoudly:
             project_dir=Path("/nonexistent"),
             settings=_Settings,
             codeindex_available=False,
-            artifacts_available=knowledge,
+            conditionals=_with_artifacts(knowledge),
             user_memory_available=user_memory,
             agent_catalog="",
             skill_descriptions="",

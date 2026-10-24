@@ -28,10 +28,28 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import pytest
+import yaml
 
+import ember_code
 from ember_code.core.tools.orchestrate_budget import SpawnBudget
 from ember_code.core.tools.orchestrate_events import SpawnDeps, SubAgentRegistry
 from ember_code.core.tools.orchestrate_spawn import AgentSpawn
+
+_BUNDLED = Path(ember_code.__file__).parent / "bundled_agents"
+
+#: The archivist is the Artifacts extension's: it ships in that
+#: extension's plugin, and is held to igni's agent contract here, against
+#: the sibling checkout when there is one.
+_ARTIFACTS_AGENTS = (
+    Path(__file__).resolve().parents[2] / "igni__artifacts" / "extension" / "plugin" / "agents"
+)
+_needs_artifacts = pytest.mark.skipif(
+    not _ARTIFACTS_AGENTS.is_dir(), reason="no igni__artifacts checkout beside this one"
+)
+
+
+def _agent_file(name: str) -> Path:
+    return _ARTIFACTS_AGENTS / name if name == "archivist.md" else _BUNDLED / name
 
 
 def _settings(max_depth: int = 5, max_agents: int = 20):
@@ -236,40 +254,36 @@ class TestTheDeclarationsAreRead:
 
     @staticmethod
     def _frontmatter(name: str) -> dict:
-        import yaml
-
-        import ember_code
-
-        path = Path(ember_code.__file__).parent / "bundled_agents" / name
-        body = path.read_text(encoding="utf-8")
+        body = _agent_file(name).read_text(encoding="utf-8")
         return yaml.safe_load(body.split("---")[1])
 
+    @_needs_artifacts
     def test_the_archivist_may_commission_a_visualization(self):
         assert self._frontmatter("archivist.md")["can_orchestrate"] is True
 
+    @_needs_artifacts
     def test_the_archivists_manifest_declares_what_it_holds(self):
-        """``Orchestrate`` is a reserved declare-don't-resolve name, the
-        same as ``Artifacts``: the registry resolves neither, the
-        builder attaches both.
+        """``Orchestrate`` is a reserved declare-don't-resolve name: the
+        registry does not resolve it, the builder attaches it.
 
         Declaring is not what grants it — ``can_orchestrate`` is. But a
         ``tools:`` list is the manifest a trace gets attributed by, and
         a grant the manifest omits is the drift that had to be repaired
-        across 1,370 captured specialist traces.
+        across 1,370 captured specialist traces. The document store's own
+        tools are not declared here: they reach the archivist from its
+        extension's service, offered only to that extension's agents.
         """
         declared = self._frontmatter("archivist.md")["tools"]
 
         assert "Orchestrate" in declared
-        assert "Artifacts" in declared
 
     def test_the_visualizer_is_a_leaf(self):
         """It renders what it is handed. Nothing to delegate to."""
         assert self._frontmatter("visualizer.md")["can_orchestrate"] is False
 
 
-@pytest.mark.parametrize("name", ["archivist.md", "visualizer.md"])
+@pytest.mark.parametrize(
+    "name", [pytest.param("archivist.md", marks=_needs_artifacts), "visualizer.md"]
+)
 def test_the_flag_is_stated_rather_than_inherited(name):
-    import ember_code
-
-    path = Path(ember_code.__file__).parent / "bundled_agents" / name
-    assert "can_orchestrate:" in path.read_text(encoding="utf-8")
+    assert "can_orchestrate:" in _agent_file(name).read_text(encoding="utf-8")

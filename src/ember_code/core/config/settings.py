@@ -57,7 +57,6 @@ from ember_code.core.config.model_entry import CLOUD_TOKEN_SENTINEL, ModelRegist
 # callers updating their import path.
 from ember_code.core.config.schemas import (
     AgentsConfig,
-    ArtifactsConfig,
     AuthConfig,
     CodeIndexConfig,
     ContextConfig,
@@ -156,7 +155,6 @@ class Settings(BaseModel):
     context: ContextConfig = Field(default_factory=ContextConfig)
     orchestration: OrchestrationConfig = Field(default_factory=OrchestrationConfig)
     memory: MemoryConfig = Field(default_factory=MemoryConfig)
-    artifacts: ArtifactsConfig = Field(default_factory=ArtifactsConfig)
     learning: LearningConfig = Field(default_factory=LearningConfig)
     reasoning: ReasoningConfig = Field(default_factory=ReasoningConfig)
     guardrails: GuardrailsConfig = Field(default_factory=GuardrailsConfig)
@@ -324,7 +322,6 @@ __all__ = [
     "EvalsConfig",
     "GuardrailsConfig",
     "HooksConfig",
-    "ArtifactsConfig",
     "LearningConfig",
     "MemoryConfig",
     "ModelsConfig",

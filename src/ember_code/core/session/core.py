@@ -513,8 +513,7 @@ class Session:
         """Swap the default chroma-backed code index for a neo4j
         one driven by ``runtime`` (typically a ``Neo4jRuntime``).
 
-        Mirrors :meth:`attach_artifacts_neo4j` for the code
-        intelligence side. Replaces ``self.code_index`` and
+        Replaces ``self.code_index`` and
         ``self.code_index_sync`` with neo4j-backed equivalents,
         points the :class:`CodeIndexAvailabilityRefresher` at the
         new refs, and recomputes ``_codeindex_available``.

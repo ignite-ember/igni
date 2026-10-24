@@ -49,13 +49,13 @@ from pathlib import Path
 from typing import Any
 
 from ember_code.core.agents.variants import VariantRegistry
-from ember_code.core.prompts.conditionals import ConditionalRegistry
-from ember_code.core.prompts.conditionals import conditionals as default_conditionals
 from ember_code.core.agents.variants import variants as default_variants
 from ember_code.core.contributed_commands import ContributedCommands
 from ember_code.core.contributed_commands import (
     contributed_commands as default_commands,
 )
+from ember_code.core.prompts.conditionals import ConditionalRegistry
+from ember_code.core.prompts.conditionals import conditionals as default_conditionals
 from ember_code.core.prompts.fragments import PromptFragments
 from ember_code.core.prompts.fragments import fragments as default_fragments
 from ember_code.extensions.manifest import ExtensionManifest, FragmentSource

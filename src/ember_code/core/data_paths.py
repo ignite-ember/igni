@@ -47,8 +47,8 @@ store as an untracked commit would make retention delete it.
 from __future__ import annotations
 
 import hashlib
-import re
 import logging
+import re
 import subprocess
 from pathlib import Path
 

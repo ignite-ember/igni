@@ -170,12 +170,12 @@ class TestToolRegistryResolveEdges:
         tools = registry.resolve(["Edit", "MCP:slack:send", "Write"])
         assert len(tools) == 2
 
-    def test_orchestrate_and_knowledge_silently_skipped(self):
-        # Orchestrate / Knowledge are added by the team builder,
-        # not the registry. Listing them in an agent's tools
-        # should be a clean no-op rather than an error.
+    def test_orchestrate_is_silently_skipped(self):
+        # Orchestrate is added by the team builder, not the registry.
+        # Listing it in an agent's tools should be a clean no-op rather
+        # than an error.
         registry = self._registry()
-        tools = registry.resolve(["Edit", "Orchestrate", "Knowledge", "Write"])
+        tools = registry.resolve(["Edit", "Orchestrate", "Write"])
         assert len(tools) == 2
 
     def test_unknown_tool_raises_with_helpful_message(self):

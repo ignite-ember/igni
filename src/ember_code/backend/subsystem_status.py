@@ -118,5 +118,4 @@ class SubsystemRegistry:
 #: Canonical names. Strings shared between a writer and a reader are
 #: exactly the thing that drifts — the sentinel-as-contract problem
 #: this codebase has hit repeatedly — so they live here once.
-ARTIFACTS = "artifacts"
 CODE_INDEX = "code_index"

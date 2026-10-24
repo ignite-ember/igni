@@ -30,6 +30,15 @@ def _index(tmp_path: Path, *, runtime=None) -> CodeIndex:
     return CodeIndex(project=project, data_dir=tmp_path / "data", runtime=runtime)
 
 
+#: Real-shaped commit hashes: retention reclaims only stores named
+#: like a commit, so an extension's named store is never mistaken for one.
+KEEPSHA = 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
+GONESHAAA = 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'
+LIVESHA = 'cccccccccccccccccccccccccccccccccccccccc'
+DEADSHA = 'dddddddddddddddddddddddddddddddddddddddd'
+OLDSHA = 'eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee'
+
+
 def _state_dir_with_bytes(index: CodeIndex, sha: str) -> Path:
     path = neo4j_runtime_dir(index.project, sha, data_dir=index.data_dir)
     (path / "data" / "databases" / "neo4j").mkdir(parents=True, exist_ok=True)
@@ -40,13 +49,13 @@ def _state_dir_with_bytes(index: CodeIndex, sha: str) -> Path:
 class TestTheSweepReclaimsTheNeo4jStores:
     def test_an_untracked_commit_store_is_removed(self, tmp_path: Path):
         index = _index(tmp_path)
-        index.manifest.upsert_commit("keepsha")
-        kept = _state_dir_with_bytes(index, "keepsha")
-        orphan = _state_dir_with_bytes(index, "goneshaaa")
+        index.manifest.upsert_commit(KEEPSHA)
+        kept = _state_dir_with_bytes(index, KEEPSHA)
+        orphan = _state_dir_with_bytes(index, GONESHAAA)
 
         removed = index.sweep_stale_dirs()
 
-        assert "goneshaaa" in removed
+        assert GONESHAAA in removed
         assert not orphan.exists(), "the per-commit Neo4j store is still on disk"
         assert kept.exists(), "a tracked commit's store was deleted"
 
@@ -76,23 +85,23 @@ class TestTheSweepReclaimsTheNeo4jStores:
         """Another backend may still be attached by refcount. Deleting the store
         underneath a running Neo4j corrupts it; the next sweep gets it."""
         index = _index(tmp_path)
-        live = _state_dir_with_bytes(index, "livesha")
+        live = _state_dir_with_bytes(index, LIVESHA)
         (live / "runtime.json").write_text(json.dumps({"pid": os.getpid()}))
 
         removed = index.sweep_stale_dirs()
 
-        assert "livesha" not in removed
+        assert LIVESHA not in removed
         assert live.exists()
 
     def test_a_store_whose_process_is_gone_is_removed(self, tmp_path: Path):
         index = _index(tmp_path)
-        dead = _state_dir_with_bytes(index, "deadsha")
+        dead = _state_dir_with_bytes(index, DEADSHA)
         # A pid that cannot be running: os.kill raises ProcessLookupError.
         (dead / "runtime.json").write_text(json.dumps({"pid": 2**31 - 1}))
 
         removed = index.sweep_stale_dirs()
 
-        assert "deadsha" in removed
+        assert DEADSHA in removed
         assert not dead.exists()
 
     def test_it_is_a_no_op_when_nothing_has_been_indexed(self, tmp_path: Path):
@@ -107,29 +116,29 @@ class TestEvictionStopsTheCommitProcess:
         runtime = AsyncMock()
         index = _index(tmp_path, runtime=runtime)
         stale = (datetime.now(timezone.utc) - timedelta(days=90)).isoformat()
-        index.manifest.upsert_commit("oldsha")
+        index.manifest.upsert_commit(OLDSHA)
         state = index.manifest.load()
-        state.commits["oldsha"].last_used_at = stale
+        state.commits[OLDSHA].last_used_at = stale
         index.manifest.save(state)
 
         dropped = await index.clean(keep_recent_days=30)
 
-        assert dropped == ["oldsha"]
-        runtime.stop_for_commit.assert_awaited_once_with(index.project_id, "oldsha")
-        assert "oldsha" not in index.manifest.load().commits
+        assert dropped == [OLDSHA]
+        runtime.stop_for_commit.assert_awaited_once_with(index.project_id, OLDSHA)
+        assert OLDSHA not in index.manifest.load().commits
 
     @pytest.mark.asyncio
     async def test_eviction_then_sweep_actually_frees_the_disk(self, tmp_path: Path):
         """The two halves together are the whole of retention on this path."""
         runtime = AsyncMock()
         index = _index(tmp_path, runtime=runtime)
-        index.manifest.upsert_commit("oldsha")
+        index.manifest.upsert_commit(OLDSHA)
         state = index.manifest.load()
-        state.commits["oldsha"].last_used_at = (
+        state.commits[OLDSHA].last_used_at = (
             datetime.now(timezone.utc) - timedelta(days=90)
         ).isoformat()
         index.manifest.save(state)
-        store = _state_dir_with_bytes(index, "oldsha")
+        store = _state_dir_with_bytes(index, OLDSHA)
 
         await index.clean(keep_recent_days=30)
         index.sweep_stale_dirs()

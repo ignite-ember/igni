@@ -244,15 +244,6 @@ class TestBackendServerRealConstruction:
         from ember_code.core.config.settings import load_settings
 
         settings = load_settings(project_dir=tmp_path)
-        # KB disabled so the Chroma index doesn't need to boot for
-        # this test — we're validating BackendServer wiring, not KB
-        # behaviour. Same story for other heavy subsystems that key
-        # off settings flags.
-        settings = settings.model_copy(
-            update={
-                "artifacts": settings.artifacts.model_copy(update={"enabled": False}),
-            }
-        )
 
         backend = BackendServer(settings, project_dir=tmp_path)
 
@@ -269,7 +260,7 @@ class TestBackendServerRealConstruction:
         assert status.model == settings.models.default
 
     def test_phase_methods_populate_expected_attributes(self, tmp_path):
-        """Verify each of the 9 `_init_*` phase methods populates its
+        """Verify each of the 8 `_init_*` phase methods populates its
         expected attribute set on the ``Session``. This is the smoke
         test that catches a phase method silently dropping a field
         assignment — the exact class of bug the audit's C-grade
@@ -277,7 +268,7 @@ class TestBackendServerRealConstruction:
 
         One assertion per phase method, in boot order:
         ``_init_loop_state`` → ``_init_per_session_scratch`` →
-        ``_init_knowledge`` → ``_init_codeindex`` →
+        ``_init_codeindex`` →
         ``_init_project_context`` →
         ``_init_plugins_output_styles_hooks`` →
         ``_init_agent_and_skill_pools`` →
@@ -286,11 +277,6 @@ class TestBackendServerRealConstruction:
         from ember_code.core.config.settings import load_settings
 
         settings = load_settings(project_dir=tmp_path)
-        settings = settings.model_copy(
-            update={
-                "artifacts": settings.artifacts.model_copy(update={"enabled": False}),
-            }
-        )
         backend = BackendServer(settings, project_dir=tmp_path)
         session = backend._session
 
@@ -312,10 +298,6 @@ class TestBackendServerRealConstruction:
         assert isinstance(session.broadcast_bus, BroadcastBus)
         assert not session.broadcast_bus.has_callbacks
         assert session.broadcast_bus.pending_count == 0
-
-        # _init_artifacts — disabled path yields None + ready flag set.
-        assert session.artifacts is None
-        assert session._knowledge_ready.is_set()
 
         # _init_codeindex — CodeIndex + sync manager + availability flag.
         assert session.code_index is not None

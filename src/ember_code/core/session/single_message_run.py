@@ -163,8 +163,7 @@ class SingleMessageRun(SessionRun):
         session = self._session
         settings = session.settings
         wants_codeindex = bool(getattr(getattr(settings, "code_index", None), "enabled", False))
-        wants_artifacts = bool(getattr(getattr(settings, "artifacts", None), "enabled", False))
-        if not (wants_codeindex or wants_artifacts):
+        if not wants_codeindex:
             return None
 
         try:
@@ -179,9 +178,7 @@ class SingleMessageRun(SessionRun):
             return None
 
         try:
-            if wants_artifacts and getattr(session, "artifacts", None) is not None:
-                await session.attach_artifacts_neo4j(runtime)
-            if wants_codeindex and getattr(session, "code_index", None) is not None:
+            if getattr(session, "code_index", None) is not None:
                 await session.attach_codeindex_neo4j(runtime)
         except Exception:  # noqa: BLE001
             logger.exception("Attaching the Neo4j runtime failed; continuing without it")

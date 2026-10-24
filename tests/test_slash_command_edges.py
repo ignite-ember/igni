@@ -14,7 +14,6 @@ from ember_code.core.session.schemas import PersistResult
 def _make_session():
     """Create a mock Session with enough attributes for CommandHandler."""
     session = MagicMock()
-    session._ensure_knowledge = AsyncMock()
     session.pool.list_agents.return_value = []
     session.pool.list_ephemeral.return_value = []
     session.skill_pool.list_skills.return_value = []
@@ -39,13 +38,8 @@ def _make_session():
     session.settings.guardrails.pii_detection = False
     session.settings.guardrails.prompt_injection = False
     session.settings.guardrails.moderation = False
-    session.settings.artifacts.enabled = False
     session.settings.orchestration.max_total_agents = 20
     session.settings.orchestration.max_nesting_depth = 3
-    # status() is async — give the mock a proper AsyncMock for it.
-    from ember_code.core.artifacts.models import ArtifactStatus
-
-    session.artifact_mgr.status = AsyncMock(return_value=ArtifactStatus(enabled=False))
     session.memory_mgr.get_memories = AsyncMock(return_value=[])
     session.mcp_manager.list_servers.return_value = []
     session.mcp_manager.list_connected.return_value = []
@@ -141,25 +135,6 @@ class TestAgentsEdgeCases:
         result = await handler.handle("/agents promote nonexistent")
         assert isinstance(result, CommandResult)
         assert result.kind in ("error", "info")
-
-
-class TestKnowledgeEdgeCases:
-    @pytest.mark.asyncio
-    async def test_artifact_add_no_args(self):
-        """'/knowledge add' with no argument should show status or error."""
-        session = _make_session()
-        handler = CommandHandler(session)
-        result = await handler.handle("/knowledge add")
-        assert isinstance(result, CommandResult)
-        # Should not crash
-
-    @pytest.mark.asyncio
-    async def test_artifact_search_no_query(self):
-        """'/knowledge search' with no query should show error."""
-        session = _make_session()
-        handler = CommandHandler(session)
-        result = await handler.handle("/knowledge search")
-        assert isinstance(result, CommandResult)
 
 
 class TestUnknownCommand:

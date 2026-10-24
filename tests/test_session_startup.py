@@ -37,8 +37,6 @@ def _bare_session(*, codeindex_enabled: bool = True):
 
     session.settings = Settings()
     object.__setattr__(session.settings.code_index, "enabled", codeindex_enabled)
-    session.artifacts = SimpleNamespace()
-    session.artifacts.start = AsyncMock()
     session.code_index = SimpleNamespace()
     session.code_index.sweep_stale_dirs = MagicMock(return_value=[])
     session.code_index.clean = AsyncMock(return_value=[])
@@ -71,45 +69,6 @@ def _bare_session(*, codeindex_enabled: bool = True):
     # path renders instead of crashing.
     session.display = MagicMock()
     return session
-
-
-class TestStartArtifactsBackground:
-    def test_no_knowledge_is_noop(self):
-        s = _bare_session()
-        s.artifacts = None
-        # Must not raise, must not need a loop.
-        SessionStartupCoordinator(s).start_knowledge_background()
-
-    def test_no_loop_is_noop(self):
-        # Called outside an event loop → get_running_loop raises,
-        # we early-return so Session's __init__ (which runs on the
-        # main thread with no loop yet) doesn't crash.
-        s = _bare_session()
-        SessionStartupCoordinator(s).start_knowledge_background()  # should not raise
-
-    @pytest.mark.asyncio
-    async def test_schedules_start_on_loop(self):
-        s = _bare_session()
-        SessionStartupCoordinator(s).start_knowledge_background()
-        # Give the scheduled task a chance to run.
-        import asyncio
-
-        await asyncio.sleep(0)
-        s.artifacts.start.assert_called_once()
-
-
-class TestEnsureArtifactsStarted:
-    @pytest.mark.asyncio
-    async def test_no_knowledge_is_noop(self):
-        s = _bare_session()
-        s.artifacts = None
-        await SessionStartupCoordinator(s).ensure_knowledge_started()  # should not raise
-
-    @pytest.mark.asyncio
-    async def test_calls_start(self):
-        s = _bare_session()
-        await SessionStartupCoordinator(s).ensure_knowledge_started()
-        s.artifacts.start.assert_called_once()
 
 
 class TestStartCodeindexBackground:

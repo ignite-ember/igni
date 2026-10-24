@@ -1,6 +1,6 @@
 """LLM-behavior cluster of config schemas.
 
-Groups memory, artifacts, learning, reasoning, evals, and guardrails
+Groups memory, learning, reasoning, evals, and guardrails
 schemas — the knobs that control what the model does with context
 and how it learns / reasons across turns.
 """
@@ -13,40 +13,6 @@ from pydantic import BaseModel
 
 class MemoryConfig(BaseModel):
     add_memories_to_context: bool = True
-
-
-class ArtifactsConfig(BaseModel):
-    """Versioned project documents with derivation lineage.
-
-    ``capture_reads`` is what makes lineage cheap to maintain: every
-    artifact the agent retrieves is offered back as a candidate source
-    on the next write. Turning it off does not disable lineage — it
-    only means nothing is proposed, and every derivation has to be
-    cited by hand or is lost.
-
-    There were three settings here for mirroring artifacts into
-    ``.igni/artifacts.yaml`` so a repository carried them. They are
-    gone with the file: a document's home is the cloud, which holds
-    the version chain, the source declaration each client rebuilds
-    its edges from, and the filing — and the file could carry only
-    head content, so it was never the copy anything could be restored
-    from. What it did reliably produce was a diff on every edit.
-    """
-
-    enabled: bool = True
-    collection_name: str = "igni_artifacts"
-    max_results: int = 10
-    # ── Lineage ───────────────────────────────────────────────────
-    capture_reads: bool = True
-    # Unconfirmed candidates older than this are pruned. Capture is
-    # deliberately generous, so without an expiry the review surface
-    # fills with reads nobody will ever adjudicate — which is the
-    # same as having no review surface.
-    candidate_ttl_days: int = 30
-    # Warn at session start when confirmed sources have moved under
-    # their dependents. Off makes staleness a thing you have to
-    # remember to ask about, which is the failure this exists to fix.
-    warn_on_stale: bool = True
 
 
 class LearningConfig(BaseModel):
