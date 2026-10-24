@@ -125,6 +125,24 @@ jobs:
       - name: Run tests
         run: uv run pytest tests/ -q -rs
 
+  # The Python SDKs under packages/ (igni-service, igni-extension) have
+  # dependencies of their own and are checked in their own environments,
+  # the way `make packages-check` does locally.
+  packages:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version-file: .python-version
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+
+      - name: Lint, type-check and test the SDKs
+        run: make packages-check
+
   # The shared web UI lives under ``clients/web`` and is consumed by
   # the Tauri / VSCode / JetBrains shells. Typecheck + tests run on
   # every push so a regression doesn't ride through to a release

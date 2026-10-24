@@ -1,4 +1,4 @@
-.PHONY: help install test lint format typecheck check clean
+.PHONY: help install test lint format typecheck check clean packages-check
 
 VENV := .venv/bin
 
@@ -43,6 +43,23 @@ check: lint format-check typecheck test ## Run all checks (lint + format + typec
 fix: ## Auto-fix linting and formatting issues
 	$(VENV)/ruff check --fix src/ tests/
 	$(VENV)/ruff format src/ tests/
+
+# The Python SDKs under packages/ — igni-service for a service,
+# igni-extension for an extension — are packages of their own, with
+# their own dependencies (FastAPI, for one, which igni itself does not
+# use). Each is checked in its own environment, which uv makes from its
+# pyproject on first run, rather than by adding their dependencies to
+# igni's.
+PY_PACKAGES := packages/igni-service packages/igni-extension
+
+packages-check: ## Lint, type-check and test the Python SDKs under packages/
+	@for pkg in $(PY_PACKAGES); do \
+		echo "== $$pkg"; \
+		uv run --directory $$pkg ruff check src tests || exit 1; \
+		uv run --directory $$pkg ruff format --check src tests || exit 1; \
+		uv run --directory $$pkg mypy || exit 1; \
+		uv run --directory $$pkg pytest -q || exit 1; \
+	done
 
 clean: ## Remove build artifacts and caches
 	rm -rf build/ dist/ *.egg-info src/*.egg-info
