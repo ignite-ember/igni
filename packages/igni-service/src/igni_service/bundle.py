@@ -123,6 +123,33 @@ class Requirement:
         return cls.normalise(re.split(r"[=<>!~;\[ ]", requirement, maxsplit=1)[0])
 
 
+class HashedRequirements:
+    """Requirement lines as `uv pip compile --generate-hashes` writes them.
+
+    Each requirement is followed by its `--hash` options on continuation
+    lines; they are joined into one line per requirement, which is a form
+    pip reads in a requirements file.
+    """
+
+    @staticmethod
+    def parse(text: str) -> list[str]:
+        requirements: list[str] = []
+        for raw in text.splitlines():
+            line = raw.strip().removesuffix("\\").strip()
+            if not line or line.startswith("#"):
+                continue
+            if line.startswith("--hash=") and requirements:
+                requirements[-1] = f"{requirements[-1]} {line}"
+            elif not line.startswith("-"):
+                requirements.append(line)
+        return requirements
+
+    @staticmethod
+    def bare(requirement: str) -> str:
+        """The requirement without its hashes, for a command line."""
+        return requirement.split(" --hash=", 1)[0]
+
+
 class CommandRunner:
     """Runs uv and pip, with a fixed timestamp for anything they build."""
 
@@ -339,6 +366,12 @@ class BundleBuilder:
                 # uv workspace's path sources would otherwise turn the
                 # SDKs into editable paths that exist only here.
                 "--no-sources",
+                # Every file is pinned by hash, so the download below takes
+                # exactly what this resolution chose, from whichever index
+                # serves it. A same-named package published anywhere else
+                # cannot match — that is what keeps a public look-alike of
+                # an igni package out of a bundle.
+                "--generate-hashes",
                 *self._index_flags(),
                 *self._isolation_flags(),
                 "-o",
@@ -349,11 +382,7 @@ class BundleBuilder:
             raise BundleError(
                 f"could not resolve the dependencies for {platform.name}:\n{compiled.stderr}"
             )
-        return [
-            line.strip()
-            for line in out.read_text().splitlines()
-            if line.strip() and not line.lstrip().startswith(("#", "-"))
-        ]
+        return HashedRequirements.parse(out.read_text())
 
     def _pip(self) -> list[str]:
         """pip, from this interpreter if it has one, otherwise through uv."""
@@ -368,6 +397,7 @@ class BundleBuilder:
             "--quiet",
             "--disable-pip-version-check",
             "--no-deps",
+            "--require-hashes",
             "--only-binary=:all:",
             "--python-version",
             PYTHON_VERSION,
@@ -419,6 +449,9 @@ class BundleBuilder:
     ) -> Path:
         built = scratch / "sdist-wheels"
         built.mkdir(exist_ok=True)
+        # Through a requirements file, so the sdist is held to its hash too.
+        pinned = scratch / f"sdist-{Requirement.name_of(requirement)}.txt"
+        pinned.write_text(requirement + "\n")
         isolation = [] if self._build_isolation else ["--no-build-isolation"]
         made = self._runner.run(
             [
@@ -431,9 +464,11 @@ class BundleBuilder:
                 ":all:",
                 *self._index_flags(),
                 *isolation,
+                "--require-hashes",
                 "-w",
                 str(built),
-                requirement,
+                "-r",
+                str(pinned),
             ]
         )
         if made.returncode != 0:
@@ -467,11 +502,14 @@ class BundleBuilder:
             if Requirement.name_of(requirement) in self._allow_sdist:
                 built = self._wheel_from_sdist(pip, requirement, into, scratch)
                 notes.append(
-                    f"{requirement}: no wheel for {', '.join(platforms)}; built {built.name} "
+                    f"{HashedRequirements.bare(requirement)}: no wheel for {', '.join(platforms)}; "
+                    f"built {built.name} "
                     "from its sdist (declared sdist-only)"
                 )
                 continue
-            unresolved.append(f"{requirement}: no cp312/abi3/pure wheel for {', '.join(platforms)}")
+            unresolved.append(
+                f"{HashedRequirements.bare(requirement)}: no cp312/abi3/pure wheel for {', '.join(platforms)}"
+            )
         if unresolved:
             raise BundleError(
                 "dependencies with no usable wheel:\n  "

@@ -275,12 +275,12 @@ In order — the consumers cannot resolve against an index that is empty.
 
 ## Not done
 
-- **The names on the public registries.** The consumers are safe from a
-  same-named public package (explicit index, scope mapping, hashes). The
-  extension-bundle builder is not entirely: its `pip download` sees igni's
-  index as an *extra* index, so a public `igni-extension` of the same version
-  would be a candidate. Registering `igni-service` and `igni-extension` on
-  PyPI (and the `@igni` organisation on npmjs) as empty placeholders closes
-  that for good.
+- **The names on the public registries.** Nothing depends on them any
+  more. The consumers use an explicit index, the `@igni` scope mapping and
+  hashes. The extension-bundle builder resolves with hashes and downloads
+  with `--require-hashes`, so a same-named public package cannot match.
+  Registering `igni-service`, `igni-extension` and the `@igni` npm
+  organisation as empty placeholders is still worth doing, so nobody else
+  can publish under those names.
 - **A changelog.** The release workflow writes a run summary, not release
   notes.
