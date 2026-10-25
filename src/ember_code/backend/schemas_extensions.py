@@ -127,6 +127,9 @@ class ExtensionSummary(BaseModel):
     #: What is wrong with it that does not stop it working — a tool
     #: whose server reports other hints than its manifest declares.
     problems: list[str] = Field(default_factory=list)
+    #: Why it is faulty — its calls timed out or crashed too often in a
+    #: row, and igni restarted it — or empty while it answers.
+    faulty: str = ""
     #: The tools it gives the agent, and what each says it is — what
     #: the permission modes decide on.
     tools: list[ExtensionTool] = Field(default_factory=list)
@@ -165,6 +168,7 @@ class ExtensionSummary(BaseModel):
                 ExtensionSwitchedOff(claim=off.claim, reason=off.reason) for off in entry.dropped
             ],
             problems=list(entry.problems),
+            faulty=entry.faulty,
             tools=[
                 ExtensionTool(name=tool.name, hints=tool.hints.describe())
                 for tool in manifest.permissions.tools

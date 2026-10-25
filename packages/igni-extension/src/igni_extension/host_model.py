@@ -1,4 +1,4 @@
-"""GENERATED from the igni host schema 1.5.0 by ember_code.extensions.host.codegen — do not edit. Run `make host-sdks` after changing the schema.
+"""GENERATED from the igni host schema 1.6.0 by ember_code.extensions.host.codegen — do not edit. Run `make host-sdks` after changing the schema.
 
 `ext.host` as an extension's process sees it. Read
 `docs/HOST_OBJECT_MODEL.md` in igni for what each object is.
@@ -12,7 +12,6 @@ from typing import cast
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from igni_extension.intercepts import Intercept
 from igni_extension.members import (
     NO_RESULT,
     HostLink,
@@ -23,7 +22,7 @@ from igni_extension.members import (
 )
 from igni_extension.notifications import LocalNotification, Target
 
-SCHEMA_VERSION = "1.5.0"
+SCHEMA_VERSION = "1.6.0"
 
 NotificationTarget = Target
 
@@ -807,6 +806,8 @@ class ExtensionInfo(BaseModel):
     """What it does not get: a collision with an extension higher in the super admin's priority order (the reason begins `lower priority than <extension>`), or an override whose text lacks the sections its manifest declares."""
     dropped: list[Withheld]
     """Its prompt edits that land nowhere: another extension overrides that prompt, and its override has no section the edit names."""
+    faulty: str
+    """Why it is faulty — its calls timed out or crashed three times in a row, so igni restarted it and does not wait on its hooks — or empty while it answers. The first answer after the restart clears it."""
 
 
 class Withheld(BaseModel):
@@ -928,65 +929,6 @@ class Decision(BaseModel):
     """By question id."""
     model: str
     """The Laya checkpoint that answered: `english` or `multilingual`."""
-
-
-class ChatSubmitting(BaseModel):
-    """A message about to start a run: the person's, or one an extension posted."""
-
-    model_config = ConfigDict(extra="allow")
-
-    session_id: str
-    text: str
-    """What the agent will be sent. An interceptor may change it."""
-    from_extension: str | None = None
-    """The extension that posted it; empty for the person's own."""
-    has_media: bool
-    """Whether files or images go with it."""
-
-
-class ToolCalling(BaseModel):
-    """A tool the agent is about to run, before igni's own permission checks."""
-
-    model_config = ConfigDict(extra="allow")
-
-    session_id: str
-    tool: str
-    """Its name, as the agent called it."""
-    args: dict[str, JsonValue]
-    """Its arguments. An interceptor may change them; igni's checks then run on what it changed them to."""
-
-
-class PlanSubmitting(BaseModel):
-    """A plan the agent is about to put to the person (`exit_plan_mode`)."""
-
-    model_config = ConfigDict(extra="allow")
-
-    session_id: str
-    plan: str
-    """The plan, in markdown. An interceptor may change it."""
-    tasks: list[JsonValue]
-    """The tasks the agent listed with it."""
-    attempt: int
-    """How many submissions were rejected since the agent entered plan mode: 0 for the first."""
-
-
-class ModelWrite(BaseModel):
-    """A write to the model about to be made."""
-
-    model_config = ConfigDict(extra="allow")
-
-    path: str
-    """The member written: `ui.navigate`, `sessions.current`."""
-    value: JsonValue = None
-    """A property's new value."""
-    params: dict[str, JsonValue] = Field(default_factory=dict)
-    """A method's parameters."""
-    window: str | None = None
-    """The window, for a per-window member."""
-    session_id: str | None = None
-    """The session it is made in."""
-    writer: str
-    """`person`, or the id of the extension making it."""
 
 
 class HostAppState(HostObject):
@@ -1840,94 +1782,6 @@ class Host(HostObject):
         """`decide` for up to 16 contexts at once, sharing forward passes. One decision per context, in order."""
         return cast(list[Decision], await self._call("decide_batch", {"contexts": contexts, "questions": questions}, list[Decision]))
 
-
-class Intercepts:
-    """Every event an extension can intercept: `@ext.intercept(Intercepts.TOOLS_CALLING)`.
-
-    The agent's decision points, then every write to the model by its
-    member's name (`UI_NAVIGATE` is a write to `ui.navigate`)."""
-
-    CHAT_SUBMITTING = Intercept("chat.submitting", ChatSubmitting, ("text",))
-    """A message is about to start a run: the person's, or one an extension posted."""
-    TOOLS_CALLING = Intercept("tools.calling", ToolCalling, ("args",))
-    """The agent is about to run a tool. Intercepted before igni's own permission checks, which then run on whatever the interceptor left."""
-    PLAN_SUBMITTING = Intercept("plan.submitting", PlanSubmitting, ("plan",))
-    """The agent is about to put a plan to the person (`exit_plan_mode`)."""
-    APP_SET_VERBOSE = Intercept("app.set_verbose", ModelWrite, ())
-    APP_SET_OUTPUT_STYLE = Intercept("app.set_output_style", ModelWrite, ())
-    APP_OPEN_EXTERNAL = Intercept("app.open_external", ModelWrite, ())
-    UI_ROUTE = Intercept("ui.route", ModelWrite, ())
-    UI_PANEL = Intercept("ui.panel", ModelWrite, ())
-    UI_SIDEBAR = Intercept("ui.sidebar", ModelWrite, ())
-    UI_PREVIEW = Intercept("ui.preview", ModelWrite, ())
-    UI_SELECTION = Intercept("ui.selection", ModelWrite, ())
-    UI_COMPOSER = Intercept("ui.composer", ModelWrite, ())
-    UI_NAVIGATE = Intercept("ui.navigate", ModelWrite, ())
-    UI_BACK = Intercept("ui.back", ModelWrite, ())
-    UI_OPEN_PANEL = Intercept("ui.open_panel", ModelWrite, ())
-    UI_CLOSE_PANEL = Intercept("ui.close_panel", ModelWrite, ())
-    UI_SET_SIDEBAR = Intercept("ui.set_sidebar", ModelWrite, ())
-    UI_OPEN_PREVIEW = Intercept("ui.open_preview", ModelWrite, ())
-    UI_CLOSE_PREVIEW = Intercept("ui.close_preview", ModelWrite, ())
-    UI_SELECT = Intercept("ui.select", ModelWrite, ())
-    UI_SET_COMPOSER = Intercept("ui.set_composer", ModelWrite, ())
-    UI_TOAST = Intercept("ui.toast", ModelWrite, ())
-    UI_DISMISS_TOAST = Intercept("ui.dismiss_toast", ModelWrite, ())
-    UI_SHOW_DIALOG = Intercept("ui.show_dialog", ModelWrite, ())
-    UI_SCROLL_TO = Intercept("ui.scroll_to", ModelWrite, ())
-    SESSIONS_CURRENT = Intercept("sessions.current", ModelWrite, ())
-    SESSIONS_OPEN = Intercept("sessions.open", ModelWrite, ())
-    SESSIONS_CREATE = Intercept("sessions.create", ModelWrite, ())
-    SESSIONS_ATTACH = Intercept("sessions.attach", ModelWrite, ())
-    CHAT_POST = Intercept("chat.post", ModelWrite, ())
-    CHAT_QUEUE = Intercept("chat.queue", ModelWrite, ())
-    CHAT_APPEND = Intercept("chat.append", ModelWrite, ())
-    CHAT_REPLACE = Intercept("chat.replace", ModelWrite, ())
-    CHAT_CANCEL = Intercept("chat.cancel", ModelWrite, ())
-    CHAT_CANCEL_AGENT = Intercept("chat.cancel_agent", ModelWrite, ())
-    CHAT_TRUNCATE = Intercept("chat.truncate", ModelWrite, ())
-    CHAT_COMPACT = Intercept("chat.compact", ModelWrite, ())
-    CHAT_EXTRACT_LEARNINGS = Intercept("chat.extract_learnings", ModelWrite, ())
-    CHAT_DISCARD_INTERRUPTED = Intercept("chat.discard_interrupted", ModelWrite, ())
-    CHAT_UPLOAD = Intercept("chat.upload", ModelWrite, ())
-    CHAT_APPROVALS_ANSWER = Intercept("chat.approvals.answer", ModelWrite, ())
-    CHAT_APPROVALS_ANSWER_ALL = Intercept("chat.approvals.answer_all", ModelWrite, ())
-    CHAT_VIEWS_DISPATCH = Intercept("chat.views.dispatch", ModelWrite, ())
-    PLAN_APPROVE = Intercept("plan.approve", ModelWrite, ())
-    PLAN_DISMISS = Intercept("plan.dismiss", ModelWrite, ())
-    LOOP_PAUSE = Intercept("loop.pause", ModelWrite, ())
-    LOOP_RESUME = Intercept("loop.resume", ModelWrite, ())
-    LOOP_CANCEL_PENDING = Intercept("loop.cancel_pending", ModelWrite, ())
-    LOOP_POP_PENDING = Intercept("loop.pop_pending", ModelWrite, ())
-    COMMANDS_RUN = Intercept("commands.run", ModelWrite, ())
-    AGENTS_PROMOTE_EPHEMERAL = Intercept("agents.promote_ephemeral", ModelWrite, ())
-    AGENTS_DISCARD_EPHEMERAL = Intercept("agents.discard_ephemeral", ModelWrite, ())
-    WORKFLOWS_RUN = Intercept("workflows.run", ModelWrite, ())
-    WORKFLOWS_CANCEL = Intercept("workflows.cancel", ModelWrite, ())
-    SCHEDULER_START = Intercept("scheduler.start", ModelWrite, ())
-    SCHEDULER_RUN_NOW = Intercept("scheduler.run_now", ModelWrite, ())
-    SCHEDULER_CANCEL = Intercept("scheduler.cancel", ModelWrite, ())
-    PROCESSES_STOP = Intercept("processes.stop", ModelWrite, ())
-    PROCESSES_RUN = Intercept("processes.run", ModelWrite, ())
-    WORKSPACE_PICK_DIR = Intercept("workspace.pick_dir", ModelWrite, ())
-    MODELS_CURRENT = Intercept("models.current", ModelWrite, ())
-    MCP_CONNECT = Intercept("mcp.connect", ModelWrite, ())
-    MCP_DISCONNECT = Intercept("mcp.disconnect", ModelWrite, ())
-    MCP_ENSURE = Intercept("mcp.ensure", ModelWrite, ())
-    MCP_SET_TOOL_ENABLED = Intercept("mcp.set_tool_enabled", ModelWrite, ())
-    PLUGINS_INSTALL = Intercept("plugins.install", ModelWrite, ())
-    PLUGINS_UPDATE = Intercept("plugins.update", ModelWrite, ())
-    PLUGINS_REMOVE = Intercept("plugins.remove", ModelWrite, ())
-    PLUGINS_SET_ENABLED = Intercept("plugins.set_enabled", ModelWrite, ())
-    PLUGINS_ADD_MARKETPLACE = Intercept("plugins.add_marketplace", ModelWrite, ())
-    PLUGINS_REMOVE_MARKETPLACE = Intercept("plugins.remove_marketplace", ModelWrite, ())
-    PLUGINS_REFRESH_MARKETPLACES = Intercept("plugins.refresh_marketplaces", ModelWrite, ())
-    HOOKS_RELOAD = Intercept("hooks.reload", ModelWrite, ())
-    HOOKS_FIRE_SESSION_START = Intercept("hooks.fire_session_start", ModelWrite, ())
-    PERMISSIONS_SAVE_RULE = Intercept("permissions.save_rule", ModelWrite, ())
-    ACCOUNT_SIGN_IN = Intercept("account.sign_in", ModelWrite, ())
-    ACCOUNT_SIGN_OUT = Intercept("account.sign_out", ModelWrite, ())
-
 __all__ = [
     "Account",
     "AgentEvent",
@@ -1937,7 +1791,6 @@ __all__ = [
     "ApprovalResolved",
     "Change",
     "ChatMessage",
-    "ChatSubmitting",
     "CollectionChange",
     "CommandOutcome",
     "Composer",
@@ -1985,12 +1838,10 @@ __all__ = [
     "HostWindows",
     "HostWorkflows",
     "HostWorkspace",
-    "Intercepts",
     "LocalNotification",
     "LoopStatus",
     "ModelChange",
     "ModelUsage",
-    "ModelWrite",
     "Notice",
     "NotificationCounts",
     "NotificationEntry",
@@ -2001,7 +1852,6 @@ __all__ = [
     "PermissionModeChange",
     "Plan",
     "PlanChange",
-    "PlanSubmitting",
     "Preview",
     "PreviewChange",
     "ProcessEvent",
@@ -2035,7 +1885,6 @@ __all__ = [
     "ToastChange",
     "Todos",
     "ToolCall",
-    "ToolCalling",
     "ToolFailure",
     "ToolResult",
     "Typing",

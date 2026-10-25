@@ -58,6 +58,7 @@ from ember_code.core.config.tool_permissions import (
     ToolPermissions,
 )
 from ember_code.core.hooks.events import HookEvent
+from ember_code.core.hooks.extension_gate import ExtensionHookGate, StopValue
 from ember_code.protocol import messages as msg
 
 if TYPE_CHECKING:
@@ -267,7 +268,14 @@ class HitlController:
         ):
             yield proto
 
-        # Fire Stop hook after continuation completes.
+        # Fire Stop hook after continuation completes: the extensions
+        # that hook it first, then the configured hooks.
+        verdict = await ExtensionHookGate.ask(
+            StopValue(session_id=self._session.session_id), HookEvent.STOP
+        )
+        if not verdict.allowed:
+            yield msg.Info(text=verdict.reason)
+            return
         stop_result = await self._session.hook_executor.execute(
             event=HookEvent.STOP.value,
             payload=StopHookPayload(session_id=self._session.session_id).model_dump(),

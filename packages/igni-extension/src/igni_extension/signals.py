@@ -15,10 +15,12 @@ from collections.abc import Awaitable, Callable
 from typing import Any
 
 from igni_extension.members import Signal
+from igni_extension.threads import OffTheLoop
 
 logger = logging.getLogger(__name__)
 
-Handler = Callable[[Any], Awaitable[None]]
+#: A reaction: `async def`, or a plain `def` the SDK runs in a worker thread.
+Handler = Callable[[Any], Awaitable[None] | None]
 
 
 class SignalHandlers:
@@ -31,8 +33,10 @@ class SignalHandlers:
 
     def on[T](
         self, signal: Signal[T]
-    ) -> Callable[[Callable[[T], Awaitable[None]]], Callable[[T], Awaitable[None]]]:
-        def register(handler: Callable[[T], Awaitable[None]]) -> Callable[[T], Awaitable[None]]:
+    ) -> Callable[[Callable[[T], Awaitable[None] | None]], Callable[[T], Awaitable[None] | None]]:
+        def register(
+            handler: Callable[[T], Awaitable[None] | None],
+        ) -> Callable[[T], Awaitable[None] | None]:
             first = signal.name not in self._handlers
             self._handlers.setdefault(signal.name, []).append(handler)
             self._signals[signal.name] = signal
@@ -62,7 +66,7 @@ class SignalHandlers:
         """
         for handler in self.handlers(signal):
             try:
-                await handler(value)
+                await OffTheLoop.call(handler, value)
             except Exception:
                 logger.exception("igni: a handler of %s failed", signal.name)
 

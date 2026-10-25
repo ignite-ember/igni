@@ -113,6 +113,10 @@ class InstalledExtension:
     #: What is wrong with it that does not stop it working — a tool
     #: whose server reports other hints than its manifest declares.
     problems: list[str] = field(default_factory=list)
+    #: Why it is faulty — it timed out or crashed too many times in a
+    #: row (:class:`~ember_code.extensions.faults.ExtensionFaults`) — or
+    #: empty while it answers. Its hooks are not waited on while it is.
+    faulty: str = ""
 
     @property
     def id(self) -> str:
@@ -201,6 +205,14 @@ class ExtensionRegistry:
         if entry is None or entry.problems == problems:
             return
         entry.problems = list(problems)
+        self._announce(extension_id)
+
+    def set_faulty(self, extension_id: str, reason: str) -> None:
+        """Mark it faulty, with why; an empty reason clears the mark."""
+        entry = self._installed.get(extension_id)
+        if entry is None or entry.faulty == reason:
+            return
+        entry.faulty = reason
         self._announce(extension_id)
 
     def authorise(self, *, caller: str | None, method: str) -> ExtensionMethod:

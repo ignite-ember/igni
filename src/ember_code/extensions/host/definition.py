@@ -22,12 +22,10 @@ from __future__ import annotations
 
 from ember_code.extensions.events import HostTopic
 from ember_code.extensions.host.spec import (
-    FailMode,
     HostSchema,
     ObjectSpec,
     PermissionSpec,
     field,
-    intercept,
     method,
     param,
     prop,
@@ -36,7 +34,7 @@ from ember_code.extensions.host.spec import (
 )
 
 #: The model's version. Semver; see the module docstring.
-SCHEMA_VERSION = "1.5.0"
+SCHEMA_VERSION = "1.6.0"
 
 # ── Permissions ───────────────────────────────────────────────────
 
@@ -688,6 +686,13 @@ TYPES = (
             "Its prompt edits that land nowhere: another extension overrides that "
             "prompt, and its override has no section the edit names.",
         ),
+        field(
+            "faulty",
+            "str",
+            "Why it is faulty — its calls timed out or crashed three times in a row, "
+            "so igni restarted it and does not wait on its hooks — or empty while it "
+            "answers. The first answer after the restart clears it.",
+        ),
     ),
     typedef(
         "Withheld",
@@ -810,53 +815,6 @@ TYPES = (
         field("answers", "dict[str, DecisionAnswer]", "By question id."),
         field("model", "str", "The Laya checkpoint that answered: `english` or `multilingual`."),
     ),
-    typedef(
-        "ChatSubmitting",
-        "A message about to start a run: the person's, or one an extension posted.",
-        field("session_id", "str"),
-        field("text", "str", "What the agent will be sent. An interceptor may change it."),
-        field(
-            "from_extension",
-            "str | None",
-            "The extension that posted it; empty for the person's own.",
-            optional=True,
-        ),
-        field("has_media", "bool", "Whether files or images go with it."),
-    ),
-    typedef(
-        "ToolCalling",
-        "A tool the agent is about to run, before igni's own permission checks.",
-        field("session_id", "str"),
-        field("tool", "str", "Its name, as the agent called it."),
-        field(
-            "args",
-            "dict[str, json]",
-            "Its arguments. An interceptor may change them; igni's checks then "
-            "run on what it changed them to.",
-        ),
-    ),
-    typedef(
-        "PlanSubmitting",
-        "A plan the agent is about to put to the person (`exit_plan_mode`).",
-        field("session_id", "str"),
-        field("plan", "str", "The plan, in markdown. An interceptor may change it."),
-        field("tasks", "list[json]", "The tasks the agent listed with it."),
-        field(
-            "attempt",
-            "int",
-            "How many submissions were rejected since the agent entered plan mode: 0 for the first.",
-        ),
-    ),
-    typedef(
-        "ModelWrite",
-        "A write to the model about to be made.",
-        field("path", "str", "The member written: `ui.navigate`, `sessions.current`."),
-        field("value", "json", "A property's new value.", optional=True),
-        field("params", "dict[str, json]", "A method's parameters.", optional=True),
-        field("window", "str | None", "The window, for a per-window member.", optional=True),
-        field("session_id", "str | None", "The session it is made in.", optional=True),
-        field("writer", "str", "`person`, or the id of the extension making it."),
-    ),
 )
 
 # ── Objects ───────────────────────────────────────────────────────
@@ -892,7 +850,6 @@ OBJECTS = (
                 param("questions", "list[DecisionQuestion]"),
                 result="Decision",
                 permission="decide",
-                reads=True,
             ),
             method(
                 "decide_batch",
@@ -902,7 +859,6 @@ OBJECTS = (
                 param("questions", "list[DecisionQuestion]"),
                 result="list[Decision]",
                 permission="decide",
-                reads=True,
             ),
         ),
     ),
@@ -948,10 +904,7 @@ OBJECTS = (
                 result="Display",
             ),
             method(
-                "check_for_update",
-                "Ask whether a newer igni exists.",
-                result="UpdateInfo | None",
-                reads=True,
+                "check_for_update", "Ask whether a newer igni exists.", result="UpdateInfo | None"
             ),
             method(
                 "open_external",
@@ -974,9 +927,7 @@ OBJECTS = (
         ),
         signals=(signal("changed", "StateChange", "A key was set or deleted."),),
         methods=(
-            method(
-                "get", "One value, or `None`.", param("key", "str"), result="str | None", reads=True
-            ),
+            method("get", "One value, or `None`.", param("key", "str"), result="str | None"),
             method("set", "Store one value.", param("key", "str"), param("value", "str")),
             method("delete", "Remove one key.", param("key", "str")),
         ),
@@ -1348,7 +1299,6 @@ OBJECTS = (
                 param("query", "str"),
                 param("limit", "int", "At most this many; 50 by default.", optional=True),
                 result="list[json]",
-                reads=True,
             ),
             method("cancel", "Stop the run.", permission="chat.control"),
             method(
@@ -1586,7 +1536,6 @@ OBJECTS = (
                 param("pid", "int"),
                 param("lines", "int", "200 by default.", optional=True),
                 result="json",
-                reads=True,
             ),
             method("stop", "Stop a shell.", param("pid", "int"), result="json"),
             method(
@@ -1620,28 +1569,17 @@ OBJECTS = (
             ),
         ),
         methods=(
-            method(
-                "read",
-                "Read a file in the project.",
-                param("path", "str"),
-                result="json",
-                reads=True,
-            ),
+            method("read", "Read a file in the project.", param("path", "str"), result="json"),
             method(
                 "list",
                 "List a directory in the project.",
                 param("dir", "str", optional=True),
                 result="json",
-                reads=True,
             ),
             method(
-                "complete",
-                "Complete a path, as `@` does.",
-                param("prefix", "str"),
-                result="json",
-                reads=True,
+                "complete", "Complete a path, as `@` does.", param("prefix", "str"), result="json"
             ),
-            method("search", "Search the code.", param("query", "str"), result="json", reads=True),
+            method("search", "Search the code.", param("query", "str"), result="json"),
             method("pick_dir", "Ask the person to pick a folder.", result="json"),
         ),
     ),
@@ -1701,13 +1639,7 @@ OBJECTS = (
         ),
         signals=(signal("changed", "CollectionChange", "A plugin or marketplace changed."),),
         methods=(
-            method(
-                "contents",
-                "What a plugin carries.",
-                param("name", "str"),
-                result="json",
-                reads=True,
-            ),
+            method("contents", "What a plugin carries.", param("name", "str"), result="json"),
             method(
                 "preview",
                 "What a plugin would install.",
@@ -1715,7 +1647,6 @@ OBJECTS = (
                 param("branch", "str", optional=True),
                 param("subdir", "str", optional=True),
                 result="json",
-                reads=True,
             ),
             method(
                 "install",
@@ -1805,7 +1736,6 @@ OBJECTS = (
                 param("func_name", "str"),
                 param("tool_args", "dict[str, json]", optional=True),
                 result="json",
-                reads=True,
             ),
             method(
                 "save_rule",
@@ -1901,52 +1831,11 @@ OBJECTS = (
 )
 
 
-# ── Interception ──────────────────────────────────────────────────
-#
-# The agent's decision points. Every write to the model can be
-# intercepted as well, by the member's name (``HostSchema.write_intercepts``),
-# so they are not listed here. ``fails`` is igni's: what happens when an
-# interceptor does not answer in time, crashes, or answers in a shape
-# the event does not take.
-
-INTERCEPTS = (
-    intercept(
-        "chat.submitting",
-        "ChatSubmitting",
-        "A message is about to start a run: the person's, or one an extension posted.",
-        on_reject="The run does not start; the window shows the reason as an error.",
-        modify=("text",),
-        fails=FailMode.CLOSED,
-        permission="chat.read",
-    ),
-    intercept(
-        "tools.calling",
-        "ToolCalling",
-        "The agent is about to run a tool. Intercepted before igni's own permission "
-        "checks, which then run on whatever the interceptor left.",
-        on_reject="The tool does not run; the agent is told why, as for igni's own refusals.",
-        modify=("args",),
-        fails=FailMode.CLOSED,
-        permission="chat.read",
-    ),
-    intercept(
-        "plan.submitting",
-        "PlanSubmitting",
-        "The agent is about to put a plan to the person (`exit_plan_mode`).",
-        on_reject="The plan is not submitted; the agent is told why and may submit again.",
-        modify=("plan",),
-        fails=FailMode.OPEN,
-        permission="chat.read",
-    ),
-)
-
-
 HOST_SCHEMA = HostSchema(
     version=SCHEMA_VERSION,
     permissions=PERMISSIONS,
     types=TYPES,
     objects=OBJECTS,
-    intercepts=INTERCEPTS,
 )
 
-__all__ = ["HOST_SCHEMA", "INTERCEPTS", "SCHEMA_VERSION"]
+__all__ = ["HOST_SCHEMA", "SCHEMA_VERSION"]

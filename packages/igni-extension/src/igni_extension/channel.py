@@ -20,6 +20,7 @@ import contextlib
 import itertools
 import json
 import logging
+import os
 from typing import Any
 
 from websockets.asyncio.client import ClientConnection, connect
@@ -27,7 +28,7 @@ from websockets.exceptions import WebSocketException
 
 from igni_extension.environment import HostEndpoint
 from igni_extension.errors import HostError, HostUnavailable, NotConfigured
-from igni_extension.intercepts import InterceptHandlers
+from igni_extension.hooks import HookHandlers
 from igni_extension.notifications import LocalNotification, NotifyNotification
 from igni_extension.session import HostSession
 from igni_extension.signals import SignalHandlers
@@ -55,11 +56,11 @@ class HostConnection:
         endpoint: HostEndpoint,
         signals: SignalHandlers,
         session: HostSession | None = None,
-        intercepts: InterceptHandlers | None = None,
+        hooks: HookHandlers | None = None,
     ) -> None:
         self._endpoint = endpoint
         self._signals = signals
-        self._intercepts = intercepts if intercepts is not None else InterceptHandlers()
+        self._hooks = hooks if hooks is not None else HookHandlers()
         self._session = session
         self._socket: ClientConnection | None = None
         self._reader: asyncio.Task[None] | None = None
@@ -113,6 +114,17 @@ class HostConnection:
 
     # ── The socket ────────────────────────────────────────────────
 
+    def _headers(self) -> dict[str, str]:
+        """The secret, and — where there is one — this process's group.
+
+        igni ends the group if the process hangs and it has to restart
+        it; it checks that it started the group's leader first.
+        """
+        headers = {"Authorization": f"Bearer {self._endpoint.secret}"}
+        if hasattr(os, "getpgid"):
+            headers["X-Igni-Process-Group"] = str(os.getpgid(0))
+        return headers
+
     async def connect(self) -> None:
         """Connect and say which signals are handled. Idempotent."""
         async with self._lock:
@@ -121,7 +133,7 @@ class HostConnection:
             try:
                 socket = await connect(
                     self._endpoint.url,
-                    additional_headers={"Authorization": f"Bearer {self._endpoint.secret}"},
+                    additional_headers=self._headers(),
                     max_size=8 * 1024 * 1024,
                     compression=None,
                 )
@@ -222,16 +234,15 @@ class HostConnection:
                     self._spawn(
                         self._signals.deliver(str(message.get("signal")), message.get("value"))
                     )
-                elif op == "intercept":
-                    # igni waits on this one, against a deadline: answer it
-                    # off the read loop, as a signal is handled.
-                    self._spawn(
-                        self._answer(
-                            str(message.get("id")),
-                            str(message.get("event")),
-                            message.get("value"),
-                        )
-                    )
+                elif op == "hook":
+                    # Off the read loop, as a signal is handled; igni
+                    # waits on a deciding one, against a deadline.
+                    hook_id = message.get("id")
+                    name = str(message.get("event"))
+                    if hook_id is None:
+                        self._spawn(self._hooks.tell(name, message.get("value")))
+                    else:
+                        self._spawn(self._answer(str(hook_id), name, message.get("value")))
         except WebSocketException:
             pass
         finally:
@@ -241,8 +252,8 @@ class HostConnection:
                 if not waiter.done():
                     waiter.set_exception(HostUnavailable("the igni host went away"))
 
-    async def _answer(self, intercept_id: str, event: str, value: Any) -> None:
-        params = await self._intercepts.answer(intercept_id, event, value)
+    async def _answer(self, hook_id: str, event: str, value: Any) -> None:
+        params = await self._hooks.answer(hook_id, event, value)
         try:
             await self._send({"op": "answer", "params": params})
         except (HostError, HostUnavailable) as exc:

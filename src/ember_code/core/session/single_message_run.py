@@ -31,6 +31,7 @@ from __future__ import annotations
 import logging
 
 from ember_code.backend.command_handler import CommandHandler
+from ember_code.backend.headless_extensions import HeadlessExtensions
 from ember_code.core.session.session_run import SessionRun
 
 logger = logging.getLogger(__name__)
@@ -77,7 +78,7 @@ class SingleMessageRun(SessionRun):
     # ── Public entry point ────────────────────────────────────────
 
     async def run(self, message: str) -> None:  # type: ignore[override]
-        """Run one message: SessionStart → dispatch → SessionEnd.
+        """Run one message: extensions up → SessionStart → dispatch → SessionEnd → extensions down.
 
         Slash-prefixed messages take the ``_dispatch_slash`` branch
         and intentionally skip ``_run_turn`` — they never reach the
@@ -85,16 +86,23 @@ class SingleMessageRun(SessionRun):
         :meth:`SessionRun._run_turn` pipeline. SessionEnd always
         fires exactly once.
         """
-        await self._fire_session_start()
+        # The extensions installed here apply to a headless run as they
+        # do in the app: their tools, hooks and prompt contributions.
+        extensions = HeadlessExtensions(self._session)
+        await extensions.start()
+        try:
+            await self._fire_session_start()
 
-        if await self._dispatch_slash(message):
-            # Slash branch: no model call. Jump straight to SessionEnd.
+            if await self._dispatch_slash(message):
+                # Slash branch: no model call. Jump straight to SessionEnd.
+                await self._fire_session_end()
+                return
+
+            await self._run_turn(message)
+            self._emit_pending_plan()
             await self._fire_session_end()
-            return
-
-        await self._run_turn(message)
-        self._emit_pending_plan()
-        await self._fire_session_end()
+        finally:
+            await extensions.stop()
 
     def _emit_pending_plan(self) -> None:
         """Print a plan the agent submitted, because nothing else will.

@@ -28,6 +28,12 @@ no extension id parameter, so a process can only ever be itself. A
 restarted process gets a new secret, and the old one stops working; a
 removed extension's connection is closed (code 4001).
 
+On POSIX, also send `X-Igni-Process-Group: <the process's group id>`
+(`os.getpgid(0)`). igni starts an extension's process in a session of
+its own; if the process hangs and igni has to restart it, it ends that
+group, having checked that it started the group's leader. A claim about
+any other process is ignored.
+
 The listener refuses, before upgrading: any path but `/v1/host` (404); a
 request carrying an `Origin` header (403 — browsers send one, SDKs must
 not, so a web page cannot reach the socket); a `Host` other than the
@@ -115,38 +121,40 @@ fields this SDK's schema does not know yet (a newer igni); ignore them.
 Run a signal's handlers off the read loop: a handler that reads the
 model needs the loop free to receive the reply.
 
-## Intercepts
+## Hook events
 
-Host → SDK, when an event the extension declared in
-`permissions.intercepts` is about to happen:
-
-```json
-{"op": "intercept", "id": "i-12", "event": "tools.calling",
- "value": {"session_id": "…", "tool": "run_shell_command", "args": {"command": "ls"}}}
-```
-
-The process answers with an `answer` request, whose reply is an
-ordinary one:
+Host → SDK, for one of igni's hook events (`docs/HOOKS.md`) the
+extension declared in `permissions.hooks`. A deciding event carries an
+`id`, and igni waits for the answer; one that decides nothing carries
+`"id": null`, and nothing is sent back:
 
 ```json
-{"id": 31, "op": "answer", "params": {"intercept": "i-12", "outcome": "allow"}}
-{"id": 32, "op": "answer", "params": {"intercept": "i-13", "outcome": "reject", "reason": "No shell on Fridays."}}
-{"id": 33, "op": "answer", "params": {"intercept": "i-14", "outcome": "modify", "value": {…the whole value…}}}
-{"id": 34, "op": "answer", "params": {"intercept": "i-15", "outcome": "failed", "reason": "index unreachable"}}
+{"op": "hook", "id": "h-12", "event": "PreToolUse",
+ "value": {"session_id": "…", "tool_name": "run_shell_command", "tool_args": {"command": "ls"}}}
+{"op": "hook", "id": null, "event": "SessionStart", "value": {"session_id": "…", "resumed": false}}
 ```
 
-* `intercept` — the `id` it answers. One answer each; an answer to
-  something already answered, or that ran out of time, is refused
-  (`not_found`).
+The process answers a deciding one with an `answer` request, whose reply
+is an ordinary one:
+
+```json
+{"id": 31, "op": "answer", "params": {"hook": "h-12", "outcome": "allow"}}
+{"id": 32, "op": "answer", "params": {"hook": "h-13", "outcome": "reject", "reason": "No shell on Fridays."}}
+{"id": 33, "op": "answer", "params": {"hook": "h-14", "outcome": "modify", "value": {…the whole value…}}}
+{"id": 34, "op": "answer", "params": {"hook": "h-15", "outcome": "failed", "reason": "index unreachable"}}
+```
+
+* `hook` — the `id` it answers. One answer each; an answer to something
+  already answered, or that ran out of time, is refused (`not_found`).
 * `outcome` — `allow`, `reject` (with a `reason`, which reaches the
   agent or the person — an empty one is not an answer), `modify` (with
   the whole `value`, only the event's changeable fields changed), or
   `failed` (the handler raised; igni treats it as a silence).
 
 igni gives each answer a deadline it sets (two seconds); what a silence
-means is the event's, in `docs/HOST_OBJECT_MODEL.md`. Answer intercepts
-off the read loop, as signals are handled, and keep handlers short. A
-page's channel takes no `answer`: a page cannot intercept.
+means is the event's, in `docs/HOOKS.md`, *Extensions*. Handle hook
+events off the read loop, as signals are handled, and keep handlers
+short. A page's channel takes no `answer`: a page cannot answer a hook.
 
 ## The page's channel: the bridge
 

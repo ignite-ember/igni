@@ -325,8 +325,9 @@ class FakeHost:
       igni refuses an object the manifest does not grant;
 
     `emit(signal, value)` fires a signal at whoever subscribed, and
-    `intercept(event, value)` asks the extension about an event as igni
-    does, and returns its answer. Everything asked is kept in `calls`.
+    `hook(event, value)` asks the extension about a deciding hook event as
+    igni does, and returns its answer; `tell(event, value)` tells it one
+    that decides nothing. Everything asked is kept in `calls`.
     """
 
     def __init__(
@@ -349,8 +350,8 @@ class FakeHost:
         self._subscribed_changed = asyncio.Event()
         self._sockets: set[Any] = set()
         self._server: Any = None
-        self._intercepts: dict[str, asyncio.Future[dict[str, Any]]] = {}
-        self._intercept_ids = itertools.count(1)
+        self._hooks: dict[str, asyncio.Future[dict[str, Any]]] = {}
+        self._hook_ids = itertools.count(1)
         self.url = ""
 
     def environment(self, **extra: str) -> dict[str, str]:
@@ -389,23 +390,35 @@ class FakeHost:
             with contextlib.suppress(Exception):
                 await socket.send(frame)
 
-    async def intercept(self, event: str, value: Any, timeout: float = 5.0) -> dict[str, Any]:
-        """Ask the connected extension about `event`, as igni does; its answer's parameters."""
+    async def _connected(self, timeout: float) -> None:
         with anyio.fail_after(timeout):
             while not self._sockets:
                 await asyncio.sleep(0.01)
-        intercept_id = f"i-{next(self._intercept_ids)}"
-        future: asyncio.Future[dict[str, Any]] = asyncio.get_running_loop().create_future()
-        self._intercepts[intercept_id] = future
-        frame = json.dumps({"op": "intercept", "id": intercept_id, "event": event, "value": value})
+
+    async def _send_all(self, frame: str) -> None:
         for socket in list(self._sockets):
             with contextlib.suppress(Exception):
                 await socket.send(frame)
+
+    async def hook(self, event: str, value: Any, timeout: float = 5.0) -> dict[str, Any]:
+        """Ask the connected extension about a deciding `event`, as igni does; its answer's parameters."""
+        await self._connected(timeout)
+        hook_id = f"h-{next(self._hook_ids)}"
+        future: asyncio.Future[dict[str, Any]] = asyncio.get_running_loop().create_future()
+        self._hooks[hook_id] = future
+        await self._send_all(
+            json.dumps({"op": "hook", "id": hook_id, "event": event, "value": value})
+        )
         try:
             with anyio.fail_after(timeout):
                 return await future
         finally:
-            self._intercepts.pop(intercept_id, None)
+            self._hooks.pop(hook_id, None)
+
+    async def tell(self, event: str, value: Any, timeout: float = 5.0) -> None:
+        """Tell the connected extension an `event` that decides nothing, as igni does."""
+        await self._connected(timeout)
+        await self._send_all(json.dumps({"op": "hook", "id": None, "event": event, "value": value}))
 
     async def wait_subscribed(self, signal: str, timeout: float = 5.0) -> None:
         """Wait until the extension has subscribed to `signal`."""
@@ -444,7 +457,7 @@ class FakeHost:
         reply: dict[str, Any] = {"op": "reply", "id": request.get("id"), "ok": True, "result": None}
         if op == "answer":
             params = dict(request.get("params") or {})
-            waiting = self._intercepts.get(str(params.get("intercept")))
+            waiting = self._hooks.get(str(params.get("hook")))
             if waiting is None or waiting.done():
                 return {
                     **reply,

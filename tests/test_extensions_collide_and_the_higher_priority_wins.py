@@ -147,14 +147,11 @@ class TestTheManifestSaysWhatItDoesToAPrompt:
         with pytest.raises(ValueError, match="twice"):
             ExtensionManifest.model_validate(self._with(prompt={"edits": [edit, edit]}))
 
-    def test_an_extension_that_runs_no_process_cannot_intercept(self):
+    def test_an_extension_that_runs_no_process_cannot_hook_an_event(self):
         """igni asks over the host channel of a process it starts; an endpoint never connects."""
         manifest = {key: value for key, value in self.BASE.items() if key != "python"} | {
             "endpoint": {"url": "https://acme.test/mcp"},
-            "permissions": {
-                "host": ["chat.read"],
-                "intercepts": [{"event": "tools.calling"}],
-            },
+            "permissions": {"hooks": ["PreToolUse"]},
         }
         with pytest.raises(ValueError, match="needs a process igni starts"):
             ExtensionManifest.model_validate(manifest)

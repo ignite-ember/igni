@@ -96,7 +96,7 @@ class PlanStore:
     # never from message content.
     decisions: dict[str, PlanDecision] = field(default_factory=dict)
     #: Submissions rejected since the agent last entered plan mode —
-    #: what an interceptor of ``plan.submitting`` is told as ``attempt``.
+    #: what a ``PlanSubmit`` hook is told as ``attempt``.
     rejected: int = 0
     # Max number of past plans we keep in history. Keeps memory
     # bounded — most sessions only ever have a handful, but a

@@ -56,8 +56,8 @@ export interface ExtensionSummary {
    */
   service_url?: string | null;
   /**
-   * What it does not get because it collides with another extension
-   * — decided against it on igni server, or not decided yet.
+   * What it does not get because it collides with an extension higher
+   * in the super admin's priority order.
    */
   switched_off?: { claim: string; reason: string }[];
   /** Its prompt edits that land nowhere: another extension's override lacks the section. */
@@ -67,6 +67,12 @@ export interface ExtensionSummary {
    * server reports other hints than its manifest declares.
    */
   problems?: string[];
+  /**
+   * Why it is faulty — its calls timed out or crashed three times in a
+   * row, so igni restarted it and does not wait on its hooks — or empty
+   * while it answers.
+   */
+  faulty?: string;
   /**
    * The tools it gives the agent, and what each says it is (`read-only,
    * local, idempotent`) — what the permission modes decide on.

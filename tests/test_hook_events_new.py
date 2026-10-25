@@ -136,11 +136,11 @@ class TestNewEventsRegistered:
     def test_permission_denied_in_enum(self) -> None:
         assert HookEvent.PERMISSION_DENIED.value == "PermissionDenied"
 
-    def test_count_grew_to_18(self) -> None:
+    def test_count_grew_to_19(self) -> None:
         # Original 10 + (PreCompact/PostCompact/InstructionsLoaded) +
         # (TaskCreated/TaskCompleted/StopFailure) +
-        # (PermissionRequest/PermissionDenied) = 18.
-        assert len(list(HookEvent)) == 18
+        # (PermissionRequest/PermissionDenied) + PlanSubmit = 19.
+        assert len(list(HookEvent)) == 19
 
 
 class _RecordingExecutor(HookExecutor):

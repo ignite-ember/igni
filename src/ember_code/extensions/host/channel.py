@@ -34,13 +34,14 @@ from websockets.datastructures import Headers
 from websockets.http11 import Request as HttpRequest
 from websockets.http11 import Response as HttpResponse
 
-from ember_code.extensions.host.intercepts import Interceptors
+from ember_code.extensions.host.hooks import ExtensionHooks
 from ember_code.extensions.host.model import HostModel
+from ember_code.extensions.host.processes import PROCESS_GROUP_HEADER, ExtensionProcesses
 from ember_code.extensions.host.spec import ErrorCode
 from ember_code.extensions.host.wire import (
     ErrorBody,
     Hello,
-    InterceptAnswer,
+    HookAnswer,
     Op,
     Reply,
     Request,
@@ -74,11 +75,11 @@ class _SocketSink:
             logger.warning("host channel: a subscriber is not reading; dropped %s", message.signal)
 
     def send(self, frame: str) -> None:
-        """An intercept, in order with everything else on the socket."""
+        """A hook event, in order with everything else on the socket."""
         try:
             self.queue.put_nowait(frame)
         except asyncio.QueueFull:
-            logger.warning("host channel: a process is not reading; an intercept is lost")
+            logger.warning("host channel: a process is not reading; a hook event is lost")
 
 
 class HostChannel:
@@ -89,10 +90,12 @@ class HostChannel:
         model: HostModel,
         *,
         host: str = LOOPBACK,
-        interceptors: Interceptors | None = None,
+        hooks: ExtensionHooks | None = None,
+        processes: ExtensionProcesses | None = None,
     ) -> None:
         self._model = model
-        self._interceptors = interceptors if interceptors is not None else Interceptors.shared()
+        self._hooks = hooks if hooks is not None else ExtensionHooks.shared()
+        self._processes = processes if processes is not None else ExtensionProcesses.shared()
         self._host = host
         self._port = 0
         self._server: Server | None = None
@@ -198,9 +201,13 @@ class HostChannel:
         )
         writer = asyncio.create_task(self._write(connection, sink))
         pending: set[asyncio.Task[None]] = set()
-        self._interceptors.connect(extension_id, sink.send)
+        self._hooks.connect(extension_id, sink.send)
         try:
             await connection.send(hello.model_dump_json())
+            group = request.headers.get(PROCESS_GROUP_HEADER) if request is not None else None
+            if group is not None:
+                # Which process group to end if it hangs (:mod:`.processes`).
+                await self._processes.claim(extension_id, group)
             async for raw in connection:
                 task = asyncio.create_task(self._answer(extension_id, subscriber, sink, raw))
                 pending.add(task)
@@ -208,7 +215,7 @@ class HostChannel:
         except Exception as exc:  # noqa: BLE001 — a connection ends however it ends
             logger.debug("host channel: %s's connection ended: %s", extension_id, exc)
         finally:
-            self._interceptors.disconnect(extension_id, sink.send)
+            self._hooks.disconnect(extension_id, sink.send)
             self._model.bus.detach(subscriber)
             self._connections.get(extension_id, set()).discard(connection)
             for task in pending:
@@ -240,22 +247,22 @@ class HostChannel:
             sink.queue.put_nowait(reply.model_dump_json())
 
     def _answered(self, extension_id: str, request: Request) -> Reply:
-        """The process's answer to an intercept. Only a process answers; a page cannot."""
+        """The process's answer to a hook event. Only a process answers; a page cannot."""
         try:
-            answer = InterceptAnswer.model_validate(request.params)
+            answer = HookAnswer.model_validate(request.params)
         except ValidationError as exc:
             return Reply(
                 id=request.id,
                 ok=False,
                 error=ErrorBody(code=ErrorCode.INVALID, message=f"not an answer: {exc}"),
             )
-        if not self._interceptors.answered(extension_id, answer):
+        if not self._hooks.answered(extension_id, answer):
             return Reply(
                 id=request.id,
                 ok=False,
                 error=ErrorBody(
                     code=ErrorCode.NOT_FOUND,
-                    message=f"nothing waits on {answer.intercept!r} from this extension; "
+                    message=f"nothing waits on {answer.hook!r} from this extension; "
                     "it was answered already, or ran out of time",
                 ),
             )

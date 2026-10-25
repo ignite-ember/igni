@@ -113,7 +113,7 @@ class DistributionListing(BaseModel):
     extensions: list[DistributedExtension] = Field(default_factory=list)
     #: The super admin's priority order of extensions, highest first:
     #: it settles every collision (:mod:`ember_code.extensions.impact`)
-    #: and is the order edits apply and interceptors run in.
+    #: and is the order edits apply and extensions' hooks run in.
     priority: list[str] = Field(default_factory=list)
 
 

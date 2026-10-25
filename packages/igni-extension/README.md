@@ -197,49 +197,70 @@ the MCP notification igni has always understood.
 `igni_extension.host_model` is generated from igni's host schema; its
 `SCHEMA_VERSION` is the model version it was generated for.
 
-## Before it happens: `@ext.intercept`
+## Having a say: `@ext.hook`
 
-A signal says what happened; an intercept is asked first, and its answer
-counts:
+igni's hook events (`docs/HOOKS.md` in igni) are where an extension gets
+a say before something happens, in one pipeline with igni's own
+settings-file hooks:
 
 ```python
-from igni_extension import Modify, Reject
-from igni_extension.host_model import Intercepts, PlanSubmitting, ToolCalling
+from igni_extension import Hooks, Modify, Reject
+from igni_extension.hooks import PlanSubmit, PreToolUse
 
-@ext.intercept(Intercepts.PLAN_SUBMITTING)
-async def grounded(plan: PlanSubmitting) -> Reject | None:
+@ext.hook(Hooks.PLAN_SUBMIT)
+async def grounded(plan: PlanSubmit) -> Reject | None:
     if plan.attempt < 2 and plan.plan.count("src/") < 2:
         return Reject("Cite the files the plan changes.")   # back to the agent
     return None                                             # allowed
 
-@ext.intercept(Intercepts.TOOLS_CALLING)
-async def quieter(call: ToolCalling) -> Modify | None:
-    if call.tool == "run_shell_command":
-        command = call.args.get("command", "") + " --quiet"
-        return Modify(call.model_copy(update={"args": {**call.args, "command": command}}))
+@ext.hook(Hooks.PRE_TOOL_USE)
+async def quieter(call: PreToolUse) -> Modify | None:
+    if call.tool_name == "run_shell_command":
+        command = call.tool_args.get("command", "") + " --quiet"
+        return Modify(call.model_copy(update={"tool_args": {**call.tool_args, "command": command}}))
     return None
 ```
 
-A handler answers `Allow()` (or `None`), `Reject(reason)` — the reason
-reaches the agent or the person, so write it for them — or
-`Modify(value)`: the whole value, with only the fields the event lets it
-change changed. `Intercepts` lists every event: `CHAT_SUBMITTING`,
-`TOOLS_CALLING`, `PLAN_SUBMITTING`, and every write to the model by its
-member (`UI_NAVIGATE`, `SESSIONS_CURRENT`, …), which can be rejected but
-not changed.
+Five events decide something — `PRE_TOOL_USE` (may change `tool_args`),
+`POST_TOOL_USE` (`result`), `USER_PROMPT_SUBMIT` (`message`), `STOP`,
+`PLAN_SUBMIT` (`plan`). A handler answers `Allow()` (or `None`),
+`Reject(reason)` — the reason reaches the agent or the person, so write
+it for them — or `Modify(value)`: the whole value, with only the fields
+the event lets it change changed. Every other event (`SESSION_START`,
+`SUBAGENT_STOP`, `PRE_COMPACT`, …) is only told: the handler hears it,
+and what it returns is not read.
 
-igni asks only about the events in the manifest's
-`permissions.intercepts` — `{"event": "tools.calling", "modify": true}`
-to change one, not just reject it — and only while the extension holds
-the grant the event needs in `permissions.host`. igni sets the deadline
-(two seconds) and decides what a silence means: a handler that raises,
-or is too slow, has not answered, and a tool call or a message then does
-not go ahead, while a plan or a write does. Several extensions
-intercepting one event are asked in the super admin's priority order,
-each handed what the one before left. One handler per event; an
-extension is never asked about its own writes. `FakeHost.intercept(event,
-value)` asks a test's extension as igni would. The rules are
-`docs/HOST_OBJECT_MODEL.md`, *Intercepting*, in igni.
+igni asks only about the events in the manifest's `permissions.hooks`
+(`["PreToolUse", "PlanSubmit"]`), in the super admin's priority order
+of extensions, each handed what the one before left, before igni's own
+configured hooks. igni sets the deadline (two seconds) and decides what
+a silence means: a handler that raises, or is too slow, has not
+answered, and a tool call or a message then does not go ahead, while
+everything else does. Three silences in a row, hooks and tool calls
+alike, make the extension faulty: igni restarts it and stops waiting on
+its hooks until it answers again. One handler per event.
+`FakeHost.hook(event, value)` asks a test's extension as igni would, and
+`FakeHost.tell(event, value)` tells it one that decides nothing.
+
+## Plain functions run off the loop
+
+The process serves igni on one event loop. A plain `def` you hand the
+SDK — a tool, a hook handler, a reaction (`@ext.on`), a background job
+(`@ext.on_start`) — runs in a worker thread, so a slow one never holds
+the calls that arrive meanwhile; an `async def` is called as it is. A
+tool's schema is FastMCP's, from the function as you wrote it.
+
+Two things this does not do: blocking inside an `async def` still holds
+the loop, and threads share the GIL — CPU-heavy work belongs in a
+process pool you run (`concurrent.futures.ProcessPoolExecutor`). The
+thread pool is anyio's default (40); it is your process, so change it if
+you need to:
+
+```python
+import anyio.to_thread
+
+anyio.to_thread.current_default_thread_limiter().total_tokens = 8
+```
 
 ## The agent's prompt: `ext.prompt`
 

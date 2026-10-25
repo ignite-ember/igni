@@ -140,7 +140,7 @@ window, another extension, or this one.
   the model's — fails the build, so the model cannot fall behind the
   app.
 - **One schema, two SDKs.** The model is described once —
-  `ember_code.extensions.host.definition`, version **1.5.0** — and
+  `ember_code.extensions.host.definition`, version **1.6.0** — and
   versioned under the compatibility floor (EXTENSIBILITY §8): a new
   member is a minor version, a changed or removed one a major. The Python
   SDK (`igni-extension`, `igni_extension.host_model`) and the TypeScript
@@ -209,7 +209,7 @@ Errors carry a code both SDKs raise (`HostError.code`): `not_granted`,
 | `host.models` | `registry`, `current` (writable — switches) | `changed` | — | `models` |
 | `host.mcp` | `servers`, `status`, `details` | `changed` | `connect(name)`, `disconnect(name)`, `ensure()`, `set_tool_enabled(server, tool, on)` | `mcp` |
 | `host.plugins` | `installed`, `marketplaces` | `changed` | `contents(name)`, `preview(source, branch, subdir)`, `install`, `update`, `remove`, `set_enabled`, `add_marketplace`, `remove_marketplace`, `refresh_marketplaces` | `plugins` |
-| `host.extensions` | `installed` — every extension: id, name, version, state, reason, `web_url`, and what it does not get (`switched_off`) and which of its prompt edits land nowhere (`dropped`) — each a `Withheld`: a claim and a reason | `state_changed` | `set_settings(values)` (its own) | `extensions` (read-only; `set_settings` always, own only) |
+| `host.extensions` | `installed` — every extension: id, name, version, state, reason, `web_url`, and what it does not get (`switched_off`) and which of its prompt edits land nowhere (`dropped`) — each a `Withheld`: a claim and a reason — and why it is `faulty`, when it is | `state_changed` | `set_settings(values)` (its own) | `extensions` (read-only; `set_settings` always, own only) |
 | `host.hooks` | `details` | `changed` | `reload()`, `fire_session_start()` | `hooks` |
 | `host.permissions` | `mode` | `mode_changed` | `check(tool_name, func_name, tool_args)`, `save_rule(rule, level)` | `permissions` |
 | `host.policy` | `pack` — the group policy in force | — (changes with `account.changed`) | — | `policy` |
@@ -305,97 +305,55 @@ The first call on a machine loads the model, which takes seconds. It
 needs the `decide` permission, shown with the others before a super
 admin approves.
 
-## Intercepting
+## Reacting, and having a say
 
-A signal says what happened. An **intercept** asks first: before the
-event happens, igni hands it to every extension that declared it, in
-the super admin's priority order of extensions, and waits for each
-answer —
+A signal says what happened, and an extension **reacts** to it
+(`@ext.on`): igni never waits on a reaction, and an extension that
+disagrees with a change writes back to the model — navigates elsewhere,
+posts in the chat. That is how an extension follows everything in the
+model: navigation, the composer, sessions, plugins.
 
-* `Allow()` — let it happen (returning nothing means the same);
-* `Reject(reason)` — it does not happen; `reason` reaches whoever caused
-  it, written for them;
-* `Modify(value)` — it happens, changed: the whole value, with only the
-  fields the event lets an interceptor change changed. Only where the
-  event can be changed, and only with `"modify": true` in the manifest.
-
-A reject ends the chain. A change is what the next interceptor is
-handed, and what igni goes ahead with.
+Where reacting is too late — a tool that already ran, a message the
+model already read — an extension **has a say first**, through igni's
+own hook events (`docs/HOOKS.md`, *Extensions*): `@ext.hook(Hooks.PRE_TOOL_USE)`,
+`POST_TOOL_USE`, `USER_PROMPT_SUBMIT`, `STOP`, `PLAN_SUBMIT`. The same
+events igni's settings-file hooks answer, in one pipeline with them:
+the extensions are asked first, in the super admin's priority order,
+and the configured hooks run on what they leave. Every other hook event
+(`SessionStart`, `SubagentStop`, `PreCompact`, …) is told, and nothing
+waits.
 
 ```python
-from igni_extension import Modify, Reject
-from igni_extension.host_model import Intercepts, PlanSubmitting, ToolCalling
+from igni_extension import Hooks, Modify, Reject
+from igni_extension.hooks import PlanSubmit, PreToolUse
 
-@ext.intercept(Intercepts.PLAN_SUBMITTING)
-async def grounded(plan: PlanSubmitting) -> Reject | None:
+@ext.hook(Hooks.PLAN_SUBMIT)
+async def grounded(plan: PlanSubmit) -> Reject | None:
     if plan.attempt < 2 and plan.plan.count("src/") < 2:
         return Reject("Cite the files the plan changes.")
     return None
 
-@ext.intercept(Intercepts.TOOLS_CALLING)
-async def no_prod(call: ToolCalling) -> Modify | None:
-    if call.tool == "run_shell_command" and "--prod" in call.args.get("command", ""):
-        return Modify(call.model_copy(update={"args": {**call.args, "command": "echo refused"}}))
+@ext.hook(Hooks.PRE_TOOL_USE)
+async def no_prod(call: PreToolUse) -> Modify | None:
+    command = call.tool_args.get("command", "")
+    if call.tool_name == "run_shell_command" and "--prod" in command:
+        return Modify(call.model_copy(update={"tool_args": {"command": "echo refused"}}))
     return None
 ```
 
-**The events.** The agent's decision points:
+The model's writes are not hook events: the host model has no
+interception of its own. A page cannot answer a hook — igni would then
+wait on whatever tab happens to be open — and neither can an extension
+with no process igni starts (`endpoint`); igni refuses a manifest that
+declares `permissions.hooks` without one.
 
-| Event | When | Changeable | On reject | Silence |
-|---|---|---|---|---|
-| `chat.submitting` (`ChatSubmitting`) | A message is about to start a run — the person's, a queued one, or one an extension posted (`from_extension`). Asked before igni wraps it for the agent. | `text` | The run does not start; the window shows the reason as an error. | closed |
-| `tools.calling` (`ToolCalling`) | The agent is about to run a tool. Asked before igni's own permission checks, which then run on what the interceptors left — a changed argument is checked like the agent's own. | `args` | The tool does not run; the agent is told why, as for igni's own refusals. | closed |
-| `plan.submitting` (`PlanSubmitting`) | The agent is about to put a plan to the person (`exit_plan_mode`). `attempt` is how many submissions were rejected since it entered plan mode. | `plan` | The plan is not submitted; the agent is told why, and may do more work and submit again. | open |
-
-…and **every write to the model**, named by its member — `ui.navigate`,
-`ui.composer`, `sessions.current`, `chat.post`, `plugins.install`, every
-writable property and every method that does more than read
-(`HostSchema.write_intercepts`; `Intercepts.UI_NAVIGATE` in the SDK).
-The value is a `ModelWrite`: the member, a property's new `value` or a
-method's `params`, the window and session, and the `writer` — `person`,
-or the extension making it. A write can be rejected, not changed: a
-rejected write is not made, and the writer is told why (`refused` for an
-extension; a window drops its own copy and shows the model's). An
-extension is never asked about its own writes. Reads, and an extension's
-own things — its state, its settings, its notifications to the person —
-are nobody else's to intercept.
-
-**A silence is igni's to decide**, never the extension's. An interceptor
-that does not answer within two seconds (igni's limit, not
-configurable by an extension), whose process is not connected, whose
-handler raised, or whose change does not fit the event, has not
-answered. *Closed*: the event does not happen, and the reason names the
-extension that could not check it — a message nobody could check is not
-sent to a model, a tool call nobody could check does not run. *Open*: it
-goes ahead as if that interceptor had allowed it — a plan, and every
-write, so that one stuck extension cannot freeze a window. A process
-that is starting counts: igni waits for it to connect, within the same
-limit.
-
-**Declared and granted; ordered, never decided.** An extension
-intercepts only what its manifest lists in `permissions.intercepts`
-(`{"event": "tools.calling", "modify": true}`), shown to the super admin
-who approves its service — approving it covers them; nobody approves an
-extension's events one by one — and only while it holds the grant the
-event needs in `permissions.host`: `chat.read` for the decision points,
-the member's own for a write. An interceptor is handed what the event
-carries, and may see only what it could read anyway. Several extensions
-intercepting one event never collide: they are asked in the super
-admin's priority order of extensions (the Services page), each handed
-what the one before left — changes chain, and the first reject ends it.
-The impact report on the Services page shows what each extension
-intercepts, and where it stands in that order.
-
-**A page cannot intercept.** igni would then wait on whatever tab
-happens to be open. Intercepting is the process's, over its socket
-(`docs/HOST_MODEL_PROTOCOL.md`, *Intercepts*).
-
-**Nor can an extension with no process.** An `endpoint` extension is a
-service somebody else runs; it never connects to the host channel, so
-it could never answer, and its silence would block every fail-closed
-event. igni refuses a manifest that declares intercepts without a
-process igni starts, and so do igni server at upload and the bundle
-builder.
+**An extension that stops answering costs nothing for long.** Three
+timeouts or crashes in a row, hooks and tool calls alike, make it
+**faulty** (`ExtensionInfo.faulty` says why): igni ends its process and
+starts it again, tells the person, and does not wait on its hooks — a
+fail-closed event (`PreToolUse`, `UserPromptSubmit`) is refused at once
+with "<extension> isn't responding", a fail-open one goes ahead without
+it. Its first answer after the restart clears the mark.
 
 ## An extension's own service is not the host
 

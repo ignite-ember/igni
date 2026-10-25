@@ -34,7 +34,9 @@ import logging
 from typing import TYPE_CHECKING, Any
 
 from ember_code.core.broadcast_schema import BroadcastEvent
-from ember_code.core.gates import EventGate
+from ember_code.core.hooks.events import HookEvent
+from ember_code.core.hooks.executor import HookExecutor
+from ember_code.core.hooks.extension_gate import ExtensionHookGate, PlanSubmitValue
 from ember_code.core.tools.plan.researcher import PlanResearcherRunner
 from ember_code.core.tools.plan.schemas import (
     PermissionModeChangedPayload,
@@ -50,9 +52,6 @@ if TYPE_CHECKING:
     from ember_code.core.session.core import Session
 
 logger = logging.getLogger(__name__)
-
-#: The event a plan is asked about before the person sees it (``docs/HOST_OBJECT_MODEL.md``).
-PLAN_SUBMITTING = "plan.submitting"
 
 
 class PlanSessionShapeError(RuntimeError):
@@ -151,7 +150,7 @@ class PlanTransactionCoordinator:
 
         store = getattr(self._session, "plan_store", None)
         if store is not None:
-            # A fresh plan: whoever checks submissions sees attempt 0.
+            # A fresh plan: PlanSubmit hooks see attempt 0.
             store.rejected = 0
 
         # Re-broadcast with the agent attribution + reason so
@@ -259,29 +258,49 @@ class PlanTransactionCoordinator:
             )
 
     async def _checked(self, plan_text: str, raw_tasks: list | None) -> str | PlanExitResult:
-        """Ask before the plan reaches the person (``plan.submitting``).
+        """The ``PlanSubmit`` hook event, before the plan reaches the person.
 
-        The plan to submit — as it came, or as whoever checks
-        submissions changed it — or the rejection, which goes back to
-        the agent so it can do more work and submit again.
+        Extensions that hook it are asked first, in priority order, and
+        may change the plan; then igni's configured ``PlanSubmit`` hooks
+        run on what they left. The plan to submit, or the rejection,
+        which goes back to the agent so it can do more work and submit
+        again.
         """
         store = getattr(self._session, "plan_store", None)
         if store is None:
             msg = "Error: plan store not initialised on this session."
             raise PlanSessionShapeError(missing="plan_store", reply_text=msg)
-        verdict = await EventGate.ask(
-            PLAN_SUBMITTING,
-            {
-                "session_id": str(getattr(self._session, "session_id", "") or ""),
-                "plan": plan_text,
-                "tasks": list(raw_tasks or []),
-                "attempt": int(store.rejected),
-            },
+        session_id = str(getattr(self._session, "session_id", "") or "")
+        verdict = await ExtensionHookGate.ask(
+            PlanSubmitValue(
+                session_id=session_id,
+                plan=plan_text,
+                tasks=list(raw_tasks or []),
+                attempt=int(store.rejected),
+            ),
+            HookEvent.PLAN_SUBMIT,
         )
-        if verdict.allowed:
-            return str(verdict.value.get("plan", plan_text)).strip() or plan_text
+        if not verdict.allowed:
+            return self._rejected(store, verdict.reason)
+        plan_text = str(verdict.value.get("plan", plan_text)).strip() or plan_text
+        executor = getattr(self._session, "hook_executor", None)
+        if isinstance(executor, HookExecutor):
+            result = await executor.execute(
+                event=HookEvent.PLAN_SUBMIT.value,
+                payload={
+                    "session_id": session_id,
+                    "plan": plan_text,
+                    "attempt": int(store.rejected),
+                },
+            )
+            if not result.should_continue:
+                return self._rejected(store, result.message or "a PlanSubmit hook rejected it")
+        return plan_text
+
+    @staticmethod
+    def _rejected(store: Any, reason: str) -> PlanExitResult:
         store.rejected += 1
-        reply = f"Plan rejected: {verdict.reason}"
+        reply = f"Plan rejected: {reason}"
         return PlanExitResult(ok=False, reason="rejected", error=reply, reply_text=reply)
 
     def _submit_transaction(self, plan_text: str, raw_tasks: list | None) -> PlanExitResult:

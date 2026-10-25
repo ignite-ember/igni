@@ -36,6 +36,7 @@ import logging
 import time
 from typing import Any
 
+from ember_code.extensions.host.processes import ExtensionProcesses
 from ember_code.extensions.installer import server_name
 from ember_code.extensions.registry import ExtensionRegistry, ExtensionState
 from ember_code.extensions.rpc import ExtensionRpc
@@ -50,6 +51,9 @@ DEFAULT_INTERVAL_S = 30.0
 #: Generous: a probe is a tool listing, and a busy sidecar answering
 #: slowly is not a dead one.
 PROBE_TIMEOUT_S = 10.0
+
+#: How long a restarted process has to come up and answer.
+RESTART_TIMEOUT_S = 60.0
 
 #: Shortest gap between restart attempts for one extension. A service
 #: that fails on startup fails every time, and retrying it every
@@ -67,8 +71,10 @@ class ExtensionHealth:
         rpc: ExtensionRpc,
         mcp: Any,
         interval_s: float = DEFAULT_INTERVAL_S,
+        processes: ExtensionProcesses | None = None,
     ) -> None:
         self._registry = registry
+        self._processes = processes if processes is not None else ExtensionProcesses.shared()
         self._rpc = rpc
         self._mcp = mcp
         self._interval = interval_s
@@ -189,12 +195,37 @@ class ExtensionHealth:
             return f"its service stopped answering: {exc}"
         return None
 
+    def restart_faulty(self, extension_id: str, reason: str = "") -> None:
+        """Restart an extension that keeps not answering. Fire-and-forget.
+
+        Its process may be alive and hung, so dropping the connection
+        alone would leak it (the module docstring): its process group
+        is ended first, where its process said which one it is
+        (:class:`~ember_code.extensions.host.processes.ExtensionProcesses`).
+        """
+        if self._registry.get(extension_id) is None:
+            return
+        task = asyncio.create_task(
+            self._restart_quietly(extension_id), name=f"restart-{extension_id}"
+        )
+        self._pending.add(task)
+        task.add_done_callback(self._pending.discard)
+
+    async def _restart_quietly(self, extension_id: str) -> None:
+        lock = self._locks.setdefault(extension_id, asyncio.Lock())
+        try:
+            async with lock:
+                self._processes.kill(extension_id)
+                await self._restart(extension_id)
+        except Exception:
+            logger.exception("restart of %s failed", extension_id)
+
     async def _restart(self, extension_id: str) -> bool:
         """Try to bring a dead service back. ``True`` if it answered.
 
-        Only reached once :meth:`_ask` has said it is gone, which is
-        what makes dropping the connection safe — see the module
-        docstring.
+        Only reached once its process is gone — :meth:`_ask` said so,
+        or :meth:`restart_faulty` ended it — which is what makes
+        dropping the connection safe; see the module docstring.
         """
         now = time.monotonic()
         last = self._last_restart.get(extension_id)
@@ -206,7 +237,7 @@ class ExtensionHealth:
         logger.info("restarting extension %s", extension_id)
         try:
             await self._mcp.disconnect_one(name)
-            result = await self._mcp.connect(name)
+            result = await asyncio.wait_for(self._mcp.connect(name), RESTART_TIMEOUT_S)
         except Exception as exc:
             self._registry.set_state(
                 extension_id, ExtensionState.FAILED, f"its service could not be restarted: {exc}"

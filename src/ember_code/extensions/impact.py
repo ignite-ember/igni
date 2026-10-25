@@ -17,7 +17,7 @@ distribution for a collision.
 the prompts it overrides and the edits it makes to them, its commands
 and anchors, and — for review rather than for collisions — its pages,
 menu entries, indicators, settings, tools (each with the four hints
-igni's permission modes decide on), host-model grants, intercepts, RPC
+igni's permission modes decide on), host-model grants, hook events, RPC
 grants, egress and secrets.
 
 ## Prompts: overrides and edits
@@ -65,9 +65,8 @@ with a command the bundle did not know about, switches the claim off
 for igni server, and a test holds it to the dispatcher.
 
 **Not collisions**, because they cannot be: inserts and appends stack;
-interceptors (``permissions.intercepts``) chain in priority order — the
-first reject ends the chain, and each change is what the next one is
-handed; tools are registered under the extension's server name; pages
+hooks (``permissions.hooks``) chain in priority order — the first
+reject ends the chain, and each change is what the next one is handed; tools are registered under the extension's server name; pages
 and indicators are named in the extension's own namespace; settings
 are stored per extension; a plugin's own agents load under the
 extension's id; grants and egress only add. A condition (``when``)
@@ -88,6 +87,7 @@ from pathlib import Path
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from ember_code.core.hooks.extension_gate import DECIDING
 from ember_code.core.mcp.hints import ToolHints
 from ember_code.core.prompts.contributions import EditOp
 from ember_code.core.prompts.document import FRONTMATTER, Position
@@ -220,13 +220,15 @@ class ImpactTool(BaseModel):
         return cls(name=name, **hints.as_annotations())
 
 
-class ImpactIntercept(BaseModel):
-    """An event it is asked about before it happens, and whether it may change it."""
+class ImpactHook(BaseModel):
+    """A hook event it answers, and whether its answer decides it or it is only told."""
 
     model_config = ConfigDict(frozen=True)
 
     event: str
-    modify: bool = False
+    #: ``True`` for an event whose answer counts (``DECIDING``): it may
+    #: stop the event, or change it; ``False`` for one it is only told.
+    decides: bool = False
 
 
 class ExtensionImpact(BaseModel):
@@ -253,9 +255,9 @@ class ExtensionImpact(BaseModel):
     indicators: list[str] = Field(default_factory=list)
     settings: list[str] = Field(default_factory=list)
     host: list[str] = Field(default_factory=list)
-    #: Events it intercepts, and whether it may change each. Never a
-    #: claim: interceptors chain in priority order.
-    intercepts: list[ImpactIntercept] = Field(default_factory=list)
+    #: igni's hook events it answers. Never a claim: hooks chain in
+    #: priority order.
+    hooks: list[ImpactHook] = Field(default_factory=list)
     rpc: list[str] = Field(default_factory=list)
     egress: list[str] = Field(default_factory=list)
     secrets: list[str] = Field(default_factory=list)
@@ -289,9 +291,12 @@ class ExtensionImpact(BaseModel):
             indicators=sorted(i.id for i in contributes.indicators),
             settings=sorted(s.key for s in contributes.settings),
             host=sorted(permissions.host),
-            intercepts=sorted(
-                (ImpactIntercept(event=g.event, modify=g.modify) for g in permissions.intercepts),
-                key=lambda i: i.event,
+            hooks=sorted(
+                (
+                    ImpactHook(event=event.value, decides=event in DECIDING)
+                    for event in permissions.hooks
+                ),
+                key=lambda hook: hook.event,
             ),
             rpc=sorted(permissions.rpc),
             egress=sorted(permissions.egress),
@@ -619,7 +624,7 @@ __all__ = [
     "ExtensionImpact",
     "IgniCommands",
     "ImpactEdit",
-    "ImpactIntercept",
+    "ImpactHook",
     "ImpactOverride",
     "ImpactResolver",
     "ImpactTool",

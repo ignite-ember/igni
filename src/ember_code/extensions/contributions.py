@@ -25,7 +25,7 @@ does for an edit aimed at a section another extension's override does
 not have.
 
 The same order is the one edits from several extensions apply in, and
-interceptors run in.
+extensions' hooks run in.
 
 ## Following the state, not the install
 
@@ -81,7 +81,7 @@ from ember_code.core.prompts.contributions import (
 from ember_code.core.prompts.document import FRONTMATTER, PromptDocument, PromptTarget
 from ember_code.core.prompts.fragments import PromptFragments
 from ember_code.core.prompts.fragments import fragments as default_fragments
-from ember_code.extensions.host.intercepts import Interceptors
+from ember_code.extensions.host.hooks import ExtensionHooks
 from ember_code.extensions.impact import (
     Claim,
     ExtensionImpact,
@@ -121,7 +121,7 @@ class ExtensionContributions:
         fragments: PromptFragments | None = None,
         prompts: PromptContributions | None = None,
         commands: ContributedCommands | None = None,
-        interceptors: Interceptors | None = None,
+        hooks: ExtensionHooks | None = None,
     ) -> None:
         """
         Args:
@@ -135,7 +135,7 @@ class ExtensionContributions:
                 counts as one of the extension's own agents.
             priority: The super admin's priority order of extensions,
                 highest first, as the store holds it now. It settles
-                collisions, and edits apply and interceptors run in it.
+                collisions, and edits apply and extensions' hooks run in it.
             igni_commands: igni's own slash commands. An extension
                 declaring one has it switched off, and is told why.
         """
@@ -148,7 +148,7 @@ class ExtensionContributions:
         self._fragments = fragments if fragments is not None else default_fragments
         self._prompts = prompts if prompts is not None else prompt_contributions
         self._commands = commands if commands is not None else default_commands
-        self._interceptors = interceptors if interceptors is not None else Interceptors.shared()
+        self._hooks = hooks if hooks is not None else ExtensionHooks.shared()
         self._resolved = ResolvedImpact()
         #: ``{extension_id: [what it declared and igni would not take]}``
         #: — an override whose text does not have the sections it says.
@@ -187,7 +187,7 @@ class ExtensionContributions:
             impacts, priority, reserved=self._igni_commands.claims()
         ).resolve()
         self._prompts.set_priority(priority)
-        self._interceptors.set_priority(priority)
+        self._hooks.set_priority(priority)
         self._publish()
         for collision in self._resolved.collisions:
             logger.info(

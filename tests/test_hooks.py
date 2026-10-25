@@ -36,6 +36,7 @@ class TestHookEvent:
             "StopFailure",
             "PermissionRequest",
             "PermissionDenied",
+            "PlanSubmit",
         }
         actual = {e.value for e in HookEvent}
         assert actual == expected

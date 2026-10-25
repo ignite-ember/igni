@@ -159,7 +159,6 @@ class PythonGenerator:
             "",
             "from pydantic import BaseModel, ConfigDict, Field",
             "",
-            "from igni_extension.intercepts import Intercept",
             "from igni_extension.members import (",
             "    NO_RESULT,",
             "    HostLink,",
@@ -194,40 +193,18 @@ class PythonGenerator:
             lines.append("")
         for obj in self.naming.ordered():
             lines += self._object(obj)
-        lines += self._intercepts()
         lines += [
             "",
             "__all__ = [",
             *sorted(
                 [f'    "{t.name}",' for t in self.schema.types]
                 + [f'    "{self.naming.class_name(o.path)}",' for o in self.schema.objects]
-                + ['    "Intercepts",', '    "SCHEMA_VERSION",']
+                + ['    "SCHEMA_VERSION",']
             ),
             "]",
             "",
         ]
         return "\n".join(lines)
-
-    def _intercepts(self) -> list[str]:
-        """`Intercepts`: every event `@ext.intercept` takes, the decision points first."""
-        out = [
-            "",
-            "",
-            "class Intercepts:",
-            '    """Every event an extension can intercept: `@ext.intercept(Intercepts.TOOLS_CALLING)`.',
-            "",
-            "    The agent's decision points, then every write to the model by its",
-            '    member\'s name (`UI_NAVIGATE` is a write to `ui.navigate`)."""',
-            "",
-        ]
-        for spec in [*self.schema.intercepts, *self.schema.write_intercepts()]:
-            constant = spec.name.upper().replace(".", "_")
-            fields = [f'"{m}"' for m in spec.modify]
-            modify = f"({fields[0]},)" if len(fields) == 1 else f"({', '.join(fields)})"
-            out.append(f'    {constant} = Intercept("{spec.name}", {spec.value}, {modify})')
-            if spec.name in {i.name for i in self.schema.intercepts}:
-                out += self._doc(spec.doc, "    ")
-        return out
 
     def _object(self, spec: ObjectSpec) -> list[str]:
         name = self.naming.class_name(spec.path)

@@ -32,6 +32,7 @@ from typing import Any
 
 from ember_code.core.hooks.envelope import HookEnvelope
 from ember_code.core.hooks.events import HookEvent
+from ember_code.core.hooks.extension_gate import ExtensionHookGate
 from ember_code.core.hooks.handlers import HookHandlerRegistry, MCPResolver
 from ember_code.core.hooks.matcher import HookMatcher
 from ember_code.core.hooks.merger import HookResultMerger
@@ -147,11 +148,15 @@ class HookExecutor:
         terminal events in :attr:`_DRAIN_EVENTS`, where "later" is
         never and they are drained before this returns.
         """
+        typed_payload = HookPayload.coerce(payload)
+        # Extensions that hook an event deciding nothing hear it here,
+        # wherever it fires; the deciding ones are asked where they fire,
+        # with the real values (:mod:`.extension_gate`).
+        ExtensionHookGate.tell(event, typed_payload.to_wire_dict())
         hooks = self._registry.for_event_and_target(event, target)
         if not hooks:
             return HookResult(should_continue=True)
 
-        typed_payload = HookPayload.coerce(payload)
         fg_hooks = HookRegistry.foreground(hooks)
         bg_hooks = HookRegistry.background(hooks)
 

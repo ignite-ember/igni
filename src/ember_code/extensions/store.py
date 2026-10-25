@@ -98,7 +98,7 @@ class DistributionRecord(BaseModel):
 
 class StoredPriority(BaseModel):
     #: The super admin's order of extensions, highest first. It settles
-    #: every collision, and is the order edits apply and interceptors run in.
+    #: every collision, and is the order edits apply and extensions' hooks run in.
     priority: list[str] = Field(default_factory=list)
 
 

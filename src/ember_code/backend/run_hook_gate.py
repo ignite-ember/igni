@@ -21,6 +21,11 @@ from ember_code.backend.schemas_run import (
 )
 from ember_code.core.hooks.events import HookEvent
 from ember_code.core.hooks.executor import HookExecutor
+from ember_code.core.hooks.extension_gate import (
+    ExtensionHookGate,
+    StopValue,
+    UserPromptSubmitValue,
+)
 
 
 class RunHookGate:
@@ -44,7 +49,17 @@ class RunHookGate:
             and bail before ``team.arun``. ``context_message`` (when
             set with ``should_continue=True``) is the string to
             append as a ``<hook-context>`` block onto the prompt.
+            ``text`` is the message to run: as it came, or as the
+            extensions that hook ``UserPromptSubmit`` changed it. They
+            are asked first; the configured hooks see what they left.
         """
+        verdict = await ExtensionHookGate.ask(
+            UserPromptSubmitValue(session_id=self._session_id, message=text),
+            HookEvent.USER_PROMPT_SUBMIT,
+        )
+        if not verdict.allowed:
+            return HookGateResult(should_continue=False, block_message=verdict.reason)
+        text = str(verdict.value.get("message", text))
         payload = UserPromptSubmitPayload(message=text, session_id=self._session_id).model_dump()
         hook_result = await self._hook_executor.execute(
             event=HookEvent.USER_PROMPT_SUBMIT.value,
@@ -58,6 +73,7 @@ class RunHookGate:
         return HookGateResult(
             should_continue=True,
             context_message=hook_result.message or None,
+            text=text,
         )
 
     async def fire_stop(self) -> HookGateResult:
@@ -69,8 +85,14 @@ class RunHookGate:
             ``Info(text=block_message)`` so the FE can surface any
             post-run guidance. Otherwise the message is silently
             dropped (matches the pre-refactor free-function
-            behavior).
+            behavior). An extension that hooks ``Stop`` and rejects is
+            a block with its reason, the same way.
         """
+        verdict = await ExtensionHookGate.ask(
+            StopValue(session_id=self._session_id), HookEvent.STOP
+        )
+        if not verdict.allowed:
+            return HookGateResult(should_continue=False, block_message=verdict.reason)
         payload = StopHookPayload(session_id=self._session_id).model_dump()
         hook_result = await self._hook_executor.execute(
             event=HookEvent.STOP.value,

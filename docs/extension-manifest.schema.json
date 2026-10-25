@@ -382,38 +382,37 @@
           "default": "all-agents",
           "description": "Which agents may call your `tools`. `all-agents` is MCP's ordinary behaviour. `own-agents` offers them only to agents shipped by the plugin you carry (`contributes.plugin`) — for a capability whose tools must belong to one role, because a capability any agent can grant itself is no rule at all. igni checks it by where an agent's file lives, so it never needs to know your id or your agents' names. Needs `contributes.plugin`; without one there are no own agents and the tools reach nobody, which is refused at install."
         },
-        "intercepts": {
+        "hooks": {
           "type": "array",
-          "description": "Events the extension's process is asked about before they happen (docs/HOST_OBJECT_MODEL.md, *Intercepting*): the agent's decision points — `chat.submitting`, `tools.calling`, `plan.submitting` — and every write to the model, named by its member (`ui.navigate`, `sessions.current`). The process answers allow, reject with a reason, or — where the event can be changed and `modify` is true — the changed value. The grant the event needs must be held in `host` as well: an interceptor is handed what the event carries. Shown to the super admin who approves the service; approving it covers them. Several extensions intercepting one event never collide: they are asked in the super admin's priority order of extensions, each handed what the one before left, and the first reject ends it. A page cannot intercept.",
+          "description": "igni's hook events the extension's process answers (igni's docs/HOOKS.md, *Extensions*). On `PreToolUse`, `PostToolUse`, `UserPromptSubmit`, `Stop` and `PlanSubmit` its answer decides: it lets the event go ahead, stops it with a reason, or changes it (the tool's arguments, the tool's result, the message, the plan); it is asked before igni's own configured hooks. Every other event is told, and nothing waits on it. If the process does not answer in time, a tool call (`PreToolUse`) or a message (`UserPromptSubmit`) does not go ahead and every other event does. Shown to the super admin who approves the service; approving it covers them. Several extensions hooking one event never collide: they are asked in the super admin's priority order of extensions, each handed what the one before left, and the first reject ends it. A page cannot answer a hook.",
+          "uniqueItems": true,
           "items": {
-            "type": "object",
-            "additionalProperties": false,
-            "required": [
-              "event"
-            ],
-            "properties": {
-              "event": {
-                "type": "string",
-                "pattern": "^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*)+$",
-                "description": "The event: `tools.calling`, `plan.submitting`, `ui.navigate`."
-              },
-              "modify": {
-                "type": "boolean",
-                "default": false,
-                "description": "Whether it may change the event, where the event can be changed. Without it, it may only allow or reject."
-              }
-            }
+            "enum": [
+              "PreToolUse",
+              "PostToolUse",
+              "PostToolUseFailure",
+              "UserPromptSubmit",
+              "SessionStart",
+              "SessionEnd",
+              "Stop",
+              "SubagentStart",
+              "SubagentStop",
+              "Notification",
+              "PreCompact",
+              "PostCompact",
+              "InstructionsLoaded",
+              "TaskCreated",
+              "TaskCompleted",
+              "StopFailure",
+              "PermissionRequest",
+              "PermissionDenied",
+              "PlanSubmit"
+            ]
           },
-          "default": [],
           "examples": [
             [
-              {
-                "event": "plan.submitting"
-              },
-              {
-                "event": "tools.calling",
-                "modify": true
-              }
+              "PreToolUse",
+              "PlanSubmit"
             ]
           ]
         }
@@ -1008,13 +1007,13 @@
         "properties": {
           "permissions": {
             "properties": {
-              "intercepts": {
+              "hooks": {
                 "maxItems": 0
               }
             }
           }
         },
-        "description": "Only a process igni starts is asked about an event, over the host channel igni hands it. An endpoint never connects to that channel, so its intercepts could never answer — and silence blocks a fail-closed event (a tool call, a message) every time."
+        "description": "Only a process igni starts is asked about an event, over the host channel igni hands it. An endpoint never connects to that channel, so its hooks could never answer — and silence blocks a fail-closed event (a tool call, a message) every time."
       }
     }
   ]

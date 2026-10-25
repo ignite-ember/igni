@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
-from collections.abc import Awaitable, Callable, Coroutine, Mapping
+from collections.abc import Awaitable, Callable, Mapping
 from typing import Any
 
 import anyio
@@ -29,13 +29,14 @@ from igni_extension.clock import Clock
 from igni_extension.environment import ExtensionEnvironment
 from igni_extension.errors import NotConfigured
 from igni_extension.hints import ToolHints, ToolHintsMissing
+from igni_extension.hooks import HookEvent, HookHandler, HookHandlers
 from igni_extension.host import Host
-from igni_extension.intercepts import Intercept, InterceptHandler, InterceptHandlers
 from igni_extension.members import Signal
 from igni_extension.prompt import PromptConditions
 from igni_extension.service import ServiceClient
 from igni_extension.session import HostSession
 from igni_extension.signals import SignalHandlers
+from igni_extension.threads import OffTheLoop
 from igni_extension.tokens import HostTokens
 
 AnyFunction = Callable[..., Any]
@@ -63,10 +64,10 @@ class IgniExtension:
         self.mcp = FastMCP(extension_id, instructions=instructions)
         self._session = HostSession(self.mcp._mcp_server)
         self._signals = SignalHandlers()
-        self._intercepts = InterceptHandlers()
+        self._hooks = HookHandlers()
         #: The socket to the igni host that `ext.host` travels on.
         self.connection = HostConnection(
-            self.environment.host, self._signals, self._session, self._intercepts
+            self.environment.host, self._signals, self._session, self._hooks
         )
         #: igni, as this extension sees it: `ext.host.chat`, `ext.host.ui`, …
         self.host = Host(self.connection)
@@ -75,7 +76,7 @@ class IgniExtension:
         self.tokens = HostTokens(self.environment.service, transport=token_transport, clock=clock)
         self._service_transport = service_transport
         self._service: ServiceClient | None = None
-        self._background: list[Callable[[], Coroutine[Any, Any, None]]] = []
+        self._background: list[Callable[[], Any]] = []
 
     # ── What the extension offers ───────────────────────────────────
 
@@ -91,36 +92,55 @@ class IgniExtension:
         `hints` is required: igni's permission modes decide on what a
         tool says it is (`igni_extension.hints`). The same four go in
         the manifest's `permissions.tools` for a tool the agent calls.
+        A plain `def` runs in a worker thread, so it never holds the
+        other calls (`igni_extension.threads`).
         """
-        return self.mcp.tool(name=name, description=description, annotations=hints.annotations())
+        register = self.mcp.tool(
+            name=name, description=description, annotations=hints.annotations()
+        )
+
+        def off_the_loop(fn: AnyFunction) -> AnyFunction:
+            register(fn)
+            # The schema is FastMCP's, from `fn` as written; only how it is
+            # run changes — a plain `def` in a worker thread (`threads`).
+            if not OffTheLoop.is_async(fn):
+                tool = self.mcp._tool_manager.get_tool(name or fn.__name__)
+                if tool is not None:
+                    tool.fn = OffTheLoop.wrap(fn)
+                    tool.is_async = True
+            return fn
+
+        return off_the_loop
 
     def on[T](
         self, signal: Signal[T]
-    ) -> Callable[[Callable[[T], Awaitable[None]]], Callable[[T], Awaitable[None]]]:
-        """Handle a host signal: `@ext.on(ext.host.<object>.<signal>)`."""
+    ) -> Callable[[Callable[[T], Awaitable[None] | None]], Callable[[T], Awaitable[None] | None]]:
+        """Handle a host signal: `@ext.on(ext.host.<object>.<signal>)`.
+
+        A reaction: igni never waits on it. A plain `def` runs in a
+        worker thread.
+        """
         return self._signals.on(signal)
 
-    def intercept[T: BaseModel](
-        self, intercept: Intercept[T]
-    ) -> Callable[[InterceptHandler[T]], InterceptHandler[T]]:
-        """Answer igni before an event happens: `@ext.intercept(Intercepts.PLAN_SUBMITTING)`.
+    def hook[T: BaseModel](self, event: HookEvent[T]) -> Callable[[HookHandler[T]], HookHandler[T]]:
+        """Answer one of igni's hook events: `@ext.hook(Hooks.PRE_TOOL_USE)`.
 
-        The handler returns `Allow()`, `Reject(reason)` or `Modify(value)`
-        (`igni_extension.intercepts`). igni asks only about the events the
-        manifest lists in `permissions.intercepts`; one handler per event.
+        On an event that decides (`event.decides`) the handler returns
+        `Allow()`, `Reject(reason)` or `Modify(value)` (`igni_extension.hooks`);
+        on any other it is only told. igni asks only about the events the
+        manifest lists in `permissions.hooks`; one handler per event.
         """
-        return self._intercepts.on(intercept)
+        return self._hooks.on(event)
 
-    def on_start(
-        self, fn: Callable[[], Coroutine[Any, Any, None]]
-    ) -> Callable[[], Coroutine[Any, Any, None]]:
+    def on_start[F: Callable[[], Any]](self, fn: F) -> F:
         """Run `fn` in the background for as long as the process serves igni.
 
         It starts with `run()`, beside the MCP server, and is cancelled
         when igni closes the pipe — so work the extension owns for its
         whole life (a sync loop, a process it started) cleans up in its
         own `finally`. An exception it raises is logged by asyncio and
-        does not stop the extension.
+        does not stop the extension. A plain `def` runs in a worker
+        thread, and cannot be cancelled: it ends with the process.
         """
         self._background.append(fn)
         return fn
@@ -188,7 +208,7 @@ class IgniExtension:
         # The host's socket alongside MCP, so signals arrive whether or
         # not igni is calling a tool.
         host = asyncio.create_task(self.connection.serve_forever())
-        background = [asyncio.create_task(fn()) for fn in self._background]
+        background = [asyncio.create_task(OffTheLoop.call(fn)) for fn in self._background]
         try:
             await self.mcp.run_stdio_async()
         finally:

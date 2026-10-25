@@ -465,6 +465,18 @@ class RunController:
         interrupted_summary_text = self._consume_interrupted_note(text)
         await self._pending_journal.drain_queued_drops()
 
+        # Fire UserPromptSubmit hook, before the prompt is built from
+        # the text: an extension that hooks it may change the text.
+        # Blocks the run when should_continue=False; otherwise
+        # optionally appends a <hook-context> block onto the prompt.
+        gate = await self._hook_gate.fire_user_prompt_submit(text)
+        if not gate.should_continue:
+            yield msg.Error(text=gate.block_message or "Message blocked by hook.")
+            self._transition_to(RunPhase.done)
+            return
+        if gate.text is not None:
+            text = gate.text
+
         # Pre-run prompt assembly: mentions, media, URL, learnings,
         # timestamp + interrupted-run note.
         build = await self._prompt_builder.build(
@@ -475,14 +487,6 @@ class RunController:
         message = build.message
         media = build.media
 
-        # Fire UserPromptSubmit hook. Blocks the run when
-        # should_continue=False; otherwise optionally appends a
-        # <hook-context> block onto the prompt.
-        gate = await self._hook_gate.fire_user_prompt_submit(text)
-        if not gate.should_continue:
-            yield msg.Error(text=gate.block_message or "Message blocked by hook.")
-            self._transition_to(RunPhase.done)
-            return
         if gate.context_message:
             message = f"{message}\n<hook-context>{gate.context_message}</hook-context>"
 

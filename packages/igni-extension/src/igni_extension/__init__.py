@@ -27,9 +27,9 @@ from igni_extension.errors import (
 )
 from igni_extension.extension import IgniExtension
 from igni_extension.hints import ToolHints, ToolHintsMissing
+from igni_extension.hooks import Allow, HookEvent, Hooks, Modify, Reject
 from igni_extension.host import Host, Notifications
-from igni_extension.host_model import SCHEMA_VERSION, Intercepts
-from igni_extension.intercepts import Allow, Intercept, Modify, Reject
+from igni_extension.host_model import SCHEMA_VERSION
 from igni_extension.members import Property, Signal
 from igni_extension.notifications import LocalNotification, Target
 from igni_extension.prompt import PromptConditions
@@ -43,11 +43,11 @@ __all__ = [
     "Host",
     "HostEndpoint",
     "HostError",
+    "HookEvent",
+    "Hooks",
     "HostUnavailable",
     "IgniExtension",
     "IgniExtensionError",
-    "Intercept",
-    "Intercepts",
     "LocalNotification",
     "Modify",
     "NotConfigured",

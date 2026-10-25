@@ -27,8 +27,6 @@ import logging
 from typing import Any
 
 from ember_code.backend.login_coordinator import LoginCoordinator
-from ember_code.core.gates import GateVerdict
-from ember_code.extensions.host.intercepts import Interceptors
 from ember_code.extensions.registry import ExtensionRefused
 from ember_code.extensions.rpc import ExtensionRpc
 from ember_code.protocol import messages as msg
@@ -57,39 +55,6 @@ class ExtensionMessage:
             "</system-context>\n"
             f'<{cls.TAG} from="{extension_id}">\n{text}\n</{cls.TAG}>'
         )
-
-
-class ChatSubmissions:
-    """``chat.submitting``: a message put to the extensions that intercept it.
-
-    Asked where a message enters — the person's, an extension's post, a
-    queued one — before igni wraps it for the agent, so an interceptor
-    reads what was written, and may change it.
-    """
-
-    EVENT = "chat.submitting"
-
-    def __init__(self, interceptors: Interceptors | None = None) -> None:
-        self._interceptors = interceptors if interceptors is not None else Interceptors.shared()
-
-    async def check(
-        self,
-        session_id: str,
-        text: str,
-        *,
-        from_extension: str | None = None,
-        has_media: bool = False,
-    ) -> GateVerdict:
-        """The verdict; ``verdict.value["text"]`` is the text to go ahead with."""
-        value = {
-            "session_id": session_id,
-            "text": text,
-            "from_extension": from_extension,
-            "has_media": has_media,
-        }
-        if not self._interceptors.any_for(self.EVENT):
-            return GateVerdict(allowed=True, value=value)
-        return await self._interceptors.run(self.EVENT, value, writer=from_extension)
 
 
 class MessageDispatcher:
@@ -122,27 +87,6 @@ class MessageDispatcher:
         # what it did for as long as the namespace did not exist and
         # is the least informative thing it could say.
         self._extensions = extensions
-        self._submissions = ChatSubmissions()
-
-    async def _submitted(
-        self,
-        text: str,
-        req_id: str,
-        *,
-        from_extension: str | None = None,
-        has_media: bool = False,
-    ) -> str | None:
-        """The text to run, or ``None`` when an extension stopped it (and the views were told)."""
-        verdict = await self._submissions.check(
-            str(self._backend.session_id),
-            text,
-            from_extension=from_extension,
-            has_media=has_media,
-        )
-        if verdict.allowed:
-            return str(verdict.value.get("text", text))
-        await self._transport.send(msg.Error(id=req_id, text=verdict.reason))
-        return None
 
     async def dispatch(self, message: Any) -> None:
         req_id = message.id or ""
@@ -179,16 +123,14 @@ class MessageDispatcher:
     # ── User-driven message paths ────────────────────────────────
 
     async def _on_user_message(self, message: Any, req_id: str) -> None:
-        text = await self._submitted(message.text, req_id, has_media=bool(message.file_contents))
-        if text is None:
-            return
         # Mirroring: every attached view paints the user bubble; the
         # sender recognises its own client_id and skips the echo.
         # Send the ORIGINAL (un-wrapped) text so chat bubbles stay
         # clean — the system-context wrapper below is for the LLM
-        # only, not for display. An interceptor's change is what was
-        # sent, so it is what the bubble shows.
-        await self._transport.send(msg.UserMessageReceived(text=text, client_id=message.client_id))
+        # only, not for display.
+        await self._transport.send(
+            msg.UserMessageReceived(text=message.text, client_id=message.client_id)
+        )
         # ``force=true`` is the FE's "Retry" semantic on an
         # interrupted banner: supersede any pending + interrupted
         # rows for this session, then start clean. Without this
@@ -205,7 +147,7 @@ class MessageDispatcher:
                     "user_message(force=true) discarded %d stale row(s) for session",
                     discarded,
                 )
-        agent_text = self._maybe_wrap_plan_hint(text)
+        agent_text = self._maybe_wrap_plan_hint(message.text)
         await self._run_turn(agent_text, message.file_contents, req_id)
 
     async def _run_turn(self, agent_text: str, media: dict[str, str], req_id: str) -> None:
@@ -232,22 +174,13 @@ class MessageDispatcher:
         told who sent it, then answers in the chat as it answers the
         person.
         """
-        submitted = await self._submitted(
-            text, "", from_extension=extension_id, has_media=bool(media)
-        )
-        if submitted is None:
-            return
         await self._transport.send(
-            msg.UserMessageReceived(text=submitted, client_id="", extension_id=extension_id)
+            msg.UserMessageReceived(text=text, client_id="", extension_id=extension_id)
         )
-        await self._run_turn(ExtensionMessage.wrap(extension_id, submitted), media, "")
+        await self._run_turn(ExtensionMessage.wrap(extension_id, text), media, "")
 
     async def queue_from_extension(self, extension_id: str, text: str) -> None:
         """``host.chat.queue``: the same, for the next turn."""
-        submitted = await self._submitted(text, "", from_extension=extension_id)
-        if submitted is None:
-            return
-        text = submitted
         self._queue.append(ExtensionMessage.wrap(extension_id, text))
         await self._transport.send(
             msg.UserMessageReceived(text=text, client_id="", queued=True, extension_id=extension_id)
@@ -363,12 +296,9 @@ class MessageDispatcher:
         await self._transport.send(result)
 
     async def _on_queue_message(self, message: Any) -> None:
-        text = await self._submitted(message.text, message.id or "")
-        if text is None:
-            return
-        self._queue.append(text)
+        self._queue.append(message.text)
         await self._transport.send(
-            msg.UserMessageReceived(text=text, client_id=message.client_id, queued=True)
+            msg.UserMessageReceived(text=message.text, client_id=message.client_id, queued=True)
         )
 
     async def _on_typing(self, message: Any) -> None:

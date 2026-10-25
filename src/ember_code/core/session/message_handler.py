@@ -40,6 +40,11 @@ from typing import Any
 from ember_code.core.guardrails.runner import GuardrailRunner
 from ember_code.core.hooks.events import HookEvent
 from ember_code.core.hooks.executor import HookExecutor
+from ember_code.core.hooks.extension_gate import (
+    ExtensionHookGate,
+    StopValue,
+    UserPromptSubmitValue,
+)
 from ember_code.core.paths import MAIN_AGENT_NAME
 from ember_code.core.session.schemas import (
     McpInitResult,
@@ -114,6 +119,13 @@ class SessionMessageHandler:
         """
         await self._ensure_mcp()
 
+        verdict = await ExtensionHookGate.ask(
+            UserPromptSubmitValue(session_id=self._session_id_ref(), message=message),
+            HookEvent.USER_PROMPT_SUBMIT,
+        )
+        if not verdict.allowed:
+            return self._blocked(verdict.reason)
+        message = str(verdict.value.get("message", message))
         blocked = await self._check_user_prompt_hook(message)
         if blocked is not None:
             return blocked
@@ -204,7 +216,10 @@ class SessionMessageHandler:
         )
         if hook_result.should_continue:
             return None
-        blocked_msg = hook_result.message or "Blocked by UserPromptSubmit hook."
+        return self._blocked(hook_result.message or "Blocked by UserPromptSubmit hook.")
+
+    def _blocked(self, blocked_msg: str) -> str:
+        """A message a UserPromptSubmit hook stopped: audited, and returned as the reply."""
         self._audit.log(
             AuditEntry.blocked(
                 session_id=self._session_id_ref(),
@@ -269,13 +284,9 @@ class SessionMessageHandler:
                 session_id=self._session_id_ref(),
                 response=response_text[: self._STOP_HOOK_RESPONSE_PREVIEW],
             )
-            stop_result = await self._hook_executor.execute(
-                event=HookEvent.STOP.value,
-                payload=payload.model_dump(),
-            )
-            if stop_result.should_continue:
+            feedback = await self._stop_feedback(payload, response_text)
+            if feedback is None:
                 break
-            feedback = stop_result.message or "Response blocked by Stop hook."
             system_msg = (
                 f"[SYSTEM] Your previous response was rejected by a Stop hook: "
                 f"{feedback}\nPlease revise your response to address this issue."
@@ -284,6 +295,25 @@ class SessionMessageHandler:
             run_output = await team.arun(system_msg, stream=False)
             response_text = self._extract_response_text(run_output)
         return response_text, run_output
+
+    async def _stop_feedback(self, payload: StopHookPayload, response_text: str) -> str | None:
+        """Why the agent may not stop yet, or ``None`` when it may.
+
+        The extensions that hook ``Stop`` are asked first, then the
+        configured hooks; either one's block sends the agent back.
+        """
+        verdict = await ExtensionHookGate.ask(
+            StopValue(session_id=payload.session_id, response=response_text), HookEvent.STOP
+        )
+        if not verdict.allowed:
+            return verdict.reason
+        stop_result = await self._hook_executor.execute(
+            event=HookEvent.STOP.value,
+            payload=payload.model_dump(),
+        )
+        if stop_result.should_continue:
+            return None
+        return stop_result.message or "Response blocked by Stop hook."
 
     async def _handle_run_failure(self, exc: Exception) -> str:
         """Common failure path: audit log, StopFailure hook fire

@@ -93,7 +93,7 @@ All of it follows `READY`, like fragments: an extension that goes down takes its
 
 ### Collisions, and the priority order
 
-`extensions/impact.py` reads an extension's **impact** off its manifest — the prompts it overrides and the edits it makes, anchors, commands, and for review its tools, pages, menu, indicators, settings, host grants, intercepts, RPC grants, egress, secrets and workspace access. igni server shows it on the Services page.
+`extensions/impact.py` reads an extension's **impact** off its manifest — the prompts it overrides and the edits it makes, anchors, commands, and for review its tools, pages, menu, indicators, settings, host grants, hook events, RPC grants, egress, secrets and workspace access. igni server shows it on the Services page.
 
 **What collides.** A claim is spelled `<kind>:<name>`:
 
@@ -106,7 +106,7 @@ All of it follows `READY`, like fragments: an extension that goes down takes its
 
 An insert or an append is named `prompt:main+our_review` where it has to be — switched off, dropped — and is never a claim. Agents are prompts like any other: `prompt:agent:explorer`, `prompt:agent:architect#frontmatter`.
 
-**Who wins: the higher priority, every time.** A super admin keeps one order of extensions on igni server's Services page (service-identity §8.1), highest first; unset, it is the order their services were approved in, and a newly approved service goes to the bottom. Every collision goes to the extension higher in that order, automatically — nobody decides collision by collision, and nothing is ever held back from distribution because of one. The loser loses that claim only; the rest of it still works. The same order is the one edits stack in and interceptors are asked in.
+**Who wins: the higher priority, every time.** A super admin keeps one order of extensions on igni server's Services page (service-identity §8.1), highest first; unset, it is the order their services were approved in, and a newly approved service goes to the bottom. Every collision goes to the extension higher in that order, automatically — nobody decides collision by collision, and nothing is ever held back from distribution because of one. The loser loses that claim only; the rest of it still works. The same order is the one edits stack in and extensions' hooks are asked in.
 
 **An exclusive override** starts a battle with every extension editing its prompt, and the same rule settles each: it holds only if its extension is above all of them, and then their edits of that prompt are off, section replacements included. If any editor is higher, the exclusive override is off and the edits stand; the next override of that prompt down the order, if there is one, has it. This is the simplest rule that is consistent with the rest — "the higher wins" — rather than a special case: an exclusive override is a claim on the whole prompt against everyone touching it, and it wins that claim exactly when it would win each part of it.
 
@@ -119,7 +119,7 @@ An insert or an append is named `prompt:main+our_review` where it has to be — 
 
 Every loss says why, and the reason begins `lower priority than <extension>` — in the extensions panel (`switched_off` on `list_extensions`, and on the host model's `ExtensionInfo`), on the Services page beside each collision's winner and losers, and in the log.
 
-**Never a collision:** inserts and appends (they stack); an edit aimed at a section an override lacks (it is dropped and listed); pages, indicators and settings (namespaced by the extension id); tools (registered under the extension's server name); a plugin's own agents (under the extension's namespace); grants, egress, secrets (they only add). A `when` does not avoid a collision: two extensions replacing one section under different conditions still both claim it. Interceptors never collide either, whether they reject or change an event: they are asked in priority order, each handed what the one before left, and the first reject ends it.
+**Never a collision:** inserts and appends (they stack); an edit aimed at a section an override lacks (it is dropped and listed); pages, indicators and settings (namespaced by the extension id); tools (registered under the extension's server name); a plugin's own agents (under the extension's namespace); grants, egress, secrets (they only add). A `when` does not avoid a collision: two extensions replacing one section under different conditions still both claim it. Hooks never collide either, whether they reject or change an event: they are asked in priority order, each handed what the one before left, and the first reject ends it.
 
 **igni's own commands are nobody's.** `/clear`, `/plan` and the rest of `docs/igni-commands.json` are answered by igni before any extension, so an extension declaring one would never run — that is not a collision between extensions, and priority does not enter into it. igni server refuses such a bundle at upload; a machine running a newer igni, with a command the bundle did not know about, switches the claim off and says why (`IgniCommands`, the resolver's `reserved`). A test holds the list to the dispatcher, and igni server's copy to it.
 
@@ -129,13 +129,16 @@ One rule, two implementations: igni server's `app/services/identity/impact.py` a
 
 ### Events
 
-Being asked *before* something happens — and stopping it, or changing
-it — is the host object model's **intercepts** (`@ext.intercept(…)`,
-declared in `permissions.intercepts`): the agent's decision points
-(`chat.submitting`, `tools.calling`, `plan.submitting`) and every write
-to the model. What each can do, and what igni does when an interceptor
-is silent, is `docs/HOST_OBJECT_MODEL.md`, *Intercepting*. A process
-intercepts; a page cannot.
+Having a say *before* something happens — and stopping it, or changing
+it — is igni's own **hook events** (`docs/HOOKS.md`, *Extensions*):
+`@ext.hook(Hooks.PRE_TOOL_USE)` and the rest, declared in
+`permissions.hooks`. The same events igni's settings-file hooks answer,
+in one pipeline: on the five that decide (`PreToolUse`, `PostToolUse`,
+`UserPromptSubmit`, `Stop`, `PlanSubmit`) the extensions are asked
+first, in the priority order, and the configured hooks run on what they
+leave; every other event is told. There is no separate interception
+layer, and the model's writes are not hook events — an extension that
+disagrees with one reacts to it. A process answers hooks; a page cannot.
 
 Being told when something happens is the host object model's signals
 (below): an extension subscribes with `@ext.on(ext.host.<object>.<signal>)`
@@ -635,7 +638,7 @@ The manifest's `trust` (`first-party` / `partner` / `unsigned`) is the author's 
 
 ### Permissions
 
-Declared, admin-granted, base-enforced, deny by default: `workspace` (none/read/write, path-scoped), `egress` (the hosts its pages may connect to, empty by default), `secrets` (named grants the deployment resolves), `tools` (MCP tools it may register with the agent, each with its four hints), `rpc` (backend methods its UI may call over the bridge — exact names, or a `*`-suffixed prefix, because this list is read by whoever approves the install), `host` (objects of the host object model its process and page may reach, same grammar), `intercepts` (events its process is asked about before they happen, and may stop or, with `modify`, change).
+Declared, admin-granted, base-enforced, deny by default: `workspace` (none/read/write, path-scoped), `egress` (the hosts its pages may connect to, empty by default), `secrets` (named grants the deployment resolves), `tools` (MCP tools it may register with the agent, each with its four hints), `rpc` (backend methods its UI may call over the bridge — exact names, or a `*`-suffixed prefix, because this list is read by whoever approves the install), `host` (objects of the host object model its process and page may reach, same grammar), `hooks` (igni's hook events its process answers — on the five that decide it may stop or change the event; the rest it is told).
 
 **Where each one is enforced, and how far.** This list was written before any of it was, and for a while the only enforced permission was `rpc` — which made the rest a list of restrictions that restricted nothing.
 
@@ -643,7 +646,7 @@ Declared, admin-granted, base-enforced, deny by default: `workspace` (none/read/
 |---|---|---|
 | `rpc` | `ExtensionRegistry.authorise`, on every call | Complete. |
 | `host` | `HostModel.handle`, on every request from the process's socket and the page's bridge; and at dispatch, for every signal | Complete for what igni does on the extension's behalf: an ungranted object answers `not_granted` and its signals are never sent; signal contents are filtered by `workspace` and `workspacePaths`. |
-| `intercepts` | `Interceptors`, which asks only the extensions that declared an event and hold the grant it needs in `host`, in priority order | Complete for what igni asks: an undeclared event is never put to the extension, and a change from one that did not declare `modify` is not taken. What a silence means is igni's, per event — a tool call or a message nobody could check does not go ahead. |
+| `hooks` | `ExtensionHooks`, which asks only the extensions that declared an event, in priority order, and takes a change only to the fields the event lets change | Complete for what igni asks: an undeclared event is never put to the extension. What a silence means is igni's, per event — a tool call or a message nobody could check does not go ahead — and an extension that is faulty is not waited on at all. |
 | `tools` | tool registration, which is igni's; and every permission mode, through each tool's hints | Complete. A service may expose what it likes; what reaches the model is this list, and how each tool is treated is what the manifest says it is. |
 | `egress` | the page's `connect-src`, written from the manifest and the extension's own service, `https`/`wss` only; and the endpoint host igni itself dials, `https` only | **The page, completely. It does not confine the extension's process**, and is not meant to: see *The process is trusted* below. |
 | `workspace` | what igni *tells* a service, as `IGNI_WORKSPACE*` | An extension that was never granted the workspace is not told where it is. A service that goes looking anyway is not stopped — same OS-sandbox gap. |
@@ -757,7 +760,11 @@ Install, registration, upgrade, permission grant, tool invocation and bridge cal
 
 Plus: validate at install not at use; supervise with backoff and open a circuit after repeated failure; atomic reversible upgrades; unknown fields ignored in both directions with a report of what was dropped.
 
-Every call into a capability carries a **deadline and a cancellation token** — the agent loop is never blocked — and a concurrency, result-size and token budget.
+Every call into a capability carries a **deadline** — the agent loop is never blocked — and a concurrency, result-size and token budget. The deadlines, all igni's: a hook event, 2 s (`ExtensionHooks.TIMEOUT_S`); an agent's tool call, the MCP session's read timeout; a page's call or a slash command, `CALL_TIMEOUT_S` over that; a prompt contribution's text, `FRAGMENT_TIMEOUT_S`; a health probe, `PROBE_TIMEOUT_S`; starting and restarting a service, `START_TIMEOUT_S` and `RESTART_TIMEOUT_S`. Signals (`@ext.on`) and the hook events that decide nothing are sent and never waited on.
+
+**Faulty after three in a row.** A deadline bounds one wait; it does not stop igni waiting on the same hung process every time. Three timeouts or crashes in a row — hooks and tool calls alike; a tool that reports an error of its own has answered — make an extension **faulty** (`extensions/faults.py`): igni ends its process group (the group the process named when it connected to the host channel, once igni has checked it started that group's leader) and starts it again, tells the person, and shows why in the extensions panel and the host model's `ExtensionInfo.faulty`. While it is faulty its hooks are not waited on: a fail-closed event is refused at once with "<extension> isn't responding", a fail-open one goes ahead without it. Its first answer after the restart clears the mark.
+
+**Never on the loop.** An extension's process serves igni on one event loop, so the SDK runs any plain `def` an author hands it — a tool, a hook handler, a reaction, a background job — in a worker thread (`igni_extension.threads`), and calls an `async def` as it is. A sync tool that takes a second does not hold a hook that arrives meanwhile. Blocking inside an `async def` still holds the loop, and threads share the GIL: heavy CPU work belongs in a process pool the extension runs itself. The thread pool is anyio's default limiter, and since the process is the extension's, it may change it.
 
 ---
 

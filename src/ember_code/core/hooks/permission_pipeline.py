@@ -112,7 +112,7 @@ class ToolCallContext:
         return cls(name=name, func=None, args=args, agent=None)
 
     def with_args(self, args: dict[str, Any]) -> ToolCallContext:
-        """The same call with other arguments: what an interceptor changed them to."""
+        """The same call with other arguments: what an extension's PreToolUse hook changed them to."""
         if args is self.args:
             return self
         return replace(self, args=dict(args))

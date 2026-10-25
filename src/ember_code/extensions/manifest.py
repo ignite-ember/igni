@@ -31,6 +31,7 @@ from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from ember_code.core.hooks.events import HookEvent
 from ember_code.core.mcp.hints import ToolHints
 from ember_code.extensions.assets import ExtensionAsset, ExtensionAssets
 
@@ -70,10 +71,6 @@ SETTING_KEY = re.compile(r"^[a-z][a-zA-Z0-9_]*$")
 #: A host-model grant: a permission name from the model
 #: (``chat.read``), or a ``*``-suffixed prefix (``chat.*``).
 HOST_GRANT = re.compile(r"^[a-z][a-z0-9_.]*\*?$")
-
-#: An event an extension intercepts: a decision point (``tools.calling``)
-#: or a member whose write it intercepts (``ui.navigate``).
-INTERCEPT_EVENT = re.compile(r"^[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)+$")
 
 #: An RPC grant: an exact method, or a ``*``-suffixed prefix. No other
 #: pattern, because this list is read by whoever approves the install
@@ -187,21 +184,6 @@ class DevCommand(Strict):
     env: dict[str, str] = Field(default_factory=dict)
 
 
-class InterceptGrant(Strict):
-    """One event the extension's process is asked about before it happens.
-
-    ``modify`` is the right to change the event, where it can be changed
-    (``docs/HOST_OBJECT_MODEL.md``, *Intercepting*); rejecting needs only
-    the entry. Approving the service covers what it intercepts. Several
-    extensions intercepting one event never collide: they are asked in
-    the super admin's priority order, each handed what the one before
-    left.
-    """
-
-    event: Annotated[str, Field(pattern=INTERCEPT_EVENT.pattern)]
-    modify: bool = False
-
-
 class Workspace(StrEnum):
     NONE = "none"
     READ = "read"
@@ -261,10 +243,13 @@ class Permissions(Strict):
     #: ``host.workspace``. Its own state, settings and notifications
     #: need no grant. See :mod:`ember_code.extensions.host.grants`.
     host: list[Annotated[str, Field(pattern=HOST_GRANT.pattern)]] = Field(default_factory=list)
-    #: Events the extension's process is asked about before they happen,
-    #: and may stop — or change, with ``modify`` — with the grant the
-    #: event needs held in ``host`` as well. See :class:`InterceptGrant`.
-    intercepts: list[InterceptGrant] = Field(default_factory=list)
+    #: igni's hook events the extension's process answers (``docs/HOOKS.md``,
+    #: *Extensions*): ``PreToolUse``, ``PostToolUse``, ``UserPromptSubmit``,
+    #: ``Stop`` and ``PlanSubmit`` decide — the process may let the event
+    #: go ahead, stop it, or change it — and every other event is told.
+    #: Approving the service covers them; several extensions hooking one
+    #: event never collide, they are asked in the priority order.
+    hooks: list[HookEvent] = Field(default_factory=list)
 
     @model_validator(mode="after")
     def _each_tool_once(self) -> Permissions:
@@ -272,10 +257,10 @@ class Permissions(Strict):
         repeated = sorted({name for name in names if names.count(name) > 1})
         if repeated:
             raise ValueError(f"permissions.tools names {', '.join(repeated)} more than once")
-        events = [grant.event for grant in self.intercepts]
+        events = [event.value for event in self.hooks]
         twice = sorted({event for event in events if events.count(event) > 1})
         if twice:
-            raise ValueError(f"permissions.intercepts names {', '.join(twice)} more than once")
+            raise ValueError(f"permissions.hooks names {', '.join(twice)} more than once")
         return self
 
     def tool_names(self) -> list[str]:
@@ -579,18 +564,18 @@ class ExtensionManifest(Strict):
         return self
 
     @model_validator(mode="after")
-    def _intercepts_need_a_process(self) -> ExtensionManifest:
-        """Only a process igni starts can be asked about an event.
+    def _hooks_need_a_process(self) -> ExtensionManifest:
+        """Only a process igni starts can answer a hook event.
 
         igni asks over the host channel it hands the processes it
         starts; an endpoint is somebody else's and never connects. Its
-        intercepts could never answer, and silence on a fail-closed
-        event — a tool call, a message — blocks it, every time.
+        hooks could never answer, and silence on a fail-closed event —
+        a tool call, a message — blocks it, every time.
         """
-        if self.permissions.intercepts and not self.runs_here:
-            events = ", ".join(grant.event for grant in self.permissions.intercepts)
+        if self.permissions.hooks and not self.runs_here:
+            events = ", ".join(event.value for event in self.permissions.hooks)
             raise ValueError(
-                f"{self.id}: permissions.intercepts ({events}) needs a process igni starts — "
+                f"{self.id}: permissions.hooks ({events}) needs a process igni starts — "
                 "'python', 'sidecar' or 'dev'. An 'endpoint' is never asked, and silence "
                 "blocks a fail-closed event every time"
             )

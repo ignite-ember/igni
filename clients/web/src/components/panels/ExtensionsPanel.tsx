@@ -282,6 +282,11 @@ export function ExtensionsPanel({
             entries={extension.dropped ?? []}
             title="Prompt edits that land nowhere — another extension's override has no such section:"
           />
+          {extension.faulty && (
+            <div className="ext-switched-off" role="alert">
+              <div className="meta">Not responding: {extension.faulty}</div>
+            </div>
+          )}
           <Problems entries={extension.problems ?? []} />
           <AgentTools tools={extension.tools ?? []} />
           <OpenOnWeb url={extension.web_url} name={extension.name} />

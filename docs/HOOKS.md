@@ -42,6 +42,7 @@ Agent calls edit_file
 | `Stop` | When agent wants to finish | Yes | Completion validation (did tests run?) |
 | `SubagentStart` | When a sub-team spawns | No | Logging, resource tracking |
 | `SubagentStop` | When a sub-team finishes | No | Result validation |
+| `PlanSubmit` | When the agent submits a plan (`exit_plan_mode`), before the person sees it | Yes | Plan quality gates (does it name the files?) |
 | `Notification` | *(reserved for future use — nothing fires it)* | No | Custom notification handlers |
 
 ### Permission events
@@ -299,6 +300,19 @@ Two more things the wire shape guarantees:
 }
 ```
 
+**PlanSubmit:**
+```json
+{
+  "session_id": "abc-123",
+  "plan": "## Plan\n1. Change `app/auth.py` …",
+  "attempt": 0
+}
+```
+
+`attempt` counts the plans rejected since the agent entered plan mode.
+A block (exit 2, or `"continue": false`) sends the plan back to the agent
+with the hook's `systemMessage`; it may do more work and submit again.
+
 **SubagentStop:**
 ```json
 {
@@ -496,6 +510,48 @@ echo '{"continue": true}'
 - Hooks load at session startup. Use `/hooks reload` to pick up changes without restarting
 - Default timeout: 10 seconds for all hook types
 - Set `"background": true` for fire-and-forget hooks that don't block the agent
+
+---
+
+## Extensions
+
+An extension's process answers hook events too: it lists them in its
+manifest's `permissions.hooks` and answers with `@ext.hook` in the
+`igni-extension` SDK (`docs/EXTENSIBILITY.md`). One pipeline, not two:
+
+- **On the five events that decide** — `PreToolUse`, `PostToolUse`,
+  `UserPromptSubmit`, `Stop`, `PlanSubmit` — the extensions that hook
+  one are asked **first**, one at a time in the super admin's priority
+  order of extensions, each handed what the one before left. A reject
+  ends the chain; then igni's configured hooks above run on what the
+  extensions left, the way plugin hooks run before project hooks so the
+  project keeps the last word.
+- **Every other event** is told to the extensions that hook it, and
+  nothing waits on them.
+
+| Event | An extension may change | A reject | No answer in 2 s |
+|---|---|---|---|
+| `PreToolUse` | `tool_args` — igni's own checks, and the tool, see the change | The tool does not run; the agent is told why | **refused** |
+| `PostToolUse` | `result` (text) — what the model reads | The model is told the result was withheld, and why | goes ahead |
+| `UserPromptSubmit` | `message` — what the run is started with | The run does not start; the reason is the error | **refused** |
+| `Stop` | — | As a Stop hook's block: the agent revises its answer with the reason where igni can send it back, else the reason is shown after the run | goes ahead |
+| `PlanSubmit` | `plan` — what the person sees | The plan goes back to the agent with the reason | goes ahead |
+
+An extension handler is handed the real values, never the clipped
+strings a settings hook receives on stdin. Two seconds is igni's
+deadline, not the extension's; a process that is not running, a handler
+that raised, or a change the event cannot take is a silence too. A
+headless run (`-m`, `--pipe`) starts the extensions installed on the
+machine first, so their hooks apply there as well; one that did not
+start refuses what it would have checked, with why.
+
+**Faulty extensions.** Three timeouts or crashes in a row — hooks and
+the extension's tool calls alike — make an extension faulty: igni
+restarts its process, tells the person, and stops waiting on its hooks.
+While it is faulty, a `PreToolUse` or `UserPromptSubmit` it hooks is
+refused at once ("<extension> isn't responding"), and every other event
+goes ahead without it. Its first answer after the restart clears the
+mark.
 
 ---
 

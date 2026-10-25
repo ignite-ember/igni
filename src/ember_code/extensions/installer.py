@@ -98,6 +98,11 @@ logger = logging.getLogger(__name__)
 #: silently take over ``github``.
 SERVER_PREFIX = "ext:"
 
+#: How long an extension's service has to start and answer MCP's
+#: ``initialize``. Every later call has its own deadline; this is the
+#: first one.
+START_TIMEOUT_S = 60.0
+
 
 class InstallError(Exception):
     """The bundle will not be installed, and why.
@@ -896,7 +901,9 @@ class ExtensionInstaller:
         """Connect to the service. Returns a reason on failure."""
         try:
             self._mcp.configs[config.name] = config
-            result = await self._mcp.connect(config.name)
+            result = await asyncio.wait_for(self._mcp.connect(config.name), START_TIMEOUT_S)
+        except TimeoutError:
+            return f"its service did not start within {START_TIMEOUT_S:g}s"
         except Exception as exc:
             logger.error("extension service %s failed to start", config.name, exc_info=True)
             return f"its service could not be started: {exc}"

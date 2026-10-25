@@ -169,6 +169,23 @@ describe("what is installed", () => {
     panelWith([extension()]);
     expect(screen.queryByRole("note")).toBeNull();
   });
+
+  it("says an extension is not responding, and why", () => {
+    panelWith([
+      extension({
+        faulty:
+          "Compliance Scanner isn't responding: 3 calls in a row timed out or crashed",
+      }),
+    ]);
+    expect(screen.getByRole("alert").textContent).toMatch(
+      /Not responding: Compliance Scanner isn't responding/,
+    );
+  });
+
+  it("says nothing about responding while it answers", () => {
+    panelWith([extension()]);
+    expect(screen.queryByRole("alert")).toBeNull();
+  });
 });
 
 describe("the form", () => {

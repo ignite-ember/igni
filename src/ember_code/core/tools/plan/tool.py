@@ -158,8 +158,8 @@ class PlanTool(Toolkit):
           plan mode is that the user reviews before execution.
           Wait for their next message.
 
-        Something checking submissions may reject the plan, with a
-        reason: do what it asks, then submit again.
+        A ``PlanSubmit`` hook may reject the plan, with a reason: do
+        what it asks, then submit again.
 
         Returns a confirmation. The plan + tasks are stored on
         the session for the UI to render and the user can

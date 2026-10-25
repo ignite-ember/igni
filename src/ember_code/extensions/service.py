@@ -22,15 +22,31 @@ should not need a subprocess to get one.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 from typing import Any, Protocol, runtime_checkable
 
 logger = logging.getLogger(__name__)
 
+#: The longest igni waits on one call into an extension's service. The
+#: MCP session's own read timeout is usually shorter; this is the bound
+#: that holds whatever the session is configured with.
+CALL_TIMEOUT_S = 60.0
+
 
 class ExtensionServiceError(Exception):
-    """The extension's service could not answer."""
+    """The extension's service could not answer.
+
+    ``unanswered`` when it said nothing — the call timed out, or the
+    connection failed — as against a tool that reported an error of its
+    own, which answered. What counts toward an extension being faulty
+    (:class:`~ember_code.extensions.faults.ExtensionFaults`).
+    """
+
+    def __init__(self, message: str, *, unanswered: bool = False) -> None:
+        super().__init__(message)
+        self.unanswered = unanswered
 
 
 @runtime_checkable
@@ -69,22 +85,30 @@ class McpExtensionService:
         if client is None:
             raise ExtensionServiceError(
                 f"the service for '{self._server_name}' is not connected; "
-                "it is starting, or it failed to start"
+                "it is starting, or it failed to start",
+                unanswered=True,
             )
         try:
-            session = await client.get_session_for_run()
-            result = await session.call_tool(method, args)
-        except ExtensionServiceError:
-            raise
+            result = await asyncio.wait_for(self._call(client, method, args), CALL_TIMEOUT_S)
+        except TimeoutError as exc:
+            raise ExtensionServiceError(
+                f"'{method}' on '{self._server_name}' did not answer within {CALL_TIMEOUT_S:g}s",
+                unanswered=True,
+            ) from exc
         except Exception as exc:
             logger.error("extension call %s.%s failed", self._server_name, method, exc_info=True)
             raise ExtensionServiceError(
-                f"'{method}' on '{self._server_name}' failed: {exc}"
+                f"'{method}' on '{self._server_name}' failed: {exc}", unanswered=True
             ) from exc
 
         if getattr(result, "isError", False):
             raise ExtensionServiceError(f"'{method}' reported: {self.unwrap(result)}")
         return self.unwrap(result)
+
+    @staticmethod
+    async def _call(client: Any, method: str, args: dict[str, Any]) -> Any:
+        session = await client.get_session_for_run()
+        return await session.call_tool(method, args)
 
     @staticmethod
     def unwrap(result: Any) -> Any:

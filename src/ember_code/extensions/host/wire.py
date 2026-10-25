@@ -30,7 +30,7 @@ class Op(StrEnum):
     CALL = "call"
     SUBSCRIBE = "subscribe"
     UNSUBSCRIBE = "unsubscribe"
-    #: The process's answer to an ``intercept``. Not a page's to send.
+    #: The process's answer to a ``hook`` message. Not a page's to send.
     ANSWER = "answer"
 
 
@@ -80,13 +80,17 @@ class SignalMessage(BaseModel):
     value: Any = None
 
 
-class InterceptMessage(BaseModel):
-    """Host → SDK: an event about to happen, waiting for the process's answer."""
+class HookMessage(BaseModel):
+    """Host → SDK: one of igni's hook events (``docs/HOOKS.md``, *Extensions*).
 
-    op: Literal["intercept"] = "intercept"
-    #: Echoed on the answer.
-    id: str
-    #: The intercept's name: ``tools.calling``, ``ui.navigate``.
+    With an ``id``, the event decides something and the host waits for
+    the process's ``answer``; without one, it is told and nothing waits.
+    """
+
+    op: Literal["hook"] = "hook"
+    #: Echoed on the answer; ``None`` for an event that is only told.
+    id: str | None = None
+    #: The hook event: ``PreToolUse``, ``PlanSubmit``, ``SessionStart``.
     event: str
     value: Any = None
 
@@ -95,24 +99,24 @@ class Outcome(StrEnum):
     ALLOW = "allow"
     REJECT = "reject"
     MODIFY = "modify"
-    #: The interceptor could not decide — it raised. The host treats it
-    #: as a silence: the event's ``fails`` decides.
+    #: The handler could not decide — it raised. The host treats it as
+    #: a silence: the event's fail mode decides.
     FAILED = "failed"
 
 
-class InterceptAnswer(BaseModel):
+class HookAnswer(BaseModel):
     """SDK → host, as the ``params`` of an ``answer`` request."""
 
     model_config = ConfigDict(extra="forbid")
 
-    #: The ``id`` of the ``intercept`` it answers.
-    intercept: str
+    #: The ``id`` of the ``hook`` message it answers.
+    hook: str
     outcome: Outcome
     #: Why, for a reject: shown to the agent or the person. What went
     #: wrong, for ``failed``.
     reason: str = ""
     #: The changed value, for a modify: the whole value, as it was handed
-    #: over, with only the fields the intercept lets it change changed.
+    #: over, with only the fields the event lets it change changed.
     value: Any = None
 
 
@@ -132,8 +136,8 @@ __all__ = [
     "PROTOCOL_VERSION",
     "ErrorBody",
     "Hello",
-    "InterceptAnswer",
-    "InterceptMessage",
+    "HookAnswer",
+    "HookMessage",
     "Op",
     "Outcome",
     "Reply",

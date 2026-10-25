@@ -271,14 +271,14 @@ def test_a_tool_that_leaves_a_hint_unstated_is_refused(tmp_path: Path, index: Pa
         builder(extension, index).build(tmp_path / "bundle.tar.gz")
 
 
-def test_intercepts_from_an_extension_that_runs_no_process_are_refused(
+def test_hooks_from_an_extension_that_runs_no_process_are_refused(
     tmp_path: Path, index: Path
 ) -> None:
-    """An endpoint is never asked about an event, so its silence would block every fail-closed one."""
+    """An endpoint is never asked about a hook event, so its silence would block every fail-closed one."""
     extension = write_extension(tmp_path / "extension", dependencies=[])
     manifest = json.loads((extension / "manifest.json").read_text())
     manifest["endpoint"] = {"url": "https://acme.example.com/mcp"}
-    manifest["permissions"] = {"intercepts": [{"event": "tools.calling"}]}
+    manifest["permissions"] = {"hooks": ["PreToolUse"]}
     (extension / "manifest.json").write_text(json.dumps(manifest))
 
     with pytest.raises(BundleError, match="needs a process igni starts"):

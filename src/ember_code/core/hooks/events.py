@@ -71,3 +71,10 @@ class HookEvent(str, Enum):
     #   {session_id, tool_name, tool_args, rule?: str, reason?: str}
     PERMISSION_REQUEST = "PermissionRequest"
     PERMISSION_DENIED = "PermissionDenied"
+    # The agent is about to put a plan to the person (``exit_plan_mode``).
+    # Fired by ``PlanTransactionCoordinator.submit`` before the plan is
+    # stored or broadcast. Payload: ``{session_id, plan, attempt}`` —
+    # ``attempt`` counts the plans rejected since plan mode was entered.
+    # A block (exit 2, ``continue: false``) sends the plan back to the
+    # agent with the hook's message; it may submit again.
+    PLAN_SUBMIT = "PlanSubmit"

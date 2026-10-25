@@ -42,6 +42,7 @@ from ember_code.extensions.contributions import (
     ExtensionContributions,
 )
 from ember_code.extensions.distribution import ExtensionDistribution
+from ember_code.extensions.faults import ExtensionFaults
 from ember_code.extensions.health import ExtensionHealth
 from ember_code.extensions.host.channel import HostChannel
 from ember_code.extensions.host.model import HostModel
@@ -61,7 +62,7 @@ from ember_code.extensions.service_token import (
 )
 from ember_code.extensions.store import ExtensionStore
 from ember_code.notifications.center import NotificationCenter
-from ember_code.notifications.extension_notices import ExtensionNoticeReceiver
+from ember_code.notifications.extension_notices import ExtensionNoticeReceiver, FaultNotices
 from ember_code.notifications.local_store import LocalNotificationStore
 from ember_code.notifications.server_client import SignedInServer
 
@@ -273,6 +274,12 @@ class BackendApp:
         self._workspace_signals = WorkspaceSignals(project_dir=self._project_dir)
         notifications = self._build_notifications(settings)
         self._notifications = notifications
+        # An extension that keeps timing out or crashing is restarted,
+        # and the person is told (``ExtensionFaults``).
+        faults = ExtensionFaults.shared()
+        faults.attach(self._extensions.registry)
+        faults.on_faulty(self._extension_health.restart_faulty)
+        faults.on_faulty(FaultNotices(self._extensions.registry, notifications).told)
         self._rpc_router = RpcRouter(
             backend=self._backend,
             transport=self._transport,

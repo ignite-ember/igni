@@ -24,6 +24,7 @@ import logging
 from collections.abc import Callable
 from typing import Any
 
+from ember_code.extensions.faults import ExtensionFaults
 from ember_code.extensions.registry import (
     NAMESPACE,
     ExtensionRefused,
@@ -38,8 +39,10 @@ logger = logging.getLogger(__name__)
 class ExtensionRpc:
     """Authorise a namespaced call, then route it to its service."""
 
-    def __init__(self, registry: ExtensionRegistry) -> None:
+    def __init__(self, registry: ExtensionRegistry, faults: ExtensionFaults | None = None) -> None:
         self._registry = registry
+        self._faults = faults if faults is not None else ExtensionFaults.shared()
+        self._faults.attach(registry)
         self._services: dict[str, ExtensionService] = {}
         self._on_failure: Callable[[str], None] | None = None
 
@@ -125,7 +128,7 @@ class ExtensionRpc:
             # The command is the tool name, so `/compliance` runs the
             # tool `compliance`. One rule, and it is the same one
             # `ext.<id>.<method>` already uses.
-            return await service.call(bare, {"args": text})
+            return await self._call(extension_id, service, bare, {"args": text})
         except ExtensionServiceError as exc:
             if self._on_failure is not None:
                 self._on_failure(extension_id)
@@ -149,7 +152,7 @@ class ExtensionRpc:
 
         logger.debug("extension rpc %s -> %s", method, parsed.method)
         try:
-            return await service.call(parsed.method, args)
+            return await self._call(parsed.extension_id, service, parsed.method, args)
         except ExtensionServiceError as exc:
             # The service answered badly or not at all. Whether it is
             # gone is a question for the health monitor — a failed
@@ -158,3 +161,18 @@ class ExtensionRpc:
             if self._on_failure is not None:
                 self._on_failure(parsed.extension_id)
             raise ExtensionRefused(str(exc)) from exc
+
+    async def _call(
+        self, extension_id: str, service: ExtensionService, method: str, args: dict[str, Any]
+    ) -> Any:
+        """One call, counted: a timeout or a crash toward faulty, an answer clearing it."""
+        try:
+            result = await service.call(method, args)
+        except ExtensionServiceError as exc:
+            if exc.unanswered:
+                self._faults.failed(extension_id, f"its call {method}: {exc}")
+            else:
+                self._faults.answered(extension_id)
+            raise
+        self._faults.answered(extension_id)
+        return result
