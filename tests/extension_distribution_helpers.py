@@ -262,6 +262,8 @@ class FakeIgni:
         self.token_status = 200
         self.tokens_issued = 0
         self.on_token: Callable[[dict[str, list[str]]], None] | None = None
+        #: Assets igni holds, by digest — what ``GET …/assets/{sha256}`` serves.
+        self.assets: dict[str, bytes] = {}
 
     def publish(self, listed: Listed) -> None:
         self.listed[listed.extension_id] = listed
@@ -271,6 +273,9 @@ class FakeIgni:
 
     def downloads(self) -> list[str]:
         return [r.url.path for r in self.requests if r.url.path.endswith("/bundle")]
+
+    def asset_downloads(self) -> list[str]:
+        return [r.url.path.rsplit("/", 1)[-1] for r in self.requests if "/assets/" in r.url.path]
 
     def transport(self) -> httpx.MockTransport:
         return httpx.MockTransport(self._handle)
@@ -292,6 +297,11 @@ class FakeIgni:
                     "resolutions": self.resolutions,
                 },
             )
+        if path.startswith("/v1/extensions/") and "/assets/" in path:
+            body = self.assets.get(path.rsplit("/", 1)[-1])
+            if body is None:
+                return httpx.Response(404)
+            return httpx.Response(200, content=body)
         if path.startswith("/v1/extensions/") and path.endswith("/bundle"):
             extension_id = path.removeprefix("/v1/extensions/").removesuffix("/bundle")
             entry = self.listed.get(extension_id)
@@ -325,3 +335,30 @@ class FakeIgni:
                 "issued_token_type": "urn:ietf:params:oauth:token-type:access_token",
             },
         )
+
+
+def asset(
+    name: str, platform: str, body: bytes, *, file: str | None = None, unpack: bool = False
+) -> dict[str, Any]:
+    """One asset as a manifest declares it."""
+    return {
+        "name": name,
+        "platform": platform,
+        "file": file or f"{name}.bin",
+        "size": len(body),
+        "sha256": hashlib.sha256(body).hexdigest(),
+        "source": f"https://downloads.example/{name}/{platform}",
+        "unpack": unpack,
+    }
+
+
+def tar_gz(files: dict[str, bytes], *, executable: tuple[str, ...] = ()) -> bytes:
+    """A gzipped tar, as a JVM or a database ships."""
+    buffer = io.BytesIO()
+    with tarfile.open(fileobj=buffer, mode="w:gz") as tar:
+        for name, data in files.items():
+            info = tarfile.TarInfo(name)
+            info.size = len(data)
+            info.mode = 0o755 if name in executable else 0o644
+            tar.addfile(info, io.BytesIO(data))
+    return buffer.getvalue()

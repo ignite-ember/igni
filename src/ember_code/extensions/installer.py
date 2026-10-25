@@ -34,11 +34,15 @@ token for it — ``IGNI_SERVICE_URL``, ``IGNI_SERVICE_TOKEN_URL`` and
 It never sees the person's igni session. It is also given a directory
 of its own, ``IGNI_EXTENSION_DATA``: what it keeps on this machine —
 a database, a model — it runs and stores itself.
-igni provides no databases or models to extensions.
+igni provides no databases or models to extensions. What it runs that
+is not Python ships with it as assets, checked against the digests its
+signed manifest pins and laid out read-only under ``<bundle>/assets/``,
+which ``IGNI_EXTENSION_ASSETS`` names (:mod:`ember_code.extensions.assets`).
 """
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import secrets
 import shutil
@@ -51,6 +55,14 @@ from ember_code.core.agents.tool_audience import audience as default_audience
 from ember_code.core.mcp.config import MCPServerConfig, MCPTransport
 from ember_code.core.mcp.hints import ToolHints, ToolHintsRegistry
 from ember_code.core.mcp.naming import bare_tool_name
+from ember_code.extensions.assets import (
+    ASSETS_DIR_ENV,
+    AssetError,
+    AssetLayout,
+    AssetPlatform,
+    AssetSource,
+    ExtensionAssets,
+)
 from ember_code.extensions.host.definition import HOST_SCHEMA
 from ember_code.extensions.host.grants import HostGrants
 from ember_code.extensions.manifest import ExtensionManifest, Workspace
@@ -124,6 +136,7 @@ class ExtensionInstaller:
         service_tokens: ServiceTokenEndpoint | None = None,
         host_channel: HostChannel | None = None,
         tool_hints: ToolHintsRegistry | None = None,
+        asset_source: AssetSource | None = None,
     ) -> None:
         """
         Args:
@@ -161,6 +174,9 @@ class ExtensionInstaller:
                 one, a process is not told where igni is.
             tool_hints: Where its tools' hints go for the permission
                 modes to read. The process's shared registry by default.
+            asset_source: Where a development install's missing asset
+                is fetched from — its manifest's ``source``. A
+                distributed one never is: its assets came from igni.
         """
         self._registry = registry
         self._rpc = rpc
@@ -175,6 +191,7 @@ class ExtensionInstaller:
         self._service_tokens = service_tokens
         self._host_channel = host_channel
         self._tool_hints = tool_hints if tool_hints is not None else ToolHintsRegistry.shared()
+        self._asset_source = asset_source or AssetSource()
         # Where a plugin an extension carries is installed.
         # ``None`` means this deployment does not take them —
         # the extension still installs, and its agents do not
@@ -229,10 +246,12 @@ class ExtensionInstaller:
         service_url = self._service_url(manifest, distribution)
 
         try:
+            assets_env = await self._lay_out_assets(manifest, bundle, distribution)
             entry_point = await self._python_entry(manifest, bundle, distribution)
-            token_env = await self._process_grants(manifest, service_url)
+            token_env = {**await self._process_grants(manifest, service_url), **assets_env}
             config = self._service_config(manifest, bundle, permissions, entry_point, token_env)
         except (
+            AssetError,
             InstallError,
             PermissionDenied,
             PythonEnvironmentError,
@@ -483,6 +502,43 @@ class ExtensionInstaller:
             "approved and never arrive. Remove it, or have the service read "
             "its own configuration."
         )
+
+    async def _lay_out_assets(
+        self,
+        manifest: ExtensionManifest,
+        bundle: Path,
+        distribution: DistributionRecord | None,
+    ) -> dict[str, str]:
+        """Its assets for this platform, checked and laid out; where, for its process.
+
+        A distributed extension's assets arrived with it from igni
+        server; one missing here is a failure, never a download from
+        anywhere else. A development install fetches a missing one
+        from its ``source``, held to the same digest.
+        """
+        if not manifest.assets:
+            return {}
+        platform = AssetPlatform.current()
+        if platform is None:
+            raise InstallError(
+                f"{manifest.id} ships what it runs for "
+                f"{', '.join(sorted({a.platform for a in manifest.assets}))}, and this "
+                "machine is none of them"
+            )
+        mine = ExtensionAssets.for_platform(manifest.assets, platform)
+        cache = (self._store or ExtensionStore()).asset_cache
+        for asset in mine:
+            if cache.holds(asset):
+                continue
+            if distribution is not None:
+                raise InstallError(
+                    f"asset {asset.name} ({asset.platform}) of {manifest.id} is not on this "
+                    "machine; the next sync with igni server downloads it"
+                )
+            logger.info("fetching asset %s of %s from %s", asset.name, manifest.id, asset.source)
+            await asyncio.to_thread(self._asset_source.fetch, asset, cache)
+        root = await asyncio.to_thread(AssetLayout(cache).lay_out, bundle, mine)
+        return {ASSETS_DIR_ENV: str(root)}
 
     async def _python_entry(
         self,

@@ -102,7 +102,8 @@ is unreachable, so the service starts and serves either way:
 - **The thumbprint** is logged in a banner. A super admin compares it in
   igni's portal before approving the service.
 - **The extension bundle** is uploaded, signed, whenever igni holds
-  different bytes.
+  different bytes — after each asset it declares that igni does not hold
+  yet, read from `extension-bundle.assets/` beside it.
 
 ## People
 
@@ -255,8 +256,19 @@ igni-service-bundle --extension extension --out extension-bundle.tar.gz
 Builds what the service uploads: `manifest.json` (declaring the `python`
 packaging), the extension's `README.md`, `plugin/` and `ui/`, and a
 wheelhouse with the extension's wheel and every dependency's for CPython
-3.12 on macOS arm64, Linux x86_64 and Windows x86_64. The same inputs give
-the same bytes. Needs `uv` and `pip`.
+3.12 on macOS 26 and later (arm64), Linux x86_64 and Windows x86_64. The
+same inputs give the same bytes. Needs `uv` and `pip`.
+
+**Assets** — what the extension runs that is not Python, a database, a
+JVM, a model — are declared in the manifest's `assets`, each pinned by
+`size` and `sha256` with the `source` to fetch it from, for `any`
+platform or one per platform. The builder fetches each into
+`extension-bundle.assets/<sha256>` beside the archive, refusing bytes
+that are not the pinned ones, and keeps one already there. They are not
+inside the archive: the service uploads each separately, signed, and a
+machine downloads only its own platform's. igni lays them out read-only
+for the extension's process (`ext.assets` in `igni-extension`). The
+wire is service-identity §8.2.
 
 Every tool in the manifest's `permissions.tools` states MCP's four hints
 (`readOnlyHint`, `destructiveHint`, `idempotentHint`, `openWorldHint`) —

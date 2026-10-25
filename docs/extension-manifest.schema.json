@@ -384,6 +384,77 @@
         }
       }
     },
+    "assets": {
+      "type": "array",
+      "description": "What the extension runs that is not Python — a database, a JVM, a model — so a machine with no network installs it. igni provides none of them. Each is pinned by size and SHA-256; the manifest is inside the signed bundle, so the signature covers every asset through its digest. The bundle builder fetches each from `source` at build time and writes it beside the bundle; the service uploads it to igni server (service-identity §8.2); a machine downloads only its own platform's, checks it again, and lays it out read-only under `<bundle>/assets/<name>/`, which the process finds through `IGNI_EXTENSION_ASSETS`. A name is either one file for `any` platform, or one for each of `macos-arm64`, `linux-x86_64` and `windows-x86_64`.",
+      "items": {
+        "type": "object",
+        "required": [
+          "name",
+          "platform",
+          "file",
+          "size",
+          "sha256",
+          "source"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "name": {
+            "type": "string",
+            "pattern": "^[a-z0-9][a-z0-9-]{0,63}$",
+            "description": "The directory it is laid out in, `<bundle>/assets/<name>/`, on every platform."
+          },
+          "platform": {
+            "enum": [
+              "any",
+              "macos-arm64",
+              "linux-x86_64",
+              "windows-x86_64"
+            ],
+            "description": "Where it is for."
+          },
+          "file": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._+-]{0,199}$",
+            "description": "A plain file name, no directory."
+          },
+          "size": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 1073741824,
+            "description": "In bytes."
+          },
+          "sha256": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$",
+            "description": "Lower-case hex."
+          },
+          "source": {
+            "type": "string",
+            "pattern": "^https://[^\\s]+$",
+            "maxLength": 2000,
+            "description": "Where the bundle builder fetches it, at build time. A machine never does — except a development install, which has no igni server to ask."
+          },
+          "unpack": {
+            "type": "boolean",
+            "default": false,
+            "description": "Unpack a `.tar.gz`, `.tgz` or `.zip` into its directory, refusing any path or link that reaches outside it. Otherwise the file is laid out as it is."
+          }
+        }
+      },
+      "examples": [
+        [
+          {
+            "name": "model",
+            "platform": "any",
+            "file": "model.onnx",
+            "size": 90405214,
+            "sha256": "6fd5d72fe4589f189f8ebc006442dbb529bb7ce38f8082112682524616046452",
+            "source": "https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2/resolve/1110a243/onnx/model.onnx"
+          }
+        ]
+      ]
+    },
     "contributes": {
       "type": "object",
       "description": "What this extension adds beyond tools. MCP carries tools; none of the below travels over it.",

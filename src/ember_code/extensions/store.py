@@ -42,6 +42,7 @@ from pathlib import Path
 from pydantic import BaseModel, Field, ValidationError
 
 from ember_code.core.paths import home_config_dir
+from ember_code.extensions.assets import AssetCache, ReadOnlyTree
 from ember_code.extensions.impact import Resolution
 from ember_code.extensions.manifest import ExtensionManifest
 
@@ -62,6 +63,10 @@ DATA_DIR = ".data"
 
 #: What an extension's process is told that directory is.
 DATA_DIR_ENV = "IGNI_EXTENSION_DATA"
+
+#: Inside the store, dot-named: assets downloaded for installed
+#: extensions, one file per digest (:class:`~ember_code.extensions.assets.AssetCache`).
+ASSETS_DIR = ".assets"
 
 #: Beside a bundle: where it came from, when igni distributed it.
 DISTRIBUTION_SUFFIX = ".distribution.json"
@@ -115,6 +120,21 @@ class ExtensionStore:
             # being sure is one line.
             raise StoreError(f"{extension_id!r} is not a usable directory name")
         return self._root / extension_id
+
+    @property
+    def asset_cache(self) -> AssetCache:
+        """Assets on this machine, shared by every extension, by digest."""
+        return AssetCache(self._root / ASSETS_DIR)
+
+    def prune_assets(self) -> None:
+        """Forget the assets no installed extension declares any more."""
+        keep: set[str] = set()
+        for bundle in self.installed():
+            try:
+                keep |= {asset.sha256 for asset in self.read(bundle).assets}
+            except StoreError:
+                continue
+        self.asset_cache.prune(keep)
 
     @property
     def environments_root(self) -> Path:
@@ -191,7 +211,7 @@ class ExtensionStore:
         retired = target.with_name(f".{manifest.id}.outgoing")
         for leftover in (staging, retired):
             if leftover.exists():
-                shutil.rmtree(leftover)
+                ReadOnlyTree.remove(leftover)
         try:
             shutil.copytree(bundle, staging)
         except Exception:
@@ -206,7 +226,8 @@ class ExtensionStore:
                 retired.rename(target)
             shutil.rmtree(staging, ignore_errors=True)
             raise
-        shutil.rmtree(retired, ignore_errors=True)
+        # Its assets were laid out read-only.
+        ReadOnlyTree.remove(retired)
 
         # The environment was built from the bundle just replaced.
         self.drop_environments(manifest.id)
@@ -377,7 +398,7 @@ class ExtensionStore:
         self.drop_environments(extension_id)
         if not target.is_dir():
             return False
-        shutil.rmtree(target)
+        ReadOnlyTree.remove(target)
         # Its settings go with it. Leaving them would mean
         # reinstalling an extension silently inherited whatever the
         # last administrator had configured.

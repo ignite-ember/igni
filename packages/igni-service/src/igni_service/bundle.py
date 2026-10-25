@@ -5,9 +5,15 @@
 A gzipped tar with `manifest.json` at its root (declaring the `python`
 packaging), the extension's own files — `README.md`, `plugin/`, `ui/`
 when present — and a wheelhouse: the extension's wheel and every
-dependency's, for CPython 3.12 on each platform igni runs on (macOS
-arm64, Linux x86_64, Windows x86_64), so a machine with no network can
-install it.
+dependency's, for CPython 3.12 on each platform igni runs on (macOS 26
+and later on arm64, Linux x86_64, Windows x86_64), so a machine with no
+network can install it.
+
+Beside the archive, in `extension-bundle.assets/`, every asset the
+manifest declares — a database, a JVM, a model — fetched from its pinned
+`source` and held to its pinned size and SHA-256, one file per digest
+(`igni_service.assets`). They are uploaded beside the bundle, and a
+machine downloads its own platform's.
 
 Per platform, the dependencies are resolved **for that platform** with
 `uv pip compile --python-platform … --python-version 3.12` (markers such
@@ -49,11 +55,23 @@ import tomllib
 from collections.abc import Iterable, Sequence
 from pathlib import Path
 
-from pydantic import BaseModel, ConfigDict, Field, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 
+from igni_service.assets import (
+    AssetFetcher,
+    AssetPlatform,
+    BundleAsset,
+    BundleAssets,
+    BundleLayout,
+)
 from igni_service.errors import BundleError
 
 PYTHON_VERSION = "3.12"
+
+#: The oldest macOS a bundle installs on. Every customer runs 26 or 27;
+#: a wheel built for an older macOS still installs there, so this only
+#: stops the resolver choosing an old release for an old system.
+MACOS_TARGET = "26.0"
 
 
 class Platform(BaseModel):
@@ -62,22 +80,40 @@ class Platform(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     name: str
+    #: The manifest's name for it, in `assets[].platform`.
+    asset: AssetPlatform
     #: `uv pip compile --python-platform`.
     uv: str
     #: `pip download --platform`, each one; pip does not widen a
-    #: `manylinux_2_x` tag to the older ones on its own.
+    #: `manylinux_2_x` tag to the older ones on its own. It does widen a
+    #: `macosx_26_0_arm64` one, to every older macOS and `universal2`.
     pip: tuple[str, ...]
+    #: Set for `uv pip compile`: uv reads the macOS it resolves for from
+    #: `MACOSX_DEPLOYMENT_TARGET`, and assumes 13 without it.
+    uv_env: tuple[tuple[str, str], ...] = ()
 
 
 PLATFORMS: tuple[Platform, ...] = (
-    Platform(name="macOS arm64", uv="aarch64-apple-darwin", pip=("macosx_13_0_arm64",)),
+    Platform(
+        name="macOS arm64",
+        asset=AssetPlatform.MACOS_ARM64,
+        uv="aarch64-apple-darwin",
+        pip=(f"macosx_{MACOS_TARGET.replace('.', '_')}_arm64",),
+        uv_env=(("MACOSX_DEPLOYMENT_TARGET", MACOS_TARGET),),
+    ),
     Platform(
         name="Linux x86_64",
+        asset=AssetPlatform.LINUX_X86_64,
         uv="x86_64-manylinux_2_28",
         pip=tuple(f"manylinux_2_{minor}_x86_64" for minor in range(28, 16, -1))
         + ("manylinux2014_x86_64", "manylinux2010_x86_64", "manylinux1_x86_64", "linux_x86_64"),
     ),
-    Platform(name="Windows x86_64", uv="x86_64-pc-windows-msvc", pip=("win_amd64",)),
+    Platform(
+        name="Windows x86_64",
+        asset=AssetPlatform.WINDOWS_X86_64,
+        uv="x86_64-pc-windows-msvc",
+        pip=("win_amd64",),
+    ),
 )
 
 
@@ -123,6 +159,12 @@ class BundleManifest(BaseModel):
     python: PythonPackaging
     #: Read for `tools`, so a bundle igni would refuse is not built.
     permissions: BundlePermissions = Field(default_factory=BundlePermissions)
+    assets: list[BundleAsset] = Field(default_factory=list)
+
+    @field_validator("assets")
+    @classmethod
+    def _assets_cover_every_platform(cls, assets: list[BundleAsset]) -> list[BundleAsset]:
+        return BundleAssets(assets=assets).assets
 
 
 class BundleReport(BaseModel):
@@ -134,6 +176,9 @@ class BundleReport(BaseModel):
     sha256: str
     size: int
     wheels: list[str] = Field(default_factory=list)
+    #: `<out>.assets`, where every declared asset was written by digest.
+    assets_dir: Path
+    assets: list[BundleAsset] = Field(default_factory=list)
     notes: list[str] = Field(default_factory=list)
 
 
@@ -186,9 +231,13 @@ class CommandRunner:
     SOURCE_DATE_EPOCH = "315532800"
 
     def run(
-        self, command: Sequence[str], *, cwd: Path | None = None
+        self,
+        command: Sequence[str],
+        *,
+        cwd: Path | None = None,
+        extra_env: Iterable[tuple[str, str]] = (),
     ) -> subprocess.CompletedProcess[str]:
-        env = {**os.environ, "SOURCE_DATE_EPOCH": self.SOURCE_DATE_EPOCH}
+        env = {**os.environ, "SOURCE_DATE_EPOCH": self.SOURCE_DATE_EPOCH, **dict(extra_env)}
         return subprocess.run(
             list(command), cwd=cwd, env=env, capture_output=True, text=True, check=False
         )
@@ -238,6 +287,7 @@ class BundleBuilder:
         build_isolation: bool = True,
         platforms: Sequence[Platform] = PLATFORMS,
         runner: CommandRunner | None = None,
+        fetcher: AssetFetcher | None = None,
     ) -> None:
         self._dir = extension_dir.resolve()
         self._find_links = [path.resolve() for path in find_links]
@@ -245,6 +295,7 @@ class BundleBuilder:
         self._build_isolation = build_isolation
         self._platforms = tuple(platforms)
         self._runner = runner or CommandRunner()
+        self._fetcher = fetcher or AssetFetcher()
         self._pyproject = self._read_pyproject()
         self._allow_sdist = {
             Requirement.normalise(name) for name in allow_sdist
@@ -260,8 +311,9 @@ class BundleBuilder:
             raise BundleError(f"{path} does not exist") from None
         except (ValueError, ValidationError) as exc:
             raise BundleError(
-                f"{path} must name an id, a version and the `python` packaging, and "
-                f"state all four hints of every tool in permissions.tools: {exc}"
+                f"{path} must name an id, a version and the `python` packaging, "
+                f"state all four hints of every tool in permissions.tools, and pin "
+                f"every asset it declares: {exc}"
             ) from exc
 
     def _read_pyproject(self) -> dict[str, object]:
@@ -317,6 +369,7 @@ class BundleBuilder:
             notes = self._wheelhouse(wheels, scratch)
             archive = BundleArchive.write(staging, out)
             built = sorted(path.name for path in wheels.glob("*.whl"))
+        assets_dir = self._assets(manifest, out)
         return BundleReport(
             out=out,
             extension_id=manifest.id,
@@ -324,8 +377,26 @@ class BundleBuilder:
             sha256=hashlib.sha256(archive).hexdigest(),
             size=len(archive),
             wheels=built,
+            assets_dir=assets_dir,
+            assets=manifest.assets,
             notes=notes,
         )
+
+    def _assets(self, manifest: BundleManifest, out: Path) -> Path:
+        """Every declared asset in `<out>.assets/<sha256>`, and nothing else there.
+
+        Made even when the manifest declares none, so an image copies the
+        same two paths whatever the extension ships.
+        """
+        where = BundleLayout.assets_dir(out)
+        where.mkdir(parents=True, exist_ok=True)
+        for asset in manifest.assets:
+            self._fetcher.fetch(asset, where)
+        wanted = {asset.sha256 for asset in manifest.assets}
+        for stale in where.iterdir():
+            if stale.name not in wanted:
+                stale.unlink()
+        return where
 
     @staticmethod
     def _add(staging: Path, source: Path, name: str) -> None:
@@ -405,7 +476,8 @@ class BundleBuilder:
                 *self._isolation_flags(),
                 "-o",
                 str(out),
-            ]
+            ],
+            extra_env=platform.uv_env,
         )
         if compiled.returncode != 0:
             raise BundleError(
@@ -598,6 +670,11 @@ class BundleCommand:
             f"extension bundle: wrote {report.out} — {report.extension_id} {report.version}, "
             f"{len(report.wheels)} wheels, {report.size} bytes, sha256 {report.sha256}"
         )
+        for asset in report.assets:
+            print(
+                f"extension bundle: asset {asset.name} ({asset.platform}) {asset.file}, "
+                f"{asset.size} bytes, sha256 {asset.sha256} in {report.assets_dir}"
+            )
         return 0
 
 

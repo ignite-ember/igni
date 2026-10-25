@@ -37,7 +37,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from igni_service.bundle import BundleArchive
 from igni_service.clock import Clock
-from igni_service.crypto import ALGORITHM, Base64Url, BundleClaim, Jwk, RsaKeyPair
+from igni_service.crypto import ALGORITHM, AssetClaim, Base64Url, BundleClaim, Jwk, RsaKeyPair
 from igni_service.directory import Member, Organisation
 from igni_service.keystore import KeyStore, MemoryKeyStore
 from igni_service.notifications import Notification, NotificationBatch, Notifier
@@ -193,6 +193,8 @@ class FakeIgni:
         self.organisations: dict[str, FakeOrganisation] = {}
         self.clients: dict[str, FakeClient] = {}
         self.extensions: dict[str, HeldExtension] = {}
+        #: Uploaded assets, by `(client_id, sha256)`.
+        self.assets: dict[tuple[str, str], bytes] = {}
         self.seen: list[SeenRequest] = []
         self.notify_calls: list[NotifyCall] = []
         self.deliveries: list[Delivery] = []
@@ -496,6 +498,8 @@ class FakeIgni:
             return self._register(seen)
         if path.startswith(f"{IgniPaths.CLIENTS}/") and path.endswith("/extension"):
             return self._extension(seen)
+        if path.startswith(f"{IgniPaths.CLIENTS}/") and "/extension/assets/" in path:
+            return self._asset(seen)
         if path == IgniPaths.TOKEN:
             return self._issue(seen)
         if path == IgniPaths.REVOKE:
@@ -592,6 +596,15 @@ class FakeIgni:
             return httpx.Response(400, json={"detail": "no manifest.json at the bundle's root"})
         if manifest.get("id") != claim.extension or manifest.get("version") != claim.version:
             return httpx.Response(400, json={"detail": "the manifest is not what was signed"})
+        missing = [
+            str(asset.get("name"))
+            for asset in manifest.get("assets") or []
+            if isinstance(asset, dict) and (client_id, asset.get("sha256")) not in self.assets
+        ]
+        if missing:
+            return httpx.Response(
+                400, json={"detail": f"assets not uploaded first: {', '.join(missing)}"}
+            )
         shipped_elsewhere = any(
             held.extension_id == claim.extension and other != client_id
             for other, held in self.extensions.items()
@@ -613,6 +626,32 @@ class FakeIgni:
             pages=pages,
         )
         return httpx.Response(200, json=self._published(self.extensions[client_id]).model_dump())
+
+    def _asset(self, seen: SeenRequest) -> httpx.Response:
+        parts = seen.path.split("/")
+        client_id, sha256 = parts[3], parts[-1]
+        client = self._client(client_id)
+        if seen.method == "HEAD":
+            return httpx.Response(200 if (client_id, sha256) in self.assets else 404)
+        if client is None:
+            return httpx.Response(404, json={"detail": "no such client"})
+        try:
+            payload = PyJWS().decode(
+                seen.headers.get("x-igni-asset-signature", ""),
+                client.jwk.public_key(),
+                algorithms=[ALGORITHM],
+            )
+            claim = AssetClaim.model_validate_json(payload)
+        except (jwt.PyJWTError, ValidationError, ValueError):
+            return httpx.Response(
+                400, json={"detail": "not signed by this client's registered key"}
+            )
+        if claim.asset != sha256 or hashlib.sha256(seen.body).hexdigest() != sha256:
+            return httpx.Response(400, json={"detail": "the signature is for other bytes"})
+        if claim.size != len(seen.body):
+            return httpx.Response(400, json={"detail": "the size is not what was signed"})
+        self.assets[(client_id, sha256)] = seen.body
+        return httpx.Response(200, json={"sha256": sha256, "size": len(seen.body)})
 
     @staticmethod
     def _published(held: HeldExtension) -> PublishedExtension:

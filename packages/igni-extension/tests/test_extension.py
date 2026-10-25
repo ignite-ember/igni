@@ -7,7 +7,14 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
-from igni_extension import IgniExtension, Signal, ToolHints, ToolHintsMissing, WorkspaceMode
+from igni_extension import (
+    IgniExtension,
+    NotConfigured,
+    Signal,
+    ToolHints,
+    ToolHintsMissing,
+    WorkspaceMode,
+)
 from igni_extension.testing import HostHarness
 
 READS = ToolHints(read_only=True, destructive=False, idempotent=True, open_world=False)
@@ -111,6 +118,26 @@ def test_the_environment_igni_grants_is_read_typed(tmp_path: Path) -> None:
     assert environment.data_dir == tmp_path / "data"
     assert environment.secrets.get("ledger-token") == "ledger"
     assert environment.service.url == "https://acme.example.test"
+
+
+def test_what_it_ships_is_found_by_name(tmp_path: Path) -> None:
+    assets = tmp_path / "assets"
+    (assets / "neo4j" / "lib").mkdir(parents=True)
+    (assets / "model").mkdir()
+    (assets / "model" / "model.onnx").write_bytes(b"onnx")
+    ext = IgniExtension("acme.example", environ={"IGNI_EXTENSION_ASSETS": str(assets)})
+
+    assert ext.assets.path("neo4j") == assets / "neo4j"
+    assert ext.assets.file("model", "model.onnx") == assets / "model" / "model.onnx"
+    with pytest.raises(NotConfigured, match="no asset named 'jre'"):
+        ext.assets.path("jre")
+    with pytest.raises(NotConfigured, match="no file"):
+        ext.assets.file("model", "tokenizer.json")
+
+
+def test_outside_igni_there_are_no_assets() -> None:
+    with pytest.raises(NotConfigured, match="laid out no assets"):
+        IgniExtension("acme.example", environ={}).assets.path("neo4j")
 
 
 def test_nothing_granted_is_nothing_granted() -> None:

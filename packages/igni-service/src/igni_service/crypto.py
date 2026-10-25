@@ -70,6 +70,13 @@ class BundleClaim(BaseModel):
     sha256: str
 
 
+class AssetClaim(BaseModel):
+    """What the signature over one uploaded asset says (§8.2)."""
+
+    asset: str
+    size: int
+
+
 class RsaKeyPair:
     """A private RSA key and what is derived from it."""
 
@@ -132,6 +139,9 @@ class RsaKeyPair:
         )
 
     def sign_bundle(self, claim: BundleClaim) -> str:
+        return self.sign_bytes(claim.model_dump_json().encode())
+
+    def sign_asset(self, claim: AssetClaim) -> str:
         return self.sign_bytes(claim.model_dump_json().encode())
 
     @staticmethod

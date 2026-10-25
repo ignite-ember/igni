@@ -11,6 +11,11 @@ extension's manifest cannot shadow them:
 * `IGNI_EXTENSION_DATA` — a directory that is this extension's alone,
   kept across reinstalls and updates of its bundle, for whatever it
   stores on this machine;
+* `IGNI_EXTENSION_ASSETS` — where the assets its manifest declares for
+  this platform are laid out, read-only, one directory each
+  (`<assets>/<name>/`), checked against the digests the signed manifest
+  pins: the database, the JVM, the model it ships so it installs with
+  no network;
 * `IGNI_HOST_URL`, `IGNI_HOST_SECRET` — the host's object model
   (`ext.host`), on a loopback socket, and this process's secret for it —
   the same secret as the token endpoint's.
@@ -28,6 +33,8 @@ from pathlib import Path
 from typing import ClassVar
 
 from pydantic import BaseModel, ConfigDict, Field
+
+from igni_extension.errors import NotConfigured
 
 
 class WorkspaceMode(StrEnum):
@@ -98,6 +105,38 @@ class HostEndpoint(BaseModel):
         return bool(self.url and self.secret)
 
 
+class Assets(BaseModel):
+    """What the extension ships for this platform: `ext.assets.path("neo4j")`."""
+
+    model_config = ConfigDict(frozen=True)
+
+    #: `IGNI_EXTENSION_ASSETS`; None outside igni, or with nothing declared.
+    root: Path | None = None
+
+    def path(self, name: str) -> Path:
+        """`<assets>/<name>/`: the unpacked archive, or the directory its one file is in.
+
+        Raises `NotConfigured` when igni laid out no asset of that name —
+        the manifest does not declare it, or this is not running in igni.
+        """
+        if self.root is None:
+            raise NotConfigured(
+                "igni laid out no assets for this process: the manifest declares none, "
+                "or it is not running in igni"
+            )
+        where = self.root / name
+        if not where.is_dir():
+            raise NotConfigured(f"no asset named {name!r} was laid out at {self.root}")
+        return where
+
+    def file(self, name: str, file: str) -> Path:
+        """One file of an asset that is not unpacked: `<assets>/<name>/<file>`."""
+        where = self.path(name) / file
+        if not where.is_file():
+            raise NotConfigured(f"asset {name!r} has no file {file!r}")
+        return where
+
+
 class ExtensionEnvironment(BaseModel):
     """What igni granted this process, read from its environment."""
 
@@ -108,6 +147,8 @@ class ExtensionEnvironment(BaseModel):
     workspace: Workspace = Field(default_factory=Workspace)
     #: This extension's own directory on this machine; None outside igni.
     data_dir: Path | None = None
+    #: What it ships for this platform, laid out by igni.
+    assets: Assets = Field(default_factory=Assets)
     secrets: Secrets = Field(default_factory=Secrets)
     service: ServiceEndpoint = Field(default_factory=ServiceEndpoint)
     host: HostEndpoint = Field(default_factory=HostEndpoint)
@@ -123,9 +164,11 @@ class ExtensionEnvironment(BaseModel):
             }
         )
         data_dir = env.get("IGNI_EXTENSION_DATA", "").strip()
+        assets = env.get("IGNI_EXTENSION_ASSETS", "").strip()
         return cls(
             workspace=cls._workspace(env),
             data_dir=Path(data_dir) if data_dir else None,
+            assets=Assets(root=Path(assets) if assets else None),
             secrets=secrets,
             service=ServiceEndpoint(
                 url=env.get("IGNI_SERVICE_URL", "").strip().rstrip("/"),

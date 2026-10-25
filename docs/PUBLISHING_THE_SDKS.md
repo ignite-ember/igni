@@ -278,7 +278,8 @@ In order — the consumers cannot resolve against an index that is empty.
 - **The names on the public registries.** Nothing depends on them any
   more. The consumers use an explicit index, the `@igni` scope mapping and
   hashes. The extension-bundle builder resolves with hashes and downloads
-  with `--require-hashes`, so a same-named public package cannot match.
+  with `--require-hashes`, so a same-named public package cannot match;
+  an extension's assets are pinned by SHA-256 in its manifest the same way.
   Registering `igni-service`, `igni-extension` and the `@igni` npm
   organisation as empty placeholders is still worth doing, so nobody else
   can publish under those names.

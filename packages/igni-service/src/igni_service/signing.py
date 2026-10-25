@@ -13,7 +13,7 @@ import asyncio
 import logging
 
 from igni_service.clock import Clock
-from igni_service.crypto import BundleClaim, RsaKeyPair
+from igni_service.crypto import AssetClaim, BundleClaim, RsaKeyPair
 from igni_service.keystore import KeyStore, StoredKey
 
 logger = logging.getLogger(__name__)
@@ -73,3 +73,7 @@ class SigningKey:
     async def sign_bundle(self, claim: BundleClaim) -> str:
         """The compact JWS igni checks an uploaded bundle against."""
         return (await self.pair()).sign_bundle(claim)
+
+    async def sign_asset(self, claim: AssetClaim) -> str:
+        """The compact JWS igni checks an uploaded asset against."""
+        return (await self.pair()).sign_asset(claim)

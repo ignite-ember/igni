@@ -37,6 +37,7 @@ from jsonschema import Draft202012Validator
 from pydantic import BaseModel, ValidationError
 
 from ember_code.core.mcp.hints import ToolHints
+from ember_code.extensions.assets import ExtensionAsset
 from ember_code.extensions.manifest import (
     AgentReplacementContribution,
     CommandContribution,
@@ -83,6 +84,7 @@ PAIRS: list[tuple[str, type[BaseModel]]] = [
     ("permissions", Permissions),
     ("permissions.tools[]", ToolGrant),
     ("permissions.tools[].annotations", ToolHints),
+    ("assets[]", ExtensionAsset),
     ("contributes", Contributes),
     ("contributes.pages[]", PageContribution),
     ("contributes.menu[]", MenuContribution),

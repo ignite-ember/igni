@@ -9,7 +9,9 @@ On every start:
 3. log the key's thumbprint, loudly: a super admin compares it with the
    one igni's portal shows before approving;
 4. ask igni which extension bundle it holds for this client and, when it
-   holds different bytes (or none), upload this one, signed.
+   holds different bytes (or none), upload this one, signed — after
+   every asset it declares that igni does not hold yet, each signed too
+   (the bundle is refused while one is missing).
 
 All of it retried with backoff in the background, so a service whose
 igni is briefly down still starts and serves.
@@ -23,12 +25,14 @@ import io
 import json
 import logging
 import tarfile
+from collections.abc import AsyncIterator
 from pathlib import Path
 
 import httpx
 from pydantic import BaseModel, Field, ValidationError
 
-from igni_service.crypto import BundleClaim, Jwk
+from igni_service.assets import BundleAsset, BundleAssets, BundleLayout, FileDigest
+from igni_service.crypto import AssetClaim, BundleClaim, Jwk
 from igni_service.errors import BundleError, IgniError, IgniUnavailable
 from igni_service.server import IgniServer
 from igni_service.signing import SigningKey
@@ -38,6 +42,8 @@ logger = logging.getLogger(__name__)
 
 #: The header igni reads a bundle's signature from.
 SIGNATURE_HEADER = "X-Igni-Bundle-Signature"
+#: The header igni reads an asset's signature from.
+ASSET_SIGNATURE_HEADER = "X-Igni-Asset-Signature"
 
 
 class ClientJwks(BaseModel):
@@ -77,27 +83,49 @@ class ExtensionRefused(IgniError):
 
 
 class ExtensionBundle:
-    """A bundle archive, read for its manifest and never unpacked."""
+    """A bundle archive, read for its manifest and never unpacked, and its assets."""
 
-    def __init__(self, archive: bytes) -> None:
+    def __init__(self, archive: bytes, *, assets_dir: Path | None = None) -> None:
         self.archive = archive
         self.sha256 = hashlib.sha256(archive).hexdigest()
-        self.extension_id, self.version = self._identity(archive)
+        manifest = self._manifest(archive)
+        try:
+            self.extension_id, self.version = str(manifest["id"]), str(manifest["version"])
+            self.assets = BundleAssets.model_validate(
+                {"assets": manifest.get("assets") or []}
+            ).assets
+        except (KeyError, ValueError) as exc:
+            raise BundleError(f"the extension bundle's manifest is unreadable: {exc}") from exc
+        self.assets_dir = assets_dir
 
     @classmethod
     def at(cls, path: str | Path) -> ExtensionBundle | None:
-        """The bundle at `path`, or `None` when there is none."""
+        """The bundle at `path`, or `None` when there is none.
+
+        Its assets are read from `<path>.assets/` beside it
+        (`BundleLayout`), where the bundle builder wrote them.
+        """
         where = Path(path)
         if not str(path) or not where.is_file():
             return None
-        return cls(where.read_bytes())
+        return cls(where.read_bytes(), assets_dir=BundleLayout.assets_dir(where))
 
     @property
     def claim(self) -> BundleClaim:
         return BundleClaim(extension=self.extension_id, version=self.version, sha256=self.sha256)
 
+    def asset_file(self, asset: BundleAsset) -> Path:
+        """The asset's file, checked against its size and digest."""
+        path = (self.assets_dir or Path()) / asset.sha256
+        if self.assets_dir is None or not FileDigest.matches(path, asset):
+            raise BundleError(
+                f"asset {asset.name} ({asset.platform}) is not at {path} with the size and "
+                "SHA-256 the manifest pins; build the bundle again"
+            )
+        return path
+
     @staticmethod
-    def _identity(archive: bytes) -> tuple[str, str]:
+    def _manifest(archive: bytes) -> dict[str, object]:
         try:
             with tarfile.open(fileobj=io.BytesIO(archive), mode="r:gz") as tar:
                 for member in tar:
@@ -106,10 +134,26 @@ class ExtensionBundle:
                         if extracted is None:
                             break
                         manifest = json.loads(extracted.read())
-                        return str(manifest["id"]), str(manifest["version"])
-        except (tarfile.TarError, OSError, EOFError, ValueError, KeyError) as exc:
+                        if not isinstance(manifest, dict):
+                            raise ValueError("manifest.json is not an object")
+                        return manifest
+        except (tarfile.TarError, OSError, EOFError, ValueError) as exc:
             raise BundleError(f"the extension bundle is unreadable: {exc}") from exc
         raise BundleError("the extension bundle has no manifest.json at its root")
+
+
+class AssetBody:
+    """An asset's bytes, streamed from disk rather than held in memory."""
+
+    CHUNK = 1024 * 1024
+
+    def __init__(self, path: Path) -> None:
+        self._path = path
+
+    async def __aiter__(self) -> AsyncIterator[bytes]:
+        with self._path.open("rb") as handle:
+            while chunk := handle.read(self.CHUNK):
+                yield chunk
 
 
 class ServiceRegistration:
@@ -120,6 +164,8 @@ class ServiceRegistration:
     RETRY_MAX = 300.0
     #: An upload may be large; it gets longer than an ordinary call.
     UPLOAD_TIMEOUT = 120.0
+    #: An asset may be a JVM or a database distribution.
+    ASSET_UPLOAD_TIMEOUT = 900.0
 
     def __init__(
         self,
@@ -208,8 +254,69 @@ class ServiceRegistration:
         except (ValidationError, ValueError) as exc:
             raise IgniUnavailable("igni server answered with something else") from exc
 
+    async def holds_asset(self, sha256: str) -> bool:
+        """Whether igni already holds this client's asset with this digest."""
+        client_id = await self.client_id()
+        try:
+            response = await self._igni.http.head(
+                self._igni.url(IgniPaths.extension_asset(client_id, sha256))
+            )
+        except httpx.HTTPError as exc:
+            raise IgniUnavailable(
+                f"could not ask igni server about an asset: {type(exc).__name__}"
+            ) from exc
+        if response.status_code == 404:
+            return False
+        if response.status_code != 200:
+            raise IgniUnavailable(
+                f"igni server would not say whether it holds an asset: {response.status_code}"
+            )
+        return True
+
+    async def ship_asset(self, bundle: ExtensionBundle, asset: BundleAsset) -> bool:
+        """Upload one asset unless igni already holds it. True when uploaded."""
+        if await self.holds_asset(asset.sha256):
+            return False
+        path = bundle.asset_file(asset)
+        client_id = await self.client_id()
+        signature = await self._key.sign_asset(AssetClaim(asset=asset.sha256, size=asset.size))
+        try:
+            response = await self._igni.http.put(
+                self._igni.url(IgniPaths.extension_asset(client_id, asset.sha256)),
+                content=AssetBody(path),
+                headers={
+                    "Content-Type": "application/octet-stream",
+                    "Content-Length": str(asset.size),
+                    ASSET_SIGNATURE_HEADER: signature,
+                },
+                timeout=max(self._igni.timeout, self.ASSET_UPLOAD_TIMEOUT),
+            )
+        except httpx.HTTPError as exc:
+            raise IgniUnavailable(f"could not upload an asset: {type(exc).__name__}") from exc
+        if 400 <= response.status_code < 500:
+            raise ExtensionRefused(
+                f"igni server refused asset {asset.name} ({asset.platform}) of "
+                f"{bundle.extension_id} {bundle.version}: {response.status_code} {response.text}"
+            )
+        if response.status_code != 200:
+            raise IgniUnavailable(
+                f"igni server could not take an asset: {response.status_code} {response.text}"
+            )
+        logger.info(
+            "igni: uploaded asset %s (%s) of %s, %d bytes",
+            asset.name,
+            asset.platform,
+            bundle.extension_id,
+            asset.size,
+        )
+        return True
+
     async def ship(self, bundle: ExtensionBundle) -> bool:
-        """Upload `bundle` unless igni already holds these exact bytes. True when uploaded."""
+        """Upload `bundle` unless igni already holds these exact bytes. True when uploaded.
+
+        Its assets go first: igni refuses a bundle that declares one it
+        does not hold.
+        """
         held = await self.published()
         if held is not None and held.sha256 == bundle.sha256:
             logger.info(
@@ -219,6 +326,8 @@ class ServiceRegistration:
                 bundle.sha256,
             )
             return False
+        for asset in bundle.assets:
+            await self.ship_asset(bundle, asset)
         client_id = await self.client_id()
         signature = await self._key.sign_bundle(bundle.claim)
         try:
@@ -284,6 +393,10 @@ class ServiceRegistration:
         except ExtensionRefused as exc:
             # Not retried either: igni read these bytes and said no.
             logger.error("igni: %s", exc)
+        except BundleError as exc:
+            # An asset missing or damaged beside the bundle: the image
+            # is broken, and retrying will not mend it.
+            logger.error("igni: %s; nothing more uploaded", exc)
         return registration
 
     async def keep_trying(self, stop: asyncio.Event | None = None) -> Registration | None:

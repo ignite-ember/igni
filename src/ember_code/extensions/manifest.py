@@ -32,6 +32,7 @@ from typing import Annotated, Any, Literal
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from ember_code.core.mcp.hints import ToolHints
+from ember_code.extensions.assets import ExtensionAsset, ExtensionAssets
 
 #: Reverse-DNS, and the namespace for everything the extension
 #: contributes. Changing it is a new extension, not a new version.
@@ -472,6 +473,11 @@ class ExtensionManifest(Strict):
     permissions: Permissions = Field(default_factory=Permissions)
     contributes: Contributes = Field(default_factory=Contributes)
 
+    #: What it runs that is not Python — a database, a JVM, a model —
+    #: pinned by size and digest, shipped beside the bundle so a machine
+    #: with no network installs it. See :mod:`ember_code.extensions.assets`.
+    assets: list[ExtensionAsset] = Field(default_factory=list)
+
     #: Present in the file so an editor finds the schema; carried so a
     #: round trip does not drop it.
     schema_: str | None = Field(default=None, alias="$schema")
@@ -497,6 +503,11 @@ class ExtensionManifest(Strict):
                 f"'dev' is required and {found} was given — packaging is a "
                 "property of the extension, not a runtime choice"
             )
+        return self
+
+    @model_validator(mode="after")
+    def _assets_cover_every_platform(self) -> ExtensionManifest:
+        ExtensionAssets.check(self.assets)
         return self
 
     @model_validator(mode="after")

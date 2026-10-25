@@ -220,8 +220,10 @@ else** — §8 of igni server's `service-identity.md` is the contract.
 There is no extension marketplace and no group policy that pushes one.
 
 1. **The service uploads it.** On every start, after registering, a
-   service `PUT`s its bundle — a gzipped tar with `manifest.json` at
-   its root — to `{igni}/v1/clients/{client_id}/extension`, with
+   service `PUT`s each asset its manifest declares that igni does not
+   hold yet (below), then its bundle — a gzipped tar with
+   `manifest.json` at its root — to
+   `{igni}/v1/clients/{client_id}/extension`, with
    `X-Igni-Bundle-Signature`: a compact JWS, signed with the key the
    service registered, over `{"extension", "version", "sha256"}`.
 2. **A super admin approves the service**, having compared its key's
@@ -232,10 +234,12 @@ There is no extension marketplace and no group policy that pushes one.
    is installed downloads `GET /v1/extensions/{id}/bundle`, verifies
    the JWS against the entry's `publisher_jwks` (RS256 or ES256, by
    `kid`), checks that the claim names this archive's SHA-256 and this
-   manifest's id and version, unpacks it safely, and installs it through
-   the ordinary boot path — trust, deployment profile, capability
-   resolution. An extension whose service is no longer listed is
-   stopped and removed.
+   manifest's id and version, unpacks it safely, downloads the assets
+   for its own platform that are not on the machine already
+   (`GET /v1/extensions/{id}/assets/{sha256}`, each held to the digest
+   the signed manifest pins), and installs it through the ordinary boot
+   path. An extension whose service is no longer listed is stopped and
+   removed.
 
 **Never in the way.** The sync runs in the background. Not signed in,
 igni unreachable, a bundle that does not verify — each is logged and
@@ -267,8 +271,51 @@ made with its own interpreter (CPython 3.12), with `pip install
 --no-index --find-links <wheels> --only-binary :all:` and pip's own
 configuration ignored — an air-gapped machine has no index, and one
 that has must not quietly use it — and starts `entry` over stdio.
-(`extensions/python_env.py`)
+(`extensions/python_env.py`) The wheelhouse is built for macOS 26 and
+later on Apple silicon, Linux x86_64 and Windows x86_64.
 
+**Assets: what it runs that is not Python.** A database, a JVM, a
+model — an extension ships them too, so it installs on a machine with no
+network and downloads nothing on first use. Each is declared in the
+manifest with the platform it is for, a plain file name, its size, its
+SHA-256 and the `source` the bundle builder fetches it from:
+
+```json
+"assets": [
+  {"name": "neo4j", "platform": "any", "file": "neo4j-community-5.26.0-unix.tar.gz",
+   "size": 158822080, "sha256": "ad8ac339…", "source": "https://dist.neo4j.org/…", "unpack": true},
+  {"name": "jre", "platform": "macos-arm64", "file": "OpenJDK21U-jre_aarch64_mac_hotspot_21.0.12.1_1.tar.gz", …},
+  {"name": "jre", "platform": "linux-x86_64", …},
+  {"name": "jre", "platform": "windows-x86_64", …}
+]
+```
+
+- A name is one file for `any` platform, or one for each of
+  `macos-arm64`, `linux-x86_64` and `windows-x86_64` — never some of
+  them, so an extension cannot install on one platform and fail on
+  another.
+- **The signature covers them.** The manifest is inside the signed
+  bundle, and it pins every asset's size and digest.
+- **They travel beside the bundle, not in it.** `igni-service-bundle`
+  fetches each from its `source` at build time and writes it to
+  `extension-bundle.assets/<sha256>`; the service uploads each one igni
+  server does not hold (`X-Igni-Asset-Signature`, a JWS over
+  `{"asset", "size"}`; service-identity §8.2), and igni server refuses a
+  bundle declaring one it does not hold. A machine downloads only its
+  own platform's, and a new version that keeps its Neo4j moves only the
+  archive. Assets on a machine are kept once per digest
+  (`<store>/.assets/`) and forgotten when no installed extension
+  declares them.
+- **Checked again, then read-only.** Before the process starts, igni
+  checks each of its platform's assets against the pinned digest and
+  lays it out under `<bundle>/assets/<name>/` — unpacked when `unpack`
+  says so (`.tar.gz`, `.tgz`, `.zip`; no path or link outside itself,
+  executable bits kept) — with nothing in it writable. The process finds
+  it through `IGNI_EXTENSION_ASSETS`, or `ext.assets.path("neo4j")`.
+- **A distributed extension's assets come from igni and nowhere else.**
+  A development install, which has no igni server behind it, fetches a
+  missing one from its `source`, held to the same digest.
+  (`extensions/assets.py`)
 **An extension's token for its service.** The extension never holds
 the person's igni session. The host does the RFC 8693 token exchange at
 `{igni}/v1/oauth/token` with the session as `subject_token` and the
@@ -429,10 +476,11 @@ no vector store, no embedder. An extension that needs one runs it, from
 the directory igni gives it alone (`IGNI_EXTENSION_DATA`, beside the
 extension store and kept across reinstalls), or reaches its own service
 for it. CodeIndex is the worked example: its local index is a Neo4j per
-(project, commit), started by its own process on a JDK it downloads into
-that directory, with the chunk vectors embedded by a sentence-transformer
-in its own wheelhouse. None of it is igni's, and all of it leaves when
-the extension does.
+(project, commit), started by its own process with its stores in that
+directory, on the Neo4j and the Java runtime it ships as assets, with the
+chunk vectors embedded by the ONNX model it also ships. None of it is
+igni's, nothing of it is downloaded on a person's machine, and all of it
+leaves when the extension does.
 
 There used to be a `requires` field — a kind (`graph-db`, `embedder`, …)
 that igni would provision on a laptop and bind in a deployment. Nothing
@@ -558,7 +606,7 @@ The manifest's `trust` (`first-party` / `partner` / `unsigned`) is the author's 
 
 ### Permissions
 
-Declared, admin-granted, base-enforced, deny by default: `workspace` (none/read/write, path-scoped), `egress` (explicit hosts, empty by default), `secrets` (named grants the deployment resolves), `tools` (MCP tools it may register with the agent, each with its four hints), `rpc` (backend methods its UI may call over the bridge — exact names, or a `*`-suffixed prefix, because this list is read by whoever approves the install), `host` (objects of the host object model its process and page may reach, same grammar).
+Declared, admin-granted, base-enforced, deny by default: `workspace` (none/read/write, path-scoped), `egress` (the hosts its pages may connect to, empty by default), `secrets` (named grants the deployment resolves), `tools` (MCP tools it may register with the agent, each with its four hints), `rpc` (backend methods its UI may call over the bridge — exact names, or a `*`-suffixed prefix, because this list is read by whoever approves the install), `host` (objects of the host object model its process and page may reach, same grammar).
 
 **Where each one is enforced, and how far.** This list was written before any of it was, and for a while the only enforced permission was `rpc` — which made the rest a list of restrictions that restricted nothing.
 
@@ -567,7 +615,7 @@ Declared, admin-granted, base-enforced, deny by default: `workspace` (none/read/
 | `rpc` | `ExtensionRegistry.authorise`, on every call | Complete. |
 | `host` | `HostModel.handle`, on every request from the process's socket and the page's bridge; and at dispatch, for every signal | Complete for what igni does on the extension's behalf: an ungranted object answers `not_granted` and its signals are never sent; signal contents are filtered by `workspace` and `workspacePaths`. |
 | `tools` | tool registration, which is igni's; and every permission mode, through each tool's hints | Complete. A service may expose what it likes; what reaches the model is this list, and how each tool is treated is what the manifest says it is. |
-| `egress` | the page's `connect-src`, written from the manifest and the extension's own service, `https`/`wss` only; and the endpoint host igni itself dials, `https` only | **The UI, completely. Not the service's own process** — confining that needs an OS sandbox igni does not apply. A sidecar can still open its own sockets. |
+| `egress` | the page's `connect-src`, written from the manifest and the extension's own service, `https`/`wss` only; and the endpoint host igni itself dials, `https` only | **The page, completely. It does not confine the extension's process**, and is not meant to: see *The process is trusted* below. |
 | `workspace` | what igni *tells* a service, as `IGNI_WORKSPACE*` | An extension that was never granted the workspace is not told where it is. A service that goes looking anyway is not stopped — same OS-sandbox gap. |
 | `secrets` | resolution: an undeclared name is never looked up, and the resolver is the deployment's | The value arrives in the service's environment as `IGNI_SECRET_<NAME>`. **Not a handle** — see below. |
 | provenance | the distribution sync, before a bundle is stored, and the installer, which trusts only a recorded distribution | Complete. The JWS covers the archive's SHA-256, so changing any byte — a permission, a file — breaks it. |
@@ -620,13 +668,13 @@ extension written with it cannot leave one out.
 
 **Secrets are values, not handles.** This section said "a handle, never a value" for as long as nothing implemented it. A handle needs an exchange step, and an extension's service is an MCP server igni *calls* — there is no channel for it to call back on. So the honest statement is the one above, and the handle exchange joins the list of things not built. What that costs: a secret is in the service's process environment, visible to anything that can read it there.
 
-**The two gaps worth naming to a customer** are the same one twice: `egress` and `workspace` are enforced where igni decides, not where the extension acts. Closing them means running a sidecar under an OS sandbox — a network namespace and a mount namespace — which is the same work as container supervision and is not started.
+**The process is trusted; approving its service is the decision to trust it.** An extension's process is its service's own code, from a bundle that service signed. igni does not put it in a sandbox: `egress` sets what its *pages* may connect to, and the process may connect wherever its code does; `workspace` decides what igni *tells* it, and it runs with the person's own access to their files. That is the same trust as any application the person installs, and it is decided in the same place — by a super admin approving the service, on a Services page that shows everything the extension declares. **Do not approve a service whose code you do not trust.** What igni does confine is what it decides itself: which of its own objects, methods, tools and secrets an extension reaches, and what an extension's page — which renders content — may load and call.
 
 A capability that asks for more on upgrade **does not get it silently**; it stays at its old grants until an admin accepts. Permission drift is how extension ecosystems rot.
 
 ### A page and its own service
 
-An extension's page and process talk to **their own service** directly; the host is for host things. An extension is not stopped from calling anywhere else either — provided it says where, and the person approving it can read that. The rules:
+An extension's page and process talk to **their own service** directly; the host is for host things. A page is not stopped from calling anywhere else either — provided its manifest says where, and the person approving it can read that. (The process is the service's own code and is not confined; see *The process is trusted*.) The rules for a page:
 
 - **`connect-src` is the page itself, its own service, and its declared egress. Nothing else.** The service is the one that shipped the extension — the distribution record's `service_url`, or a development install's `serviceUrl` setting — and needs no declaration: it is the extension's. Every other host is in `permissions.egress`, shown to the super admin on the Services page before approval, and enforced by the CSP (`Egress.csp_connect_src`). No service known, none in the CSP.
 - **`https` and `wss` only.** Each origin is written with its scheme — `https://host` and `wss://host` — never scheme-less, which in a CSP matches any scheme. Plain `http`/`ws` only to this machine (`localhost`, `127.0.0.1`, `::1`) and only with `IGNI_DEV_EXTENSIONS` set; a plain-http service anywhere else is not given to the page at all (`ServiceOrigin.parse`). The same rule holds where igni dials an endpoint itself (`Egress.check_endpoint`).
@@ -654,7 +702,10 @@ Tool descriptions, prompt fragments and tool results all land in a model's conte
 
 ### Egress
 
-The air-gap claim is defended by a test (`tests/test_nothing_phones_home.py`). The contract extends it: every host declared, empty by default, UI egress no wider than its own service and its declared hosts, and each capability service carries its own equivalent of that test. Undeclared egress is a contract violation, not a bug — it is the one failure that costs a customer their accreditation.
+igni's own air-gap claim is defended by a test (`tests/test_nothing_phones_home.py`). For an extension the contract has two halves:
+
+- **Its pages** reach their own service and the hosts `permissions.egress` declares, and nothing else — enforced by the CSP, empty by default, shown on the Services page.
+- **Its process** is trusted, not confined (*The process is trusted*). What it ships is in its bundle — assets, not downloads on first use — so installing it reaches nothing outside the customer's network; what it contacts while it runs is its service's design, which is what a super admin is approving. A service that claims air-gap readiness should carry its own equivalent of igni's test.
 
 ### Audit
 

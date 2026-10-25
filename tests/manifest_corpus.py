@@ -47,6 +47,16 @@ def without(*keys: str) -> dict[str, Any]:
 #:
 #: Every case is a mistake that was either already made in this
 #: repository or is one keystroke away.
+#: One asset, as a manifest declares it.
+ASSET: dict[str, Any] = {
+    "name": "model",
+    "platform": "any",
+    "file": "model.onnx",
+    "size": 90405214,
+    "sha256": "6fd5d72fe4589f189f8ebc006442dbb529bb7ce38f8082112682524616046452",
+    "source": "https://downloads.example/model.onnx",
+}
+
 REFUSALS: list[tuple[str, dict[str, Any], str]] = [
     (
         "a sidecar with nowhere to come from",
@@ -164,6 +174,21 @@ REFUSALS: list[tuple[str, dict[str, Any], str]] = [
         "",
     ),
     ("a typo in a top-level key", with_(permissons={"workspace": "read"}), ""),
+    (
+        "an asset whose file name climbs out of its directory",
+        with_(assets=[{**ASSET, "file": "../escape.tar.gz"}]),
+        "assets/0/file",
+    ),
+    (
+        "an asset fetched over plain http",
+        with_(assets=[{**ASSET, "source": "http://downloads.example/model.onnx"}]),
+        "assets/0/source",
+    ),
+    (
+        "an asset with no digest",
+        with_(assets=[{k: v for k, v in ASSET.items() if k != "sha256"}]),
+        "assets/0",
+    ),
     (
         "a page kind that is not namespaced",
         with_(contributes={"pages": [{"kind": "scan", "label": "Scan"}]}),

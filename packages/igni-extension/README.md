@@ -245,6 +245,24 @@ keeps on this machine goes in `ext.environment.data_dir`
 (`IGNI_EXTENSION_DATA`): a directory that is this extension's alone and
 survives reinstalls and updates of its bundle.
 
+What it *runs* that is not Python — a database, a JVM, a model — it
+ships, as `assets` in its manifest, so it installs with no network. igni
+checks each against the digest the signed manifest pins and lays it out
+read-only, one directory per asset (`IGNI_EXTENSION_ASSETS`):
+
+```python
+neo4j_home = ext.assets.path("neo4j")                 # an unpacked archive
+model = ext.assets.file("minilm", "model.onnx")       # one file, as shipped
+```
+
+Both raise `NotConfigured` for a name igni did not lay out — one the
+manifest does not declare, or a process running outside igni.
+
+**The process is trusted, not confined.** It is the service's own code;
+`permissions.egress` sets what the extension's *pages* may connect to,
+not where this process may. Approving the service is the decision to
+trust it.
+
 ## Testing an extension
 
 ```python

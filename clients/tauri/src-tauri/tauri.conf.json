@@ -46,7 +46,7 @@
     "copyright": "Copyright © 2026 Ignite Ember",
     "macOS": {
       "entitlements": "entitlements.plist",
-      "minimumSystemVersion": "11.0"
+      "minimumSystemVersion": "26.0"
     }
   }
 }

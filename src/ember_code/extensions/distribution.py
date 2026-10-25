@@ -17,7 +17,11 @@ is installed:
    ``{extension, version, sha256}`` is this archive;
 4. unpack it (no path outside itself, no links, no devices, bounded
    size) and check the manifest names the same id and version;
-5. store it with a :class:`~ember_code.extensions.store.DistributionRecord`
+5. download each asset its manifest declares for this machine's
+   platform that is not on this machine already —
+   ``GET /v1/extensions/{id}/assets/{sha256}`` — and keep it only if it
+   is the bytes the signed manifest pins (§8.2);
+6. store it with a :class:`~ember_code.extensions.store.DistributionRecord`
    and hand it to the ordinary boot path — trust, profile, capability
    resolution — through :class:`ExtensionLifecycle`.
 
@@ -53,8 +57,16 @@ import httpx
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from ember_code.core.config.endpoint import is_configured
+from ember_code.extensions.assets import (
+    AssetCache,
+    AssetError,
+    AssetPlatform,
+    ExtensionAsset,
+    ExtensionAssets,
+)
 from ember_code.extensions.bundle_signature import BundleSignatureError, PublisherKeys
 from ember_code.extensions.impact import Resolution
+from ember_code.extensions.manifest import ExtensionManifest
 from ember_code.extensions.service_token import IgniSession
 from ember_code.extensions.store import DistributionRecord, ExtensionStore, StoreError
 
@@ -69,6 +81,10 @@ MAX_UNPACKED_BYTES = 1024 * 1024 * 1024
 
 SIGNATURE_HEADER = "X-Igni-Bundle-Signature"
 SHA256_HEADER = "X-Igni-Bundle-Sha256"
+
+#: How long one asset may take to arrive: a JVM or a database is
+#: hundreds of megabytes.
+ASSET_DOWNLOAD_TIMEOUT = 1800.0
 
 
 class DistributionError(Exception):
@@ -192,6 +208,43 @@ class DistributionClient:
                 )
         except httpx.HTTPError as exc:
             raise DistributionError(f"the bundle download failed: {exc}") from exc
+
+    async def asset(self, extension_id: str, asset: ExtensionAsset, cache: AssetCache) -> Path:
+        """Download one asset into ``cache``, held to its size and digest on the way."""
+        url = f"{self._api_url}{self.LISTING_PATH}/{extension_id}/assets/{asset.sha256}"
+        partial = cache.partial()
+        try:
+            async with (
+                httpx.AsyncClient(
+                    timeout=ASSET_DOWNLOAD_TIMEOUT, transport=self._transport
+                ) as client,
+                client.stream("GET", url, headers=self._headers) as response,
+            ):
+                if response.status_code != 200:
+                    raise DistributionError(
+                        f"igni refused asset {asset.name} ({asset.platform}): "
+                        f"{response.status_code}"
+                    )
+                received = 0
+                with partial.open("wb") as out:
+                    async for chunk in response.aiter_bytes():
+                        received += len(chunk)
+                        if received > asset.size:
+                            raise DistributionError(
+                                f"asset {asset.name} ({asset.platform}) is larger than "
+                                "its manifest pins"
+                            )
+                        out.write(chunk)
+        except httpx.HTTPError as exc:
+            partial.unlink(missing_ok=True)
+            raise DistributionError(f"asset {asset.name} could not be downloaded: {exc}") from exc
+        except DistributionError:
+            partial.unlink(missing_ok=True)
+            raise
+        try:
+            return cache.adopt(partial, asset)
+        except AssetError as exc:
+            raise DistributionError(str(exc)) from exc
 
 
 class BundleArchive:
@@ -342,6 +395,7 @@ class ExtensionDistribution:
             await self._remove_unlisted(
                 {entry.extension_id for entry in listing.extensions}, report
             )
+            self._store.prune_assets()
             return report
 
     async def _bring_up_to_date(
@@ -409,6 +463,9 @@ class ExtensionDistribution:
                     f"{manifest.id} uses 'dev' packaging, a command out of its "
                     "manifest, which igni does not install from a service"
                 )
+            # Before the old version stops: a download that fails leaves
+            # the one that works running.
+            await self._fetch_assets(client, manifest)
 
             # Stopped before its files are replaced: a running process
             # whose environment is deleted under it fails in ways that
@@ -433,6 +490,30 @@ class ExtensionDistribution:
         )
         if self._lifecycle is not None:
             await self._lifecycle.activate(entry.extension_id, target)
+
+    async def _fetch_assets(self, client: DistributionClient, manifest: ExtensionManifest) -> None:
+        """This machine's assets of ``manifest``, each one not here already."""
+        if not manifest.assets:
+            return
+        platform = AssetPlatform.current()
+        if platform is None:
+            raise DistributionError(
+                f"{manifest.id} ships assets for "
+                f"{', '.join(sorted({a.platform for a in manifest.assets}))}, and this "
+                "machine is none of the platforms igni runs on"
+            )
+        cache = self._store.asset_cache
+        for asset in ExtensionAssets.for_platform(manifest.assets, platform):
+            if cache.holds(asset):
+                continue
+            logger.info(
+                "downloading asset %s (%s) of %s, %d bytes",
+                asset.name,
+                asset.platform,
+                manifest.id,
+                asset.size,
+            )
+            await client.asset(manifest.id, asset, cache)
 
     async def _restart(self, extension_id: str, bundle: Path) -> None:
         if self._lifecycle is None:

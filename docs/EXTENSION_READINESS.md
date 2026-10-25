@@ -75,19 +75,19 @@ the extension boundary is a security boundary or a comment.
 | # | Declared | Enforced at | How far |
 |---|---|---|---|
 | B1 | `permissions.rpc` | `ExtensionRegistry.authorise` | ✅ complete |
-| B2 | `permissions.egress` | the page's `connect-src`, written from the manifest; and the endpoint host igni dials | ⚠️ **UI complete, service not.** Confining a sidecar's own sockets needs an OS network namespace. |
+| B2 | `permissions.egress` | the page's `connect-src`, written from the manifest; and the endpoint host igni dials | ✅ **complete for what it governs: pages.** The extension's process is the service's own code and is trusted, not confined — approving the service is that decision (EXTENSIBILITY §6, *The process is trusted*). |
 | B3 | `permissions.secrets` | resolution — an undeclared name is never looked up, and the resolver is the deployment's | ⚠️ **value, not handle.** It reaches the service's environment as `IGNI_SECRET_<NAME>`. **Never a token for the extension's own service**: that the host fetches by token exchange and serves on a loopback endpoint (`IGNI_SERVICE_TOKEN_URL`, §9 of igni server's `service-identity.md`), so the extension never holds the person's igni session. No deployment wires a secret source yet, so a declared secret currently fails the install. |
-| B4 | `permissions.workspace` / `workspacePaths` | what igni *tells* a service | ⚠️ **told, not confined.** An ungranted extension is not told where the project is; one that goes looking is not stopped. |
+| B4 | `permissions.workspace` / `workspacePaths` | what igni *tells* a service | ✅ **told, by design.** An ungranted extension is not told where the project is, and is not given its signals; its process runs with the person's own access, trusted as its service is. |
 | B5 | `permissions.tools` | tool registration, which is igni's | ✅ complete |
 | B6 | provenance (was `signature`) | the distribution sync, before a bundle is stored: the JWS igni server hands over with the bundle, checked against the approved service's `publisher_jwks` (RS256/ES256) and the archive's SHA-256; then the installer, which trusts a bundle only with that record | ✅ complete. The manifest no longer carries a signature — one cannot cover the archive it is inside — and the administrator-maintained Ed25519 trust store is gone. Anything not distributed by igni is a development install behind `IGNI_DEV_EXTENSIONS`. |
 
-**The two partial ones are the same gap twice**: `egress` and
-`workspace` are enforced where igni decides, not where the extension
-acts. Closing them means running a sidecar under a network namespace
-and a mount namespace — the same work as container supervision, and
-not started. For a regulated deployment that is the honest sentence
-to put in front of an assessor, and it is better than the previous
-one, which was that none of it was enforced at all.
+**`egress` and `workspace` are enforced where igni decides, and the
+process is trusted where it acts.** That is a decision, not a gap: an
+extension's process is the code of a service a super admin approved,
+from a bundle that service signed, and confining it would mean an OS
+sandbox per platform for code the deployment has already chosen to run.
+For a regulated deployment the sentence to put in front of an assessor
+is that one, with the Services page as the record of what was approved.
 
 **Secrets became values rather than handles**, and the contract was
 corrected rather than the other way round. A handle needs an exchange
@@ -197,16 +197,12 @@ runs sees one undifferentiated caller.
 
 **To hand one trusted partner a thing that works** — done. They can
 scaffold, check, install, run, call their own service and see it fail
-legibly, without writing Python. Gate B is enforced except for the OS
-sandbox, and that caveat goes in the agreement. That is the
-smallest honest deliverable: they can build, install, run, call their
-own service and see it fail legibly. Gate B stays open and is written
-into the agreement rather than the code.
+legibly, without writing Python. Gate B is enforced; its process is
+trusted rather than sandboxed, and the agreement says so.
 
-**To let an untrusted third party build** — Gate B is done except
-for the OS sandbox that `egress` and `workspace` need to bind on the
-extension's side rather than igni's. That is the remaining honest
-caveat, and it is one sentence rather than five.
+**To let a third party build** — Gate B is done. Its process is not
+sandboxed: a deployment approves a third party's service only if it
+trusts that service's code, exactly as it would install its software.
 
 **To serve a group** — G1–G4 are done and G5 is not. A shared backend
 now refuses what it cannot run, which is the half that stops somebody

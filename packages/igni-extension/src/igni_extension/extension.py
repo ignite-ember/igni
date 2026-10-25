@@ -56,6 +56,8 @@ class IgniExtension:
             raise ValueError("an extension is named by its manifest id")
         self.id = extension_id
         self.environment = ExtensionEnvironment.read(environ)
+        #: What it ships for this platform: `ext.assets.path("neo4j")`.
+        self.assets = self.environment.assets
         self.mcp = FastMCP(extension_id, instructions=instructions)
         self._session = HostSession(self.mcp._mcp_server)
         self._signals = SignalHandlers()

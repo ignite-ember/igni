@@ -332,9 +332,9 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - platform: macos-14
+          - platform: macos-26
             args: --target aarch64-apple-darwin
-          - platform: macos-14
+          - platform: macos-26
             args: --target x86_64-apple-darwin
           - platform: windows-latest
             args: ""
@@ -353,7 +353,7 @@ jobs:
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
         with:
-          targets: ${{ matrix.platform == 'macos-14' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
+          targets: ${{ matrix.platform == 'macos-26' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
 
       - name: Cache Cargo
         uses: Swatinem/rust-cache@v2
@@ -379,7 +379,7 @@ jobs:
       # creds it exits non-zero with a clear "Authentication failed"
       # in ~5 seconds, fast-failing the run.
       - name: Preflight notarytool credentials (macOS)
-        if: matrix.platform == 'macos-14'
+        if: matrix.platform == 'macos-26'
         env:
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
@@ -435,7 +435,7 @@ jobs:
       # pre-staple tarball is deleted so the next step's fallback
       # re-mints it via minisign against the new tarball.
       - name: Notarize + staple .app (macOS)
-        if: matrix.platform == 'macos-14'
+        if: matrix.platform == 'macos-26'
         env:
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
@@ -609,7 +609,7 @@ jobs:
       # ``signature`` field. ``updater-json`` below embeds the
       # file's contents verbatim.
       - name: Stash updater signature (macOS)
-        if: matrix.platform == 'macos-14'
+        if: matrix.platform == 'macos-26'
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
@@ -649,7 +649,7 @@ jobs:
           fi
           ls -la /tmp/updater-sig/
       - name: Upload updater signature artifact
-        if: matrix.platform == 'macos-14'
+        if: matrix.platform == 'macos-26'
         uses: actions/upload-artifact@v4
         with:
           name: updater-sig-${{ contains(matrix.args, 'aarch64') && 'aarch64' || 'x86_64' }}
@@ -665,7 +665,7 @@ jobs:
       # The .app.tar.gz updater payload (separately signed) is
       # untouched, so the auto-updater chain stays valid.
       - name: Strip DMG volume icon (macOS)
-        if: matrix.platform == 'macos-14'
+        if: matrix.platform == 'macos-26'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |

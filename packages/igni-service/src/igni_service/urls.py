@@ -44,6 +44,10 @@ class IgniPaths:
     def extension(cls, client_id: str) -> str:
         return f"{cls.CLIENTS}/{client_id}/extension"
 
+    @classmethod
+    def extension_asset(cls, client_id: str, sha256: str) -> str:
+        return f"{cls.CLIENTS}/{client_id}/extension/assets/{sha256}"
+
     #: Where igni calls a service about one person (erasure, export).
     SUBJECTS = "/v1/igni/subjects"
     #: Where igni tells a service that an organisation was deleted.
