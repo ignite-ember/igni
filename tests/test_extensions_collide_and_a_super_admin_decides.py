@@ -37,7 +37,9 @@ def _impacts(case: dict[str, Any]) -> list[ExtensionImpact]:
 
 def _resolver(case: dict[str, Any]) -> ImpactResolver:
     return ImpactResolver(
-        _impacts(case), [Resolution.model_validate(r) for r in case["resolutions"]]
+        _impacts(case),
+        [Resolution.model_validate(r) for r in case["resolutions"]],
+        reserved=case.get("reserved", []),
     )
 
 

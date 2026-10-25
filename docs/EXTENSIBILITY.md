@@ -92,11 +92,13 @@ All of it follows `READY`, like fragments: an extension that goes down takes its
 |---|---|
 | `prompt:main` (the whole prompt) | another `prompt:main`, and **any** `prompt:main.<section>` |
 | `prompt:main.workflow` (a section) | the same section, and `prompt:main` — never a *different* section |
-| `command:/review` | the same command |
+| `command:/review` | the same command — and never one of igni's own (below) |
 | `agent:explorer` (a stand-in) | the same agent |
 | `anchor:GRAPH_SCHEMA` | the same anchor |
 
 **Never a collision:** slot fills (they stack); pages, indicators and settings (namespaced by the extension id); tools (registered under the extension's server name); a plugin's own agents (under the extension's namespace); grants, egress, secrets (they only add). A `when` does not avoid a collision: two extensions replacing one section under different conditions still both claim it. Host-model signals are observed, never intercepted — there is no veto or rewrite hook to collide over; one added later is a claim.
+
+**igni's own commands are nobody's.** `/clear`, `/plan` and the rest of `docs/igni-commands.json` are answered by igni before any extension, so an extension declaring one would never run, and there is nothing to decide. igni server refuses such a bundle at upload; a machine running a newer igni, with a command the bundle did not know about, switches the claim off and says why (`IgniCommands`, the resolver's `reserved`). A test holds the list to the dispatcher, and igni server's copy to it.
 
 **Deciding.** A super admin picks the winner of each collision on igni server (service-identity §8.1). A decision names the claim, the extensions and the winner, with who and when. It covers any collision among the extensions it names — all of them or some, as on a machine that has two of three — and a collision with an extension it did not name is new. The losers lose that claim only. Whole prompts are settled first: if the extension replacing `main` wins, every other extension's `main` sections are off and no section collision is left; if a section's extension wins, only the whole-prompt one loses, and the sections meet again, one by one. When a decision's winner is not among the extensions present, all of them lost.
 

@@ -76,6 +76,7 @@ from ember_code.core.prompts.fragments import fragments as default_fragments
 from ember_code.extensions.impact import (
     Claim,
     ExtensionImpact,
+    IgniCommands,
     ImpactResolver,
     Resolution,
     ResolvedImpact,
@@ -107,6 +108,7 @@ class ExtensionContributions:
         bundles: dict[str, Path] | None = None,
         plugins_dir: Path | None = None,
         resolutions: Callable[[], list[Resolution]] | None = None,
+        igni_commands: IgniCommands | None = None,
         fragments: PromptFragments | None = None,
         prompts: PromptContributions | None = None,
         commands: ContributedCommands | None = None,
@@ -123,12 +125,15 @@ class ExtensionContributions:
                 so it counts as one of the extension's own agents.
             resolutions: The decisions on collisions, as the store
                 holds them now.
+            igni_commands: igni's own slash commands. An extension
+                declaring one has it switched off, and is told why.
         """
         self._registry = registry
         self._rpc = rpc
         self._bundles = bundles if bundles is not None else {}
         self._plugins_dir = plugins_dir
         self._resolutions = resolutions or (lambda: [])
+        self._igni_commands = igni_commands or IgniCommands()
         self._fragments = fragments if fragments is not None else default_fragments
         self._prompts = prompts if prompts is not None else prompt_contributions
         self._commands = commands if commands is not None else default_commands
@@ -156,7 +161,9 @@ class ExtensionContributions:
             for extension_id in self._registry.ids()
             if (entry := self._registry.get(extension_id)) is not None
         ]
-        self._resolved = ImpactResolver(impacts, self._resolutions()).enforce()
+        self._resolved = ImpactResolver(
+            impacts, self._resolutions(), reserved=self._igni_commands.claims()
+        ).enforce()
         for extension_id in self._registry.ids():
             entry = self._registry.get(extension_id)
             if entry is not None:

@@ -24,6 +24,7 @@ from pathlib import Path
 from typing import Any
 
 from ember_code.backend.agent_refresh import AgentRefresh
+from ember_code.backend.command_handler import CommandHandler
 from ember_code.backend.host_backend import HostModelWiring, ObservedTransport
 from ember_code.backend.login_coordinator import LoginCoordinator
 from ember_code.backend.push_bridge import PushNotificationBridge
@@ -44,6 +45,7 @@ from ember_code.extensions.distribution import ExtensionDistribution
 from ember_code.extensions.health import ExtensionHealth
 from ember_code.extensions.host.channel import HostChannel
 from ember_code.extensions.host.model import HostModel
+from ember_code.extensions.impact import IgniCommands
 from ember_code.extensions.installer import ExtensionInstaller
 from ember_code.extensions.launcher import ExtensionLauncher
 from ember_code.extensions.origin import ExtensionOrigins
@@ -293,6 +295,7 @@ class BackendApp:
             rpc=self._extensions,
             plugins_dir=PluginInstaller(data_dir=settings.storage.data_dir).plugins_dir,
             resolutions=extension_store.resolutions,
+            igni_commands=IgniCommands.of(CommandHandler.builtin_names()),
         )
         self._extension_contributions.attach()
         # When what extensions do to the prompts changes — one became

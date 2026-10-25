@@ -34,6 +34,16 @@ one replaces a whole prompt and the other replaces any section of it:
 a section of a prompt someone else wrote does not exist. Two
 extensions replacing *different* sections of one prompt do not collide.
 
+**igni's own commands** are not anybody's to claim. An extension
+declaring ``/clear`` does not collide with another extension, it
+collides with igni, and there is nothing for a super admin to decide:
+igni's command runs first and the extension's never would. igni server
+refuses such a bundle at upload; the host, which may be a newer igni
+with a command the bundle did not know about, switches the claim off
+(:class:`IgniCommands`, passed to :class:`ImpactResolver` as
+``reserved``). ``docs/igni-commands.json`` lists them for authors and
+for igni server, and a test holds it to the dispatcher.
+
 **Not collisions**, because they cannot be: slot fills stack, each
 under its extension's name; tools are registered under the
 extension's server name; pages and indicators are named in the
@@ -72,6 +82,7 @@ from __future__ import annotations
 from collections.abc import Iterable
 from datetime import datetime
 from enum import StrEnum
+from pathlib import Path
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -198,6 +209,35 @@ class ExtensionImpact(BaseModel):
         )
 
 
+class IgniCommands(BaseModel):
+    """igni's own slash commands: claims no extension can have.
+
+    Bare names, as the dispatcher compares them. The live list is the
+    dispatcher's; ``docs/igni-commands.json`` is the same list written
+    down, for authors and for igni server.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    commands: list[str] = Field(default_factory=list)
+
+    @classmethod
+    def of(cls, names: Iterable[str]) -> IgniCommands:
+        return cls(commands=sorted({name.lstrip("/").lower() for name in names}))
+
+    @classmethod
+    def load(cls, path: Path) -> IgniCommands:
+        return cls.model_validate_json(path.read_text(encoding="utf-8"))
+
+    def claims(self) -> list[str]:
+        return [Claim.command(f"/{name}") for name in self.commands]
+
+    def clashes(self, impact: ExtensionImpact) -> list[str]:
+        """The commands this extension declares that are igni's."""
+        own = set(self.commands)
+        return [c for c in impact.commands if c.lstrip("/") in own]
+
+
 class Collision(BaseModel):
     """Two or more extensions wanting one thing."""
 
@@ -260,10 +300,21 @@ class ImpactResolver:
     """Finds the collisions among a set of extensions and applies the decisions."""
 
     def __init__(
-        self, impacts: Iterable[ExtensionImpact], resolutions: Iterable[Resolution] = ()
+        self,
+        impacts: Iterable[ExtensionImpact],
+        resolutions: Iterable[Resolution] = (),
+        *,
+        reserved: Iterable[str] = (),
     ) -> None:
+        """
+        Args:
+            reserved: Claims igni keeps for itself — its own commands
+                (:meth:`IgniCommands.claims`). An extension claiming
+                one loses it, always; there is nothing to decide.
+        """
         self._impacts = {impact.extension_id: impact for impact in impacts}
         self._resolutions = list(resolutions)
+        self._reserved = set(reserved)
 
     def enforce(self) -> ResolvedImpact:
         """What the host applies: an undecided claim is off for everyone in it."""
@@ -276,6 +327,16 @@ class ImpactResolver:
     def _resolve(self, *, enforce: bool) -> ResolvedImpact:
         active = {ext: set(impact.claims()) for ext, impact in self._impacts.items()}
         outcome = ResolvedImpact()
+
+        for ext in sorted(active):
+            for key in sorted(active[ext] & self._reserved):
+                self._switch_off(
+                    outcome,
+                    active,
+                    ext,
+                    key,
+                    f"{key} is igni's own; igni answers it before any extension could",
+                )
 
         for key in self._keys(active):
             participants = self._participants(key, active)
@@ -382,6 +443,7 @@ __all__ = [
     "ClaimKind",
     "Collision",
     "ExtensionImpact",
+    "IgniCommands",
     "ImpactResolver",
     "Resolution",
     "ResolvedImpact",

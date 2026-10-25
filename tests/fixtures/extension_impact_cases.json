@@ -1,5 +1,5 @@
 {
-  "about": "What an extension changes in igni, and where two extensions collide: cases igni (src/ember_code/extensions/impact.py) and igni server (app/services/identity/impact.py) both run, so the two implementations of one rule give the same answers. The copy in igni's tests/fixtures/ is the original; igni server's tests/fixtures/ holds the same file, and each repository's test fails when its sibling checkout's copy differs.",
+  "about": "What an extension changes in igni, and where two extensions collide: cases igni (src/ember_code/extensions/impact.py) and igni server (app/services/identity/impact.py) both run, so the two implementations of one rule give the same answers. The copy in igni's tests/fixtures/ is the original; igni server's tests/fixtures/ holds the same file, and each repository's test fails when its sibling checkout's copy differs. A case's optional \"reserved\" is the claims igni keeps for itself (its own commands), passed to the resolver as such.",
   "impact": {
     "manifest": {
       "id": "acme.a",
@@ -1413,6 +1413,97 @@
       },
       "enforce": {
         "off": {}
+      }
+    },
+    {
+      "name": "one of igni's own commands is nobody's: off for every extension, nothing to decide",
+      "manifests": [
+        {
+          "id": "acme.a",
+          "version": "1.0.0",
+          "contract": ">=1.0 <2",
+          "trust": "unsigned",
+          "python": {
+            "package": "acme_a",
+            "entry": "acme-a",
+            "mcp": {
+              "transport": "stdio"
+            }
+          },
+          "contributes": {
+            "commands": [
+              {
+                "command": "/clear",
+                "desc": "clears"
+              },
+              {
+                "command": "/tidy",
+                "desc": "tidies"
+              }
+            ]
+          }
+        },
+        {
+          "id": "acme.b",
+          "version": "1.0.0",
+          "contract": ">=1.0 <2",
+          "trust": "unsigned",
+          "python": {
+            "package": "acme_b",
+            "entry": "acme-b",
+            "mcp": {
+              "transport": "stdio"
+            }
+          },
+          "contributes": {
+            "commands": [
+              {
+                "command": "/clear",
+                "desc": "clears"
+              },
+              {
+                "command": "/tidy",
+                "desc": "tidies"
+              }
+            ]
+          }
+        }
+      ],
+      "reserved": [
+        "command:/clear"
+      ],
+      "resolutions": [],
+      "survey": {
+        "collisions": [
+          {
+            "claim": "command:/tidy",
+            "extensions": [
+              "acme.a",
+              "acme.b"
+            ]
+          }
+        ],
+        "undecided": [
+          {
+            "claim": "command:/tidy",
+            "extensions": [
+              "acme.a",
+              "acme.b"
+            ]
+          }
+        ]
+      },
+      "enforce": {
+        "off": {
+          "acme.a": [
+            "command:/clear",
+            "command:/tidy"
+          ],
+          "acme.b": [
+            "command:/clear",
+            "command:/tidy"
+          ]
+        }
       }
     }
   ]
