@@ -56,7 +56,6 @@ from pathlib import Path
 from typing import Any
 
 from agno.agent import Agent
-from agno.compression.manager import CompressionManager
 
 from ember_code.backend.schemas_model import ModelSwitchResult
 from ember_code.core.agents import AgentPool
@@ -90,6 +89,7 @@ from ember_code.core.session.broadcast import BroadcastBus
 from ember_code.core.session.cloud_auth import SessionCloudAuth
 from ember_code.core.session.cloud_catalog import CloudModelCatalog
 from ember_code.core.session.compaction import CompactionCoordinator
+from ember_code.core.session.compression import MeasuredCompression
 from ember_code.core.session.event_log import SessionEventLog
 from ember_code.core.session.event_log_schema import SessionEvent
 from ember_code.core.session.identity import SessionIdentity
@@ -1083,7 +1083,7 @@ class Session:
             agent_cls=Agent,
             registry_cls=ToolRegistry,
             permissions_cls=ToolPermissions,
-            compression_cls=CompressionManager,
+            compression_cls=MeasuredCompression,
             model_registry_cls=ModelRegistry,
             reasoning_factory=create_reasoning_tools,
             guardrails_factory=create_guardrails,

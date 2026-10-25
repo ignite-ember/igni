@@ -704,19 +704,22 @@ dependencies = [
     { name = "google-genai" },
     { name = "greenlet" },
     { name = "httpx" },
-    { name = "laya" },
     { name = "pydantic" },
     { name = "pyyaml" },
     { name = "rich" },
     { name = "ripgrep" },
     { name = "sqlalchemy", extra = ["asyncio"] },
     { name = "textual" },
-    { name = "tiktoken" },
     { name = "tokenizers" },
     { name = "websockets" },
 ]
 
 [package.optional-dependencies]
+decisions = [
+    { name = "laya" },
+    { name = "starlette" },
+    { name = "uvicorn" },
+]
 dev = [
     { name = "jsonschema" },
     { name = "mypy" },
@@ -752,7 +755,7 @@ requires-dist = [
     { name = "greenlet", specifier = "~=3.5.1" },
     { name = "httpx", specifier = "~=0.28.1" },
     { name = "jsonschema", marker = "extra == 'dev'", specifier = "~=4.26.0" },
-    { name = "laya", specifier = "~=0.4.4" },
+    { name = "laya", marker = "extra == 'decisions'", specifier = "~=0.4.4" },
     { name = "mcp", marker = "extra == 'mcp'", specifier = "~=1.30" },
     { name = "mypy", marker = "extra == 'dev'", specifier = "~=1.19.1" },
     { name = "pydantic", specifier = "~=2.13.4" },
@@ -765,12 +768,13 @@ requires-dist = [
     { name = "ripgrep", specifier = "~=15.1.0" },
     { name = "ruff", marker = "extra == 'dev'", specifier = "~=0.15.6" },
     { name = "sqlalchemy", extras = ["asyncio"], specifier = "~=2.0.50" },
+    { name = "starlette", marker = "extra == 'decisions'", specifier = "~=1.9.0" },
     { name = "textual", specifier = "~=8.2.7" },
-    { name = "tiktoken", specifier = "~=0.13.0" },
     { name = "tokenizers", specifier = "~=0.22.2" },
+    { name = "uvicorn", marker = "extra == 'decisions'", specifier = "~=0.54.0" },
     { name = "websockets", specifier = "~=16.0" },
 ]
-provides-extras = ["dev", "mcp", "gemini", "web"]
+provides-extras = ["decisions", "dev", "mcp", "gemini", "web"]
 
 [[package]]
 name = "iniconfig"
@@ -1829,25 +1833,6 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/00/21/39a76b01bd5eea82a04baaca7580e105d8c59450df03998345bb2cfb307b/textual-8.2.8.tar.gz", hash = "sha256:3f106a9fbc73e39dd266c9712432087de78a6d644084c7c241d6a25c3169115b", size = 1860502, upload-time = "2026-06-30T06:51:24.495Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/fb/be/35261223d9416a0751cdff1c7b4a6f881387218a12d439fe22fefebc8c04/textual-8.2.8-py3-none-any.whl", hash = "sha256:267375fd402dc8d981457212efa71f0e3365fd17bba144ba9bb3ed7563cb374a", size = 731418, upload-time = "2026-06-30T06:51:26.364Z" },
-]
-
-[[package]]
-name = "tiktoken"
-version = "0.13.0"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "regex" },
-    { name = "requests" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/e4/e5/5f3cb2159769d0f4324c0e9e87f9de3c4b1cd45848a96b2eb3566ad5ca77/tiktoken-0.13.0.tar.gz", hash = "sha256:c9435714c3a84c2319499de9a300c0e604449dd0799ff246458b3bb6a7f433c1", size = 38986, upload-time = "2026-05-15T04:51:27.153Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/85/8e/144bde4e01df66b34bb865557c7cd754ed08b036217ebd79c9db5e9048a9/tiktoken-0.13.0-cp312-cp312-macosx_10_13_x86_64.whl", hash = "sha256:32ac870a806cfb260a02d0cb70426aef02e038297f8ad50df5040bb5af360791", size = 1034888, upload-time = "2026-05-15T04:50:31.579Z" },
-    { url = "https://files.pythonhosted.org/packages/36/18/d4ac9d20956cdebca04841316660ed584c2fecdc2b81722a28bc7ad3b1e4/tiktoken-0.13.0-cp312-cp312-macosx_11_0_arm64.whl", hash = "sha256:4d9980f11429ed2d737c463bb1fb78cf330caa026adf002f714aced7849a687b", size = 982970, upload-time = "2026-05-15T04:50:32.961Z" },
-    { url = "https://files.pythonhosted.org/packages/74/ed/6bb8d05b9f731f749fee5c6f5ca63e981143c826a5985877330507bd13b7/tiktoken-0.13.0-cp312-cp312-manylinux_2_28_aarch64.whl", hash = "sha256:3f277ebea5edd7b8bf03c6f9431e1d67d517530115572b2dc1d465326e8f88c7", size = 1115741, upload-time = "2026-05-15T04:50:34.475Z" },
-    { url = "https://files.pythonhosted.org/packages/34/de/2ca96b07a82d972b74fe4b46de055b79c904e45c7eab699354a0bfa697dc/tiktoken-0.13.0-cp312-cp312-manylinux_2_28_x86_64.whl", hash = "sha256:a116178fa7e1b4065bff05214360373a65cac22f965be7b3f73d00a0dbfe7649", size = 1136523, upload-time = "2026-05-15T04:50:35.782Z" },
-    { url = "https://files.pythonhosted.org/packages/ee/dc/9dafec002c2d4424378563cf4cf5c7fb93631d2a55013c8b87554ee4012c/tiktoken-0.13.0-cp312-cp312-musllinux_1_2_aarch64.whl", hash = "sha256:2c397ddda233208345b01bd30f2fca79ff730e55731d0108a603f9bc57f6af3b", size = 1181954, upload-time = "2026-05-15T04:50:36.99Z" },
-    { url = "https://files.pythonhosted.org/packages/a1/d0/1f8578c45b2f24759b46f0b50d31878c63c73e6bf0f2227e10ec5c5408dc/tiktoken-0.13.0-cp312-cp312-musllinux_1_2_x86_64.whl", hash = "sha256:95097e4f89b06403976e498abf61a0ee73a7497e73fb599cb211d8197a054d91", size = 1240069, upload-time = "2026-05-15T04:50:38.221Z" },
-    { url = "https://files.pythonhosted.org/packages/aa/90/28d7f154888610aa9237e541986beb62b479df29d193a5a0617dbb1514d0/tiktoken-0.13.0-cp312-cp312-win_amd64.whl", hash = "sha256:8f2d16e7a7c783ad81f36e457d046d1f1c8af70b22aec8a13238efe531977c41", size = 874748, upload-time = "2026-05-15T04:50:39.587Z" },
 ]
 
 [[package]]

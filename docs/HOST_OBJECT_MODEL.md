@@ -181,7 +181,7 @@ window, another extension, or this one.
 
 Errors carry a code both SDKs raise (`HostError.code`): `not_granted`,
 `not_found`, `invalid`, `read_only`, `stage_2`, `refused`, `unavailable`
-(what answers it — igni's decision model — could not be started),
+(what answers it — igni's decisions service — could not be started or reached, or its model could not load),
 `failed`.
 
 ## The model
@@ -299,11 +299,15 @@ questions included — never answered from part of it. A model that cannot
 be loaded is `unavailable`; nothing is guessed.
 
 **Sharing the model.** One Laya serves the whole of igni and answers one
-request at a time. The Bypass guard, which stands between the person and
-an approval, always goes first; extensions wait their turn in order.
-The first call on a machine loads the model, which takes seconds. It
-needs the `decide` permission, shown with the others before a super
-admin approves.
+request at a time. It runs in igni's decisions service, not in the
+backend: beside a desktop backend (started on first use, idling out after
+15 minutes) or once per cloud node, shared by every backend there
+(`IGNI_DECISIONS_URL`; see SECURITY, *The last check before
+`--auto-approve` runs a call*). The Bypass guard, which stands between a
+person and an approval, always goes first; extensions wait their turn in
+order. The first call starts the service and loads the model, which takes
+seconds. It needs the `decide` permission, shown with the others before a
+super admin approves.
 
 ## Reacting, and having a say
 

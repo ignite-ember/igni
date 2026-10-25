@@ -819,9 +819,12 @@ jobs:
 
           **Python (CLI / library):**
           ```bash
-          pip install 'ignite-ember==${{ steps.notes.outputs.pip_version }}'
+          pip install 'ignite-ember[decisions]==${{ steps.notes.outputs.pip_version }}'
           # or
-          uv pip install 'ignite-ember==${{ steps.notes.outputs.pip_version }}'
+          uv pip install 'ignite-ember[decisions]==${{ steps.notes.outputs.pip_version }}'
+          # ``[decisions]`` adds igni's decisions service (Laya, torch) for
+          # Bypass mode's last check and ``host.decide``; leave it out on a
+          # backend that points IGNI_DECISIONS_URL at a shared one.
           ```
 
           **JetBrains plugin:** download the ``ember-code-jetbrains-*.zip``

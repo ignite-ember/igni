@@ -46,7 +46,7 @@ def _session_patches(**overrides):
         "ToolEventHook": None,
         "create_reasoning_tools": None,
         "create_guardrails": None,
-        "CompressionManager": None,
+        "MeasuredCompression": None,
         "Agent": None,
         "load_prompt": "You are an assistant.",
     }
@@ -381,7 +381,7 @@ def _patches_with_real_context_loader():
         "ToolEventHook": None,
         "create_reasoning_tools": None,
         "create_guardrails": None,
-        "CompressionManager": None,
+        "MeasuredCompression": None,
         "Agent": None,
         "load_prompt": "You are an assistant.",
     }

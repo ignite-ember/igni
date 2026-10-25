@@ -1,101 +1,198 @@
-"""Laya, once per process, for everything in igni that asks it.
+"""Laya, asked over HTTP: the backend's client for igni's decisions service.
 
-Laya (``convaiinnovations/laya``, Apache-2.0) answers typed questions —
-choice, score, yes/no — about a short text in one forward pass, on this
-machine. Two callers share it:
+Laya answers typed questions — choice, score, yes/no — about a short
+text. It brings torch and ~1.7 GB of checkpoints, so it does not run in
+the backend: it runs in the decisions service
+(:mod:`ember_code.decisions_server`), and this client asks it. Two
+callers share it:
 
 * the Bypass guard (:mod:`ember_code.core.hooks.bypass_guard`), on the
   approval path, with the ``typed-decisions`` checkpoint it was
-  measured on;
-* extensions, through ``host.decide``, with Laya's general checkpoints:
-  ``english`` for English text, ``multilingual`` for the rest — Laya's
-  own routing, which never picks ``typed-decisions`` (it is tuned on
-  four synthetic workflows and is no general answerer).
+  measured on (:meth:`Laya.predict`);
+* extensions, through ``host.decide``, with Laya's general checkpoints
+  (:meth:`Laya.decide`).
 
-One model answers at a time, the Bypass guard first: an extension's
-batch never stands between the person and an approval. Checkpoints load
-on first use, off the event loop, with download chatter kept off stdout
-(the backend's handshake pipe). A model that will not load is
-:class:`~.schemas.DecisionsUnavailable` — never a guess.
+The service puts approvals first, across every backend it serves.
+
+Where the service is:
+
+* ``IGNI_DECISIONS_URL`` set (the cloud: one service per node) —
+  :class:`RemoteDecisions`, sending ``IGNI_DECISIONS_TOKEN``;
+* otherwise (a desktop) — :class:`LocalDecisions`, which starts the
+  service on first use as its own process on a loopback port, with a
+  per-run secret, and starts it again if it has idled out.
+
+Anything that keeps an answer from coming back — the service will not
+start, cannot be reached, or cannot load the model — is
+:class:`~.schemas.DecisionsUnavailable`: never a guess.
 """
 
 from __future__ import annotations
 
 import asyncio
-import contextlib
-import heapq
-import io
-import itertools
 import logging
 import os
+import secrets
+import shutil
+import subprocess
+import sys
+import tempfile
 import threading
-from collections.abc import Callable, Iterator
-from enum import IntEnum
+import time
 from pathlib import Path
-from typing import Any
+from typing import Any, Protocol, TypeVar
 
-from huggingface_hub import constants as hub
+import httpx
+from pydantic import BaseModel, ConfigDict, ValidationError
 
 from ember_code.core.decisions.schemas import (
+    DecideAnswer,
+    DecideCall,
     Decision,
     DecisionRequest,
+    DecisionsFailure,
     DecisionsUnavailable,
     LayaReading,
+    PredictAnswer,
+    PredictCall,
+    Priority,
 )
 
 logger = logging.getLogger(__name__)
 
-#: The hub repository bundling every Laya checkpoint (``laya.router.BUNDLE_REPO``).
-BUNDLE_REPO = "convaiinnovations/laya"
+Answer = TypeVar("Answer", bound=BaseModel)
 
-#: Checkpoints that may be resident at once: the Bypass guard's, and the
-#: two general ones extensions are routed between.
-MAX_LOADED = 3
-
-
-class Priority(IntEnum):
-    """Who waits for whom. Lower goes first."""
-
-    APPROVAL = 0
-    EXTENSION = 1
+URL_ENV = "IGNI_DECISIONS_URL"
+TOKEN_ENV = "IGNI_DECISIONS_TOKEN"
+SECRET_ENV = "IGNI_DECISIONS_SECRET"
 
 
-class PriorityGate:
-    """One holder at a time; the lowest priority waiting goes next, in arrival order."""
+class Connection(BaseModel):
+    """Where to send a call, and with what."""
+
+    model_config = ConfigDict(arbitrary_types_allowed=True)
+
+    base_url: str
+    token: str
+    transport: httpx.AsyncBaseTransport | None = None
+
+
+class DecisionsEndpoint(Protocol):
+    """Where the decisions service is. Blocking; called off the event loop."""
+
+    def connection(self) -> Connection: ...
+
+    def lost(self) -> None:
+        """The last call could not connect; find the service again next time."""
+
+
+class RemoteDecisions:
+    """A service someone else runs — one per cloud node."""
+
+    def __init__(
+        self, url: str, token: str, *, transport: httpx.AsyncBaseTransport | None = None
+    ) -> None:
+        self._connection = Connection(base_url=url.rstrip("/"), token=token, transport=transport)
+
+    def connection(self) -> Connection:
+        return self._connection
+
+    def lost(self) -> None:
+        return None
+
+
+class LocalDecisions:
+    """The service as this backend's own child process, started on first use."""
+
+    #: How long the service may take to start listening (not to load the model).
+    START_S = 30.0
+    #: An unused service exits after this long and gives its memory back.
+    IDLE_S = 900
 
     def __init__(self) -> None:
-        self._cond = threading.Condition()
-        self._busy = False
-        self._waiting: list[tuple[int, int]] = []
-        self._seq = itertools.count()
+        self._secret = secrets.token_urlsafe(32)
+        self._lock = threading.Lock()
+        self._process: subprocess.Popen[bytes] | None = None
+        self._home: Path | None = None
+        self._url = ""
 
-    @contextlib.contextmanager
-    def hold(self, priority: Priority) -> Iterator[None]:
-        with self._cond:
-            ticket = (int(priority), next(self._seq))
-            heapq.heappush(self._waiting, ticket)
-            while self._busy or self._waiting[0] != ticket:
-                self._cond.wait()
-            heapq.heappop(self._waiting)
-            self._busy = True
+    def connection(self) -> Connection:
+        with self._lock:
+            if self._process is None or self._process.poll() is not None:
+                self._url = self._start()
+            return Connection(base_url=self._url, token=self._secret)
+
+    def lost(self) -> None:
+        with self._lock:
+            if self._process is not None and self._process.poll() is None:
+                self._process.terminate()
+            self._process = None
+
+    def _start(self) -> str:
+        if self._home is not None:
+            # The last service has gone; its port file and log go with it.
+            shutil.rmtree(self._home, ignore_errors=True)
+        home = self._home = Path(tempfile.mkdtemp(prefix="igni-decisions-"))
+        ready = home / "port"
+        log = (home / "service.log").open("ab")
+        env = dict(os.environ, **{SECRET_ENV: self._secret})
+        command = [
+            sys.executable,
+            "-m",
+            "ember_code.decisions_server",
+            "--port",
+            "0",
+            "--ready-file",
+            str(ready),
+            "--idle-seconds",
+            str(self.IDLE_S),
+            "--watch-stdin",
+        ]
         try:
-            yield
+            process = subprocess.Popen(  # noqa: S603 — our own module, by absolute interpreter
+                command, stdin=subprocess.PIPE, stdout=log, stderr=log, env=env
+            )
+        except OSError as exc:
+            raise DecisionsUnavailable(f"igni's decisions service would not start ({exc})") from exc
         finally:
-            with self._cond:
-                self._busy = False
-                self._cond.notify_all()
+            log.close()
+        deadline = time.monotonic() + self.START_S
+        while not ready.exists():
+            if process.poll() is not None:
+                raise DecisionsUnavailable(
+                    "igni's decisions service exited as it started; see "
+                    f"{home / 'service.log'} (is ignite-ember[decisions] installed?)"
+                )
+            if time.monotonic() > deadline:
+                process.kill()
+                raise DecisionsUnavailable("igni's decisions service did not start in time")
+            time.sleep(0.05)
+        self._process = process
+        return f"http://127.0.0.1:{int(ready.read_text())}"
+
+
+class DecisionsEndpoints:
+    """Which endpoint this process uses."""
+
+    @staticmethod
+    def configured() -> DecisionsEndpoint:
+        url = os.environ.get(URL_ENV, "").strip()
+        if url:
+            return RemoteDecisions(url, os.environ.get(TOKEN_ENV, ""))
+        return LocalDecisions()
 
 
 class Laya:
-    """The process's Laya router and the gate in front of it."""
+    """The backend's way to ask Laya: one per process, shared by the guard and extensions."""
+
+    #: A first call may wait for the service to load a checkpoint.
+    TIMEOUT = httpx.Timeout(300.0, connect=10.0)
 
     _shared: Laya | None = None
     _shared_lock = threading.Lock()
 
-    def __init__(self) -> None:
-        self._router: Any = None
-        self._lock = threading.Lock()
-        self.gate = PriorityGate()
+    def __init__(self, endpoint: DecisionsEndpoint | None = None) -> None:
+        self._endpoint = endpoint if endpoint is not None else DecisionsEndpoints.configured()
 
     @classmethod
     def shared(cls) -> Laya:
@@ -103,8 +200,6 @@ class Laya:
             if cls._shared is None:
                 cls._shared = cls()
             return cls._shared
-
-    # ── Asking ────────────────────────────────────────────────────
 
     async def predict(
         self,
@@ -115,98 +210,71 @@ class Laya:
         priority: Priority = Priority.APPROVAL,
     ) -> dict[str, Any]:
         """Laya's raw answer from one checkpoint — for a caller that measured its questions on it."""
-        return await asyncio.to_thread(self._predict, state, questions, model, priority)
+        call = PredictCall(state=state, questions=questions, model=model, priority=priority)
+        answer = await self._ask("/v1/predict", call, PredictAnswer)
+        return answer.result
 
     async def decide(self, request: DecisionRequest) -> list[Decision]:
-        """Every context's decision, from Laya's general checkpoints, behind the Bypass guard."""
-        results = await asyncio.to_thread(self._decide, request)
+        """Every context's decision, from Laya's general checkpoints, behind the approvals."""
+        answer = await self._ask("/v1/decide", DecideCall(request=request), DecideAnswer)
         reading = LayaReading(request.questions)
-        return [reading.decision(result) for result in results]
+        return [reading.decision(result) for result in answer.results]
 
-    def _predict(
-        self, state: dict[str, str], questions: dict[str, Any], model: str, priority: Priority
-    ) -> dict[str, Any]:
-        router = self._load()
-        with self.gate.hold(priority):
-            return dict(router.predict(state, questions, model=model))
-
-    def _decide(self, request: DecisionRequest) -> list[dict[str, Any]]:
-        router = self._load()
-        questions = request.laya_questions()
-        batch = [{"state": context, "questions": questions} for context in request.contexts]
-        with self.gate.hold(Priority.EXTENSION):
+    async def _ask(self, path: str, call: BaseModel, shape: type[Answer]) -> Answer:
+        body = call.model_dump_json()
+        for attempt in (1, 2):
+            connection = await self._connection()
             try:
-                return [dict(result) for result in router.predict_batch(batch)]
-            except ValueError as exc:
-                # Laya names the question it cannot read; the request
-                # passed igni's checks, so this is the model's limit.
-                raise DecisionsUnavailable(f"Laya could not answer: {exc}") from exc
-
-    # ── Loading ───────────────────────────────────────────────────
-
-    def _load(self) -> Any:
-        if self._router is not None:
-            return self._router
-        with self._lock:
-            if self._router is None:
-                try:
-                    self._router = self._build()
-                except Exception as exc:  # noqa: BLE001 — any load failure is "unavailable"
-                    logger.warning("laya: could not load (%s)", type(exc).__name__)
+                async with httpx.AsyncClient(
+                    base_url=connection.base_url,
+                    transport=connection.transport,
+                    timeout=self.TIMEOUT,
+                    headers={
+                        "authorization": f"Bearer {connection.token}",
+                        "content-type": "application/json",
+                    },
+                ) as client:
+                    response = await client.post(path, content=body)
+            except httpx.ConnectError as exc:
+                # A local service that idled out between our check and the call.
+                self._endpoint.lost()
+                if attempt == 2:
                     raise DecisionsUnavailable(
-                        f"igni's decision model could not be loaded ({type(exc).__name__})"
+                        f"igni's decisions service could not be reached ({exc})"
                     ) from exc
-        return self._router
+                continue
+            except httpx.HTTPError as exc:
+                raise DecisionsUnavailable(
+                    f"igni's decisions service did not answer ({type(exc).__name__})"
+                ) from exc
+            return self._read(response, shape)
+        raise AssertionError("unreachable")
 
-    def _build(self) -> Any:
-        """The router; tried offline first when the bundle is cached.
+    async def _connection(self) -> Connection:
+        # Starting a local service blocks for up to a few seconds.
+        return await asyncio.to_thread(self._endpoint.connection)
 
-        A warm load then does not wait on a network probe. A cached
-        bundle need not hold every checkpoint's subfolder, so a failed
-        offline load falls back to fetching.
-        """
-        from laya import Router  # noqa: PLC0415 — torch-heavy, load on first use
-
-        def build() -> Any:
-            return Router(max_loaded=MAX_LOADED)
-
-        if os.environ.get("HF_HUB_OFFLINE") is None and HubCache.has(BUNDLE_REPO):
-            os.environ["HF_HUB_OFFLINE"] = "1"
+    @staticmethod
+    def _read(response: httpx.Response, shape: type[Answer]) -> Answer:
+        if response.status_code == 200:
             try:
-                return self._quietly(build)
-            except Exception as exc:  # noqa: BLE001 — retried online below
-                logger.debug("laya offline load failed (%s); fetching", type(exc).__name__)
-            finally:
-                del os.environ["HF_HUB_OFFLINE"]
-        return self._quietly(build)
-
-    @staticmethod
-    def _quietly(build: Callable[[], Any]) -> Any:
-        devnull = os.open(os.devnull, os.O_WRONLY)
-        saved = os.dup(1)
-        bars = os.environ.get("HF_HUB_DISABLE_PROGRESS_BARS")
-        os.environ["HF_HUB_DISABLE_PROGRESS_BARS"] = "1"
+                return shape.model_validate_json(response.content)
+            except ValidationError as exc:
+                raise DecisionsUnavailable("igni's decisions service answered nonsense") from exc
         try:
-            os.dup2(devnull, 1)
-            with contextlib.redirect_stdout(io.StringIO()):
-                return build()
-        finally:
-            os.dup2(saved, 1)
-            os.close(saved)
-            os.close(devnull)
-            if bars is None:
-                del os.environ["HF_HUB_DISABLE_PROGRESS_BARS"]
-            else:
-                os.environ["HF_HUB_DISABLE_PROGRESS_BARS"] = bars
+            failure = DecisionsFailure.model_validate_json(response.content)
+            detail = failure.detail
+        except ValidationError:
+            detail = f"HTTP {response.status_code}"
+        raise DecisionsUnavailable(detail)
 
 
-class HubCache:
-    """Whether a hub repository has been downloaded to this machine."""
-
-    @staticmethod
-    def has(repo: str) -> bool:
-        snapshots = Path(hub.HF_HUB_CACHE) / ("models--" + repo.replace("/", "--")) / "snapshots"
-        return snapshots.is_dir() and any(snapshots.iterdir())
-
-
-__all__ = ["BUNDLE_REPO", "HubCache", "Laya", "Priority", "PriorityGate"]
+__all__ = [
+    "Connection",
+    "DecisionsEndpoint",
+    "DecisionsEndpoints",
+    "Laya",
+    "LocalDecisions",
+    "Priority",
+    "RemoteDecisions",
+]

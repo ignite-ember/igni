@@ -416,6 +416,16 @@ Authentication is handled by `/login` — no API key environment variables neede
 
 > **Note:** BYOM API keys (OpenAI, Anthropic, etc.) are configured per model in your registry via `api_key_env`, `api_key`, or `api_key_cmd` — you choose the variable name yourself.
 
+**igni's decisions service** (Laya, for Bypass mode's last check and `host.decide`):
+
+| Variable | Where | Meaning |
+|---|---|---|
+| `IGNI_DECISIONS_URL` | backend | The node's shared decisions service. Unset: the backend starts its own on first use (needs `ignite-ember[decisions]`). |
+| `IGNI_DECISIONS_TOKEN` | backend | The secret sent to that service. |
+| `IGNI_DECISIONS_SECRET` | service | The secret the service requires; it will not start without one. |
+
+Run the shared service with `python -m ember_code.decisions_server --host 0.0.0.0 --port 8730` (installed with the `decisions` extra). A backend image needs neither the extra nor torch.
+
 ## CLI Flags
 
 ```bash

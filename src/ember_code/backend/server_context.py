@@ -7,8 +7,8 @@ history-truncation surface. Wire schemas
 the sibling :mod:`schemas_context` module.
 
 * :meth:`ContextController.get_status` — status-bar snapshot.
-* :meth:`ContextController.count_context_tokens` — locally count
-  tokens of the current conversation.
+* :meth:`ContextController.count_context_tokens` — the conversation's
+  size: the server's own count at the last answer, plus the tail after it.
 * :meth:`ContextController.context_breakdown` — what that count is
   made of, for the ``/ctx`` page.
 * :meth:`ContextController.compact_if_needed` — compaction on
@@ -40,6 +40,7 @@ from ember_code.backend.schemas_context import (
     PendingMessage,
     TruncateHistoryResult,
 )
+from ember_code.core.session.token_estimate import TokenEstimate
 from ember_code.protocol import messages as msg
 
 if TYPE_CHECKING:
@@ -137,7 +138,7 @@ class ContextController:
         return {"total": b.total, "runs": b.runs, "floor": b.floor}
 
     async def count_context_tokens(self) -> int:
-        """Locally count tokens of the current conversation."""
+        """The conversation's size: the server's count at the last answer, plus the tail after it."""
         try:
             agno_session = await self._session.main_team.aget_session(
                 session_id=self._session.session_id,
@@ -153,11 +154,7 @@ class ContextController:
         except Exception as exc:
             logger.debug("get_messages failed (%s); reporting 0", exc)
             return 0
-        try:
-            n = int(self._session.main_team.model.count_tokens(messages))
-        except Exception as exc:
-            logger.debug("count_tokens failed (%s); reporting 0", exc)
-            return 0
+        n = TokenEstimate.of(messages)
         # Latch only when we actually measured something.
         if n > 0:
             self._session.latch_input_tokens(n)

@@ -15,7 +15,7 @@ help: ## Show this help
 # one of them and never has been; an unknown extra only warns, so it
 # installed nothing and said so in a line nobody read.
 install: ## Install package in dev mode with all extras
-	uv pip install --python $(VENV)/python -e ".[dev,mcp,gemini,web]"
+	uv pip install --python $(VENV)/python -e ".[dev,mcp,gemini,web,decisions]"
 
 test: ## Run tests
 	$(VENV)/python -m pytest tests/ -q

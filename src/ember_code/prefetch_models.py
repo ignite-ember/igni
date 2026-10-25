@@ -1,14 +1,15 @@
 """One-shot model prefetcher used by the clients' managed-runtime bootstrap.
 
 Calling ``python -m ember_code.prefetch_models`` fetches Laya, igni's
-decision model (:mod:`ember_code.core.decisions`), so the first Bypass
+decision model (:mod:`ember_code.decisions_server`), so the first Bypass
 check or ``host.decide`` does not stall on a ~1.7 GB download. The
 bootstraps (Tauri's ``runtime.rs``, ``EmberRuntime.kt`` for JetBrains,
 ``runtime.ts`` for VS Code) call this after installing igni, so the
 download is a visible install step rather than a hung first call.
 
 It is the only model igni has. An extension that needs one ships and
-fetches it itself.
+fetches it itself. It runs in its own process at install time, with the
+``decisions`` extra installed; the backend never imports Laya.
 
 Output:
   * Progress lines go to stdout so the bootstrap can surface them.
@@ -24,13 +25,13 @@ from __future__ import annotations
 
 import sys
 
-from ember_code.core.decisions.laya import Laya
+from ember_code.decisions_server.model import LayaModel
 
 
 def main() -> int:
     print("prefetch: loading igni's decision model (~1.7 GB on first run)", flush=True)
     try:
-        Laya.shared()._load()
+        LayaModel().load()
     except Exception as exc:  # pragma: no cover — surfaced to caller
         print(f"prefetch: decision model not fetched: {exc!r}", file=sys.stderr, flush=True)
         return 0

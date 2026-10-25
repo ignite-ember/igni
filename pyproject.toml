@@ -56,7 +56,6 @@ dependencies = [
     "httpx~=0.28.1",
     "google-genai~=2.8.0",
     "tokenizers~=0.22.2",
-    "tiktoken~=0.13.0",
     "ripgrep~=15.1.0",
     # Ed25519 verification of extension bundle signatures
     # (``extensions/signature.py``). It was already importable as a
@@ -70,9 +69,6 @@ dependencies = [
     # dependencies: a machine that never installs it never installs a
     # PDF parser. Nothing left in igni imports any of them.
     "dateparser~=1.4.0",
-    # igni's decision model (core/decisions/): Bypass mode's last check and
-    # `host.decide`. Runs locally; brings torch and transformers with it.
-    "laya~=0.4.4",
     "websockets~=16.0",
     # Server discovery reads a TXT record in the customer's own zone,
     # for deployments that would rather publish DNS than serve a file
@@ -89,6 +85,16 @@ Issues = "https://github.com/ignite-ember/igni/issues"
 Changelog = "https://github.com/ignite-ember/igni/releases"
 
 [project.optional-dependencies]
+# igni's decisions service (``python -m ember_code.decisions_server``):
+# Laya, for Bypass mode's last check and ``host.decide``. It runs in its
+# own process — beside a desktop backend, or once per cloud node — so a
+# backend image leaves this out and never carries torch. The desktop app
+# installs ``ignite-ember[decisions]``.
+decisions = [
+    "laya~=0.4.4",
+    "starlette~=1.9.0",
+    "uvicorn~=0.54.0",
+]
 dev = [
     "pytest~=9.0.2",
     "pytest-asyncio~=1.3.0",

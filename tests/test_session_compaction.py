@@ -36,8 +36,6 @@ def _bare_session(*, agno_session=None, hook_result=None):
     session.main_team = SimpleNamespace()
     session.main_team.aget_session = AsyncMock(return_value=agno_session)
     session.main_team.asave_session = AsyncMock()
-    session.main_team.model = SimpleNamespace()
-    session.main_team.model.count_tokens = MagicMock(return_value=100)
     # Compaction now goes through the public rebuild seam.
     session.rebuild_main_team = MagicMock()
     session.hook_executor = SimpleNamespace()
@@ -150,33 +148,37 @@ class TestContextBreakdown:
     async def test_decomposes_total_into_runs_plus_floor(self):
         # The invariant that /ctx relies on: total == runs + floor.
         # ``floor`` is what /compact can't shrink (system prompt,
-        # tool schemas, project rules).
+        # tool schemas, project rules). ``total`` is the server's own
+        # count at the last answer; ``runs`` is the turns' length.
+        user = _message("user", "x" * 400)
+        answer = _message("assistant", "y" * 400, input_tokens=450, output_tokens=100)
         agno = SimpleNamespace()
-        agno.runs = [SimpleNamespace(messages=[MagicMock(), MagicMock()])]
-        agno.get_messages = MagicMock(return_value=[MagicMock() for _ in range(5)])
+        agno.runs = [SimpleNamespace(messages=[user, answer])]
+        agno.get_messages = MagicMock(return_value=[_message("system", "s" * 40), user, answer])
         s = _bare_session(agno_session=agno)
         coord = CompactionCoordinator(s)
-        # Model reports different counts for the two calls (total
-        # messages vs. runs-only messages).
-        s.main_team.model.count_tokens = MagicMock(side_effect=[500, 200])
         result = await coord.context_breakdown()
-        assert result.total == 500
-        assert result.runs == 200
-        assert result.floor == 300  # 500 - 200
+        assert result.total == 550  # 450 read + 100 written, as the server counted
+        assert result.runs == 200  # 800 characters / 4
+        assert result.floor == 350
 
     @pytest.mark.asyncio
     async def test_floor_never_negative(self):
-        # If tokenizer bugs make ``runs`` > ``total``, floor
-        # should clamp to 0 rather than go negative (the /ctx
-        # panel renders a negative pill oddly).
+        # The turns' estimate can exceed a small measured total; runs is
+        # capped at the total so the floor lands at 0, never negative.
+        answer = _message("assistant", "y" * 4000, input_tokens=10, output_tokens=0)
         agno = SimpleNamespace()
-        agno.runs = [SimpleNamespace(messages=[MagicMock()])]
-        agno.get_messages = MagicMock(return_value=[MagicMock()])
+        agno.runs = [SimpleNamespace(messages=[answer])]
+        agno.get_messages = MagicMock(return_value=[answer])
         s = _bare_session(agno_session=agno)
-        s.main_team.model.count_tokens = MagicMock(side_effect=[10, 20])
         coord = CompactionCoordinator(s)
         result = await coord.context_breakdown()
         assert result.floor == 0
+
+
+def _message(role: str, content: str, *, input_tokens: int = 0, output_tokens: int = 0):
+    metrics = SimpleNamespace(input_tokens=input_tokens, output_tokens=output_tokens)
+    return SimpleNamespace(role=role, content=content, metrics=metrics, tool_calls=None)
 
 
 class TestContextBreakdownFromTotals:

@@ -17,8 +17,8 @@ they keep a question inside what the model can read at all.
 from __future__ import annotations
 
 import re
-from enum import StrEnum
-from typing import Any
+from enum import IntEnum, StrEnum
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
@@ -180,8 +180,49 @@ class Decision(BaseModel):
     model: str
 
 
+class Priority(IntEnum):
+    """Who waits for whom at the model. Lower goes first."""
+
+    APPROVAL = 0
+    EXTENSION = 1
+
+
+# ── The decisions service's wire ──────────────────────────────────
+
+
+class PredictCall(Strict):
+    """One raw Laya question set, on one checkpoint — the Bypass guard's call."""
+
+    state: dict[str, str]
+    questions: dict[str, Any]
+    model: str
+    priority: Priority = Priority.APPROVAL
+
+
+class PredictAnswer(BaseModel):
+    result: dict[str, Any]
+
+
+class DecideCall(Strict):
+    """An extension's decision, on Laya's general checkpoints, behind the approvals."""
+
+    request: DecisionRequest
+
+
+class DecideAnswer(BaseModel):
+    #: Laya's raw result per context; the asker reads them into decisions.
+    results: list[dict[str, Any]]
+
+
+class DecisionsFailure(BaseModel):
+    """Why the service answered nothing."""
+
+    error: Literal["unavailable", "unauthorized"]
+    detail: str
+
+
 class DecisionsUnavailable(Exception):
-    """Laya could not be loaded or could not run; nothing was decided."""
+    """The decisions service could not be reached, or Laya could not load or run; nothing was decided."""
 
 
 class DecisionTooLong(Exception):
@@ -250,6 +291,12 @@ __all__ = [
     "DecisionRequest",
     "DecisionTooLong",
     "DecisionsUnavailable",
+    "DecideAnswer",
+    "DecideCall",
+    "DecisionsFailure",
     "LayaReading",
+    "PredictAnswer",
+    "PredictCall",
+    "Priority",
     "QuestionKind",
 ]

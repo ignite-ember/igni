@@ -24,7 +24,7 @@ ember-code/
 │   │   ├── auth/           # browser login, local callback server, credential storage
 │   │   ├── config/         # Settings, model registry, permission evaluation, policy tiers
 │   │   ├── db/             # SQLAlchemy engine + sessionmaker cache, migration entry point
-│   │   ├── decisions/      # Laya, igni's decision model: the Bypass guard and `host.decide`
+│   │   ├── decisions/      # the client for igni's decisions service: the Bypass guard and `host.decide`
 │   │   ├── evals/          # YAML eval loading, assertions, runner, reporter
 │   │   ├── guardrails/     # one rule per file (PII, injection, moderation) behind one runner
 │   │   ├── hooks/          # hook discovery, matcher, executor, tool-event pipeline
@@ -42,6 +42,7 @@ ember-code/
 │   │   ├── skills/         # `SKILL.md` discovery, frontmatter parsing, invocation
 │   │   ├── tools/          # every agent tool: edit, shell/process, orchestrate, plan, todo, web
 │   │   └── utils/          # project context (`igni.md`), audit log, display, mentions, tips
+│   ├── decisions_server/   # igni's decisions service: Laya in its own process (`[decisions]` extra)
 │   ├── protocol/           # the BE↔FE wire contract — Pydantic message models under `schemas/`
 │   ├── transport/          # how those messages move: unix socket, websocket, in-process, NDJSON
 │   ├── bundled_agents/     # the agent `.md` files that ship inside the wheel

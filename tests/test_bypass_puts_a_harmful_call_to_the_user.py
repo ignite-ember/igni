@@ -339,7 +339,7 @@ class TestAskingThroughTheSessionsApprovalChannel:
 
 
 def _model_cached() -> bool:
-    from ember_code.core.decisions.laya import BUNDLE_REPO, HubCache
+    from ember_code.decisions_server.model import BUNDLE_REPO, HubCache
 
     return HubCache.has(BUNDLE_REPO)
 

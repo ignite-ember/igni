@@ -1,10 +1,12 @@
-"""``host.decide``: an extension asks igni's local decision model typed questions.
+"""``host.decide``: an extension asks igni's decision model typed questions.
 
-Laya is loaded once per process and shared with the Bypass guard,
-which goes first (``ember_code.core.decisions.laya``). These drive the
-member through the host model over a stand-in router — what an
-extension sends, what reaches Laya, what comes back, and what is
-refused — and, when the model is on this machine, the real thing.
+Laya runs in igni's decisions service, shared with the Bypass guard,
+which goes first (``ember_code.decisions_server``); the backend asks
+it over HTTP (``ember_code.core.decisions.laya``). These drive the
+member through the host model, through the real client and the real
+service app, over a stand-in router — what an extension sends, what
+reaches Laya, what comes back, and what is refused — and, when the
+model is on this machine, the real thing in its own process.
 """
 
 from __future__ import annotations
@@ -16,12 +18,15 @@ import time
 from pathlib import Path
 from typing import Any
 
+import httpx
 import pytest
 
 from ember_code.core.decisions import Laya, Priority
-from ember_code.core.decisions.laya import BUNDLE_REPO, HubCache, PriorityGate
+from ember_code.core.decisions.laya import RemoteDecisions
 from ember_code.core.decisions.schemas import DecisionRequest
 from ember_code.core.hooks.bypass_guard import QUESTIONS, HarmJudge
+from ember_code.decisions_server.app import DecisionsApp
+from ember_code.decisions_server.model import BUNDLE_REPO, HubCache, LayaModel, PriorityGate
 from tests.host_model_helpers import HostRig
 
 TRIAGE = [
@@ -93,10 +98,17 @@ class FakeRouter:
         }
 
 
+def service_over(model: LayaModel) -> Laya:
+    """The backend's client, talking to the real service app in-process."""
+    app = DecisionsApp(model, "secret")
+    transport = httpx.ASGITransport(app=app.asgi)
+    return Laya(RemoteDecisions("http://decisions", "secret", transport=transport))
+
+
 def laya_over(router: Any) -> Laya:
-    laya = Laya()
-    laya._router = router  # noqa: SLF001 — the stand-in for a loaded checkpoint
-    return laya
+    model = LayaModel()
+    model._router = router  # noqa: SLF001 — the stand-in for a loaded checkpoint
+    return service_over(model)
 
 
 @pytest.fixture
@@ -208,14 +220,14 @@ class TestDecide:
         assert "40 tokens" in message
 
     async def test_a_model_that_will_not_load_is_unavailable(self, rig: HostRig) -> None:
-        laya = Laya()
+        model = LayaModel()
 
         def broken() -> Any:
             raise OSError("no weights")
 
-        laya._build = broken  # type: ignore[method-assign]
+        model._build = broken  # type: ignore[method-assign]
         assert rig.model is not None
-        rig.model.decisions = laya
+        rig.model.decisions = service_over(model)
         ext = rig.install(host=["decide"])
         refused(
             await rig.ask(ext, "call", "decide", context={"text": "x"}, questions=TRIAGE),
@@ -284,7 +296,7 @@ class TestSharedWithTheBypassGuard:
         probability, which = asyncio.run(judge.score("Bash: rm -rf ~"))
         [(state, questions, model)] = router.single
         assert state == {"tool_call": "Bash: rm -rf ~"}
-        assert questions is QUESTIONS
+        assert questions == QUESTIONS  # sent over the wire, unchanged
         assert model == "typed-decisions"
         assert which in QUESTIONS and 0.0 <= probability <= 1.0
 

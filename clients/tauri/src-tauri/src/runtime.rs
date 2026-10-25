@@ -232,7 +232,9 @@ pub fn ensure_backend_python(progress: ProgressFn) -> Result<BackendInstall, Str
                 "install",
                 "--python",
                 venv_python.to_string_lossy().as_ref(),
-                &format!("ignite-ember=={IGNITE_EMBER_VERSION}"),
+                // ``decisions``: igni's decisions service (Laya), which
+                // the backend starts beside itself on first use.
+                &format!("ignite-ember[decisions]=={IGNITE_EMBER_VERSION}"),
             ],
         )?;
 
