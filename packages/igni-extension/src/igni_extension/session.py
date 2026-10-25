@@ -22,7 +22,10 @@ from typing import Any
 from mcp.server.lowlevel import Server
 from mcp.server.session import ServerSession
 
-from igni_extension.notifications import NotifyNotification
+from igni_extension.notifications import ConditionsNotification, NotifyNotification
+
+#: What the process says to the host on its own.
+HostNotification = NotifyNotification | ConditionsNotification
 
 logger = logging.getLogger(__name__)
 
@@ -37,7 +40,7 @@ class HostSession:
 
     def __init__(self, server: Server[Any, Any]) -> None:
         self._session: ServerSession | None = None
-        self._pending: deque[NotifyNotification] = deque()
+        self._pending: deque[HostNotification] = deque()
         self._lock = asyncio.Lock()
         self._wrap(server)
 
@@ -63,15 +66,12 @@ class HostSession:
             while self._pending:
                 await session.send_notification(self._pending.popleft())  # type: ignore[arg-type]
 
-    async def send(self, notification: NotifyNotification) -> None:
+    async def send(self, notification: HostNotification) -> None:
         async with self._lock:
             if self._session is None:
                 if len(self._pending) >= self.MAX_PENDING:
                     dropped = self._pending.popleft()
-                    logger.warning(
-                        "igni: dropped notification %r; the host has not connected",
-                        dropped.params.event_key or dropped.params.title,
-                    )
+                    logger.warning("igni: dropped %s; the host has not connected", dropped.method)
                 self._pending.append(notification)
                 return
             await self._session.send_notification(notification)  # type: ignore[arg-type]

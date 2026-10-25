@@ -1,11 +1,12 @@
 """The prompt promises a document store only when there is one.
 
 A document store is an extension, and it switches off like CodeIndex
-does. While it is READY it declares ``project-documents`` and supplies
-the ``PROJECT_DOCUMENTS_*`` anchors — the text about the store and the
-agent that keeps it. When it is not, a prompt telling the orchestrator
-to hand project knowledge to that agent describes a capability the
-session does not have.
+does. While it is READY it fills the prompt's ``persisting``,
+``when_to_persist``, ``reading`` and ``project_documents`` slots — the
+text about the store and the agent that keeps it. When it is not, the
+slots say what they say when nothing fills them, and a prompt telling
+the orchestrator to hand project knowledge to that agent would describe
+a capability the session does not have.
 
 That defect has shipped twice already. ``knowledge_*`` was taught in
 7,542 system prompts against zero manifests and called zero times, and
@@ -28,45 +29,45 @@ not offer to record what it cannot record.
 
 from __future__ import annotations
 
-from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
 
 import ember_code
-from ember_code.core.prompts import fragments, load_prompt
-from ember_code.core.prompts.conditionals import ConditionalRegistry
+from ember_code.core.prompts import load_prompt
+from ember_code.core.prompts.contributions import (
+    PromptClaim,
+    PromptClaimKind,
+    PromptContributions,
+)
 from ember_code.core.session.agent_builder.prompt_builder import PromptBuilder
 
 #: A stand-in for the extension that keeps the documents. igni's prompts
 #: name none, so neither does this.
 _DOCS = "acme.docs"
 
-_ANCHORS = {
-    "PROJECT_DOCUMENTS_PERSISTING": (
-        '- **`spawn_agent("docs-keeper", ...)`** — hand it to the docs keeper.'
-    ),
-    "PROJECT_DOCUMENTS_WHEN_TO_PERSIST": "- A root cause → the docs keeper.",
-    "PROJECT_DOCUMENTS_READING": "Ask the docs keeper why.",
-    "PROJECT_DOCUMENTS_REFERENCE": "## The Project's Documents\n\nDelegate to the docs keeper.",
+_SLOTS = {
+    "main.persisting": '- **`spawn_agent("docs-keeper", ...)`** — hand it to the docs keeper.',
+    "main.when_to_persist": "- A root cause → the docs keeper.",
+    "main.reading": "Ask the docs keeper why.",
+    "main.project_documents": "## The Project's Documents\n\nDelegate to the docs keeper.",
 }
 
 
-@pytest.fixture(autouse=True)
-def _documents_text() -> Iterator[None]:
-    for anchor, text in _ANCHORS.items():
-        assert fragments.register(anchor, _DOCS, lambda text=text: text) is None
-    yield
-    fragments.remove_owner(_DOCS)
-
-
-def _with_documents(live: bool) -> ConditionalRegistry:
-    """A registry in which an installed extension keeps the project's
-    documents — declares ``project-documents`` — or nobody does."""
-    registry = ConditionalRegistry()
+def _with_documents(live: bool) -> PromptContributions:
+    """Contributions in which an installed extension keeps the project's
+    documents — fills the slots — or nobody does."""
+    contributions = PromptContributions()
     if live:
-        registry.declare(_DOCS, {"project-documents", "can-persist"})
-    return registry
+        contributions.set_owner(
+            _DOCS,
+            "Docs",
+            [
+                PromptClaim(kind=PromptClaimKind.SLOT, target=slot, text=text)
+                for slot, text in _SLOTS.items()
+            ],
+        )
+    return contributions
 
 
 def _loader(name: str) -> str:
@@ -79,12 +80,13 @@ def _render(*, codeindex: bool, artifacts: bool) -> str:
         project_dir=Path("."),
         settings=None,
         codeindex_available=codeindex,
-        conditionals=_with_documents(artifacts),
+        contributions=_with_documents(artifacts),
         agent_catalog="(catalog)",
         skill_descriptions="",
         prompt_loader=_loader,
     )
-    return builder.resolve_conditionals(builder.substitute_placeholders(builder.load_base()))
+    prompt = builder.replace_sections(builder.load_base())
+    return builder.resolve_conditionals(builder.fill_slots(builder.substitute_placeholders(prompt)))
 
 
 COMBINATIONS = [
@@ -183,7 +185,7 @@ class TestNoDeadToolSurvivesInEitherBranch:
 class TestTheSwitchIsTheOneTheExtensionDeclares:
     def test_the_coordinator_does_not_decide_it(self):
         """Whether the store is there is the extension's to say, by
-        declaring ``project-documents`` while it runs. A host flag — a settings
+        filling the slots while it runs. A host flag — a settings
         read, a check on a manager the session holds — could disagree
         with the extension, and would be igni naming one extension."""
         from pathlib import Path as _Path
@@ -204,7 +206,7 @@ class TestTheSwitchIsTheOneTheExtensionDeclares:
             project_dir=Path("."),
             settings=None,
             codeindex_available=False,
-            conditionals=_with_documents(True),
+            contributions=_with_documents(True),
             agent_catalog="x",
             skill_descriptions="",
             prompt_loader=lambda name: (_ for _ in ()).throw(FileNotFoundError(name)),
@@ -224,28 +226,28 @@ class TestUnbalancedMarkersRaise:
             project_dir=Path("."),
             settings=None,
             codeindex_available=False,
-            conditionals=_with_documents(artifacts),
+            contributions=_with_documents(artifacts),
             agent_catalog="x",
             skill_descriptions="",
             prompt_loader=_loader,
         )
 
         with pytest.raises(ValueError, match="unbalanced"):
-            builder.resolve_conditionals("<!-- project-documents:only -->orphan")
+            builder.resolve_conditionals("<!-- user-memory:only -->orphan")
 
     def test_a_balanced_span_round_trips(self):
         builder = PromptBuilder(
             project_dir=Path("."),
             settings=None,
             codeindex_available=False,
-            conditionals=_with_documents(True),
+            contributions=_with_documents(True),
             agent_catalog="x",
             skill_descriptions="",
             prompt_loader=_loader,
         )
         text = (
-            "a <!-- project-documents:only -->b<!-- /project-documents:only -->"
-            "<!-- project-documents:absent -->c<!-- /project-documents:absent --> d"
+            "a <!-- slot.reading:only -->b<!-- /slot.reading:only -->"
+            "<!-- slot.reading:absent -->c<!-- /slot.reading:absent --> d"
         )
 
         assert builder.resolve_conditionals(text) == "a b d"
@@ -255,14 +257,14 @@ class TestUnbalancedMarkersRaise:
             project_dir=Path("."),
             settings=None,
             codeindex_available=False,
-            conditionals=_with_documents(False),
+            contributions=_with_documents(False),
             agent_catalog="x",
             skill_descriptions="",
             prompt_loader=_loader,
         )
         text = (
-            "a <!-- project-documents:only -->b<!-- /project-documents:only -->"
-            "<!-- project-documents:absent -->c<!-- /project-documents:absent --> d"
+            "a <!-- slot.reading:only -->b<!-- /slot.reading:only -->"
+            "<!-- slot.reading:absent -->c<!-- /slot.reading:absent --> d"
         )
 
         assert builder.resolve_conditionals(text) == "a c d"
@@ -275,7 +277,7 @@ class TestUnbalancedMarkersRaise:
             project_dir=Path("."),
             settings=None,
             codeindex_available=False,
-            conditionals=_with_documents(True),
+            contributions=_with_documents(True),
             agent_catalog="x",
             skill_descriptions="",
             prompt_loader=_loader,

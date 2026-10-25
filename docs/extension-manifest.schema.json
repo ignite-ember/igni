@@ -449,7 +449,7 @@
         },
         "promptFragments": {
           "type": "array",
-          "description": "Text this extension supplies at a named anchor in a system prompt. The anchor must already appear in a prompt that is in scope — base prompt text is not in the floor, so in practice an extension's anchors land in prompts it also contributes through `promptVariants`.",
+          "description": "Text this extension supplies at a named `{{ANCHOR}}` in an agent's prompt — one of its plugin's agents, or an agent it stands in for through `prompt.agents`. Only one extension may fill an anchor: two that both do collide, and a super admin decides which wins.",
           "items": {
             "type": "object",
             "required": [
@@ -477,12 +477,130 @@
             }
           }
         },
-        "promptVariants": {
-          "type": "array",
-          "description": "Variant names this extension makes live while it is READY. An agent file named `<agent>.<variant>.md` takes over from the plain `<agent>.md` whenever the variant is live. Namespace these: a bare word can collide with an agent whose own name contains a dot.",
-          "items": {
-            "type": "string",
-            "pattern": "^[a-z][a-z0-9-]*$"
+        "prompt": {
+          "type": "object",
+          "additionalProperties": false,
+          "description": "What your extension does to the agent's prompts — and full control is allowed: a deployment that wants its agent to work its own way may replace the whole prompt. `main` is the main agent's system prompt and `plan_mode` what it is told about plan mode; their sections and slots are listed in igni's `docs/prompt-targets.json`. Replacing a whole prompt, a section, or standing in for an agent is something only one extension can do: two that claim the same thing collide — so do one replacing a whole prompt and one replacing any section of it — and a super admin picks the winner on igni server's Services page before the version is distributed. Slots never collide: several extensions' text stacks, each under its extension's name.",
+          "properties": {
+            "replace": {
+              "type": "array",
+              "description": "A whole prompt (`main`), or one section of it (`main.workflow`), written by you. Your text may carry igni's slot markers, `{{AGENT_CATALOG}}` and the host's conditionals, which work as they do in igni's own.",
+              "items": {
+                "type": "object",
+                "required": [
+                  "target",
+                  "source",
+                  "from"
+                ],
+                "additionalProperties": false,
+                "properties": {
+                  "target": {
+                    "type": "string",
+                    "pattern": "^(main|plan_mode)(\\.[a-z][a-z0-9_]*)?$",
+                    "examples": [
+                      "main",
+                      "main.workflow",
+                      "plan_mode"
+                    ]
+                  },
+                  "source": {
+                    "enum": [
+                      "tool",
+                      "file"
+                    ],
+                    "description": "Where the text comes from. `tool`: igni calls the named MCP tool when the extension becomes ready. `file`: a file in the bundle."
+                  },
+                  "from": {
+                    "type": "string",
+                    "minLength": 1,
+                    "description": "The tool name, or the bundle-relative file path, depending on `source`."
+                  },
+                  "when": {
+                    "type": "string",
+                    "pattern": "^[a-z][a-z0-9-]*$",
+                    "description": "A condition your extension reports, with `notifications/igni/conditions` (`ext.prompt.hold(...)` in igni-extension): this holds only while the condition does. Without one it holds whenever the extension is ready.",
+                    "examples": [
+                      "index-covers-head"
+                    ]
+                  }
+                }
+              }
+            },
+            "slots": {
+              "type": "array",
+              "description": "Text added to a slot igni leaves — `main.code_intelligence`, `main.when_to_persist`. What a slot says when nothing fills it is replaced by what extensions put there. At most 8,000 characters per slot fill.",
+              "items": {
+                "type": "object",
+                "required": [
+                  "slot",
+                  "source",
+                  "from"
+                ],
+                "additionalProperties": false,
+                "properties": {
+                  "slot": {
+                    "type": "string",
+                    "pattern": "^(main|plan_mode)\\.[a-z][a-z0-9_]*$",
+                    "examples": [
+                      "main.code_intelligence"
+                    ]
+                  },
+                  "source": {
+                    "enum": [
+                      "tool",
+                      "file"
+                    ],
+                    "description": "Where the text comes from. `tool`: igni calls the named MCP tool when the extension becomes ready. `file`: a file in the bundle."
+                  },
+                  "from": {
+                    "type": "string",
+                    "minLength": 1,
+                    "description": "The tool name, or the bundle-relative file path, depending on `source`."
+                  },
+                  "when": {
+                    "type": "string",
+                    "pattern": "^[a-z][a-z0-9-]*$",
+                    "description": "A condition your extension reports, with `notifications/igni/conditions` (`ext.prompt.hold(...)` in igni-extension): this holds only while the condition does. Without one it holds whenever the extension is ready.",
+                    "examples": [
+                      "index-covers-head"
+                    ]
+                  }
+                }
+              }
+            },
+            "agents": {
+              "type": "array",
+              "description": "One of igni's agents — `explorer`, `data-architect` — defined by a file your plugin carries, under igni's name, while you are ready (and while `when` holds). The file is inside your plugin directory and outside its `agents/`, which holds your plugin's own agents.",
+              "items": {
+                "type": "object",
+                "required": [
+                  "agent",
+                  "from"
+                ],
+                "additionalProperties": false,
+                "properties": {
+                  "agent": {
+                    "type": "string",
+                    "pattern": "^[a-z][a-z0-9_-]*$"
+                  },
+                  "from": {
+                    "type": "string",
+                    "minLength": 1,
+                    "examples": [
+                      "plugin/stand-ins/explorer.md"
+                    ]
+                  },
+                  "when": {
+                    "type": "string",
+                    "pattern": "^[a-z][a-z0-9-]*$",
+                    "description": "A condition your extension reports, with `notifications/igni/conditions` (`ext.prompt.hold(...)` in igni-extension): this holds only while the condition does. Without one it holds whenever the extension is ready.",
+                    "examples": [
+                      "index-covers-head"
+                    ]
+                  }
+                }
+              }
+            }
           }
         },
         "settings": {
@@ -548,21 +666,6 @@
           "description": "A directory inside your bundle holding a plugin, installed with the extension and removed with it. **This is how an extension ships agents, skills and hooks** — they are not contribution types, because igni already delivers them through plugins and a second path for the same thing is a second thing to keep in step. The directory is a Claude-Code-shaped plugin (`.claude-plugin/plugin.json` plus `agents/`, `skills/`, `hooks/`); igni copies it into the plugins directory at install and deletes it at uninstall, and the loader that was already there picks it up. Relative to the bundle root and inside it: a plugin from somewhere else is one you install yourself.",
           "examples": [
             "plugin"
-          ]
-        },
-        "promptConditionals": {
-          "type": "array",
-          "items": {
-            "type": "string",
-            "pattern": "^[a-z][a-z0-9-]*$"
-          },
-          "default": [],
-          "description": "Prompt conditionals you satisfy while you are READY. A prompt has `<!-- project-documents:only -->` sections kept or dropped depending on what the session can do, and igni used to know the answers because it owned the capabilities. It does not any more, and the alternative to this was igni checking for your extension id by name. Declared rather than inferred: you say which questions you answer yes to, and a name igni has no marker for is harmless.",
-          "examples": [
-            [
-              "project-documents",
-              "can-persist"
-            ]
           ]
         }
       }

@@ -1,4 +1,4 @@
-"""Prompt fragments and agent variants, from a manifest.
+"""Prompt fragments, prompt sections and slots, and agent stand-ins, from a manifest.
 
 EXTENSIBILITY §1 calls these the whole justification for a contract —
 MCP carries tools and carries none of this. Both mechanisms existed
@@ -25,10 +25,15 @@ from pathlib import Path
 
 import pytest
 
-from ember_code.core.agents.variants import VariantRegistry
 from ember_code.core.mcp.client import MCPClientManager
+from ember_code.core.prompts.contributions import PromptContributions
+from ember_code.core.prompts.document import PromptDocumentName
 from ember_code.core.prompts.fragments import PromptFragments
-from ember_code.extensions.contributions import ExtensionContributions
+from ember_code.extensions.contributions import (
+    ExtensionConditionReceiver,
+    ExtensionContributions,
+)
+from ember_code.extensions.impact import Resolution
 from ember_code.extensions.installer import ExtensionInstaller
 from ember_code.extensions.manifest import ExtensionManifest
 from ember_code.extensions.origin import ExtensionOrigins
@@ -59,12 +64,14 @@ class Wired:
         # Local tables rather than the process-wide ones, so these
         # tests cannot leak into each other or into anything else.
         self.fragments = PromptFragments()
-        self.variants = VariantRegistry()
+        self.prompts = PromptContributions()
+        self.resolutions: list[Resolution] = []
         self.contributions = ExtensionContributions(
             registry=self.registry,
             rpc=self.rpc,
             fragments=self.fragments,
-            variants=self.variants,
+            prompts=self.prompts,
+            resolutions=lambda: self.resolutions,
         )
         self.contributions.attach()
         self.installer = ExtensionInstaller(
@@ -200,72 +207,178 @@ async def test_a_fragment_is_not_fetched_from_an_extension_that_is_down(wired, t
     assert "ACME_POLICY_SUMMARY" not in wired.fragments.anchors()
 
 
-async def test_two_extensions_cannot_take_one_anchor(wired, tmp_path):
-    """Refused rather than last-write-wins: otherwise whichever prompt
-    loaded last would decide what the model was told."""
-    await wired.install(bundle_at(tmp_path))
-
-    other = ExtensionManifest.model_validate(
+def _other(**contributes: object) -> ExtensionManifest:
+    return ExtensionManifest.model_validate(
         {
             "id": "other.ext",
             "version": "1.0.0",
             "contract": ">=1.0 <2",
             "trust": "unsigned",
             "dev": {"command": ["true"]},
+            "contributes": contributes,
+        }
+    )
+
+
+async def test_two_extensions_wanting_one_anchor_get_it_only_when_somebody_decides(wired, tmp_path):
+    """Neither keeps it by having started first: an undecided collision
+    is off for both, and a super admin's decision gives it to one."""
+    await wired.install(bundle_at(tmp_path))
+    assert wired.fragments.owner_of("ACME_POLICY_SUMMARY") == "acme.scanner"
+
+    wired.registry.install(
+        _other(
+            promptFragments=[{"anchor": "ACME_POLICY_SUMMARY", "source": "file", "from": "x.md"}]
+        ),
+        state=ExtensionState.PREPARING,
+    )
+    assert wired.fragments.owner_of("ACME_POLICY_SUMMARY") is None
+    [off] = wired.registry.get("acme.scanner").switched_off
+    assert off.claim == "anchor:ACME_POLICY_SUMMARY"
+    assert "no super admin has decided" in off.reason
+
+    wired.resolutions.append(
+        Resolution(
+            claim="anchor:ACME_POLICY_SUMMARY",
+            extensions=["acme.scanner", "other.ext"],
+            winner="acme.scanner",
+            decided_by="admin@acme.test",
+        )
+    )
+    wired.contributions.resolutions_changed()
+    await wired.contributions.apply(wired.registry.get("acme.scanner").manifest)
+    assert wired.fragments.owner_of("ACME_POLICY_SUMMARY") == "acme.scanner"
+    assert wired.registry.get("acme.scanner").switched_off == []
+    [lost] = wired.registry.get("other.ext").switched_off
+    assert "decided by admin@acme.test" in lost.reason
+
+
+# ── The prompt ─────────────────────────────────────────────────────
+
+
+def prompt_bundle(tmp_path: Path, prompt: dict, files: dict[str, str]) -> Path:
+    bundle = bundle_at(tmp_path, contributes={"prompt": prompt})
+    for name, text in files.items():
+        (bundle / name).parent.mkdir(parents=True, exist_ok=True)
+        (bundle / name).write_text(text)
+    return bundle
+
+
+async def test_a_READY_extension_fills_its_slot_and_replaces_its_section(wired, tmp_path):
+    bundle = prompt_bundle(
+        tmp_path,
+        {
+            "replace": [{"target": "main.safety", "source": "file", "from": "safety.md"}],
+            "slots": [
+                {"slot": "main.code_intelligence", "source": "tool", "from": "policy_summary"}
+            ],
+        },
+        {"safety.md": "## Safety\n\nOur rules."},
+    )
+    await wired.install(bundle)
+
+    main = PromptDocumentName.MAIN
+    assert wired.prompts.section_replacements(main) == {"safety": "## Safety\n\nOur rules."}
+    assert "no plaintext secrets" in wired.prompts.slot_fills(main)["code_intelligence"]
+
+
+async def test_a_condition_holds_only_once_the_extension_says_so(wired, tmp_path):
+    """No polling: the extension's process says, on its own connection."""
+    bundle = prompt_bundle(
+        tmp_path,
+        {"replace": [{"target": "main", "source": "file", "from": "main.md", "when": "covered"}]},
+        {"main.md": "The whole prompt, ours."},
+    )
+    await wired.install(bundle)
+    assert wired.prompts.replacement(PromptDocumentName.MAIN) is None
+
+    receiver = ExtensionConditionReceiver(registry=wired.registry, prompts=wired.prompts)
+    receiver("ext:acme.scanner", {"conditions": {"covered": True}})
+    assert wired.prompts.replacement(PromptDocumentName.MAIN) == "The whole prompt, ours."
+
+    receiver("ext:acme.scanner", {"conditions": {"covered": False}})
+    assert wired.prompts.replacement(PromptDocumentName.MAIN) is None
+
+
+async def test_a_condition_is_only_ever_its_own_extensions(wired, tmp_path):
+    """The connection names the sender: nothing else can say it."""
+    bundle = prompt_bundle(
+        tmp_path,
+        {"replace": [{"target": "main", "source": "file", "from": "main.md", "when": "covered"}]},
+        {"main.md": "ours"},
+    )
+    await wired.install(bundle)
+    receiver = ExtensionConditionReceiver(registry=wired.registry, prompts=wired.prompts)
+
+    receiver("ext:other.ext", {"conditions": {"covered": True}})
+    receiver("some-mcp-server", {"conditions": {"covered": True}})
+    assert wired.prompts.replacement(PromptDocumentName.MAIN) is None
+
+
+async def test_a_slot_fill_longer_than_a_slot_is_refused(wired, tmp_path):
+    bundle = prompt_bundle(
+        tmp_path,
+        {"slots": [{"slot": "main.code_intelligence", "source": "file", "from": "long.md"}]},
+        {"long.md": "x" * 8_001},
+    )
+    await wired.install(bundle)
+    assert wired.prompts.slot_fills(PromptDocumentName.MAIN) == {}
+
+
+async def test_an_agent_stand_in_is_read_from_the_installed_plugin(tmp_path):
+    """So it counts among the extension's own agents for its tools."""
+    registry = ExtensionRegistry()
+    prompts = PromptContributions()
+    plugins = tmp_path / "plugins"
+    installed = plugins / "acme.scanner" / "stand-ins" / "explorer.md"
+    installed.parent.mkdir(parents=True)
+    installed.write_text("---\nname: explorer\ndescription: x\n---\nbody")
+    contributions = ExtensionContributions(
+        registry=registry, rpc=None, prompts=prompts, plugins_dir=plugins
+    )
+    manifest = ExtensionManifest.model_validate(
+        {
+            "id": "acme.scanner",
+            "version": "1.0.0",
+            "contract": ">=1.0 <2",
+            "trust": "unsigned",
+            "dev": {"command": ["true"]},
             "contributes": {
-                "promptFragments": [
-                    {
-                        "anchor": "ACME_POLICY_SUMMARY",
-                        "source": "file",
-                        "from": "x.md",
-                    }
-                ]
+                "plugin": "plugin",
+                "prompt": {
+                    "agents": [{"agent": "explorer", "from": "plugin/stand-ins/explorer.md"}]
+                },
             },
         }
     )
-    await wired.contributions.apply(other)
-    assert wired.fragments.owner_of("ACME_POLICY_SUMMARY") == "acme.scanner"
+    await contributions.apply(manifest)
+    assert prompts.agent_replacements()["explorer"].path == installed
 
 
-# ── Variants ───────────────────────────────────────────────────────
+async def test_a_down_extension_takes_its_prompt_with_it(wired, tmp_path):
+    bundle = prompt_bundle(
+        tmp_path,
+        {"slots": [{"slot": "main.code_intelligence", "source": "file", "from": "ci.md"}]},
+        {"ci.md": "the index"},
+    )
+    await wired.install(bundle)
+    assert wired.prompts.slot_fills(PromptDocumentName.MAIN)
 
-
-async def test_a_READY_extension_makes_its_variants_live(wired, tmp_path):
-    await wired.install(bundle_at(tmp_path))
-    assert "acme-scan" in wired.variants.known()
-    assert "acme-scan" in wired.variants.active()
-
-
-async def test_a_down_extension_stays_known_and_stops_being_active(wired, tmp_path):
-    """Known and live are different questions, and conflating them is
-    the bug the loader's own docstring warns about: a sibling naming a
-    variant that is installed but down has to be recognised and
-    skipped, not loaded as an agent whose name contains a dot.
-    """
-    await wired.install(bundle_at(tmp_path))
     wired.registry.set_state("acme.scanner", ExtensionState.FAILED, "down")
-
-    assert "acme-scan" in wired.variants.known()
-    assert "acme-scan" not in wired.variants.active()
+    assert wired.prompts.slot_fills(PromptDocumentName.MAIN) == {}
 
 
-async def test_uninstalling_forgets_the_variant_entirely(wired, tmp_path):
-    await wired.install(bundle_at(tmp_path))
+async def test_uninstalling_forgets_everything_it_contributed(wired, tmp_path):
+    bundle = prompt_bundle(
+        tmp_path,
+        {"slots": [{"slot": "main.code_intelligence", "source": "file", "from": "ci.md"}]},
+        {"ci.md": "the index"},
+    )
+    await wired.install(bundle)
     wired.registry.remove("acme.scanner")
 
-    assert "acme-scan" not in wired.variants.known()
-    assert "acme-scan" not in wired.variants.active()
+    assert wired.prompts.slot_fills(PromptDocumentName.MAIN) == {}
     assert "ACME_POLICY_SUMMARY" not in wired.fragments.anchors()
-
-
-async def test_re_declaring_drops_a_variant_that_went_away(wired, tmp_path):
-    """An upgrade that removed a variant should stop being known for
-    it."""
-    await wired.install(bundle_at(tmp_path))
-    assert "acme-scan" in wired.variants.known()
-
-    wired.variants.declare("acme.scanner", [])
-    assert "acme-scan" not in wired.variants.known()
 
 
 async def test_the_registry_does_not_announce_a_state_that_did_not_move(wired, tmp_path):

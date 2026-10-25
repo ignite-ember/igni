@@ -55,6 +55,11 @@ export interface ExtensionSummary {
    * when it has one a page may reach.
    */
   service_url?: string | null;
+  /**
+   * What it does not get because it collides with another extension
+   * — decided against it on igni server, or not decided yet.
+   */
+  switched_off?: { claim: string; reason: string }[];
 }
 
 export interface ExtensionPageProps {

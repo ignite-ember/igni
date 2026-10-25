@@ -21,7 +21,7 @@ knowing which extension it is, what the agent is called, or that a
 document store is involved.
 
 ``core`` owns the table and the extension system registers into it,
-the shape :mod:`ember_code.core.agents.variants` uses, which keeps
+the shape :mod:`ember_code.core.prompts.contributions` uses, which keeps
 ``core`` from importing the extension system.
 """
 

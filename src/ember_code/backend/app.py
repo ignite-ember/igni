@@ -23,6 +23,7 @@ import logging
 from pathlib import Path
 from typing import Any
 
+from ember_code.backend.agent_refresh import AgentRefresh
 from ember_code.backend.host_backend import HostModelWiring, ObservedTransport
 from ember_code.backend.login_coordinator import LoginCoordinator
 from ember_code.backend.push_bridge import PushNotificationBridge
@@ -34,7 +35,11 @@ from ember_code.backend.supervisor import BackendSupervisor
 from ember_code.backend.workspace_signals import WorkspaceSignals
 from ember_code.core.config.settings import Settings, load_settings
 from ember_code.core.plugins.installer import PluginInstaller
-from ember_code.extensions.contributions import ExtensionContributions
+from ember_code.core.prompts.contributions import prompt_contributions
+from ember_code.extensions.contributions import (
+    ExtensionConditionReceiver,
+    ExtensionContributions,
+)
 from ember_code.extensions.distribution import ExtensionDistribution
 from ember_code.extensions.health import ExtensionHealth
 from ember_code.extensions.host.channel import HostChannel
@@ -276,14 +281,25 @@ class BackendApp:
             mcp=self._backend.mcp_manager,
         )
         self._extensions.watch(self._extension_health.on_call_failed)
-        # What an extension adds to the *agent* — prompt anchors and
-        # agent variants. Tied to READY rather than to being
-        # installed: an extension whose service has died must stop
-        # telling the model about data it can no longer fetch.
+        # What an extension adds to the *agent* — its prompt, its
+        # anchors, the agents it stands in for, its commands. Tied to
+        # READY rather than to being installed: an extension whose
+        # service has died must stop telling the model about data it
+        # can no longer fetch. Collisions between extensions are
+        # applied as a super admin decided them, from the store.
+        extension_store = ExtensionStore()
         self._extension_contributions = ExtensionContributions(
-            registry=self._extensions.registry, rpc=self._extensions
+            registry=self._extensions.registry,
+            rpc=self._extensions,
+            plugins_dir=PluginInstaller(data_dir=settings.storage.data_dir).plugins_dir,
+            resolutions=extension_store.resolutions,
         )
         self._extension_contributions.attach()
+        # When what extensions do to the prompts changes — one became
+        # ready, a condition it reports moved — every session's agent
+        # is rebuilt, once, on the next turn of the loop.
+        self._agent_refresh = AgentRefresh(loop=loop, refresh=self._refresh_agents)
+        prompt_contributions.watch(self._agent_refresh.request)
         # The project's git state, as the host model's workspace
         # signals. Owns the poll, which does no git work until some
         # extension entitled to the workspace is subscribed.
@@ -448,6 +464,13 @@ class BackendApp:
         router = getattr(self._backend.mcp_manager, "notifications", None)
         if router is not None:
             router.handle(ExtensionNoticeReceiver.METHOD, receiver)
+            # And what an extension says holds — the ``when`` of its
+            # prompt contributions. On the same connections, for the
+            # same reason: the connection names the sender.
+            router.handle(
+                ExtensionConditionReceiver.METHOD,
+                ExtensionConditionReceiver(registry=self._extensions.registry),
+            )
         if self._login is not None:
             self._login.on_signed_in(center.schedule_signed_in)
         return center
@@ -531,13 +554,26 @@ class BackendApp:
         await launcher.start_installed()
 
         self._distribution = ExtensionDistribution(
-            store, api_url=self._igni_api_url, session=session, lifecycle=launcher
+            store,
+            api_url=self._igni_api_url,
+            session=session,
+            lifecycle=launcher,
+            on_resolutions=(
+                self._extension_contributions.resolutions_changed
+                if self._extension_contributions is not None
+                else None
+            ),
         )
         self._distribution.schedule()
         # And again whenever somebody signs in: the listing is the
         # signed-in person's, and before that there was none.
         if self._login is not None:
             self._login.on_signed_in(self._distribution.schedule)
+
+    def _refresh_agents(self) -> None:
+        """Rebuild every session's agents with the prompts as they are now."""
+        if self._orchestrator is not None:
+            self._orchestrator.refresh_agents()
 
     def _igni_api_url(self) -> str | None:
         """igni server's URL as it is configured now — read per call,

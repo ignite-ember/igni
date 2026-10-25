@@ -39,9 +39,10 @@ import shutil
 from datetime import datetime
 from pathlib import Path
 
-from pydantic import BaseModel, ValidationError
+from pydantic import BaseModel, Field, ValidationError
 
 from ember_code.core.paths import home_config_dir
+from ember_code.extensions.impact import Resolution
 from ember_code.extensions.manifest import ExtensionManifest
 
 logger = logging.getLogger(__name__)
@@ -57,6 +58,10 @@ ENVIRONMENTS_DIR = ".python"
 
 #: Beside a bundle: where it came from, when igni distributed it.
 DISTRIBUTION_SUFFIX = ".distribution.json"
+
+#: The super admin's decisions on collisions between extensions, as
+#: the last distribution listing carried them.
+RESOLUTIONS_FILE = ".resolutions.json"
 
 
 class StoreError(Exception):
@@ -78,6 +83,10 @@ class DistributionRecord(BaseModel):
     #: token the host fetches for it.
     service_url: str
     published_at: datetime | None = None
+
+
+class StoredResolutions(BaseModel):
+    resolutions: list[Resolution] = Field(default_factory=list)
 
 
 class ExtensionStore:
@@ -241,6 +250,39 @@ class ExtensionStore:
             if record is not None:
                 records.append(record)
         return records
+
+    # ── Collisions ─────────────────────────────────────────────────
+
+    @property
+    def resolutions_path(self) -> Path:
+        return self._root / RESOLUTIONS_FILE
+
+    def record_resolutions(self, resolutions: list[Resolution]) -> bool:
+        """Keep the decisions the listing carried. ``True`` if they changed.
+
+        Kept so the next start applies them before igni server has
+        been asked anything: a machine that cannot reach igni still
+        runs what was decided for it.
+        """
+        stored = StoredResolutions(resolutions=resolutions)
+        if self.resolutions() == resolutions:
+            return False
+        self._root.mkdir(parents=True, exist_ok=True)
+        self.resolutions_path.write_text(stored.model_dump_json(indent=2) + "\n", encoding="utf-8")
+        return True
+
+    def resolutions(self) -> list[Resolution]:
+        """The decisions last received. None, if nothing was."""
+        path = self.resolutions_path
+        if not path.is_file():
+            return []
+        try:
+            return StoredResolutions.model_validate_json(
+                path.read_text(encoding="utf-8")
+            ).resolutions
+        except (OSError, ValidationError) as exc:
+            logger.warning("ignoring %s: %s", path, exc)
+            return []
 
     def drop_environments(self, extension_id: str) -> None:
         """Remove every private environment built for this extension."""

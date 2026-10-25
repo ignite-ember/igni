@@ -325,6 +325,18 @@ class SessionOrchestrator:
         assert self._pool is not None, "setup_pool must be called first"
         return self._pool
 
+    def refresh_agents(self) -> None:
+        """Rebuild every live session's agents.
+
+        What extensions do to the prompts and agents changed; a session
+        built before it would otherwise keep the old ones until
+        something else rebuilt it.
+        """
+        if self._pool is None:
+            return
+        for rt in self._pool.runtimes:
+            rt.backend.reload_agents()
+
     # ── Runtime factory ──────────────────────────────────────────
 
     async def _create_runtime(self, session_id: str) -> SessionRuntime:

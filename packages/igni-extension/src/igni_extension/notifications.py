@@ -15,6 +15,7 @@ notifications from other people.
 from __future__ import annotations
 
 import json
+import re
 from typing import Final, Literal
 
 from mcp import types
@@ -101,3 +102,36 @@ class NotifyNotification(types.Notification[NotifyParams, Literal["notifications
 
     def local(self) -> LocalNotification:
         return LocalNotification.model_validate(self.params.model_dump(exclude={"meta"}))
+
+
+#: The MCP method an extension says which of its conditions hold with.
+CONDITIONS_METHOD: Final = "notifications/igni/conditions"
+
+#: How many conditions one message may carry — igni's limit.
+MAX_CONDITIONS = 64
+
+#: A condition's name, as a manifest's `when` spells it.
+CONDITION = r"^[a-z][a-z0-9-]*$"
+
+
+class ConditionsParams(types.NotificationParams):
+    """`params` of `notifications/igni/conditions`: `{condition: holds}`."""
+
+    conditions: dict[str, bool] = Field(max_length=MAX_CONDITIONS)
+
+    @field_validator("conditions")
+    @classmethod
+    def _named_as_a_manifest_names_them(cls, value: dict[str, bool]) -> dict[str, bool]:
+        for name in value:
+            if not re.fullmatch(CONDITION, name):
+                raise ValueError(f"{name!r} is not a condition name a manifest's `when` can use")
+        return value
+
+
+class ConditionsNotification(
+    types.Notification[ConditionsParams, Literal["notifications/igni/conditions"]]
+):
+    """Which of this extension's conditions hold now."""
+
+    method: Literal["notifications/igni/conditions"] = CONDITIONS_METHOD
+    params: ConditionsParams

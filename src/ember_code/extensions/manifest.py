@@ -52,6 +52,17 @@ EGRESS = re.compile(r"^[a-z0-9.-]+(:\d{1,5})?$")
 #: A lowercase, hyphenated name.
 SLUG = re.compile(r"^[a-z][a-z0-9-]*$")
 
+#: Part of the agent's prompt: ``main`` or ``plan_mode`` whole, or one
+#: section of it — ``main.workflow``. The names igni has are in
+#: ``docs/prompt-targets.json``.
+PROMPT_TARGET = re.compile(r"^(main|plan_mode)(\.[a-z][a-z0-9_]*)?$")
+
+#: A slot in a prompt: ``main.code_intelligence``.
+PROMPT_SLOT = re.compile(r"^(main|plan_mode)\.[a-z][a-z0-9_]*$")
+
+#: An agent, by the name igni knows it by: ``explorer``, ``data-architect``.
+AGENT_NAME = re.compile(r"^[a-z][a-z0-9_-]*$")
+
 #: A settings key, as code reads it.
 SETTING_KEY = re.compile(r"^[a-z][a-zA-Z0-9_]*$")
 
@@ -330,6 +341,74 @@ class PromptFragment(Strict):
     model_config = ConfigDict(extra="forbid", populate_by_name=True)
 
 
+class PromptText(Strict):
+    """Text an extension puts in the agent's prompt, and when."""
+
+    #: Where the text comes from: a tool igni calls, or a bundled file.
+    source: FragmentSource
+    from_: str = Field(alias="from", min_length=1)
+    #: A condition the extension reports — ``index-covers-head`` — while
+    #: which this holds. Without one it holds whenever the extension is
+    #: ready.
+    when: Annotated[str, Field(pattern=SLUG.pattern)] | None = None
+
+    model_config = ConfigDict(extra="forbid", populate_by_name=True)
+
+
+class PromptReplacement(PromptText):
+    """The whole of a prompt, or one section of it, written by the extension."""
+
+    target: Annotated[str, Field(pattern=PROMPT_TARGET.pattern)]
+
+
+class PromptSlotFill(PromptText):
+    """Text added to a slot igni leaves, beside other extensions'."""
+
+    slot: Annotated[str, Field(pattern=PROMPT_SLOT.pattern)]
+
+
+class AgentReplacementContribution(Strict):
+    """One of igni's agents, defined by a file the extension's plugin carries.
+
+    The file is inside the plugin and outside its ``agents/``
+    directory: everything in ``agents/`` loads as the plugin's own
+    agent under the extension's namespace, and this is the other thing
+    — the agent igni already has, standing in under igni's name.
+    """
+
+    agent: Annotated[str, Field(pattern=AGENT_NAME.pattern)]
+    from_: str = Field(alias="from", min_length=1)
+    when: Annotated[str, Field(pattern=SLUG.pattern)] | None = None
+
+    model_config = ConfigDict(extra="forbid", populate_by_name=True)
+
+
+class PromptContribution(Strict):
+    """What an extension does to the agent's prompts.
+
+    Full control, on purpose: a deployment that wants its agent to work
+    its own way may replace the whole prompt. Two extensions that claim
+    the same thing collide, and a super admin decides which one wins —
+    :mod:`ember_code.extensions.impact`.
+    """
+
+    replace: list[PromptReplacement] = Field(default_factory=list)
+    slots: list[PromptSlotFill] = Field(default_factory=list)
+    agents: list[AgentReplacementContribution] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def _each_once(self) -> PromptContribution:
+        for what, names in (
+            ("replaces", [r.target for r in self.replace]),
+            ("fills slot", [s.slot for s in self.slots]),
+            ("stands in for agent", [a.agent for a in self.agents]),
+        ):
+            repeated = sorted({n for n in names if names.count(n) > 1})
+            if repeated:
+                raise ValueError(f"the prompt contribution {what} {', '.join(repeated)} twice")
+        return self
+
+
 class Setting(Strict):
     key: Annotated[str, Field(pattern=SETTING_KEY.pattern)]
     type: Literal["string", "number", "boolean", "enum"]
@@ -349,24 +428,12 @@ class Contributes(Strict):
     menu: list[MenuContribution] = Field(default_factory=list)
     indicators: list[IndicatorContribution] = Field(default_factory=list)
     commands: list[CommandContribution] = Field(default_factory=list)
+    #: Text at a ``{{ANCHOR}}`` in an agent's prompt — the extension's
+    #: own agents, or one it stands in for.
     promptFragments: list[PromptFragment] = Field(default_factory=list)
-    promptVariants: list[Annotated[str, Field(pattern=SLUG.pattern)]] = Field(default_factory=list)
-    #: Prompt conditionals this extension satisfies while it is
-    #: READY.
-    #:
-    #: A prompt has ``<!-- project-documents:only -->`` sections
-    #: that are kept or dropped depending on what the session can
-    #: do. The host knew the answers because it owned the
-    #: capabilities; now it does not, and the alternative to this
-    #: was igni checking for one extension's id by name, which is
-    #: the thing an extension platform exists to stop.
-    #:
-    #: Declared, not inferred: an extension says which questions it
-    #: answers yes to, and the host merges whatever it is told with
-    #: its own. A name igni has no marker for is harmless.
-    promptConditionals: list[Annotated[str, Field(pattern=SLUG.pattern)]] = Field(
-        default_factory=list
-    )
+    #: The main prompt and plan mode: replaced whole, a section
+    #: replaced, a slot added to; and igni's agents stood in for.
+    prompt: PromptContribution = Field(default_factory=PromptContribution)
     settings: list[Setting] = Field(default_factory=list)
     #: A directory inside the bundle holding a plugin, installed
     #: with the extension and removed with it.
@@ -378,7 +445,8 @@ class Contributes(Strict):
     #: those, and adding ``contributes.agents`` beside it would be
     #: the second path this contract says not to build.
     #:
-    #: So an extension *wraps* a plugin. The named directory is a
+    #: So an extension *wraps* a plugin. (Standing in for an agent igni
+    #: already has is different, and is ``prompt.agents``.) The named directory is a
     #: Claude-Code-shaped plugin — ``.claude-plugin/plugin.json``
     #: plus ``agents/``, ``skills/``, ``hooks/`` — copied into the
     #: plugins directory at install and deleted at uninstall. The
@@ -461,6 +529,33 @@ class ExtensionManifest(Strict):
                 "signature over it would attest to something that then ran "
                 "whatever it liked."
             )
+        return self
+
+    @model_validator(mode="after")
+    def _agents_are_in_the_plugin(self) -> ExtensionManifest:
+        agents = self.contributes.prompt.agents
+        if not agents:
+            return self
+        plugin = (self.contributes.plugin or "").strip("/")
+        if not plugin:
+            raise ValueError(
+                f"{self.id}: prompt.agents stands in for igni's agents with files "
+                "its plugin carries, and it declares no 'plugin'"
+            )
+        for entry in agents:
+            path = entry.from_.strip("/")
+            if not path.startswith(f"{plugin}/") or ".." in path.split("/"):
+                raise ValueError(
+                    f"{self.id}: prompt.agents {entry.agent!r} reads {entry.from_!r}, "
+                    f"which is not inside the plugin directory {plugin!r}"
+                )
+            if path.startswith(f"{plugin}/agents/"):
+                raise ValueError(
+                    f"{self.id}: prompt.agents {entry.agent!r} reads {entry.from_!r}, "
+                    f"inside {plugin}/agents/ — everything there loads as the "
+                    "plugin's own agent; keep stand-ins beside it, e.g. "
+                    f"{plugin}/stand-ins/"
+                )
         return self
 
     @classmethod

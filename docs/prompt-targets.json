@@ -1,0 +1,35 @@
+{
+  "documents": [
+    "main",
+    "plan_mode"
+  ],
+  "sections": [
+    "main.identity",
+    "main.working_with_user",
+    "main.workflow",
+    "main.memory",
+    "main.responding",
+    "main.specialists",
+    "main.editing",
+    "main.scheduling",
+    "main.progress_tracking",
+    "main.safety",
+    "main.project_context",
+    "main.response_style",
+    "plan_mode.title",
+    "plan_mode.when",
+    "plan_mode.while_planning",
+    "plan_mode.tasks",
+    "plan_mode.vs_workflow",
+    "plan_mode.vs_tasks",
+    "plan_mode.skip"
+  ],
+  "slots": [
+    "main.code_intelligence",
+    "main.persisting",
+    "main.when_to_persist",
+    "main.reading",
+    "main.project_documents",
+    "plan_mode.code_intelligence"
+  ]
+}

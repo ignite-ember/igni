@@ -26,8 +26,8 @@ from pathlib import Path
 
 import pytest
 
-from ember_code.core.agents.variants import VariantRegistry
 from ember_code.core.mcp.client import MCPClientManager
+from ember_code.core.prompts.contributions import PromptContributions
 from ember_code.core.prompts.fragments import PromptFragments
 from ember_code.extensions.contributions import ExtensionContributions
 from ember_code.extensions.installer import ExtensionInstaller
@@ -57,12 +57,12 @@ class Wired:
         self.mcp = MCPClientManager(project_dir=tmp_path)
         self.origins = ExtensionOrigins()
         self.fragments = PromptFragments()
-        self.variants = VariantRegistry()
+        self.prompts = PromptContributions()
         self.contributions = ExtensionContributions(
             registry=self.registry,
             rpc=self.rpc,
             fragments=self.fragments,
-            variants=self.variants,
+            prompts=self.prompts,
         )
         self.contributions.attach()
         self.installer = ExtensionInstaller(
@@ -150,15 +150,6 @@ async def test_its_file_sourced_prompt_fragment_reaches_a_prompt(wired, tmp_path
     # fragment is a file and arrives with its wrapping intact.
     assert "Name the behaviour, not the commit." in filled
     assert "{{" not in filled
-
-
-async def test_it_declares_a_variant_and_makes_it_live(wired, tmp_path):
-    bundle = bundle_at(tmp_path)
-    wired.contributions.note_bundle("acme.notes", bundle)
-    entry = await wired.installer.install(bundle)
-    await wired.contributions.apply(entry.manifest)
-
-    assert "acme-notes" in wired.variants.active()
 
 
 async def test_every_method_its_client_names_is_granted(wired, tmp_path):

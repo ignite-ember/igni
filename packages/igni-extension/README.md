@@ -170,6 +170,24 @@ the MCP notification igni has always understood.
 `igni_extension.host_model` is generated from igni's host schema; its
 `SCHEMA_VERSION` is the model version it was generated for.
 
+## The agent's prompt: `ext.prompt`
+
+A manifest's `contributes.prompt` can replace igni's whole prompt, one
+section of it, fill a slot or stand in for one of igni's agents — each,
+optionally, only while a condition holds (`"when": "index-covers-head"`).
+Only the extension can judge the condition, so it says when it changes:
+
+```python
+await ext.prompt.hold("index-covers-head", True)
+await ext.prompt.set({"index-covers-head": False, "signed-in": True})
+```
+
+igni rebuilds the agent with the prompt as it now is. It travels on the
+process's own MCP connection (`notifications/igni/conditions`), works
+before igni has finished connecting, and sends only what changed. Nothing
+holds until it is said, and nothing survives a restart: say it again when
+the process starts.
+
 ## Testing an extension
 
 ```python

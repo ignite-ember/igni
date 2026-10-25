@@ -1,12 +1,15 @@
 """System-prompt assembly stage.
 
-Owns the base system prompt loaded from ``core/prompts/``: picks
-the CodeIndex variant when available, resolves the capability-
-conditional spans in the markdown, substitutes the ``{{AGENT_
-CATALOG}}`` placeholder from the agent pool's catalog, appends the
-per-commit Project Map (best-effort — missing map is non-fatal),
-and tacks on the skill-descriptions block when skills are
-configured to auto-trigger.
+Owns the base system prompt loaded from ``core/prompts/``: takes an
+extension's replacement of the whole prompt when there is one (or
+picks the CodeIndex variant when available), applies the sections
+extensions replace, substitutes the ``{{AGENT_CATALOG}}`` placeholder
+from the agent pool's catalog, fills the slots extensions add to,
+resolves the capability-conditional spans in the markdown, appends the
+per-commit Project Map (best-effort — missing map is non-fatal), and
+tacks on the skill-descriptions block when skills are configured to
+auto-trigger. What an extension may do to it is
+:mod:`ember_code.core.prompts.document`.
 
 The output is a single string handed to
 :class:`InstructionsBuilder` as the first entry of the
@@ -23,8 +26,13 @@ from typing import Any, ClassVar
 
 from ember_code.core.code_index.manifest import Manifest
 from ember_code.core.code_index.project_map import ProjectMap
-from ember_code.core.prompts.conditionals import ConditionalRegistry
-from ember_code.core.prompts.conditionals import conditionals as default_conditionals
+from ember_code.core.prompts.contributions import PromptContributions, prompt_contributions
+from ember_code.core.prompts.document import NAME, PromptDocument, PromptDocumentName
+from ember_code.core.prompts.fragments import fragments
+
+#: ``<!-- slot.<id>:only -->``: guidance that depends on whether a slot
+#: is filled and does not sit inside it.
+_SLOT_CONDITIONAL = re.compile(rf"<!-- /?slot\.({NAME}):(?:only|absent) -->")
 
 logger = logging.getLogger(__name__)
 
@@ -42,10 +50,10 @@ class PromptBuilder:
     #: survives when the capability is present, ``absent`` when it is
     #: not; the markers themselves never reach the model. Add a name
     #: here and a matching entry in :meth:`_capabilities` to make a new
-    #: capability switchable.
+    #: capability switchable. What extensions provide is not in this
+    #: list: it arrives in slots, and ``slot.<id>`` is the conditional
+    #: for whether one is filled.
     _CONDITIONALS: ClassVar[tuple[str, ...]] = (
-        "project-documents",
-        "code-intelligence",
         "codeindex",
         "user-memory",
         "can-persist",
@@ -60,13 +68,17 @@ class PromptBuilder:
         agent_catalog: str,
         skill_descriptions: str,
         prompt_loader: Callable[[str], str],
-        conditionals: ConditionalRegistry | None = None,
+        contributions: PromptContributions | None = None,
         user_memory_available: bool = True,
     ) -> None:
         self._project_dir = project_dir
         self._settings = settings
         self._codeindex_available = codeindex_available
-        self._conditionals = conditionals or default_conditionals
+        self._contributions = contributions if contributions is not None else prompt_contributions
+        self._fills = {
+            slot: fragments.expand(text)
+            for slot, text in self._contributions.slot_fills(PromptDocumentName.MAIN).items()
+        }
         self._user_memory_available = user_memory_available
         self._agent_catalog = agent_catalog
         self._skill_descriptions = skill_descriptions
@@ -75,13 +87,34 @@ class PromptBuilder:
     def load_base(self) -> str:
         """Pick + load the base template.
 
-        When CodeIndex is available we load
+        An extension that replaces the whole prompt wins: an enterprise
+        that wants the agent to work its way gets exactly that, and the
+        sections and slots below still apply to whatever it wrote.
+
+        Otherwise, when CodeIndex is available we load
         ``main_agent.codeindex.md`` — a wholly CodeIndex-first
         variant with the tool reference inline and read-before-
         edit / search guidance re-framed around the index.
         """
+        replaced = self._contributions.replacement(PromptDocumentName.MAIN)
+        if replaced is not None:
+            return fragments.expand(replaced.strip())
         name = "main_agent.codeindex" if self._codeindex_available else "main_agent"
         return self._prompt_loader(name)
+
+    def replace_sections(self, prompt: str) -> str:
+        """The sections extensions replace, replaced."""
+        sections = {
+            name: fragments.expand(text)
+            for name, text in self._contributions.section_replacements(
+                PromptDocumentName.MAIN
+            ).items()
+        }
+        return PromptDocument(prompt).replace_sections(sections).text
+
+    def fill_slots(self, prompt: str) -> str:
+        """Every slot: what extensions put there, or its default."""
+        return PromptDocument(prompt).fill_slots(self._fills)
 
     def substitute_placeholders(self, prompt: str) -> str:
         """Substitute ``{{AGENT_CATALOG}}`` and ``{{PERSISTING}}``."""
@@ -139,7 +172,9 @@ class PromptBuilder:
         section is the failure this method exists to prevent.
         """
         available = self._capabilities()
-        for name in self._CONDITIONALS:
+        for slot in sorted(set(_SLOT_CONDITIONAL.findall(prompt))):
+            available[f"slot.{slot}"] = slot in self._fills
+        for name in available:
             keep, drop = ("only", "absent") if available[name] else ("absent", "only")
             for branch in (keep, drop):
                 open_tag = f"<!-- {name}:{branch} -->"
@@ -168,17 +203,7 @@ class PromptBuilder:
         One entry per name in :attr:`_CONDITIONALS`; adding a capability
         is a line here and a pair of markers in the markdown.
         """
-        live = self._conditionals.live()
         return {
-            # Declared by whoever satisfies it: an extension that keeps
-            # the project's documents says so, and supplies the
-            # ``PROJECT_DOCUMENTS_*`` anchors the ``only`` branches hold.
-            # The host does not know what is installed, nor should it.
-            "project-documents": "project-documents" in live,
-            # Likewise declared: an extension that indexes the code says
-            # so, and supplies ``{{CODE_INTELLIGENCE_ABOUT}}`` — what it
-            # is and how to set it up, for a session that cannot use it.
-            "code-intelligence": "code-intelligence" in live,
             "codeindex": self._codeindex_available,
             # agno attaches ``update_user_memory`` only when the session
             # has a LearningMachine *and* ``learning.user_memory`` is on,
@@ -189,11 +214,11 @@ class PromptBuilder:
             # Derived: somewhere to persist *to*. The "when (not) to
             # persist" rules only mean anything next to a surface that
             # could take the fact; with neither they are a list of
-            # things not to do with a tool nobody has.
-            # Derived: somewhere to persist *to*. Two extensions
-            # both offering one both make this true, and neither
-            # has to know about the other.
-            "can-persist": "can-persist" in live or self._user_memory_available,
+            # things not to do with a tool nobody has. An extension
+            # that keeps the project's documents says when to file
+            # something in the ``when_to_persist`` slot, so a filled
+            # slot is somewhere to persist to.
+            "can-persist": "when_to_persist" in self._fills or self._user_memory_available,
         }
 
     def append_project_map(self, prompt: str) -> str:
@@ -265,16 +290,19 @@ class PromptBuilder:
         )
 
     def render(self) -> str:
-        """Compose the full prompt through the five phases.
+        """Compose the full prompt.
 
-        Conditionals resolve *after* substitution, so a section pulled
-        in from its own file has its spans resolved too — otherwise a
-        block would behave differently depending on whether it happened
-        to be inlined or kept beside the prompt.
+        Sections are replaced before anything is substituted, so an
+        extension's section may use ``{{AGENT_CATALOG}}`` and slots as
+        igni's own do. Slots fill after substitution, because
+        ``{{PERSISTING}}`` brings slots of its own. Conditionals
+        resolve last, so a section pulled in from its own file — or
+        written by an extension — has its spans resolved too.
         """
         prompt = self.load_base()
-        prompt = self.resolve_conditionals(prompt)
+        prompt = self.replace_sections(prompt)
         prompt = self.substitute_placeholders(prompt)
+        prompt = self.fill_slots(prompt)
         prompt = self.resolve_conditionals(prompt)
         prompt = self.append_project_map(prompt)
         prompt = self.append_skills(prompt)

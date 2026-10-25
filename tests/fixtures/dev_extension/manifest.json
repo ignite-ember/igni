@@ -31,9 +31,6 @@
         "from": "policy_summary"
       }
     ],
-    "promptVariants": [
-      "acme-scan"
-    ],
     "commands": [
       {
         "command": "/compliance",

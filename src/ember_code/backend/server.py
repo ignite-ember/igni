@@ -1052,6 +1052,14 @@ class BackendServer:
         result = await self.processes.stop(pid)
         return result.model_dump()
 
+    def reload_agents(self) -> bool:
+        """Rebuild this session's agents — what extensions do to them changed.
+
+        Returns whether they were rebuilt; a failure leaves the agents
+        that were working.
+        """
+        return self._session.reload_group_agents()
+
     # ── Read-only accessors ───────────────────────────────────────
 
     @property

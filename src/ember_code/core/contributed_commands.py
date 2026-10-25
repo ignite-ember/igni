@@ -9,7 +9,7 @@ tiers and neither knew about a fourth.
 This is the table they both consult. ``core`` owns it and the
 extension layer registers into it, which is the same shape
 :mod:`ember_code.core.prompts.fragments` and
-:mod:`ember_code.core.agents.variants` already use and keeps ``core``
+:mod:`ember_code.core.prompts.contributions` already use and keeps ``core``
 from importing the extension system.
 
 **The invoker lives here too.** A registry of names alone would mean

@@ -46,7 +46,6 @@
         "from": "acme.scanner.explain_rule"
       }
     ],
-    "promptVariants": ["acme-scan"],
     "settings": [
       {
         "key": "failOn",

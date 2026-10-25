@@ -37,6 +37,7 @@ from jsonschema import Draft202012Validator
 from pydantic import BaseModel, ValidationError
 
 from ember_code.extensions.manifest import (
+    AgentReplacementContribution,
     CommandContribution,
     Contributes,
     DevCommand,
@@ -48,7 +49,10 @@ from ember_code.extensions.manifest import (
     MenuContribution,
     PageContribution,
     Permissions,
+    PromptContribution,
     PromptFragment,
+    PromptReplacement,
+    PromptSlotFill,
     PythonPackage,
     Requirement,
     Setting,
@@ -83,6 +87,10 @@ PAIRS: list[tuple[str, type[BaseModel]]] = [
     ("contributes.commands[]", CommandContribution),
     ("contributes.indicators[]", IndicatorContribution),
     ("contributes.promptFragments[]", PromptFragment),
+    ("contributes.prompt", PromptContribution),
+    ("contributes.prompt.replace[]", PromptReplacement),
+    ("contributes.prompt.slots[]", PromptSlotFill),
+    ("contributes.prompt.agents[]", AgentReplacementContribution),
     ("contributes.settings[]", Setting),
 ]
 

@@ -31,6 +31,7 @@ from igni_extension.host import Host, Notifications
 from igni_extension.host_model import SCHEMA_VERSION
 from igni_extension.members import Property, Signal
 from igni_extension.notifications import LocalNotification, Target
+from igni_extension.prompt import PromptConditions
 from igni_extension.service import ServiceClient
 from igni_extension.tokens import SignedIn
 
@@ -48,6 +49,7 @@ __all__ = [
     "NotConfigured",
     "NotSignedIn",
     "Notifications",
+    "PromptConditions",
     "Property",
     "SCHEMA_VERSION",
     "Secrets",

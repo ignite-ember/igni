@@ -54,6 +54,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from ember_code.core.config.endpoint import is_configured
 from ember_code.extensions.bundle_signature import BundleSignatureError, PublisherKeys
+from ember_code.extensions.impact import Resolution
 from ember_code.extensions.service_token import IgniSession
 from ember_code.extensions.store import DistributionRecord, ExtensionStore, StoreError
 
@@ -95,6 +96,9 @@ class DistributionListing(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
     extensions: list[DistributedExtension] = Field(default_factory=list)
+    #: A super admin's decisions on collisions between the extensions
+    #: listed — :mod:`ember_code.extensions.impact`.
+    resolutions: list[Resolution] = Field(default_factory=list)
 
 
 class DownloadedBundle(BaseModel):
@@ -113,6 +117,8 @@ class SyncReport(BaseModel):
     unchanged: list[str] = Field(default_factory=list)
     #: Development installs a listed extension did not replace.
     development: list[str] = Field(default_factory=list)
+    #: Whether the decisions on collisions changed.
+    resolutions_changed: bool = False
     failed: dict[str, str] = Field(default_factory=dict)
 
 
@@ -144,7 +150,7 @@ class DistributionClient:
         self._timeout = timeout
         self._download_timeout = download_timeout
 
-    async def listing(self) -> list[DistributedExtension]:
+    async def listing(self) -> DistributionListing:
         try:
             async with httpx.AsyncClient(
                 timeout=self._timeout, transport=self._transport
@@ -157,7 +163,7 @@ class DistributionClient:
         if response.status_code != 200:
             raise DistributionError(f"igni refused the extension listing ({response.status_code})")
         try:
-            return DistributionListing.model_validate_json(response.content).extensions
+            return DistributionListing.model_validate_json(response.content)
         except ValidationError as exc:
             raise DistributionError(f"the extension listing is malformed: {exc}") from exc
 
@@ -250,11 +256,18 @@ class ExtensionDistribution:
         session: Callable[[], IgniSession | None],
         lifecycle: ExtensionLifecycle | None = None,
         transport: httpx.AsyncBaseTransport | None = None,
+        on_resolutions: Callable[[], None] | None = None,
     ) -> None:
+        """
+        Args:
+            on_resolutions: Told when the decisions on collisions
+                changed, after they are stored.
+        """
         self._store = store
         self._api_url = api_url
         self._session = session
         self._lifecycle = lifecycle
+        self._on_resolutions = on_resolutions
         self._transport = transport
         self._lock = asyncio.Lock()
         self._tasks: set[asyncio.Task[SyncReport | None]] = set()
@@ -318,9 +331,17 @@ class ExtensionDistribution:
                 return SyncReport(skipped=str(exc))
 
             report = SyncReport()
-            for entry in listing:
+            # Decisions first: an extension installed below starts
+            # with them already applied.
+            if self._store.record_resolutions(listing.resolutions):
+                report.resolutions_changed = True
+                if self._on_resolutions is not None:
+                    self._on_resolutions()
+            for entry in listing.extensions:
                 await self._bring_up_to_date(client, entry, report)
-            await self._remove_unlisted({entry.extension_id for entry in listing}, report)
+            await self._remove_unlisted(
+                {entry.extension_id for entry in listing.extensions}, report
+            )
             return report
 
     async def _bring_up_to_date(

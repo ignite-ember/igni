@@ -42,8 +42,8 @@ Everything below is a key under `contributes` in the manifest, and the list is e
 
 | Contribution | What it does | Why MCP can't |
 |---|---|---|
-| `promptFragments` | text injected at a named anchor in a system prompt, from a tool call or a bundled file | replaces the hardcoded `{{CODEINDEX_GRAPH_SCHEMA}}` placeholder. Fetched when the extension becomes `READY` and cached, because a supplier runs during prompt assembly and that is not an async context — so a fragment changes when its extension restarts, not when its data does. |
-| `promptVariants` | which agents switch to a variant while this extension is `READY` | generalises the `.codeindex.md` suffix. *Known* and *live* are separate: a variant whose extension is installed but down stays known, so its agent file is recognised and skipped rather than loaded as an agent whose name happens to contain a dot. |
+| `prompt` | the agent's prompts: replace the whole main prompt (or plan mode), replace one named section, add to a slot igni leaves, or stand in for one of igni's agents — each optionally only while a condition the extension reports holds | MCP has no prompt. See *The agent's prompt* below. |
+| `promptFragments` | text injected at a named `{{ANCHOR}}` in an agent's prompt, from a tool call or a bundled file | replaces the hardcoded `{{CODEINDEX_GRAPH_SCHEMA}}` placeholder. Fetched when the extension becomes `READY` and cached, because a supplier runs during prompt assembly and that is not an async context — so a fragment changes when its extension restarts, not when its data does. |
 | `settings` | config the host renders into its own settings surface, stored per deployment and delivered through launch params | Rendered by igni's **Extensions** page (`/extensions`), a control per declared `type`. Stored *beside* the bundle rather than inside it: the bundle is what was signed, and a value an administrator typed is not part of what a vendor attested to. Never a secret — those are `permissions.secrets`, resolved by the deployment. A change applies the next time your page is opened; a frame already up keeps the values it launched with. |
 | `commands` | slash commands the extension answers | — . Dispatched to the tool with the command's own name, the rest of the line arriving as `args`. Declaring one *is* the grant, separately from `permissions.rpc`: that list is what the extension's UI may call, and a slash command is the user invoking something igni offered them. |
 | `menu` | entries in the header tools menu | — |
@@ -59,7 +59,50 @@ UI is a contribution some extensions have, not what makes something an extension
 
 Agents, skills and hooks are **not** here: plugins and group packs already carry those. Don't build a second path.
 
-Everything is namespaced by extension id. A collision with a base name is a validation error at install, not a surprise at runtime.
+Everything is namespaced by extension id. A collision with a base name is a validation error at install, not a surprise at runtime. What cannot be namespaced — a prompt section, a slash command, an agent of igni's, an anchor — is a *claim*, and two extensions claiming one thing is a collision a super admin decides (below).
+
+### The agent's prompt
+
+An enterprise that wants its agent to work its own way gets exactly that. `contributes.prompt` has three lists:
+
+```json
+"prompt": {
+  "replace": [{"target": "main", "source": "file", "from": "plugin/prompts/main.md", "when": "index-covers-head"},
+              {"target": "main.safety", "source": "file", "from": "plugin/prompts/safety.md"}],
+  "slots":   [{"slot": "main.code_intelligence", "source": "file", "from": "plugin/prompts/about.md"}],
+  "agents":  [{"agent": "explorer", "from": "plugin/stand-ins/explorer.md"}]
+}
+```
+
+- **The prompts are documents with named parts.** `main` is the main agent's system prompt, `plan_mode` what it is told about plan mode. Each is marked up in igni's markdown — `<!-- section:workflow -->…<!-- /section:workflow -->` for igni's text an extension may replace, `<!-- slot:code_intelligence -->default<!-- /slot:code_intelligence -->` for a place igni leaves, whose default shows only while nothing fills it. Every one is listed in `docs/prompt-targets.json`, generated from the markdown and held to it by `tests/test_prompt_targets_are_listed.py`. Every `##` of the main prompt is inside a section.
+- **`replace`** takes `main`/`plan_mode` whole or one section (`main.workflow`). The text may use igni's own slot markers, `{{AGENT_CATALOG}}` and the host's conditionals, which work as in igni's text.
+- **`slots`** add text. Several extensions' fills stack in extension-id order, each under `### From <name>` when there is more than one; one fill is at most 8,000 characters (`MAX_SLOT_CHARS`) — replacing a section is how to say more. Whether a slot is filled is itself a conditional, `<!-- slot.<id>:only -->`/`:absent`, for guidance elsewhere that depends on it.
+- **`agents`** stand in for one of igni's agents under igni's name, at `EXTENSION_OVERRIDE` priority above anything a person or organisation wrote, with a file the extension's plugin carries outside its `agents/` (which holds the plugin's own agents, under the extension's namespace). The file gets the plugin security envelope.
+- **`when`** names a condition only the extension can judge. Its process says so on its own MCP connection — `notifications/igni/conditions` `{"conditions": {"index-covers-head": true}}`, `await ext.prompt.hold("index-covers-head", True)` in igni-extension — and igni rebuilds every session's agents, once, on the next turn of the loop (`backend/agent_refresh.py`). Nothing polls. The connection names the sender, so an extension speaks only for its own conditions; none survive a restart.
+
+All of it follows `READY`, like fragments: an extension that goes down takes its text and its stand-ins with it. Implemented in `core/prompts/document.py` (the markup), `core/prompts/contributions.py` (the live table the prompt builder, plan mode and the agent loader read) and `extensions/contributions.py` (registering into it).
+
+### Collisions, and a super admin deciding them
+
+`extensions/impact.py` reads an extension's **impact** off its manifest — prompt targets replaced, slots filled, agents stood in for, anchors, commands, conditions, and for review its tools, pages, menu, indicators, settings, host and RPC grants, egress, secrets and workspace access. igni server shows it on the Services page.
+
+**What collides.** A claim is spelled `<kind>:<name>`:
+
+| Claim | Collides with |
+|---|---|
+| `prompt:main` (the whole prompt) | another `prompt:main`, and **any** `prompt:main.<section>` |
+| `prompt:main.workflow` (a section) | the same section, and `prompt:main` — never a *different* section |
+| `command:/review` | the same command |
+| `agent:explorer` (a stand-in) | the same agent |
+| `anchor:GRAPH_SCHEMA` | the same anchor |
+
+**Never a collision:** slot fills (they stack); pages, indicators and settings (namespaced by the extension id); tools (registered under the extension's server name); a plugin's own agents (under the extension's namespace); grants, egress, secrets (they only add). A `when` does not avoid a collision: two extensions replacing one section under different conditions still both claim it. Host-model signals are observed, never intercepted — there is no veto or rewrite hook to collide over; one added later is a claim.
+
+**Deciding.** A super admin picks the winner of each collision on igni server (service-identity §8.1). A decision names the claim, the extensions and the winner, with who and when. It covers any collision among the extensions it names — all of them or some, as on a machine that has two of three — and a collision with an extension it did not name is new. The losers lose that claim only. Whole prompts are settled first: if the extension replacing `main` wins, every other extension's `main` sections are off and no section collision is left; if a section's extension wins, only the whole-prompt one loses, and the sections meet again, one by one. When a decision's winner is not among the extensions present, all of them lost.
+
+**On igni server** a version with an undecided collision against what is distributed is held, and the previous version keeps being distributed, until it is decided. **On a machine** the decisions arrive with the distribution listing, are kept in the store (`.resolutions.json`, so a machine that cannot reach igni still applies them), and `ImpactResolver.enforce()` runs over everything installed whenever that changes — an undecided collision (a development install colliding with a distributed extension, say) is switched off for every extension in it. What an extension does not get, and why, is in the extensions panel (`switched_off` on `list_extensions`) and nowhere is it silent.
+
+One rule, two implementations: igni server's `app/services/identity/impact.py` and this one both run `tests/fixtures/extension_impact_cases.json`, which both repositories carry and each checks against its sibling checkout.
 
 ### Events
 
@@ -632,8 +675,8 @@ Tested in `tests/test_a_page_reaches_its_own_service.py` and the bridge's `servi
 Tool descriptions, prompt fragments and tool results all land in a model's context, so a careless capability can steer the agent rather than merely misbehave.
 
 - **Supplied text is data, never instructions** — delimited and origin-labelled on the way in, like any untrusted file content.
-- **No modifying the system prompt**, no altering another capability's tool definitions, no contributing to agents it does not own.
-- **Fragments are length-capped and token-budgeted**; over-cap truncates and reports rather than crowding out the user.
+- **Changing the system prompt is allowed and visible, never silent.** An extension may replace igni's prompt or stand in for its agents — the deployment chose that by approving the service, after the Services page showed it exactly what is taken over. It cannot alter another capability's tool definitions, and what two extensions both want is decided by a super admin, never by load order.
+- **Slot fills are length-capped** (8,000 characters); over-cap is refused and logged rather than crowding out igni's text.
 - **Tools obey the permission pipeline and the hooks chain.** `BYPASS_PERMISSIONS` is unreachable from a capability.
 - **Guardrails apply** on the same path as everything else.
 - A result that *looks* like an instruction is still a result. Stated so a reviewer can test it.
@@ -725,7 +768,8 @@ This replaces a line that read "the React component tree, CSS class names, any t
 | json-render catalog + action round-trip | **shipped** |
 | Phones-home test | **shipped** |
 | Capability services as separate images | **shipped in the service repos** (`igni__code-index`, `igni__artifacts`) — and **not extracted here**: both still live in `core/` and are imported unconditionally by the agent and tool builders, so neither is separable. See `docs/EXTRACTING_A_CAPABILITY.md`. |
-| Prompt fragments / variants as contributions | **shipped** (`extensions/contributions.py`, tied to `READY` rather than to being installed) |
+| Prompt fragments, prompt replacement, slots and agent stand-ins as contributions | **shipped** (`extensions/contributions.py`, tied to `READY` rather than to being installed) |
+| Impact and collisions, decided by a super admin | **shipped** (`extensions/impact.py`; igni server's Services page) |
 | Manifest + validation | **shipped** (`docs/extension-manifest.schema.json` for the author's editor, `extensions/manifest.py` for the installer, held to each other by `tests/test_the_manifest_model_and_its_schema_agree.py`) |
 | Distribution from services (signed bundle, JWS verified against the approved service's key, sync at start-up and sign-in) | **shipped** (`extensions/distribution.py`, `extensions/bundle_signature.py`) — the manifest `signature` field and the Ed25519 trust store are removed |
 | `python` packaging, offline from the bundle's wheelhouse | **shipped** (`extensions/python_env.py`) |

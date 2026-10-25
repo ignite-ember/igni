@@ -106,6 +106,49 @@ REFUSALS: list[tuple[str, dict[str, Any], str]] = [
         "contributes/promptFragments/0/anchor",
     ),
     (
+        "a prompt target in a prompt igni does not have",
+        with_(
+            contributes={
+                "prompt": {"replace": [{"target": "system", "source": "file", "from": "p.md"}]}
+            }
+        ),
+        "contributes/prompt/replace/0/target",
+    ),
+    (
+        "a slot named without its prompt",
+        with_(
+            contributes={
+                "prompt": {
+                    "slots": [{"slot": "code_intelligence", "source": "file", "from": "p.md"}]
+                }
+            }
+        ),
+        "contributes/prompt/slots/0/slot",
+    ),
+    (
+        "a replacement with nowhere to read it from",
+        with_(contributes={"prompt": {"replace": [{"target": "main", "source": "file"}]}}),
+        "contributes/prompt/replace/0",
+    ),
+    (
+        "a condition that is not a slug",
+        with_(
+            contributes={
+                "prompt": {
+                    "slots": [
+                        {
+                            "slot": "main.code_intelligence",
+                            "source": "file",
+                            "from": "p.md",
+                            "when": "Index Ready",
+                        }
+                    ]
+                }
+            }
+        ),
+        "contributes/prompt/slots/0/when",
+    ),
+    (
         "an rpc pattern that is not a prefix",
         with_(permissions={"rpc": ["ext.*.scanner.list"]}),
         "permissions/rpc/0",

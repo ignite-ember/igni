@@ -48,7 +48,13 @@ from websockets.asyncio.server import serve
 from igni_extension.clock import Clock
 from igni_extension.extension import IgniExtension
 from igni_extension.host_model import SCHEMA_VERSION
-from igni_extension.notifications import NOTIFY_METHOD, LocalNotification, NotifyNotification
+from igni_extension.notifications import (
+    CONDITIONS_METHOD,
+    NOTIFY_METHOD,
+    ConditionsNotification,
+    LocalNotification,
+    NotifyNotification,
+)
 
 
 class ManualClock(Clock):
@@ -174,12 +180,14 @@ class FakeHostTokenEndpoint:
         return f"{header}.{part(claims.model_dump_json().encode())}.{part(b'not-checked-here')}"
 
 
-class HostBoundNotification(RootModel[types.ServerNotification | NotifyNotification]):
+class HostBoundNotification(
+    RootModel[types.ServerNotification | NotifyNotification | ConditionsNotification]
+):
     """What the host's client accepts from an extension: MCP's own, and igni's."""
 
 
 class HostClientSession(ClientSession):
-    """An MCP client session that also understands `notifications/igni/notify`."""
+    """An MCP client session that also understands igni's own notifications."""
 
     def __init__(self, *args: Any, **kwargs: Any) -> None:
         super().__init__(*args, **kwargs)
@@ -200,6 +208,8 @@ class HostHarness:
         self.notifications: list[LocalNotification] = []
         #: The same messages exactly as they crossed the wire.
         self.raw: list[dict[str, Any]] = []
+        #: What the extension said about its conditions, in order.
+        self.conditions: list[dict[str, bool]] = []
 
     @property
     def session(self) -> ClientSession:
@@ -258,6 +268,14 @@ class HostHarness:
                 self._changed = anyio.Event()
         return list(self.notifications)
 
+    async def conditions_said(self, count: int) -> list[dict[str, bool]]:
+        """Wait until the extension has said `count` things about its conditions."""
+        with anyio.fail_after(self._timeout):
+            while len(self.conditions) < count:
+                await self._changed.wait()
+                self._changed = anyio.Event()
+        return list(self.conditions)
+
     async def _tap(
         self,
         source: MemoryObjectReceiveStream[SessionMessage],
@@ -265,7 +283,7 @@ class HostHarness:
     ) -> None:
         async for message in source:
             wire = message.message.model_dump(by_alias=True, mode="json", exclude_none=True)
-            if wire.get("method") == NOTIFY_METHOD:
+            if wire.get("method") in (NOTIFY_METHOD, CONDITIONS_METHOD):
                 self.raw.append(wire)
             await sink.send(message)
 
@@ -278,6 +296,9 @@ class HostHarness:
         root = getattr(message, "root", None)
         if isinstance(root, NotifyNotification):
             self.notifications.append(root.local())
+            self._changed.set()
+        elif isinstance(root, ConditionsNotification):
+            self.conditions.append(dict(root.params.conditions))
             self._changed.set()
 
 

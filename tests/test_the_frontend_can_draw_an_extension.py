@@ -142,6 +142,9 @@ async def test_the_manifest_itself_does_not_go_to_the_browser(wired, tmp_path):
         # — the origin its CSP already admits. Also the service's
         # address, and no credential: the token is fetched separately.
         "service_url",
+        # What a collision with another extension switched off, and
+        # why: a claim's name and a sentence, nothing of the manifest.
+        "switched_off",
     }
 
 

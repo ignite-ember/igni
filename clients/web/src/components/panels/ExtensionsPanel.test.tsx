@@ -130,6 +130,29 @@ describe("what is installed", () => {
     panelWith([extension()]);
     expect(screen.queryByRole("button", { name: "Save" })).toBeNull();
   });
+
+  it("says what a collision switched off, and why", () => {
+    // Two extensions replacing one prompt section: the one that lost
+    // is running, and its section is not in the prompt. Without this
+    // row that is a mystery to whoever installed it.
+    panelWith([
+      extension({
+        switched_off: [
+          {
+            claim: "prompt:main.workflow",
+            reason: "acme.review has prompt:main.workflow: decided by admin@acme.test",
+          },
+        ],
+      }),
+    ]);
+    expect(screen.getByText("prompt:main.workflow")).toBeTruthy();
+    expect(screen.getByText(/decided by admin@acme.test/)).toBeTruthy();
+  });
+
+  it("says nothing about collisions when there are none", () => {
+    panelWith([extension()]);
+    expect(screen.queryByRole("note")).toBeNull();
+  });
 });
 
 describe("the form", () => {

@@ -25,7 +25,6 @@
     "pages": [
       { "kind": "acme.notes", "label": "Release notes", "sidebar": true }
     ],
-    "promptVariants": ["acme-notes"],
     "promptFragments": [
       {
         "anchor": "ACME_NOTES_STYLE",

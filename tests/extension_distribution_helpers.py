@@ -255,6 +255,8 @@ class FakeIgni:
 
     def __init__(self) -> None:
         self.listed: dict[str, Listed] = {}
+        #: The super admin's decisions on collisions, as the listing carries them.
+        self.resolutions: list[dict[str, Any]] = []
         self.requests: list[httpx.Request] = []
         self.listing_status = 200
         self.token_status = 200
@@ -284,7 +286,11 @@ class FakeIgni:
             if self.listing_status != 200:
                 return httpx.Response(self.listing_status, json={"detail": "down"})
             return httpx.Response(
-                200, json={"extensions": [entry.row() for entry in self.listed.values()]}
+                200,
+                json={
+                    "extensions": [entry.row() for entry in self.listed.values()],
+                    "resolutions": self.resolutions,
+                },
             )
         if path.startswith("/v1/extensions/") and path.endswith("/bundle"):
             extension_id = path.removeprefix("/v1/extensions/").removesuffix("/bundle")

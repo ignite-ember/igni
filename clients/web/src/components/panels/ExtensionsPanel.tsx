@@ -181,6 +181,32 @@ function SettingsForm({
   );
 }
 
+/**
+ * What an extension does not get because another extension claims the
+ * same thing — a prompt section, a command, an agent. Shown, because
+ * "my section is not in the prompt" is otherwise a mystery to whoever
+ * installed it.
+ */
+function SwitchedOff({
+  entries,
+}: {
+  entries: { claim: string; reason: string }[];
+}) {
+  if (entries.length === 0) return null;
+  return (
+    <div className="ext-switched-off" role="note">
+      <div className="meta">Switched off by a collision with another extension:</div>
+      <ul>
+        {entries.map((entry) => (
+          <li key={entry.claim}>
+            <code>{entry.claim}</code> <span className="meta">{entry.reason}</span>
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
 /** Installed extensions, their state, and their settings. */
 export function ExtensionsPanel({
   client,
@@ -217,6 +243,7 @@ export function ExtensionsPanel({
             </span>
           </div>
           {extension.reason && <div className="meta">{extension.reason}</div>}
+          <SwitchedOff entries={extension.switched_off ?? []} />
           <OpenOnWeb url={extension.web_url} name={extension.name} />
           {extension.settings.length > 0 && (
             <SettingsForm

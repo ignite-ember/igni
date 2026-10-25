@@ -64,6 +64,15 @@ class ExtensionSetting(BaseModel):
     options: list[str] = Field(default_factory=list)
 
 
+class ExtensionSwitchedOff(BaseModel):
+    """One thing an extension does not get, because it collides with another."""
+
+    #: ``prompt:main.workflow``, ``command:/review``, ``agent:explorer``…
+    claim: str
+    #: Who decided against it, or that nobody has decided yet.
+    reason: str
+
+
 class ExtensionSummary(BaseModel):
     """One installed extension, as the frontend sees it."""
 
@@ -99,6 +108,11 @@ class ExtensionSummary(BaseModel):
     #: when it has one a page may reach — the origin its frame's CSP
     #: admits. The host passes it to the frame in ``hello``.
     service_url: str | None = None
+    #: What it does not get because it collides with another
+    #: extension. Empty for almost every extension; when not, the
+    #: panel says what and why, because "my prompt section is not
+    #: there" is otherwise a mystery.
+    switched_off: list[ExtensionSwitchedOff] = Field(default_factory=list)
 
     @classmethod
     def of(
@@ -126,6 +140,10 @@ class ExtensionSummary(BaseModel):
             host=list(manifest.permissions.host),
             web_url=web_url,
             service_url=service_url,
+            switched_off=[
+                ExtensionSwitchedOff(claim=off.claim, reason=off.reason)
+                for off in entry.switched_off
+            ],
         )
 
 

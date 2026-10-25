@@ -28,9 +28,10 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import StrEnum
 
+from ember_code.extensions.impact import SwitchedOff
 from ember_code.extensions.manifest import ExtensionManifest
 
 logger = logging.getLogger(__name__)
@@ -102,6 +103,10 @@ class InstalledExtension:
     state: ExtensionState = ExtensionState.PREPARING
     #: Why it is not :attr:`ExtensionState.READY`, and what to do.
     reason: str = ""
+    #: What it does not get because it collides with another
+    #: extension — decided against it, or not decided yet. Kept by
+    #: :class:`~ember_code.extensions.contributions.ExtensionContributions`.
+    switched_off: list[SwitchedOff] = field(default_factory=list)
 
     @property
     def id(self) -> str:
