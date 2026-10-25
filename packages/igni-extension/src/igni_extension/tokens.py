@@ -18,9 +18,10 @@ from typing import Any
 import httpx
 from pydantic import BaseModel, ConfigDict, ValidationError
 
+from igni_extension.caller import Caller
 from igni_extension.clock import Clock
 from igni_extension.environment import ServiceEndpoint
-from igni_extension.errors import HostUnavailable, NotConfigured, NotSignedIn
+from igni_extension.errors import HostError, HostUnavailable, NotConfigured, NotSignedIn
 
 
 class IssuedToken(BaseModel):
@@ -75,8 +76,13 @@ class HostTokens:
         transport: httpx.AsyncBaseTransport | None = None,
         clock: Clock | None = None,
         timeout: float = 10.0,
+        caller: Caller | None = None,
     ) -> None:
         self._endpoint = endpoint
+        #: Whom these tokens are for, named to the host; `None` is the
+        #: signed-in person, as before callers existed.
+        self._caller = caller
+        self._for: dict[str, HostTokens] = {}
         self._transport = transport
         self._clock = clock or Clock()
         self._timeout = timeout
@@ -93,6 +99,25 @@ class HostTokens:
     def signed_in(self) -> SignedIn | None:
         """Who the last token was for; `None` before one, or once signed out."""
         return self._signed_in
+
+    def for_(self, caller: Caller) -> HostTokens:
+        """Tokens for the service as `caller`: one set per caller, each kept apart.
+
+        The host is told whom a token is for and hands out only one it
+        may: on a backend that serves one person, that person's — a
+        token for anybody else is refused (`HostError`).
+        """
+        found = self._for.get(caller.ref)
+        if found is None:
+            found = HostTokens(
+                self._endpoint,
+                transport=self._transport,
+                clock=self._clock,
+                timeout=self._timeout,
+                caller=caller,
+            )
+            self._for[caller.ref] = found
+        return found
 
     def invalidate(self) -> None:
         """Forget the kept token; the next request asks the host again."""
@@ -113,16 +138,19 @@ class HostTokens:
                 return self._token
             return await self._fetch()
 
+    def _caller_ref(self) -> str:
+        return self._caller.ref if self._caller is not None else "the signed-in person"
+
     def _fresh(self) -> bool:
         return bool(self._token) and self._clock.monotonic() < self._expires_at - self.RENEW_BEFORE
 
     async def _fetch(self) -> str:
         async with httpx.AsyncClient(transport=self._transport, timeout=self._timeout) as client:
             try:
-                response = await client.get(
-                    self._endpoint.token_url,
-                    headers={"Authorization": f"Bearer {self._endpoint.token_secret}"},
-                )
+                headers = {"Authorization": f"Bearer {self._endpoint.token_secret}"}
+                if self._caller is not None:
+                    headers[Caller.TOKEN_HEADER] = self._caller.ref
+                response = await client.get(self._endpoint.token_url, headers=headers)
             except httpx.HTTPError as exc:
                 raise HostUnavailable(
                     f"the igni host did not answer: {type(exc).__name__}"
@@ -131,6 +159,10 @@ class HostTokens:
             self.invalidate()
             self._signed_in = None
             raise NotSignedIn()
+        if response.status_code == 403:
+            raise HostError(
+                "refused", f"the igni host will not give a token for {self._caller_ref()}"
+            )
         if response.status_code != 200:
             raise HostUnavailable(f"the igni host answered {response.status_code}")
         try:

@@ -27,6 +27,7 @@ from typing import Any
 import httpx
 from websockets.asyncio.client import ClientConnection, connect
 
+from igni_extension.caller import Caller
 from igni_extension.tokens import HostTokenAuth, HostTokens
 
 
@@ -78,6 +79,25 @@ class ServiceClient(httpx.AsyncClient):
         self._transport_override = transport
         self._timeout_seconds = timeout
         self._anonymous: httpx.AsyncClient | None = None
+        self._for: dict[str, ServiceClient] = {}
+
+    def for_(self, caller: Caller) -> ServiceClient:
+        """The same service, as `caller`: what a tool acting for someone uses.
+
+        The token is fetched from the host for that caller, and kept apart
+        from every other caller's. The service sees exactly who the call
+        is for, as it checks every token.
+        """
+        found = self._for.get(caller.ref)
+        if found is None:
+            found = ServiceClient(
+                base_url=str(self.base_url),
+                tokens=self._tokens.for_(caller),
+                transport=self._transport_override,
+                timeout=self._timeout_seconds,
+            )
+            self._for[caller.ref] = found
+        return found
 
     @property
     def anonymous(self) -> httpx.AsyncClient:
@@ -103,6 +123,9 @@ class ServiceClient(httpx.AsyncClient):
         return ServiceWebSocket(f"{base}/{path.lstrip('/')}", self._tokens, options)
 
     async def aclose(self) -> None:
+        for client in self._for.values():
+            await client.aclose()
+        self._for.clear()
         if self._anonymous is not None:
             await self._anonymous.aclose()
             self._anonymous = None

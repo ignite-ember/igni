@@ -13,7 +13,7 @@ import json
 import logging
 from typing import TYPE_CHECKING, Literal
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 if TYPE_CHECKING:
     from ember_code.core.auth.credentials import Credentials
@@ -148,11 +148,16 @@ class JwtClaims(BaseModel):
 
     model_config = {"extra": "ignore"}
 
+    #: The person's user id on igni server.
+    sub: str | None = None
     email: str | None = None
     exp: int | None = None
     org: str | None = None
     org_name: str | None = None
     group_id: str | None = None
+    #: The person's groups in ``org`` when the token was issued — a
+    #: snapshot; the extension listing carries them as they are now.
+    groups: list[str] = Field(default_factory=list)
 
     @classmethod
     def decode(cls, token: str) -> JwtClaims | None:

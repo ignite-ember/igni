@@ -71,6 +71,7 @@ from ember_code.extensions.origin import (
     ExtensionOrigins,
     HttpReply,
 )
+from ember_code.extensions.principal import Principal
 
 logger = logging.getLogger(__name__)
 
@@ -306,9 +307,16 @@ class ServiceTokenEndpoint:
 
     PATH = "/v1/service-token"
 
-    def __init__(self, exchange: ServiceTokenExchange, *, host: str = LOOPBACK) -> None:
+    def __init__(
+        self,
+        exchange: ServiceTokenExchange,
+        *,
+        host: str = LOOPBACK,
+        principal: Callable[[], Principal | None] | None = None,
+    ) -> None:
         self._exchange = exchange
         self._host = host
+        self._principal = principal
         self._server: asyncio.AbstractServer | None = None
         self._port = 0
         self._grants: dict[str, ServiceGrant] = {}
@@ -423,6 +431,14 @@ class ServiceTokenEndpoint:
                 challenge='Bearer realm="igni-service-token"',
             )
 
+        named = headers.get(Principal.TOKEN_HEADER.lower(), "")
+        if named and not self._is_signed_in(named):
+            return self._error(
+                403,
+                "Forbidden",
+                f"this machine serves only the person signed in on it, not {named}",
+            )
+
         try:
             token = await self._exchange.token_for(grant.service_url)
         except NotSignedIn as exc:
@@ -437,6 +453,19 @@ class ServiceTokenEndpoint:
             service_url=grant.service_url,
         ).model_dump_json()
         return HttpReply(200, "OK", body=body.encode(), content_type=_JSON)
+
+    def _is_signed_in(self, named: str) -> bool:
+        """Whether ``person:<id>`` is who this backend serves.
+
+        ``ext.service.for_(caller)`` names its caller; a single-person
+        backend has one, and a token for anybody else — another person,
+        an app — is not something it can hand out (docs/
+        EXTENSION_ROUTING_AND_CONCURRENCY.md §6).
+        """
+        if self._principal is None:
+            return False
+        principal = self._principal()
+        return principal is not None and hmac.compare_digest(principal.ref, named)
 
     def _grant_for(self, authorization: str) -> ServiceGrant | None:
         scheme, _, presented = authorization.partition(" ")

@@ -10,6 +10,7 @@
 See the package README for the whole surface.
 """
 
+from igni_extension.caller import Caller, CallerKind, NoCaller
 from igni_extension.environment import (
     Assets,
     ExtensionEnvironment,
@@ -39,6 +40,8 @@ from igni_extension.tokens import SignedIn
 __all__ = [
     "Allow",
     "Assets",
+    "Caller",
+    "CallerKind",
     "ExtensionEnvironment",
     "Host",
     "HostEndpoint",
@@ -50,6 +53,7 @@ __all__ = [
     "IgniExtensionError",
     "LocalNotification",
     "Modify",
+    "NoCaller",
     "NotConfigured",
     "NotSignedIn",
     "Notifications",

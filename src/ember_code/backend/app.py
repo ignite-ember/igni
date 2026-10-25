@@ -45,11 +45,13 @@ from ember_code.extensions.distribution import ExtensionDistribution
 from ember_code.extensions.faults import ExtensionFaults
 from ember_code.extensions.health import ExtensionHealth
 from ember_code.extensions.host.channel import HostChannel
+from ember_code.extensions.host.hooks import ExtensionHooks
 from ember_code.extensions.host.model import HostModel
 from ember_code.extensions.impact import IgniCommands
 from ember_code.extensions.installer import ExtensionInstaller
 from ember_code.extensions.launcher import ExtensionLauncher
 from ember_code.extensions.origin import ExtensionOrigins
+from ember_code.extensions.principal import SignedInPerson
 from ember_code.extensions.profile import DeploymentProfile, DevelopmentFlag
 from ember_code.extensions.python_env import PythonEnvironments
 from ember_code.extensions.registry import ExtensionRegistry
@@ -476,10 +478,15 @@ class BackendApp:
         settings = self._backend.settings
         store = ExtensionStore()
         session = CredentialsSession(settings.auth.credentials_file)
+        # Whom every call into an extension is for: on this backend, the
+        # person signed in here (docs/EXTENSION_ROUTING_AND_CONCURRENCY.md).
+        person = SignedInPerson(settings.auth.credentials_file, store)
+        self._backend.mcp_manager.extension_request_meta = person.meta
+        ExtensionHooks.shared().set_principal(person)
         # One exchange, one cache: an extension's process and its page
         # ask for the same token and igni is asked once.
         exchange = ServiceTokenExchange(api_url=self._igni_api_url, session=session)
-        self._service_tokens = ServiceTokenEndpoint(exchange)
+        self._service_tokens = ServiceTokenEndpoint(exchange, principal=person)
         if self._orchestrator is not None and self._origins is not None:
             self._orchestrator.attach_page_tokens(
                 PageServiceTokens(origins=self._origins, exchange=exchange)

@@ -125,6 +125,41 @@ When nobody is signed in to igni, a request raises `NotSignedIn`.
   this never decides anything. Whether anyone is signed in to igni at all
   is `await ext.host.account.status` (with the `account` grant).
 
+## Whom a call is for: `Caller`
+
+Every call igni makes — a tool call, a page's call, a hook — names whom
+it is for: a person (`kind="person"`, their `id`, `org` and `groups`) or,
+later, an app. A tool or hook handler that wants it declares a parameter
+typed `Caller`; the SDK fills it from the call, and it is never part of
+a tool's input:
+
+```python
+from igni_extension import Caller
+
+@ext.tool(hints=ToolHints(read_only=True, destructive=False, idempotent=True, open_world=False))
+async def mine(caller: Caller) -> list[str]:
+    response = await ext.service.for_(caller).get("/v1/things")
+    return response.json()
+```
+
+- **`ext.service.for_(caller)`** — the service as that caller. The token
+  is fetched from the host for them and kept apart from every other
+  caller's. On a machine serving one person, the host gives that
+  person's token and refuses anybody else's (`HostError`, code
+  `refused`).
+- **`caller: Caller`** fails the call when igni sent none;
+  **`caller: Caller | None`** runs with `None` instead.
+- **`Caller.current()`** answers the same anywhere inside the call — in
+  a helper, or a plain `def` running in a worker thread.
+- **Work no caller started** — `on_start`, a reaction — has none, and
+  `ext.service` there is the signed-in person.
+
+The extension never decides who may call it: igni forwards only calls
+the caller may make, to extensions an org admin enabled for them. Its
+job is to serve calls in parallel and keep callers apart — a caller kept
+in a module global is the bug to avoid. `ConcurrencyHarness` (below)
+checks both.
+
 ## The host: `ext.host`
 
 `ext.host` is igni as the extension sees it — the **host object model**
@@ -335,6 +370,27 @@ not where this process may. Approving the service is the decision to
 trust it.
 
 ## Testing an extension
+
+**Many callers at once:** `ConcurrencyHarness(ext).run([...])` makes
+every call concurrently, each as its own caller, and raises
+`ConcurrencyProblem` if the event loop was held longer than
+`stall_limit` (0.1 s), or if a tool saw a caller other than the one its
+call was sent with:
+
+```python
+from igni_extension.testing import ConcurrencyHarness, ConcurrentCall
+
+report = await ConcurrencyHarness(ext).run([
+    ConcurrentCall(tool="mine", caller=ada),
+    ConcurrentCall(tool="mine", caller=grace),
+])
+assert report.results[0].result != report.results[1].result
+```
+
+`HostHarness.call(tool, args, caller=...)` calls one tool as igni does,
+for that caller, and `FakeHost.hook(event, value, caller=...)` asks a
+hook the same way.
+
 
 ```python
 from igni_extension.testing import FakeHost, FakeHostTokenEndpoint, HostHarness

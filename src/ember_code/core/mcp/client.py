@@ -58,6 +58,8 @@ from ember_code.core.mcp.tool_state import MCPToolStateStore
 if TYPE_CHECKING:
     from agno.tools.mcp import MCPTools
 
+    from ember_code.core.mcp.request_meta import RequestMeta
+
 logger = logging.getLogger(__name__)
 
 
@@ -108,6 +110,11 @@ class MCPClientManager:
         #: takes them — ``notifications/igni/notify`` from an extension
         #: is the first. Applied to every stdio connection opened here.
         self.notifications = McpNotificationRouter()
+        #: Asked on every tool call to a server whose config says
+        #: ``source == "extension"``, and sent as the call's ``_meta``
+        #: (:mod:`ember_code.core.mcp.request_meta`). The extensions layer
+        #: sets it: it is how an extension learns whom a call is for.
+        self.extension_request_meta: RequestMeta | None = None
 
     # ── Connection gate ───────────────────────────────────────────
 
@@ -239,7 +246,10 @@ class MCPClientManager:
             await mcp_tools.__aenter__()
             return mcp_tools
         if transport == "stdio":
-            return await self._stdio_binding.open(name, config, notifications=self.notifications)
+            request_meta = self.extension_request_meta if config.source == "extension" else None
+            return await self._stdio_binding.open(
+                name, config, notifications=self.notifications, request_meta=request_meta
+            )
         return None
 
     async def disconnect_all(self) -> None:

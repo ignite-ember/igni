@@ -33,6 +33,8 @@ from cryptography.hazmat.primitives.asymmetric.utils import decode_dss_signature
 
 API_URL = "https://igni.test"
 SESSION = "session-token-of-the-person"
+#: The group the signed-in person is in; listed extensions are on for it unless a test says not.
+PERSON_GROUP = "g-legal"
 
 
 def b64url(data: bytes) -> str:
@@ -221,8 +223,11 @@ class Listed:
         listed_sha256: str | None = None,
         header_sha256: str | None = None,
         jwks: dict[str, Any] | None = None,
+        groups: list[str] | None = None,
     ) -> None:
         self.archive = archive
+        #: The groups it is switched on for: the person's own by default.
+        self.groups = groups if groups is not None else [PERSON_GROUP]
         self.extension_id = extension_id
         self.version = version
         self.service_url = service_url
@@ -247,6 +252,7 @@ class Listed:
             "signature": self.signature,
             "publisher_jwks": self.jwks,
             "published_at": "2026-10-24T00:00:00Z",
+            "groups": self.groups,
         }
 
 
@@ -257,6 +263,8 @@ class FakeIgni:
         self.listed: dict[str, Listed] = {}
         #: The super admin's decisions on collisions, as the listing carries them.
         self.priority: list[str] = []
+        #: The signed-in person's groups, as igni server reads them when it lists.
+        self.groups: list[str] = [PERSON_GROUP]
         self.requests: list[httpx.Request] = []
         self.listing_status = 200
         self.token_status = 200
@@ -293,6 +301,7 @@ class FakeIgni:
             return httpx.Response(
                 200,
                 json={
+                    "groups": self.groups,
                     "extensions": [entry.row() for entry in self.listed.values()],
                     "priority": self.priority,
                 },

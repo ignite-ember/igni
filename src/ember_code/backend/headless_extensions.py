@@ -38,6 +38,7 @@ from ember_code.extensions.impact import IgniCommands
 from ember_code.extensions.installer import ExtensionInstaller
 from ember_code.extensions.launcher import ExtensionLauncher
 from ember_code.extensions.origin import ExtensionOrigins
+from ember_code.extensions.principal import SignedInPerson
 from ember_code.extensions.profile import DeploymentProfile, DevelopmentFlag
 from ember_code.extensions.python_env import PythonEnvironments
 from ember_code.extensions.registry import ExtensionRegistry, ExtensionState
@@ -159,7 +160,11 @@ class HeadlessExtensions:
             store=store,
         )
         self._channel = HostChannel(model)
-        ExtensionHookGate.install(ExtensionHooks.wire(self._registry))
+        hooks = ExtensionHooks.wire(self._registry)
+        ExtensionHookGate.install(hooks)
+        person = SignedInPerson(settings.auth.credentials_file, store)
+        session.mcp_manager.extension_request_meta = person.meta
+        hooks.set_principal(person)
         exchange = ServiceTokenExchange(
             api_url=lambda: settings.api_url,
             session=CredentialsSession(settings.auth.credentials_file),
@@ -175,7 +180,7 @@ class HeadlessExtensions:
             allow_development=DevelopmentFlag.enabled(),
             store=store,
             environments=PythonEnvironments(store.environments_root),
-            service_tokens=ServiceTokenEndpoint(exchange),
+            service_tokens=ServiceTokenEndpoint(exchange, principal=person),
             host_channel=self._channel,
         )
         launcher = ExtensionLauncher(

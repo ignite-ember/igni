@@ -26,6 +26,10 @@ answer a deadline that igni sets. A handler that raises, or is too slow,
 has not answered: a tool call (`PRE_TOOL_USE`) or a message
 (`USER_PROMPT_SUBMIT`) then does not go ahead, and every other event
 does.
+
+A handler that declares a second parameter typed `Caller` is handed whom
+the event is for (`igni_extension.caller`); `Caller.current()` answers
+the same inside any handler.
 """
 
 from __future__ import annotations
@@ -37,6 +41,7 @@ from typing import Any, Literal
 from pydantic import BaseModel, ConfigDict, Field
 from pydantic_core import to_jsonable_python
 
+from igni_extension.caller import Caller, CallerScope
 from igni_extension.threads import OffTheLoop
 
 logger = logging.getLogger(__name__)
@@ -184,8 +189,12 @@ class Modify(BaseModel):
 
 
 type Answer = Allow | Reject | Modify
-#: `async def`, or a plain `def` the SDK runs in a worker thread.
-type HookHandler[T] = Callable[[T], Awaitable[Answer | None] | Answer | None]
+#: `async def`, or a plain `def` the SDK runs in a worker thread. A second
+#: parameter typed `Caller` is handed whom the event is for.
+type HookHandler[T] = (
+    Callable[[T], Awaitable[Answer | None] | Answer | None]
+    | Callable[[T, Caller], Awaitable[Answer | None] | Answer | None]
+)
 
 
 class HookHandlers:
@@ -206,18 +215,29 @@ class HookHandlers:
     def events(self) -> list[str]:
         return sorted(self._handlers)
 
-    async def tell(self, name: str, raw: Any) -> None:
+    @staticmethod
+    async def _call(handler: HookHandler[Any], value: Any, caller: Caller | None) -> Any:
+        """Run a handler for one event, with its caller in scope — and handed in, if it asks."""
+        wanted = CallerScope.parameter(handler)
+        with CallerScope.of(caller):
+            if wanted is None:
+                return await OffTheLoop.call(handler, value)
+            return await OffTheLoop.call(handler, value, **{wanted: caller})
+
+    async def tell(self, name: str, raw: Any, principal: Any = None) -> None:
         """An event that decides nothing: the handler hears it, and nothing is sent back."""
         found = self._handlers.get(name)
         if found is None:
             return
         event, handler = found
         try:
-            await OffTheLoop.call(handler, event.parse(raw))
+            await self._call(handler, event.parse(raw), Caller.of(principal))
         except Exception:
             logger.exception("igni: the handler of %s failed", name)
 
-    async def answer(self, hook_id: str, name: str, raw: Any) -> dict[str, Any]:
+    async def answer(
+        self, hook_id: str, name: str, raw: Any, principal: Any = None
+    ) -> dict[str, Any]:
         """The `answer` request's parameters for one deciding event."""
         found = self._handlers.get(name)
         if found is None:
@@ -229,7 +249,7 @@ class HookHandlers:
             return {"hook": hook_id, "outcome": "allow"}
         event, handler = found
         try:
-            answer = await OffTheLoop.call(handler, event.parse(raw))
+            answer = await self._call(handler, event.parse(raw), Caller.of(principal))
         except Exception as exc:
             logger.exception("igni: the handler of %s failed", name)
             return {"hook": hook_id, "outcome": "failed", "reason": str(exc)}

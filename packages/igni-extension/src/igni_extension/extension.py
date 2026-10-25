@@ -24,6 +24,7 @@ from mcp.server.fastmcp import FastMCP
 from mcp.shared.message import SessionMessage
 from pydantic import BaseModel
 
+from igni_extension.caller import CallerScope
 from igni_extension.channel import HostConnection
 from igni_extension.clock import Clock
 from igni_extension.environment import ExtensionEnvironment
@@ -93,20 +94,25 @@ class IgniExtension:
         tool says it is (`igni_extension.hints`). The same four go in
         the manifest's `permissions.tools` for a tool the agent calls.
         A plain `def` runs in a worker thread, so it never holds the
-        other calls (`igni_extension.threads`).
+        other calls (`igni_extension.threads`). A parameter typed
+        `Caller` receives whom the call is for, and is not part of the
+        tool's input (`igni_extension.caller`).
         """
         register = self.mcp.tool(
             name=name, description=description, annotations=hints.annotations()
         )
 
         def off_the_loop(fn: AnyFunction) -> AnyFunction:
-            register(fn)
+            # A parameter typed `Caller` is filled from the call, and is
+            # not part of the tool's input (`igni_extension.caller`).
+            served = CallerScope.inject(fn)
+            register(served)
             # The schema is FastMCP's, from `fn` as written; only how it is
             # run changes — a plain `def` in a worker thread (`threads`).
-            if not OffTheLoop.is_async(fn):
+            if not OffTheLoop.is_async(served):
                 tool = self.mcp._tool_manager.get_tool(name or fn.__name__)
                 if tool is not None:
-                    tool.fn = OffTheLoop.wrap(fn)
+                    tool.fn = OffTheLoop.wrap(served)
                     tool.is_async = True
             return fn
 
@@ -159,7 +165,8 @@ class IgniExtension:
         and renewed; `NotSignedIn` is raised when nobody is signed in to
         igni. `ext.service.anonymous` reaches the same service with no
         token, and `ext.service.websocket(path)` opens a WebSocket to it
-        as the person.
+        as the person. `ext.service.for_(caller)` is the same service as
+        the caller a tool was handed — what a tool acting for someone uses.
         """
         if self._service is None:
             if not self.environment.service.configured:

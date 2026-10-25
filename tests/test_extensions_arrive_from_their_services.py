@@ -694,3 +694,38 @@ def test_a_replace_that_fails_leaves_the_old_bundle(tmp_path, monkeypatch):
     assert store.read(store.path_for("acme.notes")).version == "1.0.0"
     assert [p.name for p in store.installed()] == ["acme.notes"]
     assert not any(p.name.startswith(".acme.notes") for p in store.root.iterdir())
+
+
+# ── Only what an org admin switched on for the person's groups ────────
+
+
+async def test_an_extension_on_for_another_group_is_not_installed(world):
+    """igni server lists only what the person gets; the machine checks the same rule."""
+    world.publish(groups=["g-finance"])
+
+    report = await world.distribution.sync()
+
+    assert report.installed == []
+    assert world.store.path_for("acme.notes").exists() is False
+    assert world.igni.downloads() == []
+
+
+async def test_switched_off_for_their_group_it_is_removed(world):
+    world.publish()
+    await world.distribution.sync()
+    assert world.store.distribution_of("acme.notes") is not None
+
+    world.igni.listed["acme.notes"].groups = []
+    report = await world.distribution.sync()
+
+    assert report.removed == ["acme.notes"]
+    assert world.store.distribution_of("acme.notes") is None
+
+
+async def test_the_persons_groups_are_kept(world):
+    """What :class:`SignedInPerson` names on every call, before igni answers next time."""
+    world.igni.groups = ["g-legal", "g-ops"]
+
+    await world.distribution.sync()
+
+    assert world.store.groups() == ["g-legal", "g-ops"]

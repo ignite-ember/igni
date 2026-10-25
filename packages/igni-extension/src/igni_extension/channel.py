@@ -239,10 +239,13 @@ class HostConnection:
                     # waits on a deciding one, against a deadline.
                     hook_id = message.get("id")
                     name = str(message.get("event"))
+                    principal = message.get("principal")
                     if hook_id is None:
-                        self._spawn(self._hooks.tell(name, message.get("value")))
+                        self._spawn(self._hooks.tell(name, message.get("value"), principal))
                     else:
-                        self._spawn(self._answer(str(hook_id), name, message.get("value")))
+                        self._spawn(
+                            self._answer(str(hook_id), name, message.get("value"), principal)
+                        )
         except WebSocketException:
             pass
         finally:
@@ -252,8 +255,8 @@ class HostConnection:
                 if not waiter.done():
                     waiter.set_exception(HostUnavailable("the igni host went away"))
 
-    async def _answer(self, hook_id: str, event: str, value: Any) -> None:
-        params = await self._hooks.answer(hook_id, event, value)
+    async def _answer(self, hook_id: str, event: str, value: Any, principal: Any = None) -> None:
+        params = await self._hooks.answer(hook_id, event, value, principal)
         try:
             await self._send({"op": "answer", "params": params})
         except (HostError, HostUnavailable) as exc:

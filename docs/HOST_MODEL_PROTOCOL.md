@@ -130,9 +130,16 @@ extension declared in `permissions.hooks`. A deciding event carries an
 
 ```json
 {"op": "hook", "id": "h-12", "event": "PreToolUse",
- "value": {"session_id": "…", "tool_name": "run_shell_command", "tool_args": {"command": "ls"}}}
-{"op": "hook", "id": null, "event": "SessionStart", "value": {"session_id": "…", "resumed": false}}
+ "value": {"session_id": "…", "tool_name": "run_shell_command", "tool_args": {"command": "ls"}},
+ "principal": {"kind": "person", "id": "u-1", "org": "o-1", "groups": ["g-1"], "session": null}}
+{"op": "hook", "id": null, "event": "SessionStart", "value": {"session_id": "…", "resumed": false},
+ "principal": {"kind": "person", "id": "u-1", "org": "o-1", "groups": ["g-1"], "session": null}}
 ```
+
+`principal` is whom the event is for — the shape a tool call carries in
+its MCP request's `_meta["igni/principal"]`
+(`docs/EXTENSION_ROUTING_AND_CONCURRENCY.md` §6); `null` when nobody is
+signed in. The SDK hands it to a handler that declares a `Caller`.
 
 The process answers a deciding one with an `answer` request, whose reply
 is an ordinary one:

@@ -569,6 +569,8 @@ A profile is also where the air-gap answer lives: Postgres is a customer-run ins
 
 Entitlement and configuration are group-level in both deployments; capability existence is deployment-level.
 
+**An extension is off until an org admin switches it on for a group.** A super admin approving a service is trust; it gives the extension to nobody. igni server lists, and serves the bundle and assets of, only the extensions switched on for one of the signed-in person's groups (igni server's service-identity spec, §8.3), and the machine installs and offers only those — checking each listed extension's `groups` against the person's own. Every call into an extension then names whom it is for (`_meta["igni/principal"]` on a tool call, `principal` on a hook frame), and the SDK hands it to the tool as a `Caller`. The whole design, and what is still to decide for apps and a backend serving several people, is `docs/EXTENSION_ROUTING_AND_CONCURRENCY.md`.
+
 | Layer | Decides | User override? |
 |---|---|---|
 | **Deployment** | which services a super admin approved (and so which extensions igni distributes), which endpoints exist, contract version | no |

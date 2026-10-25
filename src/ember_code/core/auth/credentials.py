@@ -272,6 +272,22 @@ class CloudCredentials:
             return None
         return self._claims.org_name
 
+    @property
+    def user_id(self) -> str | None:
+        """The signed-in person's id on igni server, from their session."""
+        self._load()
+        if self._claims is None:
+            return None
+        return self._claims.sub
+
+    @property
+    def groups(self) -> list[str]:
+        """The person's groups as their session token was issued with them."""
+        self._load()
+        if self._claims is None:
+            return []
+        return list(self._claims.groups)
+
 
 class EmptyCloudCredentials(CloudCredentials):
     """A :class:`CloudCredentials` that is always logged-out.

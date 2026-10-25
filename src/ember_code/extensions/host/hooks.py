@@ -49,6 +49,7 @@ from ember_code.core.mcp.naming import tool_name_prefix
 from ember_code.extensions.faults import ExtensionFaults
 from ember_code.extensions.host.wire import HookAnswer, HookMessage, Outcome
 from ember_code.extensions.installer import server_name
+from ember_code.extensions.principal import Principal
 from ember_code.extensions.registry import ExtensionRegistry, ExtensionState
 
 logger = logging.getLogger(__name__)
@@ -94,6 +95,7 @@ class ExtensionHooks:
         self._connected: dict[str, asyncio.Event] = {}
         self._waiting: dict[str, tuple[str, asyncio.Future[HookAnswer]]] = {}
         self._ids = itertools.count(1)
+        self._principal: Callable[[], Principal | None] = lambda: None
 
     @classmethod
     def shared(cls) -> ExtensionHooks:
@@ -124,6 +126,14 @@ class ExtensionHooks:
     def set_priority(self, priority: list[str]) -> None:
         """The super admin's priority order of extensions, highest first: hooks run in it."""
         self._priority = list(priority)
+
+    def set_principal(self, principal: Callable[[], Principal | None]) -> None:
+        """Who an event is for: asked as each frame goes out, and sent on it."""
+        self._principal = principal
+
+    def _principal_wire(self) -> dict[str, Any] | None:
+        principal = self._principal()
+        return principal.model_dump(mode="json") if principal is not None else None
 
     def connect(self, extension_id: str, send: Callable[[str], None]) -> None:
         """An extension's process connected: ``send`` puts a frame on its socket."""
@@ -179,7 +189,11 @@ class ExtensionHooks:
 
     def tell(self, event: str, payload: dict[str, Any]) -> None:
         """An event that decides nothing: sent to each extension that hooks it, never awaited."""
-        frame = HookMessage(event=event, value=to_jsonable_python(payload, fallback=str))
+        frame = HookMessage(
+            event=event,
+            value=to_jsonable_python(payload, fallback=str),
+            principal=self._principal_wire(),
+        )
         text = frame.model_dump_json()
         for extension_id in self.hookers(HookEvent(event)):
             send = self._senders.get(extension_id)
@@ -284,7 +298,10 @@ class ExtensionHooks:
         self._waiting[hook_id] = (extension_id, future)
         try:
             frame = HookMessage(
-                id=hook_id, event=event.value, value=to_jsonable_python(value, fallback=str)
+                id=hook_id,
+                event=event.value,
+                value=to_jsonable_python(value, fallback=str),
+                principal=self._principal_wire(),
             )
             send(frame.model_dump_json())
             remaining = max(0.0, deadline - loop.time())

@@ -74,6 +74,10 @@ DISTRIBUTION_SUFFIX = ".distribution.json"
 #: distribution listing carried it.
 PRIORITY_FILE = ".priority.json"
 
+#: The signed-in person's groups, as the last distribution listing
+#: carried them: who this machine's extensions were installed for.
+GROUPS_FILE = ".groups.json"
+
 
 class StoreError(Exception):
     """The bundle will not be stored, and why."""
@@ -100,6 +104,12 @@ class StoredPriority(BaseModel):
     #: The super admin's order of extensions, highest first. It settles
     #: every collision, and is the order edits apply and extensions' hooks run in.
     priority: list[str] = Field(default_factory=list)
+
+
+class StoredGroups(BaseModel):
+    #: The signed-in person's groups in their organisation, read by igni
+    #: server when it listed what they get (its §8.3).
+    groups: list[str] = Field(default_factory=list)
 
 
 class ExtensionStore:
@@ -313,6 +323,27 @@ class ExtensionStore:
         except (OSError, ValidationError) as exc:
             logger.warning("ignoring %s: %s", path, exc)
             return StoredPriority()
+
+    @property
+    def groups_path(self) -> Path:
+        return self._root / GROUPS_FILE
+
+    def record_groups(self, groups: list[str]) -> None:
+        """Keep the person's groups the listing carried, for the next start before igni answers."""
+        self._root.mkdir(parents=True, exist_ok=True)
+        stored = StoredGroups(groups=groups)
+        self.groups_path.write_text(stored.model_dump_json(indent=2) + "\n", encoding="utf-8")
+
+    def groups(self) -> list[str] | None:
+        """The person's groups as last received; ``None`` if no listing ever arrived."""
+        path = self.groups_path
+        if not path.is_file():
+            return None
+        try:
+            return StoredGroups.model_validate_json(path.read_text(encoding="utf-8")).groups
+        except (OSError, ValidationError) as exc:
+            logger.warning("ignoring %s: %s", path, exc)
+            return None
 
     def drop_environments(self, extension_id: str) -> None:
         """Remove every private environment built for this extension."""
