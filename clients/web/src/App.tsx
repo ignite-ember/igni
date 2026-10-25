@@ -1394,6 +1394,13 @@ export default function App() {
             target: { kind: "schedule", label: "Scheduled tasks" },
             data: { channel: m.channel, task_id: m.payload.task_id },
           });
+        } else if (m.channel === "open_external") {
+          // An extension asked this window to open a link
+          // (``host.app.open_external``); the backend checked it, and
+          // ``openExternal`` checks it again.
+          if (m.payload.window === windowModel.clientId) {
+            void host.openExternal(String(m.payload.url ?? ""));
+          }
         } else if (m.channel === "window_model_changed") {
           // A change to a window's model — this window's own echo,
           // another window's, or an extension's through ``host.ui``.

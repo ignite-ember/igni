@@ -1,11 +1,11 @@
-// GENERATED from the igni host schema 1.1.0 by ember_code.extensions.host.codegen — do not edit. Run `make host-sdks` after changing the schema.
+// GENERATED from the igni host schema 1.2.0 by ember_code.extensions.host.codegen — do not edit. Run `make host-sdks` after changing the schema.
 //
 // `bridge.host` as an extension's page sees it. Read
 // `docs/HOST_OBJECT_MODEL.md` in igni for what each object is.
 
 import { HostObject, Property, Signal, type HostLink, type JsonValue } from "./hostModel";
 
-export const SCHEMA_VERSION = "1.1.0";
+export const SCHEMA_VERSION = "1.2.0";
 
 /** One change anywhere in the model, as `host.changed` reports it. */
 export interface Change {
@@ -771,6 +771,11 @@ export class HostApp extends HostObject {
   /** Ask whether a newer igni exists. */
   check_for_update(): Promise<UpdateInfo | null> {
     return this.call<UpdateInfo | null>("check_for_update", {});
+  }
+
+  /** Open an https link in the person's browser, the way igni opens every link outside it. The window asked about opens it: a page's own, else the active one. Anything but an absolute `https://` URL with a host and no credentials in it is refused (`invalid`). */
+  open_external(url: string): Promise<void> {
+    return this.call<void>("open_external", { url });
   }
 }
 

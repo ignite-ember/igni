@@ -354,6 +354,11 @@ class PushChannel(StrEnum):
     #: it; the one it is about applies it. The payload is
     #: :class:`~ember_code.extensions.host.windows.WindowChange`.
     WINDOW_MODEL_CHANGED = "window_model_changed"
+    #: An extension asked a window to open a link in the person's
+    #: browser (``host.app.open_external``). Every window gets it; the
+    #: one it names opens it. The payload is
+    #: :class:`~ember_code.extensions.host.model.ExternalOpen`.
+    OPEN_EXTERNAL = "open_external"
     UNKNOWN = "unknown"
 
     @classmethod

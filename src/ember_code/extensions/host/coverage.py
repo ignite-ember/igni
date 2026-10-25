@@ -54,7 +54,7 @@ NOT_REACHABLE: tuple[Unreachable, ...] = (
     Unreachable(
         key="channel",
         what="The model's own plumbing: the `host_model` and `window_model` RPCs, and the "
-        "`host_signal` and `window_model_changed` pushes",
+        "`host_signal`, `window_model_changed` and `open_external` pushes",
         why="They are how the model reaches a page and a window, not things igni does.",
     ),
     Unreachable(
@@ -287,6 +287,7 @@ PUSH: dict[PushChannel, str] = {
 
 PUSH_UNREACHABLE: dict[PushChannel, str] = {
     PushChannel.HOST_SIGNAL: "channel",
+    PushChannel.OPEN_EXTERNAL: "channel",
     PushChannel.WINDOW_MODEL_CHANGED: "channel",
 }
 

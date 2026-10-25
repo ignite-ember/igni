@@ -22,7 +22,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from pydantic import ValidationError
+from pydantic import BaseModel, ValidationError
 
 from ember_code.backend.workspace_watch import GitWorkspace, Head
 from ember_code.extensions.events import HostTopic
@@ -74,6 +74,15 @@ class HostState:
     view_owner: dict[str, str] = field(default_factory=dict)
     #: The last status seen, by session.
     status: dict[str, dict[str, Any]] = field(default_factory=dict)
+
+
+class ExternalOpen(BaseModel):
+    """The ``open_external`` push: which window opens which link, for whom."""
+
+    window: str
+    url: str
+    #: The extension that asked.
+    source: str
 
 
 class HostModel:
@@ -595,6 +604,17 @@ class HostModel:
         self.backend.broadcast(
             msg.PushNotification(
                 channel="window_model_changed", payload=change.model_dump(mode="json")
+            )
+        )
+
+    def open_external(self, window: str, url: str, *, source: str) -> None:
+        """Ask ``window`` to open ``url`` the way it opens every link
+        outside igni. Checked already (``ExternalLink``); the window
+        checks again before it opens anything."""
+        self.backend.broadcast(
+            msg.PushNotification(
+                channel="open_external",
+                payload=ExternalOpen(window=window, url=url, source=source).model_dump(),
             )
         )
 

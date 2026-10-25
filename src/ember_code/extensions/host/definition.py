@@ -34,12 +34,16 @@ from ember_code.extensions.host.spec import (
 )
 
 #: The model's version. Semver; see the module docstring.
-SCHEMA_VERSION = "1.1.0"
+SCHEMA_VERSION = "1.2.0"
 
 # ── Permissions ───────────────────────────────────────────────────
 
 PERMISSIONS = (
     PermissionSpec(name="app", doc="igni's display settings, version and connection."),
+    PermissionSpec(
+        name="links",
+        doc="Open https links in the person's browser, from the window it is asked about.",
+    ),
     PermissionSpec(
         name="ui",
         doc="The windows and what is on screen in them: page, sidebar, composer, and so on.",
@@ -790,6 +794,15 @@ OBJECTS = (
             ),
             method(
                 "check_for_update", "Ask whether a newer igni exists.", result="UpdateInfo | None"
+            ),
+            method(
+                "open_external",
+                "Open an https link in the person's browser, the way igni opens every link "
+                "outside it. The window asked about opens it: a page's own, else the active "
+                "one. Anything but an absolute `https://` URL with a host and no credentials "
+                "in it is refused (`invalid`).",
+                param("url", "str", "The link: `https://` only."),
+                permission="links",
             ),
         ),
     ),

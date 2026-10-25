@@ -396,6 +396,58 @@ class TestWindowsAndUi:
         refused(await rig.ask(ext, "get", "sessions.current", window="w-1"), "invalid")
 
 
+class TestOpenExternal:
+    """``host.app.open_external``: a link out of igni, opened by a window."""
+
+    async def test_the_window_asked_about_is_told_to_open_it(self, rig: HostRig) -> None:
+        ext = rig.install(host=["links"])
+        await rig.window("w-1", connection="ws-a")
+        await rig.window("w-2", connection="ws-b")
+        url = "https://code.example.com/repos/42?tab=commits#top"
+        assert (
+            ok(await rig.ask(ext, "call", "app.open_external", url=url, home_window="w-1")) is None
+        )
+        await rig.settle()
+        [push] = [p.payload for p in rig.windows.pushes("open_external")]
+        assert push == {"window": "w-1", "url": url, "source": ext}
+
+    @pytest.mark.parametrize(
+        "url",
+        [
+            "http://code.example.com/",
+            "javascript:alert(1)",
+            "file:///etc/passwd",
+            "vscode://acme.reviewer/open",
+            "https://user:secret@code.example.com/",
+            "https:///no-host",
+            "https://code.example.com/a b",
+            "/relative/path",
+            "https://code.example.com/" + "a" * 2048,
+        ],
+    )
+    async def test_only_an_https_link_opens(self, rig: HostRig, url: str) -> None:
+        ext = rig.install(host=["links"])
+        await rig.window("w-1")
+        refused(await rig.ask(ext, "call", "app.open_external", url=url), "invalid")
+        await rig.settle()
+        assert rig.windows.pushes("open_external") == []
+
+    async def test_it_needs_the_links_grant(self, rig: HostRig) -> None:
+        ext = rig.install(host=["app"])
+        await rig.window("w-1")
+        refused(
+            await rig.ask(ext, "call", "app.open_external", url="https://example.com/"),
+            "not_granted",
+        )
+
+    async def test_with_no_window_there_is_nowhere_to_open_it(self, rig: HostRig) -> None:
+        ext = rig.install(host=["links"])
+        refused(
+            await rig.ask(ext, "call", "app.open_external", url="https://example.com/"),
+            "not_found",
+        )
+
+
 class TestSignals:
     async def test_signals_carry_the_model_shape_not_igni_wire(self, rig: HostRig) -> None:
         ext = rig.install(host=["chat.read"], workspace="read", workspacePaths=["src/**"])

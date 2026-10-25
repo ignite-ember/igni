@@ -140,7 +140,7 @@ window, another extension, or this one.
   the model's — fails the build, so the model cannot fall behind the
   app.
 - **One schema, two SDKs.** The model is described once —
-  `ember_code.extensions.host.definition`, version **1.1.0** — and
+  `ember_code.extensions.host.definition`, version **1.2.0** — and
   versioned under the compatibility floor (EXTENSIBILITY §8): a new
   member is a minor version, a changed or removed one a major. The Python
   SDK (`igni-extension`, `igni_extension.host_model`) and the TypeScript
@@ -187,7 +187,7 @@ Errors carry a code both SDKs raise (`HostError.code`): `not_granted`,
 | Object | Properties | Signals | Methods | Permission |
 |---|---|---|---|---|
 | `host` (the root) | — | `changed` (path, value) | — | each delivery needs the changed member's |
-| `host.app` | `display` (theme, verbosity, output style), `version`, `update_available`, `connection` | `display_changed`, `connection_changed`, `update_changed` | `set_verbose(on)`, `set_output_style(name)`, `check_for_update()` | `app` |
+| `host.app` | `display` (theme, verbosity, output style), `version`, `update_available`, `connection` | `display_changed`, `connection_changed`, `update_changed` | `set_verbose(on)`, `set_output_style(name)`, `check_for_update()`, `open_external(url)` | `app`; `open_external`: `links` |
 | `host.app.state` | `values` — key–value state (its own keys) | `changed` | `get(key)`, `set(key, value)`, `delete(key)` | always (own keys) |
 | `host.windows` | `list` — every open window: id, kind (`tauri`, `vscode`, `jetbrains`, `web`), session, `focused`; `focused` — the window with focus | `opened`, `closed`, `focus_changed` | `ui(id)` — that window's `host.ui` | `ui` |
 | `host.ui` — the active window, or `host.windows.ui(id)` | `route` (the page stack: kind, label and params of each), `panel`, `sidebar` (open, width, section), `preview`, `selection` (message, text, file), `composer` (draft, attachments, mode) — all writable; `toasts`, `dialog`, `scroll` | `navigated`, `panel_changed`, `sidebar_changed`, `preview_changed`, `selection_changed`, `composer_changed`, `toast_shown`, `toast_dismissed`, `dialog_opened`, `dialog_closed` (with the answer), `scrolled` | `navigate(page, params)`, `back()`, `open_panel(kind, params)`, `close_panel()`, `set_sidebar(open, width, section)`, `open_preview(path)`, `close_preview()`, `select(selection)`, `set_composer(text, attachments, mode)`, `toast(text, kind, body, target)`, `dismiss_toast(toast_id)` (its own), `show_dialog(spec)` → the person's answer, `scroll_to(message_id)` | `ui`; `open_preview` also needs the path within `permissions.workspace` |
@@ -223,6 +223,27 @@ distribution record's `service_url`, which is the service's `client_uri`,
 RFC 7591's "home page of the client" — or, for a development install,
 its `serviceUrl` setting. igni shows it as **Open on the web** on the
 extension's row and above its page.
+
+## Links out of igni
+
+`host.app.open_external(url)` opens a link in the person's browser, the
+way igni opens every link outside it — the desktop app hands it to the
+operating system, a browser tab opens a new one. It is how a page opens
+a link at all: its frame is sandboxed without `allow-popups`, so an
+`<a target="_blank">` in it goes nowhere.
+
+```ts
+await bridge.host.app.open_external("https://code.example.com/repos/42");
+```
+
+The window asked about opens it: a page's own window, else the active
+one. The host refuses (`invalid`) anything but an absolute `https://`
+URL with a host and no `user:password@` — no `http`, `file:`,
+`javascript:` or custom scheme — and the window checks again before it
+opens anything. It needs the `links` permission, shown with the others
+before a super admin approves. Opening a link is not a change to the
+model, so it has no signal; it reaches the window as the `open_external`
+push, which is the model's plumbing like `window_model_changed`.
 
 ## An extension's own service is not the host
 
@@ -267,7 +288,7 @@ rules are EXTENSIBILITY §6, *A page and its own service*.
 | The person's igni session and any credential (`login`, `reload_cloud_credentials`, `clear_cloud_credentials`, `set_server`, `discover_server` values, `cancel_login`) | An extension never holds the session (service-identity §9). It can start or end the person's sign-in through `host.account`, but never read what it produces. |
 | Posting *as the person* (`UserMessage` from an extension) | Decided: an extension's messages are labelled as the extension's (`host.chat.post`). |
 | `shutdown` | Quitting igni is the person's decision. |
-| The model's own plumbing: the `host_model` and `window_model` RPCs, and the `host_signal` and `window_model_changed` pushes | They are how the model reaches a page and a window, not things igni does. |
+| The model's own plumbing: the `host_model` and `window_model` RPCs, and the `host_signal`, `window_model_changed` and `open_external` pushes | They are how the model reaches a page and a window, not things igni does. |
 | A page's token for its own service (`extension_service_token`) | Not igni's to model: it is how a page reaches its own service (`bridge.service`), the page's half of what `ext.service` is for the process. No `permissions.host` grant — having a service is the grant — and the audience is that extension's own service, never one it names. |
 
 Anything else missing from this table is a bug in it.

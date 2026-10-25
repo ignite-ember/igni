@@ -139,6 +139,16 @@ signals reach the windows as the `host_signal` push
 (`{extension_id, signal, value}`), and each window posts them into that
 extension's frames, where the bridge calls the handlers it has.
 
+### Opening a link
+
+`host.app.open_external` is an ordinary host-model call. The backend
+checks the URL, then pushes `open_external` (`{window, url, source}`) to
+every window; the window it names checks the URL again (`https:` with a
+host, no credentials) and opens it as it opens any link outside igni:
+the desktop app's opener bridge (`__EMBER_HOST__.openUrl`), else
+`window.open(url, "_blank", "noopener,noreferrer")`. The page never
+opens anything itself — its sandbox has no `allow-popups`.
+
 ### The service token
 
 `bridge.service` asks the window for a token for the extension's own

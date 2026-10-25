@@ -1,4 +1,4 @@
-"""GENERATED from the igni host schema 1.1.0 by ember_code.extensions.host.codegen — do not edit. Run `make host-sdks` after changing the schema.
+"""GENERATED from the igni host schema 1.2.0 by ember_code.extensions.host.codegen — do not edit. Run `make host-sdks` after changing the schema.
 
 `ext.host` as an extension's process sees it. Read
 `docs/HOST_OBJECT_MODEL.md` in igni for what each object is.
@@ -22,7 +22,7 @@ from igni_extension.members import (
 )
 from igni_extension.notifications import LocalNotification, Target
 
-SCHEMA_VERSION = "1.1.0"
+SCHEMA_VERSION = "1.2.0"
 
 NotificationTarget = Target
 
@@ -971,6 +971,10 @@ class HostApp(HostObject):
     async def check_for_update(self) -> UpdateInfo | None:
         """Ask whether a newer igni exists."""
         return cast(UpdateInfo | None, await self._call("check_for_update", {}, UpdateInfo | None))
+
+    async def open_external(self, url: str) -> None:
+        """Open an https link in the person's browser, the way igni opens every link outside it. The window asked about opens it: a page's own, else the active one. Anything but an absolute `https://` URL with a host and no credentials in it is refused (`invalid`)."""
+        await self._call("open_external", {"url": url}, NO_RESULT)
 
 class HostWindows(HostObject):
     """Every open igni window. Address one window's UI with `host.windows.ui(id)`."""

@@ -19,8 +19,9 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, TypeVar
+from urllib.parse import urlsplit
 
-from pydantic import BaseModel, ConfigDict, Field, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 
 from ember_code import __version__
 from ember_code.extensions.host.errors import HostModelError
@@ -171,6 +172,43 @@ class AppMembers(Members):
         self.model.state.update = update
         self.model.emit("app.update_changed", update)
         return update
+
+    @call("app.open_external")
+    async def open_external(self, c: Call) -> Any:
+        if c.window is None:
+            raise HostModelError(ErrorCode.NOT_FOUND, "no igni window is open")
+        try:
+            link = ExternalLink(url=c.params["url"])
+        except ValidationError as exc:
+            raise HostModelError(ErrorCode.INVALID, exc.errors()[0]["msg"]) from None
+        self.model.open_external(c.window, link.url, source=c.extension_id)
+
+
+class ExternalLink(BaseModel):
+    """A link an extension asks igni to open in the person's browser.
+
+    Absolute ``https`` only, with a host and no credentials: nothing
+    that runs on this machine (``file:``, a custom scheme), nothing
+    readable in transit, and nothing that hides who it signs in as.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    url: str = Field(max_length=2048)
+
+    @field_validator("url")
+    @classmethod
+    def _https(cls, url: str) -> str:
+        if any(ch.isspace() or ord(ch) < 0x20 for ch in url):
+            raise ValueError("a link has no whitespace or control characters")
+        parts = urlsplit(url)
+        if parts.scheme != "https":
+            raise ValueError(f"only https links open outside igni, not {parts.scheme or url!r}")
+        if not parts.hostname:
+            raise ValueError("a link names its host")
+        if parts.username is not None or parts.password is not None:
+            raise ValueError("a link carries no credentials")
+        return url
 
 
 class AppStateMembers(Members):
