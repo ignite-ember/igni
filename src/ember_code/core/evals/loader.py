@@ -18,7 +18,6 @@ from pydantic import ValidationError
 from ember_code.core.config.schemas.llm_behavior import EvalsConfig
 from ember_code.core.evals.assertions import FileAssertion
 from ember_code.core.evals.schemas import (
-    CypherAssertion,
     EvalCase,
     EvalSuite,
     FixtureSpec,
@@ -106,9 +105,6 @@ class _EvalYamlParser:
             tool_arg_assertions=self._parse_tool_arg_assertions(
                 data.get("tool_arg_assertions"),
             ),
-            cypher_assertions=self._parse_cypher_assertions(
-                data.get("cypher_assertions"),
-            ),
         )
 
     @staticmethod
@@ -150,28 +146,6 @@ class _EvalYamlParser:
                 out.append(entry)
             elif isinstance(entry, dict):
                 out.append(ToolArgAssertion.model_validate(entry))
-        return out
-
-    @staticmethod
-    def _parse_cypher_assertions(
-        raw: list[Any] | None,
-    ) -> list[CypherAssertion] | None:
-        """Parse the ``cypher_assertions:`` block from a case.
-
-        Validates each entry as a :class:`CypherAssertion` at load
-        time so a typo'd ``kind:`` field fails the whole YAML
-        (matching the ``tool_arg_assertions`` and ``file_assertions``
-        loading pattern) rather than surfacing a runtime
-        "unknown assertion kind" later.
-        """
-        if not raw:
-            return None
-        out: list[CypherAssertion] = []
-        for entry in raw:
-            if isinstance(entry, CypherAssertion):
-                out.append(entry)
-            elif isinstance(entry, dict):
-                out.append(CypherAssertion.model_validate(entry))
         return out
 
 

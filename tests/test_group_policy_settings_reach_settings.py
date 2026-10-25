@@ -17,8 +17,8 @@ there was nothing for a fetcher to read. Now the cache persists them
 (``group_settings.json``), ``CachedSettingsFetcher`` reads them, and both
 entry points that build a real ``Settings`` — ``BackendApp.run`` and
 ``load_settings_from_options`` — construct one. The end-to-end claim being
-tested is the one an admin makes: publish ``{"code_index": {"enabled": false}}``
-and the session comes up with the code index off.
+tested is the one an admin makes: publish ``{"learning": {"enabled": false}}``
+and the session comes up with learning off.
 
 The degradation cases matter as much as the happy one. This runs on the path
 every session and every CLI invocation takes, so no cache, no group, a
@@ -60,13 +60,13 @@ def _pack(payload: dict, *, enabled: bool = True) -> GroupPolicyPack:
 
 
 class TestTheFacadeCarriesTheFetcher:
-    def test_an_admin_can_turn_the_code_index_off(self, tmp_path: Path):
-        """The example the ``code_index.enabled`` docstring gives."""
-        pack = _pack({"code_index": {"enabled": False}})
+    def test_an_admin_can_turn_learning_off(self, tmp_path: Path):
+        """An admin turning learning off for a group."""
+        pack = _pack({"learning": {"enabled": False}})
 
         settings = load_settings(project_dir=tmp_path, group_policy_fetcher=lambda: pack)
 
-        assert settings.code_index.enabled is False
+        assert settings.learning.enabled is False
 
     def test_a_group_tightening_beats_a_cli_flag(self, tmp_path: Path):
         """The tier sits above CLI on purpose — that is the whole point of an
@@ -97,14 +97,14 @@ class TestTheFacadeCarriesTheFetcher:
     def test_no_group_changes_nothing(self, tmp_path: Path):
         assert load_settings(
             project_dir=tmp_path, group_policy_fetcher=lambda: None
-        ).code_index.enabled
+        ).learning.enabled
 
     def test_a_disabled_entry_is_ignored(self, tmp_path: Path):
-        pack = _pack({"code_index": {"enabled": False}}, enabled=False)
+        pack = _pack({"learning": {"enabled": False}}, enabled=False)
 
         assert load_settings(
             project_dir=tmp_path, group_policy_fetcher=lambda: pack
-        ).code_index.enabled
+        ).learning.enabled
 
 
 # ── The production path ────────────────────────────────────────────────
@@ -149,32 +149,32 @@ def _publish(payload: dict, *, group_name: str = "Platform") -> GroupPolicyCache
 class TestTheCachedFetcher:
     """``CachedSettingsFetcher`` — the disk-backed half of the wiring."""
 
-    def test_an_admin_turning_off_the_code_index_is_obeyed(self, tmp_path: Path):
+    def test_an_admin_turning_off_learning_is_obeyed(self, tmp_path: Path):
         """SWP-23, end to end: the published policy reaches ``Settings``."""
-        _publish({"code_index": {"enabled": False}})
+        _publish({"learning": {"enabled": False}})
 
         settings = load_settings(
             project_dir=tmp_path,
             group_policy_fetcher=CachedSettingsFetcher(_data_dir()),
         )
 
-        assert settings.code_index.enabled is False
+        assert settings.learning.enabled is False
 
     def test_a_policy_survives_the_process_that_fetched_it(self, tmp_path: Path):
         """The point of persisting settings: the fetch and the read are in
         different processes, so the pack has to come back off disk."""
-        _publish({"code_index": {"enabled": False}})
+        _publish({"learning": {"enabled": False}})
 
         # A fetcher built from nothing but the data directory — no pack
         # object handed over, no network, no token.
         assert CachedSettingsFetcher(_data_dir())().to_settings_dict() == {
-            "code_index": {"enabled": False}
+            "learning": {"enabled": False}
         }
 
     def test_it_says_in_the_log_that_a_policy_applied(self, tmp_path: Path, caplog):
         """A policy that applies silently is as hard to trust as one that
         does not apply at all — ops has to be able to tell which happened."""
-        _publish({"code_index": {"enabled": False}}, group_name="Legal")
+        _publish({"learning": {"enabled": False}}, group_name="Legal")
 
         with caplog.at_level(logging.INFO, logger="ember_code.core.config.group_policy"):
             CachedSettingsFetcher(_data_dir())()
@@ -187,7 +187,7 @@ class TestTheCachedFetcher:
     def test_the_cache_is_read_once_per_fetcher(self):
         """Memoized, so a second tier apply (or a second load) costs nothing
         and cannot disagree with the first."""
-        _publish({"code_index": {"enabled": False}})
+        _publish({"learning": {"enabled": False}})
         fetcher = CachedSettingsFetcher(_data_dir())
         first = fetcher()
 
@@ -198,7 +198,7 @@ class TestTheCachedFetcher:
     def test_withdrawing_a_policy_restores_the_default(self, tmp_path: Path):
         """An admin who deletes the settings entry gets the default back —
         the last policy does not stay in force forever."""
-        cache = _publish({"code_index": {"enabled": False}})
+        cache = _publish({"learning": {"enabled": False}})
         cache.materialize(
             GroupPolicyPack(
                 group_id="g1",
@@ -213,7 +213,7 @@ class TestTheCachedFetcher:
             group_policy_fetcher=CachedSettingsFetcher(_data_dir()),
         )
 
-        assert settings.code_index.enabled is True
+        assert settings.learning.enabled is True
 
 
 class TestItDegradesInsteadOfFailing:
@@ -224,7 +224,7 @@ class TestItDegradesInsteadOfFailing:
         fetcher = CachedSettingsFetcher(_data_dir())
 
         assert fetcher() is None
-        assert load_settings(project_dir=tmp_path, group_policy_fetcher=fetcher).code_index.enabled
+        assert load_settings(project_dir=tmp_path, group_policy_fetcher=fetcher).learning.enabled
 
     def test_a_data_directory_that_does_not_exist(self, tmp_path: Path):
         fetcher = CachedSettingsFetcher(tmp_path / "nowhere")
@@ -235,9 +235,9 @@ class TestItDegradesInsteadOfFailing:
     def test_a_truncated_cache_file_is_reported_not_raised(self, tmp_path: Path, caplog):
         """A crash mid-write leaves half a JSON object. Settings still load,
         and the log distinguishes this from 'your group publishes nothing'."""
-        _publish({"code_index": {"enabled": False}})
+        _publish({"learning": {"enabled": False}})
         path = _data_dir() / "group-policy" / GroupPolicyCache.SETTINGS_FILE
-        path.write_text('{"code_index": {"enab', encoding="utf-8")
+        path.write_text('{"learning": {"enab', encoding="utf-8")
 
         with caplog.at_level(logging.WARNING, logger="ember_code.core.config.group_policy"):
             settings = load_settings(
@@ -245,11 +245,11 @@ class TestItDegradesInsteadOfFailing:
                 group_policy_fetcher=CachedSettingsFetcher(_data_dir()),
             )
 
-        assert settings.code_index.enabled is True
+        assert settings.learning.enabled is True
         assert any("malformed" in r.getMessage() for r in caplog.records)
 
     def test_a_cache_holding_a_list_is_not_a_policy(self, tmp_path: Path):
-        _publish({"code_index": {"enabled": False}})
+        _publish({"learning": {"enabled": False}})
         path = _data_dir() / "group-policy" / GroupPolicyCache.SETTINGS_FILE
         path.write_text("[1, 2, 3]", encoding="utf-8")
 
@@ -258,7 +258,7 @@ class TestItDegradesInsteadOfFailing:
     def test_a_policy_outlives_its_metadata(self, tmp_path: Path):
         """``pack_meta.json`` is identity for the log line and the FE, never
         input to the merge — losing it must not cost the group its policy."""
-        _publish({"code_index": {"enabled": False}})
+        _publish({"learning": {"enabled": False}})
         (_data_dir() / "group-policy" / "pack_meta.json").unlink()
 
         settings = load_settings(
@@ -266,10 +266,10 @@ class TestItDegradesInsteadOfFailing:
             group_policy_fetcher=CachedSettingsFetcher(_data_dir()),
         )
 
-        assert settings.code_index.enabled is False
+        assert settings.learning.enabled is False
 
     def test_unparseable_metadata_does_not_cost_the_policy(self, tmp_path: Path):
-        _publish({"code_index": {"enabled": False}})
+        _publish({"learning": {"enabled": False}})
         (_data_dir() / "group-policy" / "pack_meta.json").write_text(
             json.dumps({"group_id": "g1", "group_name": "P", "fetched_at": "not a date"}),
             encoding="utf-8",
@@ -280,13 +280,13 @@ class TestItDegradesInsteadOfFailing:
             group_policy_fetcher=CachedSettingsFetcher(_data_dir()),
         )
 
-        assert settings.code_index.enabled is False
+        assert settings.learning.enabled is False
 
     def test_a_data_dir_that_is_not_a_path_falls_back_to_the_default(self, tmp_path: Path):
         """Callers read ``storage.data_dir`` off a ``Settings``; a stub one
         hands back an object. Better the default directory than a coerced
         path nobody writes to."""
-        _publish({"code_index": {"enabled": False}})
+        _publish({"learning": {"enabled": False}})
 
         assert CachedSettingsFetcher(object())() is not None
 
@@ -300,7 +300,7 @@ class TestTheEntryPointsBuildOne:
         ``BackendServer`` and to every runtime in the pool."""
         from ember_code.backend.app import BackendApp
 
-        _publish({"code_index": {"enabled": False}})
+        _publish({"learning": {"enabled": False}})
         app = BackendApp(
             socket_path=None,
             ws_port=None,
@@ -309,7 +309,7 @@ class TestTheEntryPointsBuildOne:
             additional_dirs=None,
         )
 
-        assert app._load_settings_with_group_policy().code_index.enabled is False
+        assert app._load_settings_with_group_policy().learning.enabled is False
 
     def test_the_backend_still_boots_without_a_policy(self, tmp_path: Path):
         from ember_code.backend.app import BackendApp
@@ -322,7 +322,7 @@ class TestTheEntryPointsBuildOne:
             additional_dirs=None,
         )
 
-        assert app._load_settings_with_group_policy().code_index.enabled is True
+        assert app._load_settings_with_group_policy().learning.enabled is True
 
     def test_the_cli_applies_group_policy_too(self):
         """``igni -m`` runs a real session in this process, so a policy that
@@ -330,9 +330,9 @@ class TestTheEntryPointsBuildOne:
         from ember_code.cli.invocation import load_settings_from_options
         from ember_code.cli.options import CliOptions
 
-        _publish({"code_index": {"enabled": False}})
+        _publish({"learning": {"enabled": False}})
 
-        assert load_settings_from_options(CliOptions()).code_index.enabled is False
+        assert load_settings_from_options(CliOptions()).learning.enabled is False
 
     def test_a_group_still_cannot_loosen_what_the_cli_denied(self):
         """The ratchet holds through the production path, not just the

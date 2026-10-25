@@ -46,6 +46,16 @@ async def test_what_is_said_before_the_host_connects_arrives_when_it_does() -> N
         assert await host.conditions_said(1) == [{"ready": True}]
 
 
+async def test_refresh_asks_igni_to_fetch_the_text_again() -> None:
+    ext = IgniExtension("acme.example", environ={})
+
+    async with HostHarness(ext) as host:
+        await ext.prompt.refresh()
+        await host.conditions_said(1)
+
+    assert host.raw[-1]["params"] == {"conditions": {}, "refresh": True}
+
+
 @pytest.mark.parametrize("name", ["Ready", "index covers head", "", "1st"])
 def test_a_name_no_manifest_could_use_is_refused_where_it_is_written(name: str) -> None:
     with pytest.raises(ValidationError):

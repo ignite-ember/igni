@@ -58,12 +58,10 @@ End-to-end tests that verify the full request path. These are **not** run in CI 
 
 **What belongs here:**
 - Session → message → Agno team → response (with real LLM)
-- CodeIndex search against real server
 - MCP server stdio round-trip
 - Device-flow auth (mocked browser, real token exchange)
 
 **Patterns:**
-- `@pytest.mark.integration` — the one marker `tests/conftest.py` registers. Its `pytest_collection_modifyitems` hook skips every test carrying it unless `NEO4J_TEST_URI` is set, so a checkout without a live Neo4j gets clean skips rather than fixture errors.
 - An env-var guard checked inside the test (`IGNI_TEST_LLM_API_KEY` below) for anything that needs credentials.
 - Real Agno agents with small models or mocked responses
 
@@ -176,10 +174,6 @@ uv run pytest tests/test_auth.py -v
 # Stop on first failure
 uv run pytest tests/ -v -x
 
-# Skip the tests that want a live Neo4j (they already self-skip
-# when NEO4J_TEST_URI is unset; this deselects them outright)
-uv run pytest tests/ -v -m "not integration"
-
 # Parallel execution
 uv run pytest tests/ -v -n auto  # requires pytest-xdist
 ```
@@ -188,5 +182,5 @@ uv run pytest tests/ -v -n auto  # requires pytest-xdist
 
 Tests run on every PR and push to main via `.github/workflows/ci.yml`:
 - Python 3.12, one job, no matrix — the version comes from `.python-version`, and `pyproject.toml` pins `requires-python` to exactly that one release. This page used to claim a four-version matrix spanning two releases below the floor and one above the ceiling; `ci.yml` carries a comment explaining why the matrix was deliberately removed (a per-version check name silently broke the branch ruleset, twice in one day).
-- `uv run pytest tests/ -q -rs` — `-rs` so the skip reasons are in the log, which is how you tell "Neo4j absent" from "nothing ran"
+- `uv run pytest tests/ -q -rs` — `-rs` so the skip reasons are in the log, which is how you tell "no model key" from "nothing ran". igni has no Neo4j tests: the graph is the CodeIndex extension's, and its suite runs against a Neo4j service container
 - Must pass before merge

@@ -155,49 +155,13 @@ class BackendApp:
         self._host_model: HostModel | None = None
         self._host_channel: HostChannel | None = None
 
-    def _start_wake_detector(self) -> None:
-        """Notice sleep, and drop the cloud state it invalidated.
-
-        Local work survives sleep on its own — see
-        :mod:`ember_code.backend.wake_detector` — but anything with a
-        remote peer does not: the far end closes the socket while we
-        are frozen. Until now nothing knew that had happened, so the
-        codeindex pill served its pre-sleep answer until some later
-        poll happened to fail.
-
-        The only thing to do is forget. Clearing the resolver's cache
-        makes the next poll ask again, which is cheap, and leaves the
-        deciding to the code that already knows how — rather than
-        having a wake handler duplicate it.
-        """
-        from ember_code.backend.wake_detector import WakeDetector
-
-        detector = WakeDetector()
-
-        async def _forget_cloud_state(slept: float) -> None:
-            session = getattr(self._backend, "_session", None)
-            sync = getattr(session, "code_index_sync", None)
-            resolver = getattr(sync, "resolver", None)
-            if resolver is None:
-                return
-            resolver.invalidate()
-            logger.info(
-                "wake: cleared the codeindex resolution after %.0fs asleep; "
-                "the next status poll will resolve again",
-                slept,
-            )
-
-        detector.subscribe(_forget_cloud_state)
-        detector.start()
-        self._wake_detector = detector
-
     def _load_settings_with_group_policy(self) -> Settings:
         """Build this process's ``Settings`` with the org's policy applied.
 
         This is the backend's half of SWP-23. ``GroupPolicyTier`` has always
         known how to merge a group's ``settings`` entries between the CLI and
         the sysadmin file, and nothing ever handed it a pack — so an admin
-        publishing ``{"code_index": {"enabled": false}}`` was ignored, silently,
+        publishing ``{"permissions": {"web_fetch": "deny"}}`` was ignored, silently,
         everywhere. Here is where that is turned on: the backend is the process
         that owns the session, holds the cloud token, and starts exactly once,
         which is all three things the tier needs.
@@ -364,29 +328,6 @@ class BackendApp:
         # runtime that narration is addressed to the wrong window, so
         # the bridge needs to know how many sessions are live.
         self._push_bridge.set_live_session_count(lambda: len(pool.runtimes))
-        # Idempotent chroma → neo4j cutover for the active project:
-        # wipes the per-commit ``<sha>.chroma/`` dirs, the
-        # ``knowledge.chroma`` dir, the legacy ``manifest.json``,
-        # and writes a sentinel at ``<data>/neo4j/state/<id>/.migrated``.
-        # The SQLite side (drop ``code_index_*`` tables) is handled
-        # by alembic migration ``d4e5f6a7b8c9`` in the regular
-        # ``Database.__init__`` path. Safe to run on every boot —
-        # the sentinel makes the second call a no-op.
-        from ember_code.core.code_index.cutover import maybe_cutover
-
-        try:
-            await maybe_cutover(
-                project=self._project_dir,
-                data_dir=settings.storage.data_dir,
-            )
-        except Exception:
-            logger.exception("neo4j cutover failed; will retry on next boot")
-        # Build the :class:`Neo4jRuntime` for CodeIndex. Deliberately
-        # not awaited: on a cold machine the attach downloads Neo4j and
-        # a JDK — ~500 MB — and waits for the bolt port, and awaiting it
-        # here would put that download between the user and a usable
-        # backend.
-        self._orchestrator.attach_neo4j_in_background()
         # Workflow runner (CC ``/workflows`` parity): the BE runs
         # ``.claude/workflows/*.mjs`` scripts in a Node subprocess
         # and streams live progress on the ``workflow_event`` push
@@ -400,7 +341,6 @@ class BackendApp:
             push=self._push_bridge,
         )
         self._supervisor.start_evictor()
-        self._start_wake_detector()
         self._supervisor.mark_running()
 
         try:
@@ -472,7 +412,14 @@ class BackendApp:
             # same reason: the connection names the sender.
             router.handle(
                 ExtensionConditionReceiver.METHOD,
-                ExtensionConditionReceiver(registry=self._extensions.registry),
+                ExtensionConditionReceiver(
+                    registry=self._extensions.registry,
+                    refetch=(
+                        self._extension_contributions.refetch
+                        if self._extension_contributions is not None
+                        else None
+                    ),
+                ),
             )
         if self._login is not None:
             self._login.on_signed_in(center.schedule_signed_in)

@@ -218,7 +218,7 @@ class GroupPolicyTier(Tier):
     :meth:`SettingsMergePlan.default` only appends the tier when it is handed
     a ``group_policy_fetcher``, and for a long time no production caller
     passed one — the tier was written, correct, and unreached, so an admin
-    publishing ``{"code_index": {"enabled": false}}`` believed it was enforced
+    publishing ``{"permissions": {"web_fetch": "deny"}}`` believed it was enforced
     and it was not.
 
     Production now passes

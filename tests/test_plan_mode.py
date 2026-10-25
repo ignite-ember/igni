@@ -25,6 +25,7 @@ from ember_code.backend.__main__ import _build_rpc_table
 from ember_code.backend.command_handler import CommandHandler
 from ember_code.backend.server import BackendServer
 from ember_code.core.config.permission_eval import PermissionEvaluator, PermissionMode
+from ember_code.core.prompts.contributions import PromptClaim, PromptClaimKind, prompt_contributions
 from ember_code.core.session.broadcast import BroadcastBus as _BroadcastBus
 from ember_code.core.session.core import Session
 from ember_code.core.tools.orchestrate import OrchestrateTools
@@ -80,7 +81,6 @@ class TestPlanTool:
     async def test_exit_plan_mode_records_plan(self):
         session = MagicMock()
         session.plan_store = PlanStore()
-        session._codeindex_available = False  # skip citation gate
         tool = PlanTool(session)
         result = tool.exit_plan_mode("Run tests, then refactor.")
         assert "Plan submitted" in result
@@ -116,7 +116,6 @@ class TestPlanTool:
         same turn, defeating the point of plan mode."""
         session = MagicMock()
         session.plan_store = PlanStore()
-        session._codeindex_available = False
         tool = PlanTool(session)
         result = tool.exit_plan_mode("plan body")
         assert "stop" in result.lower() or "do not continue" in result.lower()
@@ -129,7 +128,6 @@ class TestPlanTool:
         session = MagicMock()
         session.plan_store = PlanStore()
         session.todo_store = TodoStore()
-        session._codeindex_available = False
         tool = PlanTool(session)
         result = tool.exit_plan_mode(
             "## Refactor\n\nSteps inside.",
@@ -194,7 +192,6 @@ class TestPlanTool:
         session = MagicMock()
         session.plan_store = PlanStore()
         session.todo_store = TodoStore()
-        session._codeindex_available = False
         tool = PlanTool(session)
         result = tool.exit_plan_mode(
             "plan",
@@ -208,18 +205,37 @@ class TestPlanTool:
         assert len(session.todo_store.items) == 1
 
 
+@pytest.fixture
+def code_intelligence():
+    """An extension giving plan mode code intelligence — what CodeIndex
+    does while its index covers HEAD — for the length of one test."""
+    prompt_contributions.set_owner(
+        "acme.code",
+        "Code",
+        [
+            PromptClaim(
+                kind=PromptClaimKind.SLOT,
+                target="plan_mode.code_intelligence",
+                text="Research through the code index first.",
+            )
+        ],
+    )
+    yield
+    prompt_contributions.remove_owner("acme.code")
+
+
+@pytest.mark.usefixtures("code_intelligence")
 class TestExitPlanModeValidation:
-    """Confidence-check gate (Path B enforcement). When
-    CodeIndex is available, plans without enough file citations
-    bounce back to the agent with specific feedback; bounded by
-    ``_MAX_PLAN_ATTEMPTS`` so we don't ping-pong forever."""
+    """Confidence-check gate (Path B enforcement). While an extension
+    gives plan mode code intelligence, plans without enough file
+    citations bounce back to the agent with specific feedback; bounded
+    by ``_MAX_PLAN_ATTEMPTS`` so we don't ping-pong forever."""
 
     def _session_with_codeindex(self):
         session = Session.__new__(Session)
         session.plan_store = PlanStore()
         session.todo_store = TodoStore()
         session.broadcast_bus = _BroadcastBus()
-        session._codeindex_available = True
         session._plan_mode_attempt = 0
         session.permission_evaluator = PermissionEvaluator.from_strings(mode="default")
         session.main_team = None  # no spawn target, enter_plan_mode falls through
@@ -234,7 +250,7 @@ class TestExitPlanModeValidation:
         result = tool.exit_plan_mode("Refactor the auth thing. It will be great.")
         assert "Plan rejected" in result
         assert "research pass 1/3" in result
-        assert "codeindex_cypher" in result.lower()
+        assert "code index" in result.lower()
         # Plan store NOT mutated on rejection.
         assert session.plan_store.latest == ""
         # Attempt counter incremented.
@@ -262,7 +278,7 @@ class TestExitPlanModeValidation:
         legitimately can't do as deep a research pass — the
         gate skips so the conversation keeps moving."""
         session = self._session_with_codeindex()
-        session._codeindex_available = False  # override
+        prompt_contributions.remove_owner("acme.code")  # no code intelligence
         tool = PlanTool(session)
         result = tool.exit_plan_mode("thin plan, no files cited.")
         assert "Plan submitted" in result

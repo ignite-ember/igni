@@ -54,10 +54,24 @@ _SLOTS = {
 }
 
 
-def _with_documents(live: bool) -> PromptContributions:
+def _with_documents(live: bool, *, code_intelligence: bool = False) -> PromptContributions:
     """Contributions in which an installed extension keeps the project's
-    documents — fills the slots — or nobody does."""
+    documents — fills the slots — or nobody does; and, independently, one
+    that gives the agent code intelligence (CodeIndex, while its index
+    covers HEAD) fills ``main.code_intelligence``."""
     contributions = PromptContributions()
+    if code_intelligence:
+        contributions.set_owner(
+            "acme.code",
+            "Code",
+            [
+                PromptClaim(
+                    kind=PromptClaimKind.SLOT,
+                    target="main.code_intelligence",
+                    text="## Code intelligence\n\nDelegate graph questions to the data-architect.",
+                )
+            ],
+        )
     if live:
         contributions.set_owner(
             _DOCS,
@@ -79,8 +93,7 @@ def _render(*, codeindex: bool, artifacts: bool) -> str:
     builder = PromptBuilder(
         project_dir=Path("."),
         settings=None,
-        codeindex_available=codeindex,
-        contributions=_with_documents(artifacts),
+        contributions=_with_documents(artifacts, code_intelligence=codeindex),
         agent_catalog="(catalog)",
         skill_descriptions="",
         prompt_loader=_loader,
@@ -205,7 +218,6 @@ class TestTheSwitchIsTheOneTheExtensionDeclares:
         builder = PromptBuilder(
             project_dir=Path("."),
             settings=None,
-            codeindex_available=False,
             contributions=_with_documents(True),
             agent_catalog="x",
             skill_descriptions="",
@@ -225,7 +237,6 @@ class TestUnbalancedMarkersRaise:
         builder = PromptBuilder(
             project_dir=Path("."),
             settings=None,
-            codeindex_available=False,
             contributions=_with_documents(artifacts),
             agent_catalog="x",
             skill_descriptions="",
@@ -239,7 +250,6 @@ class TestUnbalancedMarkersRaise:
         builder = PromptBuilder(
             project_dir=Path("."),
             settings=None,
-            codeindex_available=False,
             contributions=_with_documents(True),
             agent_catalog="x",
             skill_descriptions="",
@@ -256,7 +266,6 @@ class TestUnbalancedMarkersRaise:
         builder = PromptBuilder(
             project_dir=Path("."),
             settings=None,
-            codeindex_available=False,
             contributions=_with_documents(False),
             agent_catalog="x",
             skill_descriptions="",
@@ -276,7 +285,6 @@ class TestUnbalancedMarkersRaise:
         builder = PromptBuilder(
             project_dir=Path("."),
             settings=None,
-            codeindex_available=False,
             contributions=_with_documents(True),
             agent_catalog="x",
             skill_descriptions="",

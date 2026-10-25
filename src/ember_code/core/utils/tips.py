@@ -176,7 +176,7 @@ class TipRegistry(BaseModel):
         "Use \"ignite-ember -m 'your task'\" for quick non-interactive tasks.",
         "Pipe mode reads stdin: cat file.log | ignite-ember -p -m 'explain this'.",
         'Use "/memory" to see what the agent remembers about you across sessions.',
-        'Skills are reusable workflows — try "/commit" or "/resolve-issues".',
+        'Skills are reusable workflows — try "/commit".',
     ]
 
     @classmethod

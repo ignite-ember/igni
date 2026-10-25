@@ -108,8 +108,8 @@ get.
 
 What still works is analysis that does not route through the shell:
 
-- `codeindex_cypher`, which queries the code graph and is read-only by
-  construction, and is the intended way to explore a codebase in this mode;
+- an extension's read-only tools — CodeIndex's `codeindex_cypher` queries the
+  code graph, and is the intended way to explore a codebase in this mode;
 - the notebook readers;
 - `web_search` and `fetch_url`.
 

@@ -1,7 +1,7 @@
-"""Abstract base for the four session-startup phases.
+"""Abstract base for the session-startup phases.
 
-The warmup families under this sub-package (knowledge,
-codeindex, marketplace, MCP) all share a boot-time
+The warmup families under this sub-package (marketplace,
+MCP) all share a boot-time
 contract:
 
 * they hold a reference to the owning :class:`Session`,

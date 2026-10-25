@@ -363,11 +363,9 @@ skills:
   #   .claude/skills/             (Claude Code project)
   #   ~/.claude/skills/           (Claude Code user global)
 
-# Embeddings are not configurable. The code index is built with
-# all-MiniLM-L6-v2 (384 dimensions), fixed, because the vector store's
-# dimension is fixed to match it — swapping the embedder without
-# rebuilding every index would produce a store whose vectors cannot be
-# compared. See `src/ember_code/core/code_index/embedder.py`.
+# Embeddings are not configurable, and not igni's. igni has no embedder:
+# the CodeIndex extension embeds its local index with all-MiniLM-L6-v2
+# (384 dimensions), fixed, because its vector index is fixed to match.
 #
 # This section previously documented an `embeddings:` block with a
 # `default` and a BYOM `registry`, mirroring `models.registry`. No such

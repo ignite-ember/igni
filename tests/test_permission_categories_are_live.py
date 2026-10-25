@@ -136,9 +136,9 @@ class TestReadOnlyIsAWall:
     def test_the_graph_stays_reachable(self):
         """The mode is only useful if something can still read the codebase.
 
-        ``codeindex_cypher`` is read-only by construction — its own guard
-        rejects every write — so it is the intended way to explore in this mode
-        and must not be swept up by the shell deny.
+        CodeIndex's ``codeindex_cypher`` is read-only by construction — its own
+        guard rejects every write — so it is the intended way to explore in
+        this mode and must not be swept up by the shell deny.
         """
         from ember_code.cli.options import CliOptions
         from ember_code.core.config.models import CliOverrides
@@ -157,7 +157,7 @@ class TestReadOnlyIsAWall:
 
         message = _denial_message("run_shell_command")
 
-        assert "codeindex_cypher" in message
+        assert "code index" in message
         assert "rather than retrying" in message
 
     def test_an_ordinary_denial_stays_terse(self):

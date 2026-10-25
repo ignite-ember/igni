@@ -57,38 +57,6 @@ from ember_code.protocol.rpc import RpcMethod
 logger = logging.getLogger(__name__)
 
 
-#: A process-level override for whether a session gets the Neo4j runtime:
-#: CI pinning a run, and an escape hatch for a machine whose sidecar will not
-#: start and which needs the backend up regardless. Set to anything but a
-#: falsey value means on.
-ENV_OVERRIDE = "IGNI_NEO4J_RUNTIME"
-_FALSEY = {"0", "false", "no", "off", ""}
-
-
-def _neo4j_runtime_wanted(settings: Any) -> bool:
-    """Whether to build a session's Neo4j runtime at all.
-
-    It backs CodeIndex. An extension that needs a graph is given one of
-    its own by the host's capabilities, not this session runtime, so
-    nothing else gets a vote here.
-    """
-    override = os.environ.get(ENV_OVERRIDE)
-    if override is not None:
-        return override.strip().lower() not in _FALSEY
-    return _codeindex_wants_neo4j(settings)
-
-
-def _codeindex_wants_neo4j(settings: Any) -> bool:
-    """Whether CodeIndex needs the Neo4j runtime.
-
-    Forgiving about the settings shape: this runs on the boot path, and
-    a config that fails to produce a ``code_index`` section should cost
-    the user their index, not their backend.
-    """
-    code_index = getattr(settings, "code_index", None)
-    return bool(getattr(code_index, "enabled", False))
-
-
 class SessionOrchestrator:
     """Pool-level dispatch + runtime factory + shutdown drain.
 
@@ -154,13 +122,6 @@ class SessionOrchestrator:
         # ``_AUTO_NAME_TASKS`` set. Kept as instance attributes so
         # each orchestrator has its own lifetime.
         self._in_flight: set[asyncio.Task] = set()
-        # Optional Neo4j runtime. The heavy work (downloading the
-        # JDK + Neo4j distribution, spawning the subprocess) is
-        # triggered on first use via ``start_for_commit`` /
-        # ``start_store``, not at construction. The construction
-        # itself is cheap (path resolution only).
-        self._neo4j_runtime: Any = None
-        self._neo4j_attach_task: asyncio.Task | None = None
         # The host object model, once :class:`BackendApp` builds it,
         # and whoever wants to see what windows send.
         self._host_model: Any = None
@@ -227,93 +188,6 @@ class SessionOrchestrator:
         )
         return self._pool
 
-    async def attach_neo4j(self) -> Any | None:
-        """Wire the optional :class:`Neo4jRuntime` into the default
-        session, for CodeIndex.
-
-        No-op when :func:`_neo4j_runtime_wanted` says no. Builds one
-        runtime per BE — refcounted across sessions via the
-        per-(project, commit) subprocess map. Returns the runtime for
-        tests and the supervisor; ``None`` when skipped.
-
-        **Slow on a cold machine.** The attach downloads Neo4j and a
-        JDK (~500 MB combined) and waits for the bolt port, so callers
-        on the boot path must not await this — see
-        :meth:`attach_neo4j_in_background`.
-
-        Idempotent — a second call is a no-op (the runtime itself is
-        cached on ``self._neo4j_runtime``).
-        """
-        if not _neo4j_runtime_wanted(self._settings):
-            return None
-        if self._neo4j_runtime is not None:
-            return self._neo4j_runtime
-        from ember_code.backend.neo4j_runtime import Neo4jRuntime
-
-        # Missing Java, a full disk, a blocked download. The BE still boots and
-        # the user can still work — with no index, not with a fallback: the
-        # Chroma-backed path went away when the index moved to Neo4j.
-        try:
-            runtime = Neo4jRuntime(data_dir=self._settings.storage.data_dir)
-        except Exception:
-            logger.exception("neo4j: runtime construction failed — continuing without an index")
-            return None
-        self._neo4j_runtime = runtime
-        # ``self._backend`` is a :class:`BackendServer`; the session
-        # is reachable via the bootstrap. Both attach calls are
-        # safe when the field is missing or the session was built
-        # with the relevant feature disabled.
-        await self._attach_neo4j_to(getattr(self._backend, "_session", None))
-        return runtime
-
-    def attach_neo4j_in_background(self) -> asyncio.Task | None:
-        """Start :meth:`attach_neo4j` without holding up the caller.
-
-        The attach can mean a ~500 MB first-run download, and the BE has
-        to report ready immediately rather than after it. Returns the
-        task so callers can await it in tests and cancel it on shutdown;
-        ``None`` when no runtime is wanted, so the caller can tell "not
-        running" from "running".
-        """
-        if not _neo4j_runtime_wanted(self._settings):
-            return None
-
-        async def _run() -> None:
-            try:
-                await self.attach_neo4j()
-            except Exception:  # noqa: BLE001 — boot must survive
-                # The runtime constructor, the download, a cancelled task
-                # on shutdown — which would otherwise surface only as
-                # "Task exception was never retrieved" on stderr.
-                logger.exception("neo4j: background attach failed")
-
-        task = asyncio.create_task(_run(), name="neo4j-attach")
-        self._neo4j_attach_task = task
-        return task
-
-    async def _attach_neo4j_to(self, session: Any) -> None:
-        """Give one session the neo4j-backed index.
-
-        Called for the boot session by :meth:`attach_neo4j` and for
-        every other session by :meth:`_create_runtime`. It has to be
-        both: the boot session is the only one the BE makes for itself,
-        and every session the user actually opens comes from the
-        factory.
-        """
-        runtime = self._neo4j_runtime
-        if runtime is None or session is None:
-            logger.debug(
-                "neo4j: skipping attach (runtime=%s session=%s)",
-                "present" if runtime is not None else "absent",
-                "present" if session is not None else "absent",
-            )
-            return
-        if (
-            _codeindex_wants_neo4j(self._settings)
-            and getattr(session, "code_index", None) is not None
-        ):
-            await session.attach_codeindex_neo4j(runtime)
-
     @property
     def client_state(self) -> ClientStateStore:
         """The store every window's lasting model fields are kept in."""
@@ -365,19 +239,6 @@ class SessionOrchestrator:
             additional_dirs=self._additional_dirs,
         )
         await rt_backend.startup()
-        # Background services the boot runtime gets in
-        # BackendApp.run — without these, a session locked to
-        # another repo has no codeindex sync/watch for it
-        # (degraded vs "the TUI opened in that repo").
-        rt_backend.start_all_background_services()
-        # The neo4j indexes are part of that same "what the boot
-        # runtime gets" list, and were missing from it. ``attach_neo4j``
-        # is idempotent and caches the runtime, so this builds it once
-        # for the whole BE and is a cheap no-op afterwards; it returns
-        # ``None`` when the opt-in is unset, and then the attach below
-        # does nothing.
-        await self.attach_neo4j()
-        await self._attach_neo4j_to(getattr(rt_backend, "_session", None))
         rt_queue: list[str] = []
         rt_backend.wire_queue_hook(rt_queue)
         stamped = SessionStampingTransport(self._transport, rt_backend)
@@ -694,16 +555,6 @@ class SessionOrchestrator:
             task = asyncio.create_task(self.dispatch(message))
             self._in_flight.add(task)
             task.add_done_callback(self._in_flight.discard)
-
-        # Cancel rather than drain: the neo4j attach can be
-        # minutes into a download, and nothing about it is worth
-        # making the user wait on the way out. Deliberately not a
-        # member of ``_in_flight`` for that reason — the gather below
-        # would block on it.
-        if self._neo4j_attach_task is not None and not self._neo4j_attach_task.done():
-            self._neo4j_attach_task.cancel()
-            with contextlib.suppress(asyncio.CancelledError):
-                await self._neo4j_attach_task
 
         # Drain in-flight tasks before shutting down so we don't
         # drop mid-stream messages on graceful exit.

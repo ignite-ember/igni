@@ -115,9 +115,16 @@ CONDITION = r"^[a-z][a-z0-9-]*$"
 
 
 class ConditionsParams(types.NotificationParams):
-    """`params` of `notifications/igni/conditions`: `{condition: holds}`."""
+    """`params` of `notifications/igni/conditions`: `{condition: holds}`.
+
+    `refresh` asks igni to fetch this extension's `source: tool` prompt
+    texts again — they describe something that changed (a new commit's
+    project map), not something that comes and goes.
+    """
 
     conditions: dict[str, bool] = Field(max_length=MAX_CONDITIONS)
+    #: Present only when asking; absent, it is just conditions.
+    refresh: bool | None = None
 
     @field_validator("conditions")
     @classmethod

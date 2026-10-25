@@ -312,8 +312,7 @@ class MCPClientManager:
         mapping.
 
         Public accessor over the internal ``_clients`` dict —
-        lets collaborators (:class:`MCPToolResolver`,
-        :class:`CodeIndexAvailabilityRefresher`) walk every
+        lets collaborators (:class:`MCPToolResolver`) walk every
         live client without reaching into a private
         attribute. The returned dict is a copy so external
         mutations don't leak into the manager's own state.

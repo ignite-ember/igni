@@ -221,20 +221,6 @@ class TestPathsThatDegradeRatherThanRefuse:
 
         assert result.reason is FetchReason.NO_SERVER
 
-    def test_a_sync_with_no_server_says_which_setting(self):
-        from ember_code.core.code_index.sync.schemas import SyncResult
-
-        result = SyncResult.no_server_configured()
-
-        assert result.skipped is True
-        assert "api_url" in result.reason
-        assert "config.yaml" in result.reason
-
-    def test_that_reason_is_distinct_from_not_being_signed_in(self):
-        from ember_code.core.code_index.sync.schemas import SyncResult
-
-        assert SyncResult.no_server_configured().reason != SyncResult.not_authenticated().reason
-
 
 class TestAPortalThatDiffersByPort:
     """The half DEC-14 left out: saying so when the guess is wrong.

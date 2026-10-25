@@ -54,7 +54,6 @@ from ember_code.extensions.manifest import (
     PromptReplacement,
     PromptSlotFill,
     PythonPackage,
-    Requirement,
     Setting,
     Sidecar,
 )
@@ -74,7 +73,6 @@ PAIRS: list[tuple[str, type[BaseModel]]] = [
     ("", ExtensionManifest),
     ("sidecar", Sidecar),
     ("sidecar.mcp", McpBinding),
-    ("requires[]", Requirement),
     ("dev", DevCommand),
     ("endpoint", Endpoint),
     ("endpoint.auth", EndpointAuth),

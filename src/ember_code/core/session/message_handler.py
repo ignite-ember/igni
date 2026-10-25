@@ -16,7 +16,7 @@ methods that own the headless message path:
 Constructor takes explicit collaborators — no reach-back
 into :class:`Session`. ``team_ref`` is a **callable**, not the
 live agent — the session rebuilds ``main_team`` under
-compact / plugin-reload / MCP-rebuild / codeindex-refresh, so
+compact / plugin-reload / MCP-rebuild / prompt-refresh, so
 storing a bare reference would go stale.
 
 Same reasoning for ``session_id_ref`` and ``context_window_ref``:

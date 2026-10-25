@@ -243,7 +243,7 @@ def load_settings_from_options(options: CliOptions) -> Settings:
 
     # Loaded twice, and the second is the one returned. ``-m`` and the pipe
     # mode run a real session in this process, so an admin's group policy has
-    # to apply here too — otherwise ``{"code_index": {"enabled": false}}``
+    # to apply here too — otherwise ``{"permissions": {"web_fetch": "deny"}}``
     # would hold in the app and not on the command line, which is the kind of
     # half-enforcement a policy cannot have. The cache it is read from lives
     # under ``storage.data_dir``, which is itself a setting, so the first pass

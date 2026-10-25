@@ -44,9 +44,11 @@ time the other one's health does.
 
 Prompt assembly is synchronous, and a ``source: tool`` text needs an
 MCP round trip. So the text is fetched when the extension becomes
-``READY`` and cached. It changes when its extension restarts, not when
-its data does; something that moves minute to minute does not belong
-in a prompt. What *can* change at any moment is whether a ``when``
+``READY`` and cached. It changes when its extension restarts, or when
+the extension says it has (``refresh`` on its conditions notice —
+CodeIndex's project map is another commit's when HEAD moves); never on
+a timer — something that moves minute to minute does not belong in a
+prompt. What *can* change at any moment is whether a ``when``
 condition holds, and that the extension reports
 (:class:`ExtensionConditionReceiver`).
 """
@@ -217,6 +219,12 @@ class ExtensionContributions:
             # it cannot answer, and a command it cannot run is worse
             # than one never offered.
             self._withdraw_live(extension_id)
+
+    def refetch(self, extension_id: str) -> None:
+        """The extension says its tool-sourced text changed: fetch it again."""
+        entry = self._registry.get(extension_id)
+        if entry is not None and entry.state is ExtensionState.READY:
+            self._schedule(entry)
 
     def withdraw(self, extension_id: str) -> None:
         """Uninstalled. Forget it entirely."""
@@ -428,6 +436,8 @@ class ConditionsNotice(BaseModel):
 
     #: ``{condition: holds}``. Only the ones that changed need be sent.
     conditions: dict[str, bool] = Field(max_length=64)
+    #: The extension's ``source: tool`` prompt text changed; fetch it again.
+    refresh: bool | None = None
 
 
 class ExtensionConditionReceiver:
@@ -443,10 +453,15 @@ class ExtensionConditionReceiver:
     METHOD = "notifications/igni/conditions"
 
     def __init__(
-        self, *, registry: ExtensionRegistry, prompts: PromptContributions | None = None
+        self,
+        *,
+        registry: ExtensionRegistry,
+        prompts: PromptContributions | None = None,
+        refetch: Callable[[str], None] | None = None,
     ) -> None:
         self._registry = registry
         self._prompts = prompts if prompts is not None else prompt_contributions
+        self._refetch = refetch
 
     def __call__(self, server: str, params: dict[str, Any]) -> None:
         """The :class:`~ember_code.core.mcp.notification_tap.McpNotificationRouter` handler."""
@@ -462,8 +477,10 @@ class ExtensionConditionReceiver:
         except ValidationError as exc:
             logger.warning("%s from %s refused: %s", self.METHOD, extension_id, exc)
             return
-        if self._prompts.hold(extension_id, notice.conditions):
+        if notice.conditions and self._prompts.hold(extension_id, notice.conditions):
             logger.info("extension %s: conditions now %s", extension_id, notice.conditions)
+        if notice.refresh and self._refetch is not None:
+            self._refetch(extension_id)
 
 
 def _supplier(text: str) -> Callable[[], str]:

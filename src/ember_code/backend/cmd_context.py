@@ -106,7 +106,7 @@ class ContextCommand:
         model-generated summary as the body. This is a bare
         :class:`CommandResult` (not a view render) because the
         payload is an ACTION result with no markdown template to
-        move — same shape as :meth:`CodeIndexCommand.clean`.
+        move.
         """
         result = await self._session.force_compact()
         return CommandResult(

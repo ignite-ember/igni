@@ -31,7 +31,10 @@ needs a container runtime this does not have yet and fails saying so.
 A process igni starts that belongs to a service is told how to get a
 token for it — ``IGNI_SERVICE_URL``, ``IGNI_SERVICE_TOKEN_URL`` and
 ``IGNI_SERVICE_TOKEN_SECRET`` (:mod:`ember_code.extensions.service_token`).
-It never sees the person's igni session.
+It never sees the person's igni session. It is also given a directory
+of its own, ``IGNI_EXTENSION_DATA``: what it keeps on this machine —
+CodeIndex keeps a graph database per commit — it runs and stores itself.
+igni provides no databases or models to extensions.
 """
 
 from __future__ import annotations
@@ -47,13 +50,6 @@ from ember_code.core.agents.tool_audience import ToolAudience
 from ember_code.core.agents.tool_audience import audience as default_audience
 from ember_code.core.mcp.config import MCPServerConfig, MCPTransport
 from ember_code.core.mcp.naming import bare_tool_name
-from ember_code.extensions.capabilities import (
-    CapabilityResolver,
-    Connections,
-    Resolved,
-    UnresolvedRequirement,
-    check_dimensions_agree,
-)
 from ember_code.extensions.host.definition import HOST_SCHEMA
 from ember_code.extensions.host.grants import HostGrants
 from ember_code.extensions.manifest import ExtensionManifest, Workspace
@@ -69,7 +65,12 @@ from ember_code.extensions.registry import (
 from ember_code.extensions.rpc import ExtensionRpc
 from ember_code.extensions.service import McpExtensionService
 from ember_code.extensions.service_token import ServiceTokenEndpoint
-from ember_code.extensions.store import DistributionRecord, ExtensionStore
+from ember_code.extensions.store import (
+    DATA_DIR,
+    DATA_DIR_ENV,
+    DistributionRecord,
+    ExtensionStore,
+)
 from ember_code.extensions.web_home import SERVICE_URL_SETTING
 
 if TYPE_CHECKING:
@@ -114,7 +115,6 @@ class ExtensionInstaller:
         project_dir: Path | None = None,
         secret_resolver: Callable[[str], str | None] | None = None,
         profile: DeploymentProfile | None = None,
-        resolver: CapabilityResolver | None = None,
         plugins_dir: Path | None = None,
         audience: ToolAudience | None = None,
         allow_development: bool = False,
@@ -140,10 +140,6 @@ class ExtensionInstaller:
                 when ``permissions.workspace`` grants it.
             secret_resolver: The deployment's secret source. A name
                 the manifest did not declare is never passed to it.
-            resolver: Turns a declared ``requires`` into a connection.
-                Optional: a deployment with no infrastructure to
-                offer refuses an extension that needs some, which is
-                the honest answer and what ``None`` produces.
             profile: How many principals this backend serves. A
                 sidecar is one process, so a shared backend refuses
                 one — see :mod:`ember_code.extensions.profile`.
@@ -169,7 +165,6 @@ class ExtensionInstaller:
         self._project_dir = project_dir
         self._secret_resolver = secret_resolver
         self._profile = profile if profile is not None else DeploymentProfile.current()
-        self._resolver = resolver
         self._allow_development = allow_development
         self._store = store
         self._environments = environments
@@ -229,16 +224,12 @@ class ExtensionInstaller:
         service_url = self._service_url(manifest, distribution)
 
         try:
-            resolved = await self._resolve_requirements(manifest)
             entry_point = await self._python_entry(manifest, bundle, distribution)
             token_env = await self._process_grants(manifest, service_url)
-            config = self._service_config(
-                manifest, bundle, permissions, resolved, entry_point, token_env
-            )
+            config = self._service_config(manifest, bundle, permissions, entry_point, token_env)
         except (
             InstallError,
             PermissionDenied,
-            UnresolvedRequirement,
             PythonEnvironmentError,
         ) as exc:
             # Packaging we cannot honour. Recorded rather than raised:
@@ -486,46 +477,6 @@ class ExtensionInstaller:
             "its own configuration."
         )
 
-    async def _resolve_requirements(self, manifest: ExtensionManifest) -> list[Resolved]:
-        """Infrastructure this extension declared, made to exist.
-
-        At install, never later: an extension that starts and then
-        discovers it has no database fails in front of a user
-        instead of in front of the administrator who installed it.
-
-        A resolver always hands back a *connection*. On a laptop it
-        provisioned one first; in a deployment it bound to one the
-        infrastructure already runs. The extension cannot tell, and
-        that is what lets the same bundle install in both.
-        """
-        requires = manifest.requires
-        if not requires:
-            return []
-        if self._resolver is None:
-            raise UnresolvedRequirement(
-                f"{manifest.id} needs "
-                f"{sorted(r.capability.value for r in requires)} and this "
-                "backend has no capability resolver, so there is nothing to "
-                "satisfy it with."
-            )
-        # Before anything is resolved: an extension whose vector
-        # kinds disagree about width is broken whichever instance
-        # satisfies them.
-        check_dimensions_agree(list(requires), extension_id=manifest.id)
-
-        resolved: list[Resolved] = []
-        for requirement in requires:
-            answer = await self._resolver.resolve(requirement, extension_id=manifest.id)
-            logger.info(
-                "extension %s: %s %s (%s)",
-                manifest.id,
-                requirement.capability.value,
-                answer.how,
-                answer.uri,
-            )
-            resolved.append(answer)
-        return resolved
-
     async def _python_entry(
         self,
         manifest: ExtensionManifest,
@@ -584,7 +535,21 @@ class ExtensionInstaller:
             env.update(await self._service_tokens.grant(manifest.id, service_url, secret=secret))
         if self._host_channel is not None:
             env.update(await self._host_channel.grant(manifest.id, secret))
+        env[DATA_DIR_ENV] = str(self._data_dir(manifest.id))
         return env
+
+    def _data_dir(self, extension_id: str) -> Path:
+        """The directory that is this extension's alone on this machine.
+
+        Beside the store rather than inside the bundle, so it survives
+        an upgrade or a reinstall: what an extension keeps here (a
+        graph per commit, a model it downloaded) is expensive to make
+        again. Made here, so the process can rely on it existing.
+        """
+        root = self._store.root if self._store is not None else ExtensionStore().root
+        path = root / DATA_DIR / extension_id
+        path.mkdir(parents=True, exist_ok=True)
+        return path
 
     def _revoke_token(self, extension_id: str) -> None:
         if self._service_tokens is not None:
@@ -596,7 +561,6 @@ class ExtensionInstaller:
         self,
         literal: dict[str, str],
         permissions: Permissions,
-        resolved: list[Resolved],
         token_env: dict[str, str],
     ) -> dict[str, str]:
         """A started process's environment, in precedence order.
@@ -604,12 +568,11 @@ class ExtensionInstaller:
         The manifest's own literals first, so nothing igni grants can
         be shadowed by a value the bundle shipped — an extension
         setting ``IGNI_WORKSPACE`` or ``IGNI_SERVICE_TOKEN_URL`` itself
-        must not be how it gets one. Then the grants, then what the
-        resolver found, then the token endpoint.
+        must not be how it gets one. Then the grants, then the host,
+        the token endpoint and its data directory.
         """
         env = dict(literal)
         env.update(permissions.service_environment(self._project_dir))
-        env.update(Connections(resolved).environment())
         env.update(token_env)
         return env
 
@@ -618,7 +581,6 @@ class ExtensionInstaller:
         manifest: ExtensionManifest,
         bundle: Path,
         permissions: Permissions,
-        resolved: list[Resolved],
         entry_point: Path | None = None,
         token_env: dict[str, str] | None = None,
     ) -> MCPServerConfig:
@@ -633,7 +595,7 @@ class ExtensionInstaller:
                 type=MCPTransport.stdio,
                 command=str(entry_point),
                 args=[],
-                env=self._process_environment({}, permissions, resolved, token_env or {}),
+                env=self._process_environment({}, permissions, token_env or {}),
                 cwd=str(bundle),
                 source="extension",
             )
@@ -645,9 +607,7 @@ class ExtensionInstaller:
                 type=MCPTransport.stdio,
                 command=manifest.dev.command[0],
                 args=list(manifest.dev.command[1:]),
-                env=self._process_environment(
-                    dict(manifest.dev.env), permissions, resolved, token_env or {}
-                ),
+                env=self._process_environment(dict(manifest.dev.env), permissions, token_env or {}),
                 # Its command is relative to the bundle, which is not
                 # where the backend happens to be running.
                 cwd=str(cwd),

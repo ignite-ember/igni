@@ -5,12 +5,11 @@ has to say what that something *is*, and the description belongs with
 the extension rather than copied into the prompt. ``{{ANCHOR}}`` marks
 where it goes; whoever owns the anchor supplies the text at load time.
 
-This generalises one hardcoded case. ``{{CODEINDEX_GRAPH_SCHEMA}}``
+This generalises what was one hardcoded case: ``{{CODEINDEX_GRAPH_SCHEMA}}``
 was substituted by a function that imported the schema module
-directly, which is exactly the coupling the extension split has to
-remove: the base cannot import from a capability that may not be
-installed. The anchor is the same; what changed is that the base now
-holds a table of them rather than a hardcoded one.
+directly. The base cannot import from a capability that may not be
+installed, so it holds a table of anchors, empty until extensions
+register theirs.
 
 The reason the original was a placeholder at all is worth keeping in
 view. The schema was maintained twice — once in the module the
@@ -130,38 +129,6 @@ class PromptFragments:
 
         return ANCHOR.sub(fill, text)
 
-    @classmethod
-    def default(cls) -> PromptFragments:
-        """The table a base install starts with.
-
-        A classmethod rather than a module function, matching
-        ``ToolSpecCatalog.default`` and ``TipRegistry.default``: the
-        thing that knows how to build one of these is the type.
-
-        CodeIndex is registered here while it is still in-tree. When it
-        becomes an extension this registers nothing and the extension
-        supplies the same anchor under the same name, which is the
-        point of naming it rather than importing it.
-        """
-        fragments = cls()
-        fragments.register("CODEINDEX_GRAPH_SCHEMA", "igni.codeindex", cls._codeindex_graph_schema)
-        return fragments
-
-    @staticmethod
-    def _codeindex_graph_schema() -> str:
-        """The live graph description.
-
-        Imported inside the call rather than at module scope because
-        the schema lives in the code-index package, which a base
-        install need not have. That import is what this whole table
-        exists to make optional; it stays until CodeIndex is loaded as
-        an extension and registers its own anchor, at which point this
-        goes with it.
-        """
-        from ember_code.core.code_index.neo4j_schema import GRAPH_SCHEMA_DESCRIPTION
-
-        return GRAPH_SCHEMA_DESCRIPTION
-
 
 #: The table the prompt loaders use.
-fragments = PromptFragments.default()
+fragments = PromptFragments()

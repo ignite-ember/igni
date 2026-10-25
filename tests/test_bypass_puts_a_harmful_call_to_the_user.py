@@ -339,11 +339,9 @@ class TestAskingThroughTheSessionsApprovalChannel:
 
 
 def _model_cached() -> bool:
-    from laya.router import BUNDLE_REPO
+    from ember_code.core.decisions.laya import BUNDLE_REPO, HubCache
 
-    from ember_code.core.embeddings import Embedder
-
-    return Embedder.is_model_cached(BUNDLE_REPO)
+    return HubCache.has(BUNDLE_REPO)
 
 
 @pytest.mark.skipif(not _model_cached(), reason="laya-typed-decisions is not in the local cache")

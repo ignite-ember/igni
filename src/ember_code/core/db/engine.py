@@ -12,7 +12,7 @@ SQLite-only (per-project ``state.db`` files plus a global ``ember.db``).
 Both sync and async flavours are exported. Engines and sessionmakers
 are cached by normalised path so callers can request them freely
 without pool churn — alembic uses the sync flavour under the hood;
-everything in code_index uses the async flavour via ``aiosqlite``.
+the application uses the async flavour via ``aiosqlite``.
 
 Back-compat: ``database.py``, ``migrations.py``, and existing tests
 import the five names from this module. We keep them working by

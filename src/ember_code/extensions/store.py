@@ -56,6 +56,13 @@ EXTENSIONS_DIR = "extensions"
 #: never mistakes it for a bundle.
 ENVIRONMENTS_DIR = ".python"
 
+#: Inside the store, dot-named for the same reason: one directory per
+#: extension that is its alone, kept across reinstalls.
+DATA_DIR = ".data"
+
+#: What an extension's process is told that directory is.
+DATA_DIR_ENV = "IGNI_EXTENSION_DATA"
+
 #: Beside a bundle: where it came from, when igni distributed it.
 DISTRIBUTION_SUFFIX = ".distribution.json"
 

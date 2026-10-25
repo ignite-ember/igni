@@ -5,13 +5,12 @@ extension's manifest cannot shadow them:
 
 * `IGNI_WORKSPACE`, `IGNI_WORKSPACE_MODE`, `IGNI_WORKSPACE_PATHS` — the
   project, when the workspace permission was granted;
-* `IGNI_CAPABILITY_<KIND>_URI` and `_SECRET` — each capability the
-  manifest requires, as the deployment resolved it (`graph-db` arrives as
-  `IGNI_CAPABILITY_GRAPH_DB_URI`); the secret is the *name* of a secret
-  grant, and its value arrives as `IGNI_SECRET_<NAME>`;
 * `IGNI_SECRET_<NAME>` — each declared secret;
 * `IGNI_SERVICE_URL`, `IGNI_SERVICE_TOKEN_URL`, `IGNI_SERVICE_TOKEN_SECRET`
   — the extension's own service and where to ask for a token to it;
+* `IGNI_EXTENSION_DATA` — a directory that is this extension's alone,
+  kept across reinstalls and updates of its bundle, for whatever it
+  stores on this machine;
 * `IGNI_HOST_URL`, `IGNI_HOST_SECRET` — the host's object model
   (`ext.host`), on a loopback socket, and this process's secret for it —
   the same secret as the token endpoint's.
@@ -54,37 +53,6 @@ class Workspace(BaseModel):
     @property
     def writable(self) -> bool:
         return self.granted and self.mode is WorkspaceMode.WRITE
-
-
-class Capability(BaseModel):
-    """One resolved capability: how to reach it, and its credential if it has one."""
-
-    model_config = ConfigDict(frozen=True)
-
-    #: The manifest's word for it: `graph-db`, `embedder`.
-    kind: str
-    uri: str
-    #: The name of the secret grant that holds its credential.
-    secret_name: str = ""
-    #: That credential, when the deployment supplied it.
-    secret: str = ""
-
-
-class Capabilities(BaseModel):
-    """Every capability this process was given, by kind."""
-
-    model_config = ConfigDict(frozen=True)
-
-    by_kind: dict[str, Capability] = Field(default_factory=dict)
-
-    def get(self, kind: str) -> Capability | None:
-        return self.by_kind.get(kind)
-
-    def __contains__(self, kind: object) -> bool:
-        return kind in self.by_kind
-
-    def all(self) -> list[Capability]:
-        return list(self.by_kind.values())
 
 
 class Secrets(BaseModel):
@@ -135,11 +103,11 @@ class ExtensionEnvironment(BaseModel):
 
     model_config = ConfigDict(frozen=True)
 
-    CAPABILITY: ClassVar[str] = "IGNI_CAPABILITY_"
     SECRET: ClassVar[str] = "IGNI_SECRET_"
 
     workspace: Workspace = Field(default_factory=Workspace)
-    capabilities: Capabilities = Field(default_factory=Capabilities)
+    #: This extension's own directory on this machine; None outside igni.
+    data_dir: Path | None = None
     secrets: Secrets = Field(default_factory=Secrets)
     service: ServiceEndpoint = Field(default_factory=ServiceEndpoint)
     host: HostEndpoint = Field(default_factory=HostEndpoint)
@@ -154,9 +122,10 @@ class ExtensionEnvironment(BaseModel):
                 if key.startswith(cls.SECRET)
             }
         )
+        data_dir = env.get("IGNI_EXTENSION_DATA", "").strip()
         return cls(
             workspace=cls._workspace(env),
-            capabilities=cls._capabilities(env, secrets),
+            data_dir=Path(data_dir) if data_dir else None,
             secrets=secrets,
             service=ServiceEndpoint(
                 url=env.get("IGNI_SERVICE_URL", "").strip().rstrip("/"),
@@ -180,20 +149,3 @@ class ExtensionEnvironment(BaseModel):
             mode = WorkspaceMode.READ
         paths = tuple(p for p in env.get("IGNI_WORKSPACE_PATHS", "").split(":") if p)
         return Workspace(root=Path(root), mode=mode, paths=paths)
-
-    @classmethod
-    def _capabilities(cls, env: Mapping[str, str], secrets: Secrets) -> Capabilities:
-        found: dict[str, Capability] = {}
-        for key, uri in env.items():
-            if not (key.startswith(cls.CAPABILITY) and key.endswith("_URI")):
-                continue
-            slug = key.removeprefix(cls.CAPABILITY).removesuffix("_URI")
-            kind = slug.lower().replace("_", "-")
-            secret_name = env.get(f"{cls.CAPABILITY}{slug}_SECRET", "")
-            found[kind] = Capability(
-                kind=kind,
-                uri=uri,
-                secret_name=secret_name,
-                secret=(secrets.get(secret_name) or "") if secret_name else "",
-            )
-        return Capabilities(by_kind=found)

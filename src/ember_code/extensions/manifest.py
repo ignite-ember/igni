@@ -105,46 +105,6 @@ class Trust(StrEnum):
     UNSIGNED = "unsigned"
 
 
-class Capability(StrEnum):
-    """A kind of infrastructure, never a product.
-
-    A regulated customer often has a sanctioned Postgres you must use,
-    and a manifest naming ``postgres`` cannot express "or whatever
-    they have".
-    """
-
-    GRAPH_DB = "graph-db"
-    VECTOR_STORE = "vector-store"
-    RELATIONAL_DB = "relational-db"
-    OBJECT_STORE = "object-store"
-    #: Text in, vectors out. A kind rather than a model name for the
-    #: usual reason — a regulated customer runs their own, on their
-    #: own hardware — and because two extensions sharing one must
-    #: agree on the vector width, which is what its ``constraint``
-    #: says. See :mod:`ember_code.extensions.capabilities`.
-    EMBEDDER = "embedder"
-
-
-class ResolveMode(StrEnum):
-    """How hard to try when satisfying a requirement."""
-
-    SHARED = "shared"
-    DEDICATED = "dedicated"
-    #: Use an existing instance and fail at install if there is none —
-    #: what a customer's sanctioned database requires, and what you
-    #: want when provisioning would breach their change control.
-    BIND_ONLY = "bind-only"
-
-
-class Requirement(Strict):
-    capability: Capability
-    #: What it means depends on the kind: a semver range over the
-    #: major version for the stores, ``dim=<n>`` for an embedder.
-    #: The table is in :mod:`ember_code.extensions.capabilities`.
-    constraint: str
-    mode: ResolveMode = ResolveMode.SHARED
-
-
 class McpBinding(Strict):
     #: A sidecar speaks MCP over stdio. An endpoint speaks it over
     #: SSE; that is the difference between the packagings, not a
@@ -476,19 +436,6 @@ class ExtensionManifest(Strict):
     endpoint: Endpoint | None = None
     python: PythonPackage | None = None
     dev: DevCommand | None = None
-
-    #: Infrastructure the deployment provides and igni brokers.
-    #:
-    #: On the manifest rather than on the packaging, which is where
-    #: it was: an extension needs a graph store whether it ships as
-    #: an image, as an endpoint, or runs from source on a laptop.
-    #: Hanging it off ``sidecar`` meant a ``dev`` extension could
-    #: not say it needed anything — it was silently resolved as
-    #: nothing — and that moving from ``dev`` to ``sidecar`` changed
-    #: what the extension *needed*, which is not a packaging
-    #: decision. Found by writing the first extension that requires
-    #: anything.
-    requires: list[Requirement] = Field(default_factory=list)
 
     permissions: Permissions = Field(default_factory=Permissions)
     contributes: Contributes = Field(default_factory=Contributes)

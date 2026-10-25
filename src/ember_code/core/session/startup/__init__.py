@@ -1,8 +1,7 @@
 """Session boot-time background warmups.
 
 Sub-package split out of the old ``startup_ops.py`` monolith
-(iter 145) — every warmup family (``knowledge``, ``codeindex``,
-``marketplace``, ``mcp``) is a subclass of
+(iter 145) — every warmup family (``marketplace``, ``mcp``) is a subclass of
 :class:`SessionStartupPhase` in its own module.
 :class:`SessionStartupCoordinator` composes one instance of each
 phase and exposes the same public API Session / backend
@@ -11,9 +10,6 @@ already call.
 Coverage:
 
   the artifact store (heavy transitive deps).
-* :class:`CodeIndexWarmupPhase` — sweep stale chroma dirs, kick
-  the resolver, run an initial sync, evict idle commit chromas,
-  start the HEAD watcher.
 * :class:`MarketplaceWarmupPhase` — refresh every registered
   plugin marketplace catalog + auto-register defaults on
   brand-new installs.
@@ -30,13 +26,11 @@ dependency.
 """
 
 from ember_code.core.session.startup.base import SessionStartupPhase
-from ember_code.core.session.startup.codeindex import CodeIndexWarmupPhase
 from ember_code.core.session.startup.coordinator import SessionStartupCoordinator
 from ember_code.core.session.startup.marketplace import MarketplaceWarmupPhase
 from ember_code.core.session.startup.mcp import McpInitPhase
 
 __all__ = [
-    "CodeIndexWarmupPhase",
     "MarketplaceWarmupPhase",
     "McpInitPhase",
     "SessionStartupCoordinator",

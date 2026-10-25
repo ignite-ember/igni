@@ -2,7 +2,7 @@
 
 Claude Code parity (the ``SlashCommand`` tool). Lets the agent
 invoke any slash command from inside a tool-using turn — useful
-for "go look up the codeindex for X and tell me what's there" or
+for "run the command an extension added for X and tell me what it said" or
 "compact the conversation, you're going to be at this for a
 while" without forcing the user to type the command themselves.
 
@@ -58,7 +58,7 @@ logger = logging.getLogger(__name__)
 
 
 # Refused with an explanatory error rather than executed.
-# Everything else (info commands, codeindex / knowledge searches,
+# Everything else (info commands, extensions' commands,
 # compact, schedule, loop, etc.) goes through unchanged.
 _BLOCKED_COMMANDS: frozenset[str] = frozenset(
     {
@@ -102,10 +102,9 @@ class SlashCommandTool(Toolkit):
         """Invoke a slash command and return what it produced.
 
         ``command`` is the full command line with the leading
-        slash (``"/help"``, ``"/ctx"``, ``"/codeindex search
-        retry logic"``, etc.). Use this when you need to consult
-        a built-in command's output (the codeindex / knowledge
-        searches are the headline use case) or to trigger a
+        slash (``"/help"``, ``"/ctx"``, an extension's command,
+        etc.). Use this when you need to consult a command's
+        output or to trigger a
         side-effect command (``/compact``, ``/schedule``).
 
         Blocked commands (return an explanatory error instead of

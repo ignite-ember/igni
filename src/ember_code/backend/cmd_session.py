@@ -69,9 +69,8 @@ class SessionCommand:
     async def clear(self) -> CommandResult:
         """Rotate to a fresh ``session_id`` — starts new agent history.
 
-        Fires a background codeindex resync + prompt refresh so the
-        fresh agent's system prompt matches the post-sync chroma
-        state.
+        Fires a background group revalidation, so the new dialogue gets
+        the agent the admin last configured.
         """
         # Generate new session_id so Agno starts fresh history — see
         # :meth:`Session.rotate_id` for why every component must be
@@ -82,11 +81,7 @@ class SessionCommand:
         # the backend reads this and exposes get_status().
         self._session.latch_input_tokens(0)
 
-        # New dialogue → re-pull the changeset for current HEAD
-        # (fire-and-forget). Also refresh the codeindex_available
-        # flag afterwards so the rebuilt agent's system prompt
-        # matches the post-sync chroma state.
-        asyncio.create_task(self._sync_then_refresh())
+        asyncio.create_task(self._revalidate_group())
         return CommandResult.for_action(CommandAction.CLEAR)
 
     async def sessions(self) -> CommandResult:
@@ -167,22 +162,6 @@ class SessionCommand:
             return
         with contextlib.suppress(Exception):
             await hook()
-
-    async def _sync_then_refresh(self) -> None:
-        """Post-``/clear`` fire-and-forget side effect.
-
-        Kept as a bound method (rather than the previous nested
-        ``async def`` inside :meth:`clear`) so the closure over
-        ``session`` collapses to ``self._session`` — mirrors
-        :meth:`CodeIndexCommand._refresh_availability_safely`.
-        """
-        # Group first: an agent the admin just changed should be the one
-        # the rebuilt system prompt describes.
-        await self._revalidate_group()
-        await self._session.code_index_sync.sync_now()
-        refresh = self._session.refresh_codeindex_availability()
-        if not refresh.ok:
-            logger.debug("refresh after /clear sync failed (%s)", refresh.error)
 
 
 # ── Module-level shims ───────────────────────────────────────────

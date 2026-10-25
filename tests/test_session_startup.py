@@ -26,26 +26,12 @@ from ember_code.core.session.schemas import McpInitResult
 from ember_code.core.session.startup import SessionStartupCoordinator
 
 
-def _bare_session(*, codeindex_enabled: bool = True):
+def _bare_session():
     """Session-shaped stub carrying only what the startup phases read."""
     session = SimpleNamespace()
-    # The CodeIndex warmup reads ``settings.code_index.enabled`` before
-    # scheduling anything — an admin can turn the index off for a group,
-    # and the whole sequence below (cloud resolve, changeset sync, HEAD
-    # watcher) is then work for an index the session does not have.
     from ember_code.core.config.settings import Settings
 
     session.settings = Settings()
-    object.__setattr__(session.settings.code_index, "enabled", codeindex_enabled)
-    session.code_index = SimpleNamespace()
-    session.code_index.sweep_stale_dirs = MagicMock(return_value=[])
-    session.code_index.clean = AsyncMock(return_value=[])
-    session.code_index_sync = SimpleNamespace()
-    session.code_index_sync.resolver = SimpleNamespace()
-    session.code_index_sync.resolver.resolve = AsyncMock()
-    session.code_index_sync.sync_now = AsyncMock()
-    session.code_index_sync.start_watcher = AsyncMock()
-    session.refresh_codeindex_availability = MagicMock()
     from ember_code.core.mcp.schemas import MCPConnectResult
 
     session.mcp_manager = SimpleNamespace()
@@ -69,48 +55,6 @@ def _bare_session(*, codeindex_enabled: bool = True):
     # path renders instead of crashing.
     session.display = MagicMock()
     return session
-
-
-class TestStartCodeindexBackground:
-    def test_no_loop_is_noop(self):
-        s = _bare_session()
-        SessionStartupCoordinator(s).start_codeindex_background()  # should not raise
-
-    @pytest.mark.asyncio
-    async def test_bootstrap_runs_sweep_sync_and_watcher(self):
-        s = _bare_session()
-        SessionStartupCoordinator(s).start_codeindex_background()
-        # Yield to the scheduled task.
-        import asyncio
-
-        await asyncio.sleep(0)
-        await asyncio.sleep(0)  # bootstrap has multiple awaits
-        s.code_index.sweep_stale_dirs.assert_called_once()
-        s.code_index_sync.sync_now.assert_called_once()
-
-    def test_disabled_schedules_nothing(self):
-        """``code_index.enabled: false`` means the warmup does not run at
-        all — no cloud resolve, no changeset sync, no HEAD watcher left
-        behind for the life of the session."""
-        s = _bare_session(codeindex_enabled=False)
-        SessionStartupCoordinator(s).start_codeindex_background()
-
-        s.code_index.sweep_stale_dirs.assert_not_called()
-        s.code_index_sync.sync_now.assert_not_called()
-        s.code_index_sync.start_watcher.assert_not_called()
-
-    @pytest.mark.asyncio
-    async def test_sweep_failure_does_not_stop_sync(self):
-        # Session boot must survive a filesystem failure in the
-        # sweep step — the sync + watcher still need to fire.
-        s = _bare_session()
-        s.code_index.sweep_stale_dirs = MagicMock(side_effect=RuntimeError("boom"))
-        SessionStartupCoordinator(s).start_codeindex_background()
-        import asyncio
-
-        await asyncio.sleep(0)
-        await asyncio.sleep(0)
-        s.code_index_sync.sync_now.assert_called_once()
 
 
 class TestStartMarketplaceRefreshBackground:

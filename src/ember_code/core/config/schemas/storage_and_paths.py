@@ -59,36 +59,3 @@ class GroupPolicyConfig(BaseModel):
     """
 
     poll_seconds: int = 300
-
-
-class CodeIndexConfig(BaseModel):
-    """Tunables for the local code-index sync.
-
-    ``repository_id`` and the GCS bucket are auto-discovered from
-    ``settings.api_url`` using the local git remote — users don't
-    configure either.
-    """
-
-    #: Whether this session has a code index at all.
-    #:
-    #: Off means the ``CodeIndex`` tool is never offered, the plain
-    #: ``main_agent`` prompt is used instead of the CodeIndex-first
-    #: variant, and the Neo4j sidecar is not attached — so no
-    #: distribution download, no server process, no refcount. That last
-    #: part is the point: the index is backed by Neo4j, and somebody who
-    #: is not reading code should not pay for a graph database.
-    #:
-    #: Meant to be server-settable: a group's ``settings`` entry is designed
-    #: to deep-merge into config above both CLI flags and project files, so an
-    #: admin could turn this off for a group and nobody could turn it back on
-    #: locally::
-    #:
-    #:     {"code_index": {"enabled": false}}
-    #:
-    #: **This alone does not remove Neo4j.** ``artifacts.enabled`` is
-    #: backed by the same sidecar, and the sidecar is only skipped when
-    #: neither feature wants it. A deployment that wants no graph
-    #: database at all turns off both.
-    enabled: bool = True
-
-    fetch_timeout: float = 60.0

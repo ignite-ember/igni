@@ -29,7 +29,6 @@ from ember_code.core.config.schemas.permissions import PermissionsConfig
 from ember_code.core.config.schemas.safety import SafetyConfig
 from ember_code.core.config.schemas.storage_and_paths import (
     AuthConfig,
-    CodeIndexConfig,
     GroupPolicyConfig,
     StorageConfig,
 )
@@ -38,7 +37,6 @@ __all__ = [
     "AgentsConfig",
     "AuthConfig",
     "GroupPolicyConfig",
-    "CodeIndexConfig",
     "ContextConfig",
     "DisplayConfig",
     "EvalsConfig",

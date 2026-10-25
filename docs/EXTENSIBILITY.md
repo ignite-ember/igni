@@ -30,7 +30,7 @@ An **extension** is a capability with a service behind it. It arrives one of two
 
 **Tools are always MCP.** We do not invent a second tool transport. What an extension needs *beyond* tools is what this document specifies.
 
-**One extension, one manifest.** Packaging decides which fields apply — `requires` and an image for a sidecar, `endpoint` and auth for a remote one. Everything else is identical, so a capability is never described twice and cannot drift between deployments.
+**One extension, one manifest.** Packaging decides which fields apply — an image for a sidecar, `endpoint` and auth for a remote one. Everything else is identical, so a capability is never described twice and cannot drift between deployments.
 
 ---
 
@@ -367,10 +367,7 @@ Additive changes are never breaking, so omitting is cheap and premature inclusio
   },
   "sidecar": {
     "image": "igni__code-index:1.4.0", // in the bundle; never pulled at install
-    "mcp": { "transport": "stdio" },
-    "requires": [                     // infra WE resolve, because there is no vendor service
-      { "capability": "graph-db", "constraint": ">=5", "mode": "shared" }
-    ]
+    "mcp": { "transport": "stdio" }
   },
   "endpoint": {                       // the remote form
     "url": "https://artifacts.internal/mcp",
@@ -420,106 +417,27 @@ igni refactoring its wire.
 
 **One version axis.** An extension declares a `contract` range and never names a product version. The deployment advertises one contract version, the lower of what the backend and the installed client implement.
 
-### Requirements: what an extension needs the deployment to provide
+### What an extension runs, it runs itself
 
-**igni is the broker, not the provider.** A deployment running Qdrant
-has a vector store igni knows nothing about and does not own; igni's
-job is to hand an extension a connection to it. The one case where
-igni *is* also the provider is a laptop, where the deployment is the
-laptop and igni is the only thing around to act for it — which is
-exactly why there are two resolvers and not one.
+**igni provides no infrastructure to extensions** — no graph database,
+no vector store, no embedder. An extension that needs one runs it, from
+the directory igni gives it alone (`IGNI_EXTENSION_DATA`, beside the
+extension store and kept across reinstalls), or reaches its own service
+for it. CodeIndex is the worked example: its local index is a Neo4j per
+(project, commit), started by its own process on a JDK it downloads into
+that directory, with the chunk vectors embedded by a sentence-transformer
+in its own wheelhouse. None of it is igni's, and all of it leaves when
+the extension does.
 
-**Why broker it at all**, rather than let the extension connect to
-Qdrant itself with its own configuration:
+There used to be a `requires` field — a kind (`graph-db`, `embedder`, …)
+that igni would provision on a laptop and bind in a deployment. Nothing
+passed the installer a resolver, so an extension declaring it could not
+install anywhere; the field is gone, and the manifest refuses it.
 
-- **The endpoint and the credential stay out of the bundle.** An
-  extension that configures its own store is an extension trusted
-  with infrastructure access, and `egress` and `secrets` stop
-  meaning anything — the deployment can no longer see or control
-  what it reaches.
-- **One bundle, every deployment.** Self-configuration means a
-  different bundle per environment, or a bundle that has to know
-  where it is running. Neither is a contract.
-- **The operator declares once.** Ten extensions needing a vector
-  store configure it once, in the deployment, rather than ten times
-  in ten manifests that can disagree.
-
-**Declare a kind, never a product.** `graph-db`, `vector-store`,
-`relational-db`, `object-store`, `embedder`. A regulated customer
-often has a sanctioned Postgres you must use, and a manifest naming
-`postgres` cannot express "or whatever they have".
-
-**A resolver returns a connection, never a process.** That is the
-whole contract, and everything below follows from it. Two resolvers
-exist and they differ only in what they do *before* returning:
-
-| | On a laptop | In a deployment |
-|---|---|---|
-| Resolver | `ProvisioningResolver` | `BindingResolver` |
-| What it does | downloads, starts, loads — then returns a connection | returns a connection to infrastructure the deployment already runs |
-| What it builds | whatever is missing | **nothing** |
-| Missing instance | provisions one | **refuses the install**, because that is an operator's problem and a backend starting one quietly is the surprise |
-
-**The extension cannot tell which it got**, and that is the point:
-the same signed bundle and the same manifest install in
-both places. A manifest that had to know where it was running would
-not be a contract.
-
-**Tenancy is in the result from the start.** A shared instance says
-which slice is this extension's — a database name, a collection
-prefix. On a laptop that is trivially "the only one" and it is
-*still* filled in, because a field that appeared only in the
-deployment case would make the deployment case a contract change
-rather than a resolver swap.
-
-**`mode` is the extension's requirement; the resolver decides how.**
-`shared` takes the deployment's instance, `dedicated` wants one
-nobody else is on, and `bind-only` means an existing instance and no
-new one. Each resolver refuses the one it cannot honour: a binding
-resolver refuses `dedicated` rather than quietly handing over a
-shared instance — the extension asked for isolation — and a
-provisioning resolver refuses `bind-only`, since starting an
-instance is exactly what that mode forbids.
-
-**`constraint` does not always mean a version.** Its meaning is
-defined by the kind, and saying "a semver range" was wrong the day
-embedders arrived:
-
-| Kind | `constraint` | Resolved `uri` |
-|---|---|---|
-| `graph-db` | semver range, e.g. `>=5` | `bolt://host:7687` |
-| `relational-db` | semver range, e.g. `>=14` | `postgresql://host:5432` |
-| `object-store` | semver range | `s3://…` or a base URL |
-| `vector-store` | **`dim=<n>`** — the vector width | product-dependent |
-| `embedder` | **`dim=<n>`** — the vector width | `http://host/embed` |
-
-The two vector kinds take a width rather than a version because
-width is the axis on which they are compatible. A newer model of the
-same width is a safe substitution; an older one of a different width
-is not, and a version range cannot say that.
-
-**An extension declaring both must give them the same width.**
-Vectors written at one width and queried at another do not fail —
-they return nonsense, slowly, which is the worst failure available,
-so it is refused at install.
-
-**One instance may satisfy several kinds.** `graph-db` and
-`vector-store` are usually the same Neo4j: it holds the graph *and*
-a native vector index on it, which is how both of igni's own
-capabilities use it. That is a resolver's business, not a manifest's
-— it maps each kind to a connection and two kinds may map to the
-same one.
-
-Merging them into a single kind would be the wrong fix. An extension
-that wants semantic search over its own documents and no graph would
-have to declare a graph database it never opens, and a deployment
-running Qdrant beside Neo4j could not express that either. **A kind
-is what the extension needs; an instance is what satisfies it.**
-
-**Resolution happens at install.** An extension that starts and then
-discovers it has no database fails in front of a user instead of in
-front of the administrator who installed it. Unsatisfiable
-requirements fail there, naming the fix.
+**What igni *does* provide is its floor**: identity and a token for the
+extension's own service, the host object model, notifications, and its
+decision model (`host.decide`). Those are the same everywhere, which is
+why they are the floor and a database is not.
 
 **A sidecar is a single instance, and that is the trade.** If it dies, one user is blocked. That is the correct blast radius for a laptop, and the reason none of a remote service's HA machinery belongs here.
 
@@ -742,7 +660,7 @@ This replaces a line that read "the React component tree, CSS class names, any t
 - **Any CSS class not defined in `igni-ui.css`**, any component not exported from `@igni/ui-react`, any token not in `PUBLISHED_TOKENS`. Naming a class is not the same as publishing it: an extension that reaches for `.kb-row` because it saw it in the DOM has taken a dependency we never offered.
 - The markup those classes are applied to — which element, which nesting. The class is the contract; the tree under it is ours.
 - `RpcMethod` members not namespaced to a capability.
-- Database schemas, Neo4j labels, on-disk layouts.
+- Database schemas, on-disk layouts.
 - Base prompt text and base agent definitions.
 - **Anything not named in this document.**
 
@@ -784,7 +702,7 @@ This replaces a line that read "the React component tree, CSS class names, any t
 | Sandboxed iframe + bridge | **shipped** (`extensions/ExtensionFrame.tsx`, `bridge.ts`, `protocol.ts`) — the host-side permission check now has its backend counterpart; nothing renders the frame yet |
 | Policy cache keyed by `group_id` | not started |
 | Extensions in group packs | **removed** — extensions come from their services through igni |
-| Requirement resolver (local only) | not started |
+| Infrastructure for extensions (`requires`) | **removed** — an extension runs what it needs from `IGNI_EXTENSION_DATA` |
 | Deployment profile: URL builder + the four raw-sqlite3 stores | not started |
 | `igni ext init` / `doctor` | **shipped** |
 
@@ -821,7 +739,6 @@ Authorisation is decided before the service is consulted, and that ordering is t
 ## Reference
 
 - Closed unions to open: [`clients/web/src/chat/pageStack.ts`](../clients/web/src/chat/pageStack.ts), [`clients/web/src/App.tsx`](../clients/web/src/App.tsx)
-- Subsystem contract: [`backend/subsystem_status.py`](../src/ember_code/backend/subsystem_status.py)
 - Permissions: [`core/config/permission_eval/`](../src/ember_code/core/config/permission_eval), [`core/config/tool_permissions/`](../src/ember_code/core/config/tool_permissions)
 - Group tier: [`core/config/group_policy.py`](../src/ember_code/core/config/group_policy.py)
 - Store seams: [`core/db/urls.py`](../src/ember_code/core/db/urls.py), [`core/db/engine_registry.py`](../src/ember_code/core/db/engine_registry.py), [`core/session/_sqlite_utils.py`](../src/ember_code/core/session/_sqlite_utils.py)

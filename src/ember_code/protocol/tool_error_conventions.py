@@ -17,7 +17,7 @@ We detect:
 
 * ``"Error: ..."`` prefix — used by ``edit_file``,
   ``edit_file_replace_all``, ``create_file``, notebook tools,
-  knowledge tools, codeindex tools.
+  knowledge tools.
 * Shell-tool non-zero exit shapes, one per emitter:
   ``"Command exited with code N:"`` (foreground
   ``run_shell_command``), ``"Background process exited with code

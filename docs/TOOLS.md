@@ -28,7 +28,6 @@ The actual tool list registered on the main team at session boot:
 | `WebSearch` | `DuckDuckGoTools` | Web search (when `permissions.web_search != "deny"` and the `web` extra — `pip install ignite-ember[web]` — is installed). |
 | `WebFetch` | `WebTools` (custom) | Fetch and extract URL content (when `permissions.web_fetch != "deny"`). |
 | `Orchestrate` | `OrchestrateTools` (custom) | Spawn sub-teams from the agent pool. |
-| `CodeIndex` | `CodeIndexTools` (custom) | Semantic search (only when an index is built for current HEAD). |
 
 ### The complete catalog — what a `tools:` list may name
 
@@ -44,8 +43,7 @@ not on this list raises `Unknown tool` when the agent is built.
 | `NotebookEdit` | yes | yes | |
 | `WebSearch` | yes | yes | Needs the `web` extra; without it the name resolves to nothing |
 | `WebFetch` | yes | yes | |
-| `CodeIndex` | yes | **no** | Wired by the main-agent path; not offered to ephemeral agents |
-| `Visualize` | yes | **no** | Same — used by the bundled `visualizer` sub-agent |
+| `Visualize` | yes | **no** | Used by the bundled `visualizer` sub-agent; not offered to ephemeral agents |
 
 Two names are accepted in a `tools:` list but are not registry toolkits —
 they are pseudo-tools the agent builder wires up itself, so the registry
@@ -57,8 +55,7 @@ The two lists differ because they are validated by different code.
 Sub-agent `.md` frontmatter goes through `ToolRegistry.resolve`, which
 accepts every catalog name. `create_agent` and `/agents create` go through
 `ToolRegistry.normalize_agno_names`, which validates against the smaller
-*ephemeral-visible* set — that is where `CodeIndex` and `Visualize` drop
-out.
+*ephemeral-visible* set — that is where `Visualize` drops out.
 
 ### Hooks: matcher gotcha
 
@@ -77,56 +74,19 @@ the full matcher convention and the rest of the translation table.
 
 ---
 
-## CodeIndex — Semantic Code Intelligence
+## CodeIndex — an extension's tool
 
-CodeIndex is the most important tool in igni's arsenal. While other tools operate on raw text (grep for patterns, read for contents), CodeIndex provides **pre-processed, semantic understanding** of the entire codebase.
+CodeIndex is an extension, not part of igni. Its extension runs the local
+index — a Neo4j graph per commit, filled from the CodeIndex service — and
+serves one agent-facing tool over MCP, `codeindex_cypher`, a **read-only**
+Cypher query over that graph. Its manifest registers the tool with the
+agent (`permissions.tools`), its `data-architect` stands in for igni's while
+its index covers HEAD, and its prompt text fills igni's
+`main.code_intelligence` and `plan_mode.code_intelligence` slots.
 
-See `igni-integration.md` in the CodeIndex repository's docs (`igni__code-index`) for the full documentation on categories, hierarchical summaries, indexing pipeline, and self-hosting.
-
-### What It Does
-
-CodeIndex pre-analyzes every entity in the codebase (files, classes, functions, modules, packages) and generates rich summaries across **six categories**: Code, Security, Testability, Architecture, Performance, and Maintainability.
-
-Summaries are built **bottom-up** (function → class → file → module → project), giving agents multi-resolution understanding.
-
-### Functions
-
-There is exactly one agent-facing function. The older per-question helpers
-(`codeindex_search`, `codeindex_item`, `codeindex_references`, …) were
-collapsed into it and no longer exist.
-
-- `codeindex_cypher(cypher, params?, limit?, confirm_raw_cypher?, commit?)` — run a **read-only** Cypher query against the per-commit Neo4j graph.
-
-Two parts of its contract are hard refusals rather than warnings:
-`confirm_raw_cypher=True` is mandatory (absent or `False` is an explicit
-deny), and the query must be read-only — no `CREATE` / `MERGE` / `SET` /
-`DELETE` / `REMOVE` / `DROP` / `ALTER`, no transaction control, no
-`CALL dbms.*`. Two procedures *are* allowed and are the intended search
-paths: `CALL db.index.vector.queryNodes` (find code by describing what it
-does) and `CALL db.index.fulltext.queryNodes` (find a literal string).
-
-Agents author Cypher against the schema in
-`core/code_index/neo4j_schema.GRAPH_SCHEMA_DESCRIPTION`; the bundled
-`data-architect` sub-agent exists for exactly this.
-
-### Why This Matters
-
-Traditional code search is syntactic — `grep "authenticate"` finds the string, not the concept. CodeIndex is semantic:
-
-| Query | Grep | CodeIndex |
-|---|---|---|
-| "how does auth work?" | Finds files with "auth" in the name/content | Returns the auth module summary with flow description, security analysis, and references to all related files |
-| "what's vulnerable?" | Can't answer this | Returns security-category summaries flagging issues across the codebase |
-| "where should I add rate limiting?" | Can't answer this | Returns architecture summaries of request-handling modules with dependency analysis |
-| "what needs more tests?" | Can't answer this | Returns testability-category summaries ranking under-tested areas |
-
-### Configuration
-
-CodeIndex works out of the box with zero configuration. Per-project customization (categories, indexing options, ignore patterns) is planned for a future release.
-
-### Fallback: Local Mode
-
-If CodeIndex cloud is unavailable, igni falls back to local shell-based search (`Bash` + `rg` / `find` / `cat`). The experience degrades gracefully — agents still work, just without semantic understanding.
+Without it — or before its index covers HEAD — igni's agents search with
+`Bash` (`rg` / `find` / `cat`). The tool's contract and the graph schema are
+the extension's documentation (`igni__code-index`).
 
 ---
 
@@ -438,8 +398,8 @@ refuses the whole call on any unknown name. That set is exactly:
 Bash, BashOutput, Edit, NotebookEdit, Schedule, WebFetch, WebSearch, Write
 ```
 
-`CodeIndex` and `Visualize` are real registry tools but are **not** on this
-list — a sub-agent `.md` may name them, `create_agent` may not. Reading and
+`Visualize` is a real registry tool but is **not** on this
+list — a sub-agent `.md` may name it, `create_agent` may not. Reading and
 searching are not on it either, because they are not tools: they go through
 `Bash` (`cat`, `rg`, `find`).
 
@@ -507,17 +467,15 @@ Each built-in agent's tools are declared in the `tools:` frontmatter of its
 | `reviewer` | `WebFetch, WebSearch, Bash` |
 | `security` | `WebSearch, Bash` |
 | `visualizer` | `Visualize` |
-| `data-architect` | `CodeIndex, Bash, WebSearch, WebFetch` |
 
 Every one of them reaches files through `Bash` — none names a read, grep,
-glob or list toolkit, because none exists. The `data-architect` is the only
-agent holding `CodeIndex`, and `visualizer` the only one holding
-`Visualize`.
+glob or list toolkit, because none exists. `visualizer` is the only one
+holding `Visualize`. (CodeIndex's `data-architect` reaches its tool through
+the extension's MCP server — `mcp_servers: [ext:igni.codeindex]`.)
 
-Agents whose filename carries a `.codeindex` suffix are the variants swapped
-in when a CodeIndex is available for the current HEAD; they otherwise
-declare the same tools, except `plan_researcher.codeindex`, which adds
-`CodeIndex`.
+An extension may stand in for one of these agents (`contributes.prompt.agents`):
+CodeIndex replaces several with versions that use its index, while its
+index covers HEAD.
 
 Two toolkits are appended at build time and so appear on no agent's list:
 `Schedule` (added to every sub-agent that has any tools at all) and the

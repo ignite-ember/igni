@@ -299,11 +299,6 @@ class TestBackendServerRealConstruction:
         assert not session.broadcast_bus.has_callbacks
         assert session.broadcast_bus.pending_count == 0
 
-        # _init_codeindex — CodeIndex + sync manager + availability flag.
-        assert session.code_index is not None
-        assert session.code_index_sync is not None
-        assert isinstance(session._codeindex_available, bool)
-
         # _init_project_context — project_instructions + rules_index.
         assert isinstance(session.project_instructions, str)
         assert session.rules_index is not None

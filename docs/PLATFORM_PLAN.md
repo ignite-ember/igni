@@ -26,8 +26,8 @@ Independent of direction. Days, not weeks.
 | | Where | Why now |
 |---|---|---|
 | **Per-runtime `load_settings`** | `backend/session_orchestrator.py:453` deep-copies the *boot* project's Settings | A session opened on repo B runs with repo A's `permissions.allow`/`deny`, guardrails and model default. Tauri "New Window" uses this path. Cross-project privilege escalation in the shipped product. |
-| **Neo4j: don't kill what you don't own** | `backend/neo4j_runtime.py:1288`, `:833` | An attached backend SIGTERM→SIGKILLs another's sidecar; `stop_all()` ignores refcounts by design. SIGKILL mid-checkpoint forces a full re-embed. |
-| **Neo4j: stale pidfile** | `backend/neo4j_runtime.py:1156` | Kill the JVM externally and the next boot silently runs with **no artifact store**, visible only in the log. |
+| **Neo4j: don't kill what you don't own** | `igni_codeindex/local/runtime/neo4j.py` (CodeIndex extension) — line numbers from igni's `backend/neo4j_runtime.py:1288`, `:833` | An attached backend SIGTERM→SIGKILLs another's sidecar; `stop_all()` ignores refcounts by design. SIGKILL mid-checkpoint forces a full re-embed. |
+| **Neo4j: stale pidfile** | `igni_codeindex/local/runtime/neo4j.py` (CodeIndex extension) — line numbers from igni's `backend/neo4j_runtime.py:1156` | Kill the JVM externally and the next boot silently runs with **no artifact store**, visible only in the log. |
 | **Neo4j: orphans and partials** | — | 36 stray JVMs (some 10 days old, `-Xmx2g`), 481 state dirs, 248 MB of abandoned `tmp*.tar.gz` on a developer laptop. Nothing reaps any of it. |
 | **`WorkflowRunner` missing on pool runtimes** | `backend/app.py:311` vs `rpc_handlers/workflows.py:33` | `/workflows` fails silently on every non-default session. |
 
@@ -69,7 +69,7 @@ Nothing here is optional, and auth is first.
 - **TLS**, since it stops being loopback.
 - **Principal-aware router.** Not a cookie-sticky LB: authenticate, resolve principal → group → that group's pool, place **least-loaded**, then pin. Sticky placement is permanent, so a bad placement is permanent.
 - **Process per group, separate HOME/OS user.** The only isolation lever that works today — `data_dir` is bypassed by ~21 hardcoded `Path.home()` call sites.
-- **Neo4j bolt auth on.** `dbms.security.auth_enabled=false` (`backend/neo4j_runtime.py:1052`) — a password is generated and passed to the driver, and the server ignores it. Every sidecar is an unauthenticated bolt port on loopback.
+- **Neo4j bolt auth on.** `dbms.security.auth_enabled=false` (`igni_codeindex/local/runtime/neo4j.py` (CodeIndex extension) — line numbers from igni's `backend/neo4j_runtime.py:1052`) — a password is generated and passed to the driver, and the server ignores it. Every sidecar is an unauthenticated bolt port on loopback.
 - **Deployment profile → Postgres** (see EXTENSIBILITY §3). The blocker is the four raw-`sqlite3` stores in `core/session/`; `session_directories` and `client_state` are exactly what a router needs.
 
 ### Scale-out blockers
@@ -139,7 +139,7 @@ Small once Phase 3 exists.
 - Does a service-account principal count as a platform user for banding? Pricing decision, not technical.
 - Retention defaults — what does an unconfigured deployment do?
 - Does the shared backend's agent need a shell at all, or only tools? Changes how much sandbox is needed.
-- `project_id` hashes the git remote, not the path (`core/code_index/project.py:36`) — two checkouts of one repo are not isolated. Latent until HOMEs are ever consolidated.
+- `project_id` hashes the git remote, not the path (`core/data_paths.py`, and the CodeIndex extension's copy) — two checkouts of one repo are not isolated. Latent until HOMEs are ever consolidated.
 
 ## Not being built
 

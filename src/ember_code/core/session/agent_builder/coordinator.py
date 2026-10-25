@@ -4,7 +4,7 @@ Six phase methods (``build_tools`` / ``build_prompt`` /
 ``build_instructions`` / ``build_model`` / ``build_spec`` /
 ``build``) each own one slice of the main-agent construction. All
 Session state is read through the session's public accessors
-(``cloud_access_token``, ``codeindex_available``,
+(``cloud_access_token``,
 ``active_output_style``, ``tool_event_hook()``,
 ``resolve_main_tool_names()``, ``build_agent_catalog()``) so this
 sub-package never reaches into ``session._underscore`` attributes.
@@ -95,7 +95,6 @@ class MainAgentBuilder:
         return PromptBuilder(
             project_dir=s.project_dir,
             settings=s.settings,
-            codeindex_available=s.codeindex_available,
             # The exact condition under which ``update_user_memory`` is
             # attached: agno adds the learning-store tools only when
             # ``agent._learning is not None`` (``agno/agent/_tools.py``),
@@ -120,7 +119,6 @@ class MainAgentBuilder:
             settings=s.settings,
             output_styles=s.output_styles,
             active_output_style_name=s.active_output_style,
-            codeindex_available=s.codeindex_available,
         ).assemble(prompt)
 
     def build_model(self) -> tuple[Any, int]:

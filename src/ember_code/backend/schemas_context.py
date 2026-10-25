@@ -35,9 +35,7 @@ Chat-view models (slash-command output):
 
 ``OutputStyle`` (a ``@dataclass``) is imported lazily under
 ``TYPE_CHECKING`` so this module stays import-cheap. Views that
-wrap it set ``arbitrary_types_allowed=True``, matching the
-treatment :class:`CodeIndexStatusView` gives to the
-``ResolvedRepository`` dataclass.
+wrap it set ``arbitrary_types_allowed=True``.
 
 ``ContextBreakdown`` **is not**, and cannot be. It is the
 *annotation of a Pydantic field*, and with
@@ -199,9 +197,7 @@ class OutputStylesListView(BaseModel):
     a style leaves its ``description`` blank.
 
     ``OutputStyle`` is a plain ``@dataclass`` (not a Pydantic
-    model), so we opt into ``arbitrary_types_allowed=True`` — same
-    treatment :class:`CodeIndexStatusView` gives its
-    ``ResolvedRepository`` field. Wrapping the raw mapping keeps
+    model), so we opt into ``arbitrary_types_allowed=True``. Wrapping the raw mapping keeps
     this view thin; the coordinator doesn't have to pre-project
     into ``(name, description, active)`` triples.
     """

@@ -16,6 +16,11 @@ The message is `notifications/igni/conditions` on the extension's own MCP
 connection, so an extension can only ever speak for its own conditions.
 A condition nobody has said holds does not, and none survive a restart:
 say them again when the process starts.
+
+Text a contribution takes from a tool (`"source": "tool"`) is fetched
+when the extension starts. When what it says changes — a project map
+for the commit HEAD moved to — `await ext.prompt.refresh()` has igni
+fetch it again and rebuild the agent.
 """
 
 from __future__ import annotations
@@ -49,4 +54,9 @@ class PromptConditions:
             return
         notification = ConditionsNotification(params=ConditionsParams(conditions=changed))
         self._holding.update(changed)
+        await self._session.send(notification)
+
+    async def refresh(self) -> None:
+        """Have igni fetch this extension's tool-sourced prompt text again."""
+        notification = ConditionsNotification(params=ConditionsParams(conditions={}, refresh=True))
         await self._session.send(notification)

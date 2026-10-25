@@ -181,8 +181,8 @@ class CliOverrides(BaseModel):
             # is to be the thing you reach for when you want the guarantee.
             #
             # What survives is analysis that does not go through the shell:
-            # ``codeindex_cypher`` over the graph, the notebook readers, and web
-            # search/fetch. That is a real working mode when the index is
+            # an extension's read-only tools (CodeIndex's graph), the notebook
+            # readers, and web search/fetch. That is a real working mode when the index is
             # populated, and close to nothing when it is not, which is why the
             # denial message below names the alternatives instead of leaving the
             # model to discover them by failing.

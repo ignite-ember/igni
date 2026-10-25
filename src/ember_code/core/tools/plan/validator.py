@@ -3,8 +3,7 @@ property before :meth:`PlanTool.exit_plan_mode` records them.
 
 The old ``_validate_plan_confidence(plan, tasks, session)`` free
 function was the canonical Rule-6 offender in this codebase: it
-mutated ``session._plan_mode_attempt`` and reached in for
-``session._codeindex_available``. The behaviour graduated to
+mutated ``session._plan_mode_attempt``. The behaviour graduated to
 :class:`PlanConfidenceValidator`, which owns the attempt counter,
 the regex, the thresholds, and the rejection-feedback prose as
 first-class instance state.
@@ -24,6 +23,9 @@ from collections.abc import Iterable
 from typing import TYPE_CHECKING
 
 from pydantic import BaseModel
+
+from ember_code.core.prompts.contributions import PromptContributions, prompt_contributions
+from ember_code.core.prompts.document import PromptDocumentName
 
 if TYPE_CHECKING:
     from ember_code.core.session.core import Session
@@ -64,10 +66,10 @@ class ConfidenceVerdict(BaseModel):
 class PlanConfidenceValidator:
     """Owns the confidence-gate state for one :class:`Session`.
 
-    Constructor takes the session so :meth:`validate` can read
-    :attr:`Session.codeindex_available` (the public accessor —
-    no reach-in on the private attr). The attempts counter is
-    instance state; :meth:`reset` clears it, called by
+    The gate runs while an extension gives plan mode code
+    intelligence (it fills the ``code_intelligence`` slot of the
+    ``plan_mode`` prompt — CodeIndex does, while its index covers
+    HEAD). The attempts counter is instance state; :meth:`reset` clears it, called by
     :meth:`PlanTool.enter_plan_mode` on fresh plan-mode entry.
 
     Compat: the counter is mirrored to
@@ -84,8 +86,10 @@ class PlanConfidenceValidator:
         min_citations: int = MIN_FILE_CITATIONS,
         max_attempts: int = MAX_PLAN_ATTEMPTS,
         file_path_re: re.Pattern[str] = FILE_PATH_RE,
+        contributions: PromptContributions | None = None,
     ) -> None:
         self._session = session
+        self._contributions = contributions if contributions is not None else prompt_contributions
         self._min_citations = min_citations
         self._max_attempts = max_attempts
         self._pattern = file_path_re
@@ -124,20 +128,15 @@ class PlanConfidenceValidator:
         mention at least :data:`MIN_FILE_CITATIONS` file paths.
         Plans without them are usually hand-wavy and produce
         execution-time surprises ("oh, I'll find the right file
-        later"). The check runs only when the session reports a
-        CodeIndex is available — without an index the agent
-        legitimately can't do as deep a research pass, so we
-        skip the gate.
+        later"). The check runs only while plan mode has code
+        intelligence — without an index the agent legitimately
+        can't do as deep a research pass, so we skip the gate.
 
         Bounded by :data:`MAX_PLAN_ATTEMPTS` — after the cap we
         accept whatever came in (the user still reviews + can
         refine).
         """
-        # Public accessor — Session.codeindex_available is a real
-        # method on the class. Bare object() test stubs may also
-        # set the private attribute directly; support both so the
-        # fake-session flow keeps working.
-        if not self._session_codeindex_available():
+        if not self.has_code_intelligence():
             return ConfidenceVerdict(reject=False, feedback="", attempts_remaining=0)
 
         attempt = self.attempts
@@ -172,8 +171,7 @@ class PlanConfidenceValidator:
 
         Kept as a method so the prose belongs to the validator's
         identity (rather than being an inline blob in
-        :meth:`validate`). If the wording ever needs tuning per-
-        session (e.g. codeindex-off variants), it happens here."""
+        :meth:`validate`)."""
         return (
             f"Plan rejected (research pass {attempt + 1}/{self._max_attempts}). "
             f"Found only {citations} file citation(s); need at least "
@@ -181,11 +179,9 @@ class PlanConfidenceValidator:
             "you actually examined — symbol-only descriptions don't ground "
             "the plan enough.\n\n"
             "Do another research pass:\n"
-            "1. Run `codeindex_cypher` with read-only queries — e.g. "
-            "multi-hop walks through :Item / :REL nodes, MATCHes with "
-            "`project_hash: $proj`, multi-angle searches the typed "
-            "queries can't yet express. confirm_raw_cypher=True is "
-            "required.\n"
+            "1. Ask the code index again, the way your plan-mode "
+            "instructions describe — from several angles: by feature, by "
+            "symbol, and by what depends on the central pieces.\n"
             # `file_read` is a permission category, not a function — PRD-12.
             # That fix reached the two plan *prompts* and missed the two plan
             # *tool results*, which is why 267 corpus tool results still carry
@@ -198,21 +194,9 @@ class PlanConfidenceValidator:
 
     # ── Internal helpers ────────────────────────────────────────
 
-    def _session_codeindex_available(self) -> bool:
-        """Read the CodeIndex-available flag from the session.
-
-        Prefers the public :attr:`Session.codeindex_available`
-        property; falls back to the private ``_codeindex_available``
-        attribute for bare-Session test stubs that set the flag
-        directly on ``__new__`` instances.
-        """
-        # Test stubs may set the private attribute directly on
-        # bare ``Session.__new__`` instances — check that first
-        # so the manual seed always wins.
-        private = getattr(self._session, "_codeindex_available", None)
-        if isinstance(private, bool):
-            return private
-        return bool(getattr(self._session, "codeindex_available", False))
+    def has_code_intelligence(self) -> bool:
+        """Whether an extension gives plan mode code intelligence right now."""
+        return "code_intelligence" in self._contributions.slot_fills(PromptDocumentName.PLAN_MODE)
 
 
 __all__ = [

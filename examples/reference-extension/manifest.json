@@ -16,10 +16,6 @@
     "mcp": { "transport": "stdio" }
   },
 
-  "requires": [
-    { "capability": "graph-db", "constraint": ">=5", "mode": "shared" }
-  ],
-
   "permissions": {
     "workspace": "read",
     "workspacePaths": ["src/**", "*.toml"],

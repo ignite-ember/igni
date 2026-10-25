@@ -11,8 +11,6 @@ See the package README for the whole surface.
 """
 
 from igni_extension.environment import (
-    Capabilities,
-    Capability,
     ExtensionEnvironment,
     HostEndpoint,
     Secrets,
@@ -36,8 +34,6 @@ from igni_extension.service import ServiceClient
 from igni_extension.tokens import SignedIn
 
 __all__ = [
-    "Capabilities",
-    "Capability",
     "ExtensionEnvironment",
     "Host",
     "HostEndpoint",

@@ -2,9 +2,6 @@
 
 from ember_code.core.session.cloud_auth import SessionCloudAuth
 from ember_code.core.session.cloud_catalog import CloudModelCatalog
-from ember_code.core.session.codeindex_availability import (
-    CodeIndexAvailabilityRefresher,
-)
 from ember_code.core.session.compaction import (
     CompactionCoordinator,
     ContextBreakdownReporter,
@@ -59,7 +56,6 @@ from ember_code.core.session.tool_hook_factory import ToolEventHookFactory
 
 __all__ = [
     "CloudModelCatalog",
-    "CodeIndexAvailabilityRefresher",
     "CompactResult",
     "CompactionCoordinator",
     "ContextBreakdown",

@@ -4,8 +4,8 @@
 //! On first launch the Tauri shell now self-provisions everything
 //! the BE needs: downloads ``uv``, asks uv to install a pinned
 //! CPython, creates a managed venv, installs ``ignite-ember`` at
-//! the pinned version, and prefetches the sentence-transformer
-//! embedding model. Subsequent launches reuse the cache and skip
+//! the pinned version, and prefetches igni's decision model
+//! (Laya). Subsequent launches reuse the cache and skip
 //! straight to spawning the BE — overhead drops to sub-100ms.
 //!
 //! Everything lives under a per-user cache dir
@@ -33,8 +33,8 @@ pub(crate) const IGNITE_EMBER_VERSION: &str = env!("CARGO_PKG_VERSION");
 const INSTALL_MARKER: &str = "ember-install.json";
 
 /// 1 GB. Sized for uv (~25 MB) + CPython (~50 MB) + ignite-ember +
-/// transitives (chromadb / sentence-transformers / torch — ~600 MB
-/// unpacked) + the embedding model (~90 MB) + headroom. Failing
+/// transitives (laya / transformers / torch — ~600 MB unpacked) +
+/// headroom. The decision model itself (~1.7 GB) is fetched after. Failing
 /// fast here is much kinder than letting pip die mid-install.
 const MIN_BOOTSTRAP_FREE_BYTES: u64 = 1024 * 1024 * 1024;
 
@@ -84,7 +84,7 @@ impl BackendSource {
 pub type ProgressFn<'a> = &'a (dyn Fn(&str) + Sync);
 
 /// Resolve a Python interpreter with ``ignite-ember`` installed and
-/// the sentence-transformer model pre-warmed. Bootstraps on first
+/// its decision model pre-warmed. Bootstraps on first
 /// call; returns cached on subsequent calls.
 ///
 /// Returns an error with a human-readable message on any failure —
@@ -236,10 +236,9 @@ pub fn ensure_backend_python(progress: ProgressFn) -> Result<BackendInstall, Str
             ],
         )?;
 
-        // Pre-warm the sentence-transformer cache so the user's
-        // first agent run doesn't stall mid-chat on a silent
-        // 90 MB HuggingFace download.
-        progress("Downloading embedding model (one-time, ~90 MB)…");
+        // Pre-warm the decision model so the first Bypass check or
+        // `host.decide` doesn't stall on a silent HuggingFace download.
+        progress("Downloading igni's decision model (one-time, ~1.7 GB)…");
         let mut cmd = Command::new(&venv_python);
         cmd.args(["-m", "ember_code.prefetch_models"]);
         cmd.env("HF_HOME", &hf_home);

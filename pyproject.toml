@@ -10,9 +10,9 @@ readme = "README.md"
 license = "Apache-2.0"
 # 3.12 exactly, not a floor. The desktop app installs 3.12 and only
 # 3.12 (``clients/tauri/src-tauri/src/runtime.rs``), and the failure
-# mode off that version is silent rather than loud: on 3.14 the Neo4j
-# sidecar dies without writing stderr or a log, and the knowledge base
-# simply never comes up. A range here would let a contributor's
+# mode off that version is silent rather than loud: on 3.14 a sidecar
+# igni used to run died without writing stderr or a log, and the feature
+# behind it simply never came up. A range here would let a contributor's
 # ``uv sync`` pick an interpreter the product never ships on.
 requires-python = ">=3.12,<3.13"
 authors = [{ name = "Ignite Ember" }]
@@ -29,8 +29,7 @@ classifiers = [
     "Programming Language :: Python :: 3",
     # One classifier, because one version is supported. Listing 3.11 and
     # 3.13 told PyPI — and anyone reading the package page — that this
-    # installs and runs there. It does not: the desktop app ships 3.12,
-    # and off-version the Neo4j sidecar fails silently.
+    # installs and runs there. It does not: the desktop app ships 3.12.
     "Programming Language :: Python :: 3.12",
     "Topic :: Software Development",
     "Topic :: Software Development :: Code Generators",
@@ -71,16 +70,10 @@ dependencies = [
     # dependencies: a machine that never installs it never installs a
     # PDF parser. Nothing left in igni imports any of them.
     "dateparser~=1.4.0",
-    # ``~=5.5.1`` capped PYSEC-2026-4164, whose fix is 5.6.0. Widened
-    # to the minor the way ``pypdf`` was, for the same reason: a patch
-    # pin on a dependency that ships security fixes in minors is a
-    # standing block on them.
-    "sentence-transformers~=5.6",
-    # Bypass mode's last check (core/hooks/bypass_guard.py). Runs locally
-    # beside the embedder; needs nothing torch/transformers do not already.
+    # igni's decision model (core/decisions/): Bypass mode's last check and
+    # `host.decide`. Runs locally; brings torch and transformers with it.
     "laya~=0.4.4",
     "websockets~=16.0",
-    "neo4j~=5.27.0",
     # Server discovery reads a TXT record in the customer's own zone,
     # for deployments that would rather publish DNS than serve a file
     # at their email domain's web root. Pure Python, no system

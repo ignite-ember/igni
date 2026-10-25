@@ -1,8 +1,8 @@
 # igni Code — how the code is supposed to be written
 
 This doc prescribes what to write. Concrete patterns, drawn from the
-A-tier subsystems already in this repo (`core/mcp/`,
-`core/code_index/`, `core/config/permission_eval/`, `core/guardrails/`,
+A-tier subsystems (`core/mcp/`, the CodeIndex extension's local index
+`igni_codeindex/local/`, `core/config/permission_eval/`, `core/guardrails/`,
 `clients/web/src/chat/observerBusy.ts`). Anti-patterns drawn from the
 D-tier files of the same grading pass.
 
@@ -304,7 +304,8 @@ what fields they'll see. Any producer change silently breaks consumers.
 constrained by `Literal`. Dispatch is `isinstance` or a match statement,
 not `event["type"] == "..."`.
 
-`core/code_index/delta/ops.py` is the canonical example. One JSONL
+`igni_codeindex/local/delta/ops.py` (the CodeIndex extension, which took
+it from this repository) is the canonical example. One JSONL
 delta file with typed ops:
 
 ```python
@@ -345,7 +346,8 @@ missing, resource not found), return a `Result` model that carries
 the error. Reserve exceptions for programming bugs and truly
 exceptional cases.
 
-`core/code_index/sync/manager.py` and `fetcher.py` are the pattern:
+`igni_codeindex/local/sync/manager.py` and `fetcher.py` (the CodeIndex
+extension) are the pattern:
 
 ```python
 class SyncResult(BaseModel):
@@ -466,9 +468,9 @@ Applies to both FE (React `useEffect` on phase change) and BE (an
 
 ### Pattern 7: separate the wire from the domain
 
-`core/code_index/` has this right: `schema/` holds Pydantic domain
+The CodeIndex extension's `igni_codeindex/local/` has this right: `schema/` holds Pydantic domain
 models (typed quality fields, categorical enums, no `tags` bag).
-`db/` holds SQLAlchemy services (persistence). `delta/ops.py` holds the
+`db/` holds persistence services. `delta/ops.py` holds the
 wire format (JSONL ops). `index.py` orchestrates.
 
 The four layers don't share types. Wire message → parsed to schema
@@ -484,7 +486,7 @@ persistence + `EventLogEmitter` wire).
 The A-tier subsystems have small files:
 - `core/guardrails/*.py` — 6 files, avg ~40 LoC each. One rule per file.
 - `core/mcp/*.py` — 5 files, most under 200 LoC. Transport / config / approval / client separated.
-- `core/code_index/schema/*.py` — 5 files, one domain model per file.
+- `igni_codeindex/local/schema/*.py` (CodeIndex extension) — one domain model per file.
 
 When a file crosses ~300 LoC, that's the smell to split. When a class
 crosses 15 methods or 5 instance fields, that's the smell.
@@ -580,7 +582,7 @@ became rather than dropped. Every replacement was read before being
 cited here.
 
 ### For a new event type
-- **Model:** `core/code_index/delta/ops.py` — typed op union. (Was `delta.py`; the module became the `delta/` package, and `ops.py` is the part that held the union. It is now a `Field(discriminator="op")` tagged union driven by one `TypeAdapter`, with the per-op behaviour as methods on the ops.)
+- **Model:** `igni_codeindex/local/delta/ops.py` (CodeIndex extension) — typed op union. (Was `delta.py`; the module became the `delta/` package, and `ops.py` is the part that held the union. It is now a `Field(discriminator="op")` tagged union driven by one `TypeAdapter`, with the per-op behaviour as methods on the ops.)
 - **Wire:** `protocol/schemas/be_events.py` — Pydantic messages with `type: Literal[...]`. (`protocol/messages.py` still exists but is a re-export shim now; the schemas live in `protocol/schemas/`, split by direction and concern.)
 
 ### For a new small pure reducer
@@ -590,14 +592,14 @@ cited here.
 ### For a new subsystem manager
 - **Model:** `core/mcp/client.py` — async client class, no globals; every concern a named collaborator, and `connect()` returns an explicit `MCPConnectResult`.
 - **Model:** `core/plugins/loader.py` — seven-root discovery with priority, namespace-prefixed apply.
-- **Model:** `core/code_index/sync/manager.py` — single orchestration entry, `SyncResult` returns, no raises for expected failures. (Was `sync_manager.py`, which survives only as a re-export shim — the coordinator plus its five domain classes live in `sync/`.)
+- **Model:** `igni_codeindex/local/sync/manager.py` (CodeIndex extension) — single orchestration entry, `SyncResult` returns, no raises for expected failures; the coordinator plus its five domain classes live in `sync/`.
 
 ### For a new eval/rule
 - **Model:** `core/config/permission_eval/` — pure package, no I/O, no network, no interactive prompts. Rules parsed once; `pipeline.py` walks the six evaluation steps and `strategies.py` holds one strategy subclass per mode instead of an `if/elif` ladder. (Was a single `permission_eval.py`.)
 - **Model:** `core/guardrails/injection.py` — regex list + `Guardrail` protocol implementation, ~50 LoC.
 
 ### For a new persistence layer
-- **Model:** `core/code_index/db/*.py` — SQLAlchemy service per domain, indexed columns for real filter queries. (Was `pg/`, deleted in `7909bcf`; `db/` was added in the same commit with the same file-per-domain shape — `commit_metadata.py`, `file_reference.py`, `models.py`. The name no longer claims Postgres: each service dispatches on its backend, SQLite or Neo4j.)
+- **Model:** `igni_codeindex/local/db/*.py` (CodeIndex extension) — one service per domain (`commit_metadata.py`, `file_reference.py`) over the commit's own store.
 - **Model:** `core/session/persistence/data_service.py` — `SessionDataService.read_key` / `write_key`, the single lock-held load-modify-write chokepoint over the Agno session blob, returning `LoadResult` / `PersistResult` rather than raising. (This is what the old `persistence.py` `_upsert_session_data_key` became.) Atomic-replace semantics are documented on the stores that compose it — `event_log_store.py`, `todos_store.py`.
 
 ### For a new tool

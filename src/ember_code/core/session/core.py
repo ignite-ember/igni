@@ -33,8 +33,6 @@ Owned concerns (each has a class in this package):
   + PermissionEvaluator composition.
 * :class:`~.learning_ops.SessionLearningManager` — learning
   context inject / extract.
-* :class:`~.codeindex_availability.CodeIndexAvailabilityRefresher`
-  — flip-detect + rebuild.
 * :class:`~.identity.SessionIdentity` — session_id rotate /
   rebind invariant.
 * :class:`~.run_debug.RunMessagesDebugDumper` — diagnostic
@@ -64,8 +62,6 @@ from ember_code.backend.schemas_model import ModelSwitchResult
 from ember_code.core.agents import AgentPool
 from ember_code.core.auth.credentials import CloudCredentials
 from ember_code.core.broadcast_schema import BroadcastEvent
-from ember_code.core.code_index import CodeIndex, CodeIndexSyncManager
-from ember_code.core.code_index.embedder import LiveEmbedder
 from ember_code.core.config.models import ModelRegistry
 from ember_code.core.config.settings import Settings
 from ember_code.core.config.tool_permissions import ToolPermissions
@@ -93,10 +89,6 @@ from ember_code.core.session.agent_factory import (
 from ember_code.core.session.broadcast import BroadcastBus
 from ember_code.core.session.cloud_auth import SessionCloudAuth
 from ember_code.core.session.cloud_catalog import CloudModelCatalog
-from ember_code.core.session.codeindex_availability import (
-    CodeIndexAvailabilityRefresher,
-    RefreshAvailabilityResult,
-)
 from ember_code.core.session.compaction import CompactionCoordinator
 from ember_code.core.session.event_log import SessionEventLog
 from ember_code.core.session.event_log_schema import SessionEvent
@@ -244,7 +236,6 @@ class Session:
 
         self._init_project_context(settings)
 
-        self._init_codeindex(settings)
         self._init_agent_and_skill_pools(settings)
 
         # ── Context window (for compaction threshold, capped by setting) ──
@@ -298,9 +289,6 @@ class Session:
         # Both are gone with the capability: the archivist ships
         # inside the Artifacts extension and its tools reach the
         # agent over MCP, which is how every other extension's do.
-        # Late-bound: ``attach_codeindex_neo4j`` swaps ``self.code_index`` when a
-        # Neo4j runtime attaches, which happens after the pool is configured.
-        self.pool.attach_code_index_provider(lambda: self.code_index)
 
         # ── Learning coordinator (owns _learning + inject/extract) ──
         # Composed after ``persistence`` / ``memory_mgr`` so the
@@ -356,26 +344,6 @@ class Session:
             hooks_map_ref=lambda: self.hooks_map,
             disconnect_removed_mcps=self._disconnect_removed_mcps,
             auto_connect_mcps=self._auto_connect_mcps,
-        )
-
-        # ── Availability refresher (codeindex flip → rebuild) ───────
-        # ``build_main_agent`` is a lambda (not a bound method) so
-        # the refresher re-reads ``self._build_main_agent`` at call
-        # time — tests that monkey-patch the private name intercept
-        # cleanly this way.
-        self._codeindex_refresher = CodeIndexAvailabilityRefresher(
-            settings=settings,
-            project_dir=self.project_dir,
-            code_index=self.code_index,
-            code_index_sync=self.code_index_sync,
-            pool_ref=lambda: self.pool,
-            plugin_loader_ref=lambda: self.plugin_loader,
-            disabled_plugins_ref=lambda: self._disabled_plugins,
-            mcp_manager_ref=lambda: self.mcp_manager,
-            build_main_agent=lambda: self._build_main_agent(),
-            assign_main_team=self._assign_main_team,
-            get_availability=lambda: self._codeindex_available,
-            set_availability=self._set_codeindex_available,
         )
 
         # ── Main Agent (single agent with all tools + orchestration) ──
@@ -467,106 +435,6 @@ class Session:
         self.loop_store = LoopStore(project_dir=self.project_dir)
         self.loop_progress_store = LoopProgressStore(project_dir=self.project_dir)
         self.loop = LoopController(self.loop_store)
-
-    def _init_codeindex(self, settings: Settings) -> None:
-        """Construct :class:`CodeIndex` + :class:`CodeIndexSyncManager`
-        eagerly and compute the ``_codeindex_available`` flag.
-        """
-        # LiveEmbedder rather than the default: the ``chunk_embedding`` vector
-        # index is 384-dim all-MiniLM-L6-v2, and the fallback HashEmbedder makes
-        # every chunk vector a hash of its own text — semantic search then only
-        # matches byte-identical text. The artifact store next door has always
-        # passed LiveEmbedder; the code index never did.
-        self.code_index = CodeIndex(
-            project=self.project_dir,
-            data_dir=settings.storage.data_dir,
-            embedder=LiveEmbedder(),
-        )
-        self.code_index_sync = CodeIndexSyncManager.from_settings(
-            settings,
-            project_dir=self.project_dir,
-            code_index=self.code_index,
-            # A background sync that populates the index has to tell the
-            # session, or the agent keeps the toolset and prompt it started
-            # with. Flipping to an indexed branch mid-session left it believing
-            # CodeIndex was unavailable while the graph was ready to query.
-            on_sync_complete=lambda: self.refresh_codeindex_availability(),
-        )
-
-        if not settings.code_index.enabled:
-            # The objects stay — they are cheap, hold no connection, and
-            # a hundred call sites read them without a None guard. What
-            # changes is the flag, and it is the only thing that needs
-            # to: ``_main_tool_names`` gates the CodeIndex tool on it,
-            # ``PromptBuilder`` picks the plain prompt over the
-            # CodeIndex-first one, and the agent pool loads the
-            # non-CodeIndex variant of every definition. Nothing else
-            # has to learn about the switch.
-            self._codeindex_available = False
-            logger.info("CodeIndex: disabled in settings")
-            return
-
-        _head_sha = self.code_index_sync.current_sha()
-        self._codeindex_available = bool(_head_sha and self.code_index.has_commit(_head_sha))
-
-    async def attach_codeindex_neo4j(self, runtime: Any) -> None:
-        """Swap the default chroma-backed code index for a neo4j
-        one driven by ``runtime`` (typically a ``Neo4jRuntime``).
-
-        Replaces ``self.code_index`` and
-        ``self.code_index_sync`` with neo4j-backed equivalents,
-        points the :class:`CodeIndexAvailabilityRefresher` at the
-        new refs, and recomputes ``_codeindex_available``.
-
-        Idempotent: a second call with the same runtime
-        short-circuits. Switching the runtime rebuilds the index.
-        """
-        # ``CodeIndex`` doesn't take an ``embedder`` kwarg yet —
-        # the items/chunks path is still chroma-backed in this
-        # branch. The seam for ``runtime=`` is what matters here:
-        # ``apply_delta`` and ``file_reference_service`` already
-        # route through the runtime's per-commit client. The
-        # remaining chroma path inside ``add_item`` is the
-        # standing migration debt (see the parked drop-tables
-        # migration and the schema description for the boundary).
-        new_index = CodeIndex(
-            project=self.project_dir,
-            data_dir=self.settings.storage.data_dir,
-            runtime=runtime,
-            embedder=LiveEmbedder(),
-        )
-        new_sync = CodeIndexSyncManager.from_settings(
-            self.settings,
-            project_dir=self.project_dir,
-            code_index=new_index,
-            # Same callback the constructor wires (see ``_init_code_index``).
-            # Dropping it here was how the neo4j path lost its only
-            # mid-session signal: the sync that finally populates the graph
-            # would finish and nothing would tell the session, so the agent
-            # kept the prompt and toolset it booted with.
-            on_sync_complete=lambda: self.refresh_codeindex_availability(),
-        )
-
-        existing_runtime = getattr(self.code_index, "_neo4j_runtime", None)
-        if existing_runtime is runtime:
-            return
-
-        self.code_index = new_index
-        self.code_index_sync = new_sync
-
-        if self._codeindex_refresher is not None:
-            self._codeindex_refresher.retarget(code_index=new_index, code_index_sync=new_sync)
-
-        # Go through the refresher rather than writing the flag. Availability
-        # is not just a boolean: ``_resolve_main_tool_names`` appends the
-        # CodeIndex tool at build time and ``PromptBuilder`` picks
-        # ``main_agent.codeindex.md`` at build time, so a bare write left the
-        # session claiming CodeIndex was available while the running agent
-        # held the plain prompt and a tool list without it. ``refresh`` flips
-        # the flag AND rebuilds the pool + main team, and it also honours the
-        # ``code_index.enabled`` kill-switch the bare write ignored.
-        self.refresh_codeindex_availability()
-        logger.info("CodeIndex: switched to neo4j backend (project=%s)", self.project_dir)
 
     def _init_mcp_client_manager(self) -> None:
         """Construct :class:`MCPClientManager` and merge in
@@ -742,7 +610,6 @@ class Session:
         self.pool.load_definitions(
             settings,
             self.project_dir,
-            codeindex_available=self._codeindex_available,
             group_dir=self.group_root("agents"),
         )
         self.plugin_loader.apply_to_agents(self.pool, disabled=self._disabled_plugins)
@@ -1081,19 +948,6 @@ class Session:
         """Public wrapper over :meth:`_rebuild_main_team`."""
         self._rebuild_main_team()
 
-    def _assign_main_team(self, team: Any) -> None:
-        """Assignment sink used by
-        :class:`CodeIndexAvailabilityRefresher` so the refresher
-        can install a freshly-built team without reaching into
-        ``session.main_team`` by name."""
-        self.main_team = team
-
-    def _set_codeindex_available(self, value: bool) -> None:
-        """Setter used by :class:`CodeIndexAvailabilityRefresher`
-        so the refresher writes through a named method rather than
-        via bare-attribute assignment on the session."""
-        self._codeindex_available = value
-
     def set_default_model(self, model_name: str) -> ModelSwitchResult:
         """Validate ``model_name`` against the registry, swap the
         default, and rebuild the main team. Returns a Pattern-3
@@ -1133,23 +987,9 @@ class Session:
             self._plan_research_armed = False
         return armed
 
-    def start_all_background_services(self) -> None:
-        """Kick off the codeindex background service.
-
-        Idempotent-safe — the subsystem's ``start_*_background``
-        entry is guarded against a double-start. A knowledge warmup
-        used to run beside it, opening the local artifact index;
-        Artifacts is an extension now and igni starts its service
-        the way it starts any other.
-        """
-        self.start_codeindex_background()
-
     def start_boot_background_services(self) -> None:
-        """Superset of :meth:`start_all_background_services` used by
-        the boot runtime only — also refreshes plugin marketplace
-        catalogs.
-        """
-        self.start_all_background_services()
+        """What the boot runtime starts in the background: the plugin
+        marketplace catalogs' refresh."""
         self.start_marketplace_refresh_background()
 
     async def fire_session_start_hook(self) -> None:
@@ -1220,7 +1060,7 @@ class Session:
 
     def _resolve_main_tool_names(self, registry: "ToolRegistry") -> list[str]:
         """Compose the main team's toolkit, honouring per-session
-        flags (web permissions, CodeIndex availability).
+        flags (web permissions).
         """
         tool_names: list[str] = list(self._MAIN_CORE_TOOLS)
         web_allowed = self.settings.permissions.web_search != "deny"
@@ -1237,8 +1077,6 @@ class Session:
                 tool_names.append("WebFetch")
             except (ImportError, ValueError):
                 pass
-        if self._codeindex_available:
-            tool_names.append("CodeIndex")
         return tool_names
 
     def _build_main_agent(self) -> Agent:
@@ -1268,11 +1106,6 @@ class Session:
     def cloud_server_url(self) -> str:
         """The igni server API root URL used by cloud-routed tools."""
         return self.cloud_auth.server_url
-
-    @property
-    def codeindex_available(self) -> bool:
-        """Whether a populated CodeIndex exists for the current HEAD."""
-        return self._codeindex_available
 
     @property
     def active_output_style(self) -> str:
@@ -1737,7 +1570,7 @@ class Session:
         """Delegate to :meth:`LoopController.loop_status_from_tool`."""
         return self.loop.loop_status_from_tool()
 
-    # ── Knowledge / codeindex / marketplace / MCP startup ──────
+    # ── Marketplace / MCP startup ──────
 
     def _startup_coord(self) -> SessionStartupCoordinator:
         """Return the :class:`SessionStartupCoordinator`."""
@@ -1746,11 +1579,6 @@ class Session:
             coord = SessionStartupCoordinator(self)
             self.startup = coord
         return coord
-
-    def start_codeindex_background(self) -> None:
-        """Delegate to
-        :meth:`SessionStartupCoordinator.start_codeindex_background`."""
-        self._startup_coord().start_codeindex_background()
 
     def start_marketplace_refresh_background(self) -> None:
         """Delegate to
@@ -1764,41 +1592,6 @@ class Session:
     def rebuild_mcp(self) -> None:
         """Delegate to :meth:`SessionStartupCoordinator.rebuild_mcp`."""
         self._startup_coord().rebuild_mcp()
-
-    def refresh_codeindex_availability(self) -> RefreshAvailabilityResult:
-        """Delegate to
-        :meth:`CodeIndexAvailabilityRefresher.refresh`.
-
-        Bare-Session test stubs may not have composed the
-        refresher (they set ``session.code_index`` etc. by hand);
-        materialise a transient one from the current session
-        attributes so those fixtures keep working. Attribute
-        errors during the lazy build are folded into an
-        ``ok=False`` envelope — matches the pre-refactor
-        bare-except behaviour.
-        """
-        refresher = getattr(self, "_codeindex_refresher", None)
-        if refresher is None:
-            try:
-                refresher = CodeIndexAvailabilityRefresher(
-                    settings=self.settings,
-                    project_dir=getattr(self, "project_dir", None),
-                    code_index=getattr(self, "code_index", None),
-                    code_index_sync=getattr(self, "code_index_sync", None),
-                    pool_ref=lambda: getattr(self, "pool", None),
-                    plugin_loader_ref=lambda: getattr(self, "plugin_loader", None),
-                    disabled_plugins_ref=lambda: getattr(self, "_disabled_plugins", set()),
-                    mcp_manager_ref=lambda: getattr(self, "mcp_manager", None),
-                    build_main_agent=lambda: self._build_main_agent(),
-                    assign_main_team=self._assign_main_team,
-                    get_availability=lambda: getattr(self, "_codeindex_available", False),
-                    set_availability=self._set_codeindex_available,
-                )
-            except Exception as exc:  # noqa: BLE001 — lazy-build safety envelope
-                logger.debug("refresh_codeindex_availability lazy-build failed (%s)", exc)
-                return RefreshAvailabilityResult(ok=False, changed=False, error=str(exc))
-            self._codeindex_refresher = refresher
-        return refresher.refresh()
 
     # ── MCP status ─────────────────────────────────────────────
 

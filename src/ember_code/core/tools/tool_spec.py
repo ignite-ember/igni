@@ -24,7 +24,7 @@ Result-shape ``NormalizeResult`` is used internally; the legacy
 from __future__ import annotations
 
 import logging
-from collections.abc import Callable, Mapping
+from collections.abc import Mapping
 from functools import cached_property
 from pathlib import Path
 from typing import Any, ClassVar
@@ -33,7 +33,6 @@ from agno.tools import Toolkit
 from agno.tools.file import FileTools
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-from ember_code.core.tools.codeindex import CodeIndexTools
 from ember_code.core.tools.edit import EmberEditTools, FileEditNotifier
 from ember_code.core.tools.notebook import NotebookTools
 from ember_code.core.tools.schedule import ScheduleTools
@@ -76,10 +75,6 @@ class ToolBuildContext(BaseModel):
     # :data:`ember_code.core.tools.edit.default_file_edit_notifier`,
     # the module-level default the backend also wires to by default.
     file_edit_notifier: FileEditNotifier | None = None
-    # Resolves the session's ``CodeIndex`` on first query. A callable, not the
-    # index, because the session swaps in a Neo4j-backed one after the team is
-    # built — see ``CodeIndexTools.index_provider``.
-    code_index_provider: Callable[[], Any] | None = None
 
 
 class NormalizeResult(BaseModel):
@@ -172,8 +167,7 @@ class ToolSpec(BaseModel):
     # When ``False``, this spec is available via the registry (e.g. main
     # agent gets it via ``resolve``) but NOT via ephemeral-agent
     # ``.md``-frontmatter ``tools:`` lists. Preserves the historical
-    # ``VALID_EPHEMERAL_TOOL_NAMES`` set — ``CodeIndex`` and
-    # ``Visualize`` are built-ins added by the main agent, not
+    # ``VALID_EPHEMERAL_TOOL_NAMES`` set — ``Visualize`` is a built-in added by the main agent, not
     # requestable by user-authored ephemeral agents.
     ephemeral_visible: bool = True
 
@@ -395,38 +389,6 @@ class NotebookSpec(ToolSpec):
     toolkit_cls: type[Toolkit] = NotebookTools
 
 
-class CodeIndexSpec(ToolSpec):
-    name: str = "CodeIndex"
-    # CodeIndex is not exposed to ephemeral agents by function-name
-    # aliasing today — it's a registry-level name only.
-    agno_function_names: tuple[str, ...] = ()
-    # The four search/item/references/commits functions were collapsed into a
-    # single Cypher entry point; these names outlived them. Agno matches
-    # ``requires_confirmation_tools`` against the toolkit's real functions and
-    # warns on a miss, so the gate had been dead — CodeIndex ran unconfirmed
-    # whatever the level said.
-    confirm_function_names: tuple[str, ...] = ("codeindex_cypher",)
-    toolkit_cls: type[Toolkit] = CodeIndexTools
-    base_dir_kwarg: str | None = "project_dir"
-
-    def _build_kwargs(self, context: ToolBuildContext, confirm: bool) -> dict[str, Any]:
-        """Hand the toolkit the session's index provider.
-
-        Without it the toolkit self-builds a ``CodeIndex`` with no ``runtime=``,
-        so ``client_for`` returns ``None`` and every query answers
-        ``no_backend``. Nothing passed ``index=`` anywhere in the codebase, so
-        that was the behaviour on every path, not just the headless one.
-        """
-        kwargs = super()._build_kwargs(context, confirm)
-        if context.code_index_provider is not None:
-            kwargs["index_provider"] = context.code_index_provider
-        return kwargs
-
-    # Not reachable via ephemeral ``tools:`` frontmatter — matches the
-    # historical ``VALID_EPHEMERAL_TOOL_NAMES`` which excluded it.
-    ephemeral_visible: bool = False
-
-
 class VisualizeSpec(ToolSpec):
     """Visualize tool. Overrides :meth:`build` to inject the
     registry-owned broadcast callable (proper subclass polymorphism,
@@ -529,8 +491,8 @@ class ToolSpecCatalog:
         """Every ephemeral-visible registry name plus every alias — the
         set an ephemeral-agent ``tools:`` list may draw from.
 
-        Specs with ``ephemeral_visible=False`` (currently ``CodeIndex``
-        and ``Visualize``) are excluded — those are wired by the main
+        Specs with ``ephemeral_visible=False`` (currently ``Visualize``)
+        are excluded — those are wired by the main
         agent path, not by user-authored ephemeral ``.md`` files.
         """
         names: set[str] = set()
@@ -601,8 +563,8 @@ class ToolSpecCatalog:
         )
 
     @classmethod
-    def base(cls) -> ToolSpecCatalog:
-        """The tools a base install has, and only those.
+    def default(cls) -> ToolSpecCatalog:
+        """The tools igni has, and only those.
 
         No capability's tools are here. A capability arrives as an
         extension, and an extension's tools reach the agent over MCP
@@ -621,27 +583,6 @@ class ToolSpecCatalog:
                 WebFetchSpec(),
                 ScheduleSpec(),
                 NotebookSpec(),
-                VisualizeSpec(),
-            ]
-        )
-
-    @classmethod
-    def default(cls) -> ToolSpecCatalog:
-        """The base catalog plus the capabilities still compiled in.
-
-        One entry: :class:`CodeIndexSpec`. It is here rather than in
-        :meth:`base` because CodeIndex is not yet an extension — its
-        server half already is (``igni__code-index``), its client half
-        is still these symbols and about twenty other modules that ask
-        ``codeindex_available`` directly.
-
-        This method is the list that shrinks as that work lands. When
-        it is empty it goes, and ``base`` is the only catalog.
-        """
-        return cls(
-            [
-                *(s for s in cls.base().specs if not isinstance(s, VisualizeSpec)),
-                CodeIndexSpec(),
                 VisualizeSpec(),
             ]
         )

@@ -1,14 +1,13 @@
 """Session-startup coordinator.
 
-Thin composer — owns one instance of each of the four warmup
+Thin composer — owns one instance of each of the warmup
 phases and exposes the same public method names Session /
 backend already call. Every method is a one-line delegate so
 the file stays a single-concern composition point rather than a
 300-line implementation.
 
 The phases themselves live in sibling modules
-(:mod:`~.artifacts`, :mod:`~.codeindex`, :mod:`~.marketplace`,
-:mod:`~.mcp`); each is a subclass of
+(:mod:`~.marketplace`, :mod:`~.mcp`); each is a subclass of
 :class:`~.base.SessionStartupPhase` so shared loop-scheduling
 and log-swallowing behaviour lives in one place.
 """
@@ -18,7 +17,6 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from ember_code.core.session.schemas import McpInitResult
-from ember_code.core.session.startup.codeindex import CodeIndexWarmupPhase
 from ember_code.core.session.startup.marketplace import MarketplaceWarmupPhase
 from ember_code.core.session.startup.mcp import McpInitPhase
 
@@ -41,7 +39,6 @@ class SessionStartupCoordinator:
 
     def __init__(self, session: Session) -> None:
         self._session = session
-        self.codeindex = CodeIndexWarmupPhase(session)
         self.marketplace = MarketplaceWarmupPhase(session)
         self.mcp = McpInitPhase(session)
 
@@ -58,17 +55,13 @@ class SessionStartupCoordinator:
     def mcp_initialized(self, value: bool) -> None:
         self.mcp.initialized = value
 
-    # ── CodeIndex / marketplace warmups ───────────────────────
+    # ── Marketplace warmup ───────────────────────────────────
     #
     # There was a knowledge warmup here, opening the local
     # artifact index in the background so the first `/artifacts`
     # press did not block. There is no local index: Artifacts is
     # an extension, and igni starts its service the way it starts
     # any other one.
-
-    def start_codeindex_background(self) -> None:
-        """See :meth:`CodeIndexWarmupPhase.start_background`."""
-        self.codeindex.start_background()
 
     def start_marketplace_refresh_background(self) -> None:
         """See :meth:`MarketplaceWarmupPhase.start_background`."""

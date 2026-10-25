@@ -182,13 +182,6 @@ class AgentBuilder:
                 base_dir=ctx.base_dir,
                 permissions=permissions,
                 broadcast=ctx.broadcast,
-                # Same reason as ``settings_permissions`` above: a specialist
-                # built without this got a ``CodeIndexTools`` that self-builds a
-                # runtime-less index, so every query it made answered
-                # ``no_backend``. Measured: the ``data-architect``'s Cypher
-                # failed on every delegated question while the main agent's
-                # worked.
-                code_index_provider=ctx.code_index_provider,
             )
             tools = registry.resolve(definition.tools)
 

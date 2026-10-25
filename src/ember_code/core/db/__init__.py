@@ -16,7 +16,7 @@ This module is the single import point for the DB stack:
 - URL helpers (:func:`sync_url`, :func:`async_url`) live in
   :mod:`ember_code.core.db.urls` and are re-exported from
   :mod:`ember_code.core.db.engine` for back-compat.
-- Submodule imports (e.g. ``ember_code.core.code_index.db.models``) attach
+- Submodule imports of model modules attach
   their tables to ``Base.metadata`` — alembic ``--autogenerate`` and the
   programmatic upgrade in :mod:`ember_code.core.db.migrations` rely on
   those imports happening before the metadata is read.

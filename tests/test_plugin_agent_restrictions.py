@@ -186,7 +186,6 @@ class TestAgentPoolPluginRestrictedLoad:
         # need ``_load_directory`` to populate ``_definitions``.
         pool = AgentPool.__new__(AgentPool)
         pool._definitions = {}
-        pool._codeindex_available = False
         return pool
 
     def test_plugin_agent_mcp_servers_stripped(self, tmp_path, captured_pool_warnings):

@@ -48,7 +48,6 @@ def _render(contributions: PromptContributions, *, user_memory: bool = True) -> 
     return PromptBuilder(
         project_dir=Path("/nonexistent"),
         settings=_Settings,
-        codeindex_available=False,
         contributions=contributions,
         user_memory_available=user_memory,
         agent_catalog="- researcher: reads things",

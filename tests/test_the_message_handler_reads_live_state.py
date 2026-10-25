@@ -297,7 +297,6 @@ class TestTheUserMemoryCapabilityIsGateable:
         return PromptBuilder(
             project_dir=Path("/nonexistent"),
             settings=SimpleNamespace(storage=SimpleNamespace(data_dir=Path("/nonexistent"))),
-            codeindex_available=False,
             user_memory_available=user_memory,
             agent_catalog="",
             skill_descriptions="",

@@ -30,6 +30,7 @@
     "main.when_to_persist",
     "main.reading",
     "main.project_documents",
+    "main.project_map",
     "plan_mode.code_intelligence"
   ]
 }

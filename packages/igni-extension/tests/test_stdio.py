@@ -70,3 +70,56 @@ async def test_a_process_serves_tools_and_notifies_over_stdio(tmp_path: Path) ->
     [notification] = received
     assert notification.local().title == "runbook.pdf"
     assert notification.params.event_key == "export:e1"
+
+
+BACKGROUND = textwrap.dedent(
+    """
+    import asyncio
+    import sys
+    from pathlib import Path
+
+    from igni_extension import IgniExtension
+
+    ext = IgniExtension("acme.example")
+    started = asyncio.Event()
+
+    @ext.on_start
+    async def keep_running() -> None:
+        started.set()
+        try:
+            await asyncio.Event().wait()
+        finally:
+            Path(sys.argv[1]).write_text("stopped")
+
+    @ext.tool
+    async def is_running() -> str:
+        await asyncio.wait_for(started.wait(), 5)
+        return "running"
+
+    ext.run()
+    """
+)
+
+
+async def test_work_started_with_the_process_runs_until_igni_closes_it(tmp_path: Path) -> None:
+    script = tmp_path / "extension.py"
+    script.write_text(BACKGROUND)
+    marker = tmp_path / "marker"
+    source = Path(__file__).resolve().parents[1] / "src"
+    server = StdioServerParameters(
+        command=sys.executable, args=[str(script), str(marker)], env={"PYTHONPATH": str(source)}
+    )
+    with anyio.fail_after(30):
+        async with (
+            stdio_client(server) as (read, write),
+            HostClientSession(read, write) as session,
+        ):
+            await session.initialize()
+            result = await session.call_tool("is_running", {})
+
+        # Closing the pipe cancels it, and its own `finally` ran.
+        while not marker.exists():
+            await anyio.sleep(0.05)
+
+    assert not result.isError
+    assert marker.read_text() == "stopped"

@@ -520,10 +520,6 @@ class BackendServer:
         """See :meth:`core.session.Session.dismiss_plan`."""
         return await self._session.dismiss_plan(run_id=run_id)
 
-    def start_all_background_services(self) -> None:
-        """Forward to :meth:`Session.start_all_background_services`."""
-        self._session.start_all_background_services()
-
     def start_boot_background_services(self) -> None:
         """Forward to :meth:`Session.start_boot_background_services`."""
         self._session.start_boot_background_services()

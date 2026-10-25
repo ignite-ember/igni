@@ -3,11 +3,9 @@
 The plan-mode instructions used to be an 84-line embedded string
 inside ``build_main_agent``. That coupled prose editing to Python
 source edits and made the file a mixed-concern blob. The prose now
-lives in ``core/prompts/plan_mode.base.md`` (+ the CodeIndex
-variant extension), matching how ``main_agent.md`` is stored. The
-:class:`PlanModeNudge` model captures the branching condition
-(``codeindex_available``) as data and exposes ``.render()`` for the
-instructions builder.
+lives in ``core/prompts/plan_mode.base.md``, matching how
+``main_agent.md`` is stored, and :class:`PlanModeNudge` exposes
+``.render()`` for the instructions builder.
 
 It is the ``plan_mode`` prompt document: an extension may replace it,
 replace a section of it, or add to its ``code_intelligence`` slot, as
@@ -28,25 +26,17 @@ class PlanModeNudge(BaseModel):
     """Render the plan-mode instructions block appended to the main
     agent's ``instructions`` list.
 
-    The base prose is always included, as extensions have shaped it.
-    When ``codeindex_available`` is ``True``, the CodeIndex-specific
-    extension is concatenated after — nudging the model to lean on
-    CodeIndex as the primary research surface during plan mode, via
-    the ``data-architect`` specialist that holds ``codeindex_cypher``
-    (the only agent-facing CodeIndex tool). Loading both from
-    co-located markdown files keeps the prose out of the Python
-    source and lets prompt authors iterate without touching the
-    builder.
+    The prose as extensions have shaped it: what CodeIndex says about
+    researching through its index in plan mode arrives in the
+    ``code_intelligence`` slot, while its index covers HEAD.
     """
 
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
-    codeindex_available: bool = False
     contributions: PromptContributions = Field(default_factory=lambda: prompt_contributions)
 
     def render(self) -> str:
-        """Return the full plan-mode block (base + optional
-        CodeIndex extension) as a single string."""
+        """Return the full plan-mode block as a single string."""
         document = PromptDocumentName.PLAN_MODE
         replaced = self.contributions.replacement(document)
         text = (
@@ -60,8 +50,4 @@ class PlanModeNudge(BaseModel):
             name: fragments.expand(body)
             for name, body in self.contributions.slot_fills(document).items()
         }
-        base = PromptDocument(text).replace_sections(sections).fill_slots(fills).strip()
-        if not self.codeindex_available:
-            return base
-        extension = load_prompt("plan_mode.codeindex")
-        return f"{base}\n\n{extension}"
+        return PromptDocument(text).replace_sections(sections).fill_slots(fills).strip()

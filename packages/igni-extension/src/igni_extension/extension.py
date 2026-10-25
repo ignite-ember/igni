@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
-from collections.abc import Awaitable, Callable, Mapping
+from collections.abc import Awaitable, Callable, Coroutine, Mapping
 from typing import Any, overload
 
 import anyio
@@ -67,6 +67,7 @@ class IgniExtension:
         self.tokens = HostTokens(self.environment.service, transport=token_transport, clock=clock)
         self._service_transport = service_transport
         self._service: ServiceClient | None = None
+        self._background: list[Callable[[], Coroutine[Any, Any, None]]] = []
 
     # ── What the extension offers ───────────────────────────────────
 
@@ -95,6 +96,20 @@ class IgniExtension:
     ) -> Callable[[Callable[[T], Awaitable[None]]], Callable[[T], Awaitable[None]]]:
         """Handle a host signal: `@ext.on(ext.host.<object>.<signal>)`."""
         return self._signals.on(signal)
+
+    def on_start(
+        self, fn: Callable[[], Coroutine[Any, Any, None]]
+    ) -> Callable[[], Coroutine[Any, Any, None]]:
+        """Run `fn` in the background for as long as the process serves igni.
+
+        It starts with `run()`, beside the MCP server, and is cancelled
+        when igni closes the pipe — so work the extension owns for its
+        whole life (a sync loop, a process it started) cleans up in its
+        own `finally`. An exception it raises is logged by asyncio and
+        does not stop the extension.
+        """
+        self._background.append(fn)
+        return fn
 
     @property
     def signals(self) -> SignalHandlers:
@@ -149,12 +164,14 @@ class IgniExtension:
         # The host's socket alongside MCP, so signals arrive whether or
         # not igni is calling a tool.
         host = asyncio.create_task(self.connection.serve_forever())
+        background = [asyncio.create_task(fn()) for fn in self._background]
         try:
             await self.mcp.run_stdio_async()
         finally:
-            host.cancel()
-            with contextlib.suppress(BaseException):
-                await host
+            for task in [*background, host]:
+                task.cancel()
+                with contextlib.suppress(BaseException):
+                    await task
             await self.aclose()
 
     async def serve(

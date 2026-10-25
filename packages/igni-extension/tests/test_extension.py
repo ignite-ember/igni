@@ -59,10 +59,7 @@ def test_the_environment_igni_grants_is_read_typed(tmp_path: Path) -> None:
             "IGNI_WORKSPACE": str(tmp_path),
             "IGNI_WORKSPACE_MODE": "write",
             "IGNI_WORKSPACE_PATHS": "docs/**:src/*.py",
-            "IGNI_CAPABILITY_GRAPH_DB_URI": "bolt://127.0.0.1:7687",
-            "IGNI_CAPABILITY_GRAPH_DB_SECRET": "graph-password",
-            "IGNI_CAPABILITY_EMBEDDER_URI": "http://127.0.0.1:9000",
-            "IGNI_SECRET_GRAPH_PASSWORD": "s3cret",
+            "IGNI_EXTENSION_DATA": str(tmp_path / "data"),
             "IGNI_SECRET_LEDGER_TOKEN": "ledger",
             "IGNI_SERVICE_URL": "https://acme.example.test/",
         },
@@ -73,14 +70,7 @@ def test_the_environment_igni_grants_is_read_typed(tmp_path: Path) -> None:
     assert environment.workspace.root == tmp_path
     assert environment.workspace.mode is WorkspaceMode.WRITE
     assert environment.workspace.paths == ("docs/**", "src/*.py")
-    graph = environment.capabilities.get("graph-db")
-    assert graph is not None
-    assert (graph.uri, graph.secret_name, graph.secret) == (
-        "bolt://127.0.0.1:7687",
-        "graph-password",
-        "s3cret",
-    )
-    assert "embedder" in environment.capabilities
+    assert environment.data_dir == tmp_path / "data"
     assert environment.secrets.get("ledger-token") == "ledger"
     assert environment.service.url == "https://acme.example.test"
 
@@ -89,6 +79,6 @@ def test_nothing_granted_is_nothing_granted() -> None:
     environment = IgniExtension("acme.example", environ={}).environment
 
     assert not environment.workspace.granted
-    assert environment.capabilities.all() == []
+    assert environment.data_dir is None
     assert environment.secrets.get("anything") is None
     assert not environment.service.configured

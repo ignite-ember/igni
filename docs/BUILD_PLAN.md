@@ -37,11 +37,11 @@ No dependencies. Roughly a week, done in any order.
 | # | Item | Where | Done when |
 |---|---|---|---|
 | 0.1 | Per-runtime `load_settings` | `backend/session_orchestrator.py:453` — it deep-copies the **boot** project's Settings | A session uses its own project's permissions: open a session on repo B from a backend booted on repo A, and B's `permissions.deny` applies while A's does not. |
-| 0.2 | Don't kill a sidecar you don't own | `backend/neo4j_runtime.py:1288`, `:833` | A second attached backend shutting down leaves the first one's JVM alive; `stop_all()` honours the refcount. |
-| 0.3 | Stale pidfile is loud | `backend/neo4j_runtime.py:1156` | Killing the JVM externally and rebooting surfaces a FAILED subsystem with a reason and a fix, not a silent no-artifact-store. |
-| 0.4 | Reap orphans | `backend/neo4j_runtime.py` + a boot-time sweep | Boot removes state dirs with no live PID and `tmp*.tar.gz` older than a day, and logs the count. Measured against the current 36 JVMs / 481 dirs / 248 MB. |
+| 0.2 | Don't kill a sidecar you don't own | `igni_codeindex/local/runtime/neo4j.py` (CodeIndex extension) — line numbers from igni's `backend/neo4j_runtime.py:1288`, `:833` | A second attached backend shutting down leaves the first one's JVM alive; `stop_all()` honours the refcount. |
+| 0.3 | Stale pidfile is loud | `igni_codeindex/local/runtime/neo4j.py` (CodeIndex extension) — line numbers from igni's `backend/neo4j_runtime.py:1156` | Killing the JVM externally and rebooting surfaces a FAILED subsystem with a reason and a fix, not a silent no-artifact-store. |
+| 0.4 | Reap orphans | `igni_codeindex/local/runtime/neo4j.py` (CodeIndex extension; was `backend/neo4j_runtime.py`) `` + a boot-time sweep | Boot removes state dirs with no live PID and `tmp*.tar.gz` older than a day, and logs the count. Measured against the current 36 JVMs / 481 dirs / 248 MB. |
 | 0.5 | `WorkflowRunner` on pool runtimes | `backend/app.py:311` vs `rpc_handlers/workflows.py:33` | `/workflows` works on a second session, not only the default one. |
-| 0.6 | Neo4j bolt auth on | `backend/neo4j_runtime.py:1052` — `dbms.security.auth_enabled=false` | The generated password is required. Connecting without it fails. |
+| 0.6 | Neo4j bolt auth on | `igni_codeindex/local/runtime/neo4j.py` (CodeIndex extension) — line numbers from igni's `backend/neo4j_runtime.py:1052` — `dbms.security.auth_enabled=false` | The generated password is required. Connecting without it fails. |
 
 0.6 sits in Track 0 rather than Track B because it is an unauthenticated port on the loopback interface of every developer machine today.
 

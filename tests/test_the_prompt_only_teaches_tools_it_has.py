@@ -85,21 +85,16 @@ _ARTIFACT_TOOLS = (
 
 
 class _Settings:
-    """Enough settings for the project-map phase to look and find nothing.
-
-    The codeindex variant of the prompt is the one that consults them, and it
-    is half of what this file is about — the two prompt files drifted apart
-    once already."""
+    """Enough settings for the prompt builder to read."""
 
     class storage:  # noqa: N801
         data_dir = Path("/nonexistent")
 
 
-def _build(*, knowledge: bool, codeindex: bool = False, user_memory: bool = True) -> str:
+def _build(*, knowledge: bool, user_memory: bool = True) -> str:
     return PromptBuilder(
         project_dir=Path("/nonexistent"),
         settings=_Settings,
-        codeindex_available=codeindex,
         contributions=_with_documents(knowledge),
         user_memory_available=user_memory,
         agent_catalog="- researcher: reads things",
@@ -108,10 +103,9 @@ def _build(*, knowledge: bool, codeindex: bool = False, user_memory: bool = True
     ).render()
 
 
-@pytest.mark.parametrize("codeindex", [False, True], ids=["plain", "codeindex"])
 class TestTheTwoConditionsAgree:
-    def test_with_a_knowledge_base_the_tools_are_taught(self, codeindex):
-        prompt = _build(knowledge=True, codeindex=codeindex)
+    def test_with_a_knowledge_base_the_tools_are_taught(self):
+        prompt = _build(knowledge=True)
 
         # What is taught is the extension's text — and never a store
         # tool, which the main agent lacks.
@@ -119,51 +113,51 @@ class TestTheTwoConditionsAgree:
             assert text.split("\n")[-1] in prompt
         assert not [tool for tool in _ARTIFACT_TOOLS if tool in prompt]
 
-    def test_without_one_they_are_not_mentioned_at_all(self, codeindex):
+    def test_without_one_they_are_not_mentioned_at_all(self):
         """Not "mentioned more carefully" — absent. A hedged sentence still
         puts the tool name in front of a model that cannot call it."""
-        prompt = _build(knowledge=False, codeindex=codeindex)
+        prompt = _build(knowledge=False)
 
         offenders = [tool for tool in _ARTIFACT_TOOLS if tool in prompt]
         assert not offenders, f"prompt still teaches {offenders} with no knowledge base"
         assert "docs keeper" not in prompt and "docs-keeper" not in prompt
 
-    def test_the_user_memory_half_survives_either_way(self, codeindex):
+    def test_the_user_memory_half_survives_either_way(self):
         """The two surfaces are described together, so a crude cut would take
         ``update_user_memory`` with it — and that tool is always attached."""
         for knowledge in (True, False):
-            prompt = _build(knowledge=knowledge, codeindex=codeindex)
+            prompt = _build(knowledge=knowledge)
             assert "update_user_memory" in prompt
             assert "Persisting What You Learn" in prompt
 
-    def test_no_marker_reaches_the_model(self, codeindex):
+    def test_no_marker_reaches_the_model(self):
         for knowledge in (True, False):
-            prompt = _build(knowledge=knowledge, codeindex=codeindex)
+            prompt = _build(knowledge=knowledge)
             assert "<!--" not in prompt.replace("<!-- This file gives", "")
 
-    def test_the_absent_branch_says_what_to_do_instead(self, codeindex):
+    def test_the_absent_branch_says_what_to_do_instead(self):
         """Removing the tool leaves a real question — where does a project
         convention go now? A prompt that only deletes guidance answers it with
         silence, and the model invents something."""
-        prompt = _build(knowledge=False, codeindex=codeindex)
+        prompt = _build(knowledge=False)
 
         assert "Nothing in this session keeps the project's documents" in prompt
 
-    def test_igni_names_no_document_extension_or_its_agent(self, codeindex):
+    def test_igni_names_no_document_extension_or_its_agent(self):
         """The text about a document store is the store's to supply. igni's
         own prompts, with nothing installed, name neither the extension that
         usually keeps the documents nor the agent it ships."""
         for user_memory in (True, False):
-            prompt = _build(knowledge=False, codeindex=codeindex, user_memory=user_memory)
+            prompt = _build(knowledge=False, user_memory=user_memory)
             assert "archivist" not in prompt.lower()
             assert "artifacts" not in prompt.lower()
 
-    def test_the_two_renders_actually_differ(self, codeindex):
+    def test_the_two_renders_actually_differ(self):
         """Guards against the whole scheme quietly no-opping: if the markers
         were mistyped, every assertion above about absence would also pass on
         a prompt where nothing was ever marked."""
-        with_kb = _build(knowledge=True, codeindex=codeindex)
-        without = _build(knowledge=False, codeindex=codeindex)
+        with_kb = _build(knowledge=True)
+        without = _build(knowledge=False)
 
         assert with_kb != without
         assert "docs keeper" in with_kb and "docs keeper" not in without
@@ -174,7 +168,6 @@ class TestTheResolverFailsLoudly:
         return PromptBuilder(
             project_dir=Path("/nonexistent"),
             settings=_Settings,
-            codeindex_available=False,
             contributions=_with_documents(knowledge),
             user_memory_available=user_memory,
             agent_catalog="",
@@ -207,7 +200,6 @@ class TestTheResolverFailsLoudly:
         )
 
 
-@pytest.mark.parametrize("codeindex", [False, True], ids=["plain", "codeindex"])
 class TestTheUserMemoryToolIsTaughtOnlyWhenAttached:
     """SWU-105 — the same defect one tool over.
 
@@ -223,69 +215,67 @@ class TestTheUserMemoryToolIsTaughtOnlyWhenAttached:
     drop the section outright rather than leave a heading over nothing.
     """
 
-    def test_with_the_tool_it_is_taught(self, codeindex):
+    def test_with_the_tool_it_is_taught(self):
         for knowledge in (True, False):
-            prompt = _build(knowledge=knowledge, codeindex=codeindex, user_memory=True)
+            prompt = _build(knowledge=knowledge, user_memory=True)
 
             assert "update_user_memory" in prompt
 
-    def test_without_it_the_name_never_appears(self, codeindex):
+    def test_without_it_the_name_never_appears(self):
         """Absent, not hedged — a sentence that mentions the tool at all is a
         sentence a model can act on."""
         for knowledge in (True, False):
-            prompt = _build(knowledge=knowledge, codeindex=codeindex, user_memory=False)
+            prompt = _build(knowledge=knowledge, user_memory=False)
 
             assert "update_user_memory" not in prompt, (
                 f"prompt still teaches update_user_memory (knowledge={knowledge})"
             )
 
-    def test_the_knowledge_half_survives_either_way(self, codeindex):
+    def test_the_knowledge_half_survives_either_way(self):
         """The mirror of ``test_the_user_memory_half_survives_either_way``:
         the two surfaces are taught in one breath, so a cut aimed at one must
         not take the other."""
         for user_memory in (True, False):
-            prompt = _build(knowledge=True, codeindex=codeindex, user_memory=user_memory)
+            prompt = _build(knowledge=True, user_memory=user_memory)
 
             assert 'spawn_agent("docs-keeper")' in prompt
 
-    def test_with_neither_the_section_goes_too(self, codeindex):
+    def test_with_neither_the_section_goes_too(self):
         """Nothing to persist to, so "Persisting What You Learn" followed by
         a list of things not to persist is pure noise — and the "never
         persist" bar only means anything next to a tool that could."""
-        prompt = _build(knowledge=False, codeindex=codeindex, user_memory=False)
+        prompt = _build(knowledge=False, user_memory=False)
 
         assert "When NOT to persist" not in prompt
         assert "When to persist proactively" not in prompt
         # What stays is the honest part: nothing can be filed, so say so.
         assert "Nothing in this session keeps the project's documents" in prompt
 
-    def test_the_absent_branch_says_what_to_do_instead(self, codeindex):
+    def test_the_absent_branch_says_what_to_do_instead(self):
         """Same standard the knowledge-base absent branch is held to: removing
         a tool leaves a question — where does a durable fact about the user go
         now? — and silence gets answered by invention."""
-        prompt = _build(knowledge=True, codeindex=codeindex, user_memory=False)
+        prompt = _build(knowledge=True, user_memory=False)
 
         assert "no user-memory store" in prompt
 
-    def test_no_marker_reaches_the_model_in_any_combination(self, codeindex):
+    def test_no_marker_reaches_the_model_in_any_combination(self):
         """Four combinations, and the ``user-memory`` spans nest inside the
         ``knowledge-base`` ones — a nesting mistake shows up as a stray
         marker in exactly one of the four."""
         for knowledge in (True, False):
             for user_memory in (True, False):
-                prompt = _build(knowledge=knowledge, codeindex=codeindex, user_memory=user_memory)
+                prompt = _build(knowledge=knowledge, user_memory=user_memory)
 
                 assert "user-memory:" not in prompt
                 assert "<!--" not in prompt.replace("<!-- This file gives", "")
 
-    def test_all_four_renders_differ(self, codeindex):
+    def test_all_four_renders_differ(self):
         """Guards the whole scheme against no-opping: a mistyped marker makes
         every absence assertion above pass on a prompt nothing was ever
         marked in."""
         renders = {
-            (knowledge, user_memory): _build(
-                knowledge=knowledge, codeindex=codeindex, user_memory=user_memory
-            )
+            (knowledge, user_memory): _build(knowledge=knowledge, user_memory=user_memory)
             for knowledge in (True, False)
             for user_memory in (True, False)
         }
@@ -324,8 +314,7 @@ _ARTIFACTS_EXTENSION = Path(__file__).resolve().parents[2] / "igni__artifacts" /
     not (_ARTIFACTS_EXTENSION / "manifest.json").is_file(),
     reason="no igni__artifacts checkout beside this one",
 )
-@pytest.mark.parametrize("codeindex", [False, True], ids=["plain", "codeindex"])
-def test_the_document_extensions_text_fills_every_slot(codeindex):
+def test_the_document_extensions_text_fills_every_slot():
     """The extension that does keep the project's documents fills every slot
     the core prompts leave for it, and its text resolves cleanly inside them
     — markers balanced, nothing left in braces, and its agent taught by
@@ -342,7 +331,6 @@ def test_the_document_extensions_text_fills_every_slot(codeindex):
     prompt = PromptBuilder(
         project_dir=Path("/nonexistent"),
         settings=_Settings,
-        codeindex_available=codeindex,
         contributions=_with_documents(True, supplied),
         user_memory_available=True,
         agent_catalog="",

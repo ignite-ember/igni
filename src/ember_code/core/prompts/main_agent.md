@@ -548,3 +548,6 @@ Check for an `igni.md` file at the project root for project-specific conventions
 
 Be direct — lead with the action or answer. For simple questions and status updates, be concise. For analysis, reviews, and multi-agent results, provide thorough detail — the user wants substance, not summaries. Show your work through tool calls, not narration.
 <!-- /section:response_style -->
+
+<!-- slot:project_map -->
+<!-- /slot:project_map -->

@@ -22,9 +22,9 @@ ember-code/
 │   ├── core/               # everything that is not CLI, wire format, or server plumbing
 │   │   ├── agents/         # agent `.md` discovery, frontmatter parsing, AgentPool, agent build
 │   │   ├── auth/           # browser login, local callback server, credential storage
-│   │   ├── code_index/     # CodeIndex: changeset fetch, JSONL delta apply, Neo4j/SQLite store
 │   │   ├── config/         # Settings, model registry, permission evaluation, policy tiers
 │   │   ├── db/             # SQLAlchemy engine + sessionmaker cache, migration entry point
+│   │   ├── decisions/      # Laya, igni's decision model: the Bypass guard and `host.decide`
 │   │   ├── evals/          # YAML eval loading, assertions, runner, reporter
 │   │   ├── guardrails/     # one rule per file (PII, injection, moderation) behind one runner
 │   │   ├── hooks/          # hook discovery, matcher, executor, tool-event pipeline
@@ -46,8 +46,7 @@ ember-code/
 │   ├── transport/          # how those messages move: unix socket, websocket, in-process, NDJSON
 │   ├── bundled_agents/     # the agent `.md` files that ship inside the wheel
 │   ├── bundled_skills/     # the `SKILL.md` directories that ship inside the wheel
-│   ├── migrations/         # Alembic environment + `versions/`
-│   └── jvm/                # JDK bootstrap so the clients can start Neo4j
+│   └── migrations/         # Alembic environment + `versions/`
 ├── clients/                # the front-ends: `web`, `tauri`, `vscode`, `jetbrains`
 ├── agents/                 # repo-root copies of most agent `.md` files, read by a few
 │                           # scripts and one parity test. `bundled_agents/` is what ships,
@@ -131,7 +130,7 @@ The `make check` target is the single command to verify everything is clean befo
 - `pydantic` — Settings and data models
 - `httpx` — HTTP client (embeddings, web tools)
 
-**Optional** — one bullet per extra in `[project.optional-dependencies]`, and no others. There is no `knowledge` extra: the vector knowledge base is core (Neo4j sidecar + a local sentence-transformers model), and `chromadb` has not been a dependency since the vectors moved.
+**Optional** — one bullet per extra in `[project.optional-dependencies]`, and no others. There is no `knowledge` extra, and no graph database or embedder in igni at all: CodeIndex's local index (Neo4j per commit, a sentence-transformer) is its extension's, installed from its bundle.
 
 - `mcp` — Model Context Protocol (`pip install ember-code[mcp]`)
 - `google-genai` — Gemini models (`pip install ember-code[gemini]`)
@@ -164,18 +163,6 @@ class AgentPool:
 ### 2. Orchestration (tools/orchestrate.py)
 
 The main agent has `OrchestrateTools` which provides `spawn_agent()`, `spawn_team()`, and `create_agent()`. There is no separate orchestrator — the main agent itself decides when to delegate via tool calls. Sub-teams are built from the `AgentPool` with all Agno features (session persistence, compression, knowledge, learning, guardrails) applied by `Session._build_main_agent()`.
-
-### 3. Knowledge System (knowledge/)
-
-The knowledge system uses a custom `EmberEmbedder` that calls the igni server's `/v1/embeddings` endpoint (proxying to CodeIndex's text2vec-transformers model, 384 dimensions):
-
-```python
-class EmberEmbedder(Embedder):
-    base_url: str = "https://api.ignite-ember.sh"
-    model: str = "text2vec-transformers"
-    dimensions: int = 384
-```
-
 
 ### 5. Backend Architecture (backend/)
 
@@ -266,7 +253,7 @@ Built-in commands available in interactive mode:
 | `/model` | Switch the active model (or show current) |
 | `/whoami` | Show the active your igni server login |
 | `/logout` | Clear cached your igni server credentials |
-| `/<skill-name> [args]` | Invoke a skill (e.g., `/commit`, `/resolve-issues`) |
+| `/<skill-name> [args]` | Invoke a skill (e.g., `/commit`) |
 
 ## Architecture Decisions
 

@@ -188,6 +188,36 @@ before igni has finished connecting, and sends only what changed. Nothing
 holds until it is said, and nothing survives a restart: say it again when
 the process starts.
 
+Text a contribution takes from a tool (`"source": "tool"`) is fetched when
+the extension starts. When what it says changes — CodeIndex's project map,
+when HEAD moves to another indexed commit — have igni fetch it again:
+
+```python
+await ext.prompt.refresh()
+```
+
+## Its own work, and its own directory
+
+Work the extension does for as long as it runs — a sync loop, processes it
+starts — goes in `@ext.on_start`. It starts with `ext.run()` and is
+cancelled when igni closes the extension, so it cleans up in its own
+`finally`:
+
+```python
+@ext.on_start
+async def follow_head() -> None:
+    try:
+        await index.start()
+        await asyncio.Event().wait()
+    finally:
+        await index.stop()
+```
+
+igni provides no database, vector store or model to extensions. What one
+keeps on this machine goes in `ext.environment.data_dir`
+(`IGNI_EXTENSION_DATA`): a directory that is this extension's alone and
+survives reinstalls and updates of its bundle.
+
 ## Testing an extension
 
 ```python

@@ -38,7 +38,7 @@ class MarketplaceWarmupPhase(SessionStartupPhase):
     """Fire-and-forget refresh of every registered plugin marketplace
     catalog + auto-register defaults.
 
-    Mirrors :class:`CodeIndexWarmupPhase` — fire-and-forget on the
+    Fire-and-forget on the
     running loop, no throttle, per-marketplace timeout, all
     failures logged and swallowed. Net effect: by the time the
     user reaches for ``/plugin install`` (seconds to minutes

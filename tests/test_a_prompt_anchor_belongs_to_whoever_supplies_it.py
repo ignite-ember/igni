@@ -121,12 +121,10 @@ class TestWhoMayClaimAnAnchor:
         assert fragments.expand("{{THING}}") == "b"
 
 
-def test_the_default_table_still_fills_the_codeindex_schema():
-    from ember_code.core.prompts import inject_codeindex_schema
+def test_igni_supplies_no_anchors_of_its_own():
+    """The table starts empty: every anchor is an installed extension's.
+    ``{{CODEINDEX_GRAPH_SCHEMA}}`` used to be filled by igni importing
+    the schema; CodeIndex supplies it now, from its ``graph_schema`` tool."""
     from ember_code.core.prompts.fragments import PromptFragments
 
-    assert PromptFragments.default().owner_of("CODEINDEX_GRAPH_SCHEMA") == "igni.codeindex"
-
-    out = inject_codeindex_schema("schema:\n{{CODEINDEX_GRAPH_SCHEMA}}")
-    assert "{{CODEINDEX_GRAPH_SCHEMA}}" not in out
-    assert len(out) > len("schema:\n")
+    assert PromptFragments().anchors() == []

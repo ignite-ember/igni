@@ -159,14 +159,9 @@ REFUSALS: list[tuple[str, dict[str, Any], str]] = [
         "permissions/egress/0",
     ),
     (
-        "a capability named as a product",
-        with_(requires=[{"capability": "postgres", "constraint": ">=14"}]),
-        "requires/0/capability",
-    ),
-    (
-        "a requirement with no constraint",
-        with_(requires=[{"capability": "graph-db"}]),
-        "requires/0",
+        "infrastructure asked of igni, which provides none",
+        with_(requires=[{"capability": "graph-db", "constraint": ">=5"}]),
+        "",
     ),
     ("a typo in a top-level key", with_(permissons={"workspace": "read"}), ""),
     (

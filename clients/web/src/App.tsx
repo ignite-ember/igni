@@ -3413,7 +3413,7 @@ export default function App() {
                         ],
                         [
                           "/skills",
-                          "Workflows like /commit and /resolve-issues",
+                          "Workflows like /commit and /pr",
                         ],
                         ["/workflows", "Run a CC-style multi-phase workflow"],
                         ["/schedule", "Background tasks that report back"],

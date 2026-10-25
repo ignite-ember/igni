@@ -58,7 +58,6 @@ from ember_code.core.config.model_entry import CLOUD_TOKEN_SENTINEL, ModelRegist
 from ember_code.core.config.schemas import (
     AgentsConfig,
     AuthConfig,
-    CodeIndexConfig,
     ContextConfig,
     DisplayConfig,
     EvalsConfig,
@@ -164,7 +163,6 @@ class Settings(BaseModel):
     scheduler: SchedulerConfig = Field(default_factory=SchedulerConfig)
     auth: AuthConfig = Field(default_factory=AuthConfig)
     group_policy: GroupPolicyConfig = Field(default_factory=GroupPolicyConfig)
-    code_index: CodeIndexConfig = Field(default_factory=CodeIndexConfig)
     display: DisplayConfig = Field(default_factory=DisplayConfig)
 
     # TODO: Add telemetry config so users can wire their own Agno server or
@@ -299,7 +297,7 @@ def load_settings(
     ``settings`` entries become the tier between CLI and managed policy.
     :meth:`SettingsLoader.load` has taken one since the tier was written; this
     facade dropped it, and this facade is what production calls — so an admin
-    publishing ``{"code_index": {"enabled": false}}`` could not have it applied
+    publishing ``{"permissions": {"web_fetch": "deny"}}`` could not have it applied
     even by a caller that wanted to. Production now passes
     :class:`~ember_code.core.config.group_policy.CachedSettingsFetcher` from
     ``BackendApp.run`` and ``load_settings_from_options``; callers that want no
@@ -316,7 +314,6 @@ __all__ = [
     "AgentsConfig",
     "AuthConfig",
     "GroupPolicyConfig",
-    "CodeIndexConfig",
     "ContextConfig",
     "DisplayConfig",
     "EvalsConfig",

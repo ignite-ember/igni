@@ -40,8 +40,6 @@ def _session_patches(**overrides):
         "SessionPersistence": None,
         "SessionMemoryManager": None,
         "CloudCredentials": None,
-        "CodeIndex": None,
-        "CodeIndexSyncManager": None,
         "ToolRegistry": None,
         "ToolPermissions": None,
         "create_learning_machine": _boot_disabled(),
@@ -377,8 +375,6 @@ def _patches_with_real_context_loader():
         "SessionPersistence": None,
         "SessionMemoryManager": None,
         "CloudCredentials": None,
-        "CodeIndex": None,
-        "CodeIndexSyncManager": None,
         "ToolRegistry": None,
         "ToolPermissions": None,
         "create_learning_machine": _boot_disabled(),
@@ -889,12 +885,10 @@ class TestMainTeamToolkit:
         *,
         web: str = "ask",
         fetch: str = "ask",
-        codeindex_available: bool = False,
     ):
         """Cheap stub: just enough state for
         ``_resolve_main_tool_names`` to run, without booting Agno,
-        the DB, etc. The method only reads ``settings.permissions``
-        and ``_codeindex_available``."""
+        the DB, etc. The method only reads ``settings.permissions``."""
         session = Session.__new__(Session)
         permissions = MagicMock()
         permissions.web_search = web
@@ -902,7 +896,6 @@ class TestMainTeamToolkit:
         settings = MagicMock()
         settings.permissions = permissions
         session.settings = settings
-        session._codeindex_available = codeindex_available
         return session
 
     @staticmethod
@@ -927,7 +920,7 @@ class TestMainTeamToolkit:
         # (available to sub-agents that opt in). They MUST NOT
         # appear in the main team's toolkit. A regression here
         # silently re-introduces tool overlap with Bash.
-        session = self._stub_session(codeindex_available=True)
+        session = self._stub_session()
         names = session._resolve_main_tool_names(self._stub_registry())
         for forbidden in ("Read", "Grep", "Glob", "LS", "Python"):
             assert forbidden not in names, (
@@ -966,13 +959,10 @@ class TestMainTeamToolkit:
         # Core tools still landed.
         assert "Bash" in names
 
-    def test_codeindex_included_only_when_available(self):
-        without = self._stub_session(codeindex_available=False)
-        with_ = self._stub_session(codeindex_available=True)
-        names_without = without._resolve_main_tool_names(self._stub_registry())
-        names_with = with_._resolve_main_tool_names(self._stub_registry())
-        assert "CodeIndex" not in names_without
-        assert "CodeIndex" in names_with
+    def test_igni_has_no_codeindex_tool(self):
+        """CodeIndex is an extension: its tool reaches the agent over MCP."""
+        names = self._stub_session()._resolve_main_tool_names(self._stub_registry())
+        assert "CodeIndex" not in names
 
     def test_core_tools_constant_is_immutable(self):
         # The 5-tool core is class-level + a tuple so a future

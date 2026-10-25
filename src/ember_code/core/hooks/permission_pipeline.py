@@ -517,9 +517,9 @@ class PermissionEvaluatorStage(PermissionStage):
 _DENIAL_ALTERNATIVES: dict[str, str] = {
     "run_shell_command": (
         " Shell access is off in this session, which also rules out reading "
-        "files with cat/sed. If this session has CodeIndex, `codeindex_cypher` "
-        "queries the code graph without the shell; otherwise say what you would "
-        "have run and why, rather than retrying."
+        "files with cat/sed. If an extension gives this session a code index, "
+        "ask it instead; otherwise say what you would have run and why, rather "
+        "than retrying."
     ),
 }
 

@@ -204,8 +204,10 @@ CodeIndex entirely, because all any of them wanted was a path.
 The count had grown from four to nine between two passes over this
 document, which is the shape of the problem: nobody relocates a
 directory to add one lookup.
-`tests/test_the_host_can_find_its_own_data.py` ratchets it, so the
-number can go down and cannot go up.
+A ratchet held the number so it could go down and not up, until it
+reached zero: CodeIndex left with its local index, and
+`tests/test_codeindex_is_not_part_of_igni.py` now says nothing in igni
+imports it.
 
 ### The import edges — **fifty-nine, not two**
 
@@ -218,9 +220,9 @@ core/tools/tool_spec.py     from ember_code.core.tools.codeindex import CodeInde
 
 Both are real. Neither is the problem. Measured with an AST walk
 rather than a grep, the host reaches into CodeIndex and Artifacts in
-**59 places across 17 files**, 37 of them at module scope.
-`tests/test_a_capability_can_be_removed.py` counts them and ratchets
-the number so it can go down and not up.
+**59 places across 17 files**, 37 of them at module scope. A test
+counted them and ratcheted the number down to zero; both have left, and
+`tests/test_codeindex_is_not_part_of_igni.py` now holds it there.
 
 The count is not fifty-nine small jobs. It is two clusters:
 
