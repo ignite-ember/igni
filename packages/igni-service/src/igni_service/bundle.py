@@ -89,12 +89,40 @@ class PythonPackaging(BaseModel):
     wheels: str = "wheels"
 
 
+class ToolAnnotations(BaseModel):
+    """MCP's four hints, every one stated: igni refuses a bundle that leaves one out."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    readOnlyHint: bool  # noqa: N815 — MCP's name for it
+    destructiveHint: bool  # noqa: N815
+    idempotentHint: bool  # noqa: N815
+    openWorldHint: bool  # noqa: N815
+
+
+class AgentTool(BaseModel):
+    """A tool in `permissions.tools`: one the agent may call, and what it says it is."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    name: str
+    annotations: ToolAnnotations
+
+
+class BundlePermissions(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+    tools: list[AgentTool] = Field(default_factory=list)
+
+
 class BundleManifest(BaseModel):
     model_config = ConfigDict(extra="allow")
 
     id: str
     version: str
     python: PythonPackaging
+    #: Read for `tools`, so a bundle igni would refuse is not built.
+    permissions: BundlePermissions = Field(default_factory=BundlePermissions)
 
 
 class BundleReport(BaseModel):
@@ -232,7 +260,8 @@ class BundleBuilder:
             raise BundleError(f"{path} does not exist") from None
         except (ValueError, ValidationError) as exc:
             raise BundleError(
-                f"{path} must name an id, a version and the `python` packaging: {exc}"
+                f"{path} must name an id, a version and the `python` packaging, and "
+                f"state all four hints of every tool in permissions.tools: {exc}"
             ) from exc
 
     def _read_pyproject(self) -> dict[str, object]:

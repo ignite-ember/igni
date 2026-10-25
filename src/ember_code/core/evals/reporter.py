@@ -14,8 +14,7 @@ now lives on:
       re-derived here.
 
 ``format_results`` is kept as a thin shim so existing callers
-(``backend/schemas_evals.py``, ``scripts/run_codeindex_eval.py``,
-``tests/test_evals.py``) keep working without changes. New callers
+(``backend/schemas_evals.py``, ``tests/test_evals.py``) keep working without changes. New callers
 should use ``EvalReport(results).render()`` directly.
 """
 

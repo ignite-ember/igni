@@ -201,4 +201,46 @@ REFUSALS: list[tuple[str, dict[str, Any], str]] = [
         with_(permissions={"workspace": "admin"}),
         "permissions/workspace",
     ),
+    (
+        "a tool named with no hints",
+        with_(permissions={"tools": ["acme.scanner.list"]}),
+        "permissions/tools/0",
+    ),
+    (
+        "a tool that leaves a hint to MCP's default",
+        with_(
+            permissions={
+                "tools": [
+                    {
+                        "name": "acme.scanner.list",
+                        "annotations": {
+                            "readOnlyHint": True,
+                            "destructiveHint": False,
+                            "idempotentHint": True,
+                        },
+                    }
+                ]
+            }
+        ),
+        "permissions/tools/0/annotations",
+    ),
+    (
+        "a tool that reads and destroys",
+        with_(
+            permissions={
+                "tools": [
+                    {
+                        "name": "acme.scanner.list",
+                        "annotations": {
+                            "readOnlyHint": True,
+                            "destructiveHint": True,
+                            "idempotentHint": True,
+                            "openWorldHint": False,
+                        },
+                    }
+                ]
+            }
+        ),
+        "permissions/tools/0/annotations",
+    ),
 ]

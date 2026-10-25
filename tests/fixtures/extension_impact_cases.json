@@ -95,7 +95,15 @@
           "token"
         ],
         "tools": [
-          "acme.a.search"
+          {
+            "name": "acme.a.search",
+            "annotations": {
+              "readOnlyHint": true,
+              "destructiveHint": false,
+              "idempotentHint": true,
+              "openWorldHint": false
+            }
+          }
         ],
         "rpc": [
           "ext.acme.a.*"
@@ -132,7 +140,13 @@
         "agent:explorer": "indexed"
       },
       "tools": [
-        "acme.a.search"
+        {
+          "name": "acme.a.search",
+          "readOnlyHint": true,
+          "destructiveHint": false,
+          "idempotentHint": true,
+          "openWorldHint": false
+        }
       ],
       "pages": [
         "acme.a"

@@ -42,6 +42,12 @@ class StubMcp:
     def get_tools(self, name: str) -> dict[str, Any]:
         return {}
 
+    def require_confirmation(self, server: str, tools: set[str]) -> None:
+        pass
+
+    async def tool_annotations(self, name: str) -> dict[str, Any]:
+        return {}
+
 
 class NoBackend:
     async def login(self, on_status: Any = None) -> Any:

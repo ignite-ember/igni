@@ -145,10 +145,8 @@ class PromptBuilder:
         ``knowledge_add`` / ``knowledge_search`` were taught across ~30
         unconditional lines while the toolkit was attached only when an
         index existed: 7,459 system prompts taught them, 0 manifests
-        carried them, 0 calls were ever made. When the versioned store
-        replaced the knowledge base the section was rewritten to
-        ``artifact_add`` — the same mistake under the name the new
-        subsystem introduced.
+        carried them, 0 calls were ever made. Then it happened again under
+        the name the next subsystem introduced.
 
         A missing capability is not only a deletion. The ``absent``
         branch says what to do with a project convention when there is

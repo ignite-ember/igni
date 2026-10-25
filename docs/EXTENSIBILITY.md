@@ -378,7 +378,11 @@ Additive changes are never breaking, so omitting is cheap and premature inclusio
     "workspace": "read",
     "egress": [],
     "secrets": [],
-    "tools": ["igni.codeindex.search"], // MCP tools it may register with the agent
+    "tools": [                          // MCP tools it may register with the agent
+      { "name": "igni.codeindex.codeindex_cypher", // each with all four of MCP's hints
+        "annotations": { "readOnlyHint": true, "destructiveHint": false,
+                         "idempotentHint": true, "openWorldHint": false } }
+    ],
     "rpc": ["ext.igni.codeindex.*"],    // backend methods its own UI may call
     "host": ["sessions", "chat.read"]   // host-model objects it may reach — §1
   },
@@ -398,7 +402,8 @@ misfiled as a `command`, and a prompt fragment with an anchor and no
 text — none of which prose alone had caught.
 
 **`tools` and `rpc` are different lists.** `permissions.tools` is MCP
-tool names the extension may register with the *agent*.
+tools the extension may register with the *agent*, each with its hints
+(§6, *What a tool says it is*).
 `permissions.rpc` is backend methods its own *UI* may call over the
 bridge. They are granted by the same administrator and enforced in
 different places, and an extension commonly wants one and not the
@@ -553,7 +558,7 @@ The manifest's `trust` (`first-party` / `partner` / `unsigned`) is the author's 
 
 ### Permissions
 
-Declared, admin-granted, base-enforced, deny by default: `workspace` (none/read/write, path-scoped), `egress` (explicit hosts, empty by default), `secrets` (named grants the deployment resolves), `tools` (MCP tool names it may register with the agent), `rpc` (backend methods its UI may call over the bridge — exact names, or a `*`-suffixed prefix, because this list is read by whoever approves the install), `host` (objects of the host object model its process and page may reach, same grammar).
+Declared, admin-granted, base-enforced, deny by default: `workspace` (none/read/write, path-scoped), `egress` (explicit hosts, empty by default), `secrets` (named grants the deployment resolves), `tools` (MCP tools it may register with the agent, each with its four hints), `rpc` (backend methods its UI may call over the bridge — exact names, or a `*`-suffixed prefix, because this list is read by whoever approves the install), `host` (objects of the host object model its process and page may reach, same grammar).
 
 **Where each one is enforced, and how far.** This list was written before any of it was, and for a while the only enforced permission was `rpc` — which made the rest a list of restrictions that restricted nothing.
 
@@ -561,11 +566,55 @@ Declared, admin-granted, base-enforced, deny by default: `workspace` (none/read/
 |---|---|---|
 | `rpc` | `ExtensionRegistry.authorise`, on every call | Complete. |
 | `host` | `HostModel.handle`, on every request from the process's socket and the page's bridge; and at dispatch, for every signal | Complete for what igni does on the extension's behalf: an ungranted object answers `not_granted` and its signals are never sent; signal contents are filtered by `workspace` and `workspacePaths`. |
-| `tools` | tool registration, which is igni's | Complete. A service may expose what it likes; what reaches the model is this list. |
+| `tools` | tool registration, which is igni's; and every permission mode, through each tool's hints | Complete. A service may expose what it likes; what reaches the model is this list, and how each tool is treated is what the manifest says it is. |
 | `egress` | the page's `connect-src`, written from the manifest and the extension's own service, `https`/`wss` only; and the endpoint host igni itself dials, `https` only | **The UI, completely. Not the service's own process** — confining that needs an OS sandbox igni does not apply. A sidecar can still open its own sockets. |
 | `workspace` | what igni *tells* a service, as `IGNI_WORKSPACE*` | An extension that was never granted the workspace is not told where it is. A service that goes looking anyway is not stopped — same OS-sandbox gap. |
 | `secrets` | resolution: an undeclared name is never looked up, and the resolver is the deployment's | The value arrives in the service's environment as `IGNI_SECRET_<NAME>`. **Not a handle** — see below. |
 | provenance | the distribution sync, before a bundle is stored, and the installer, which trusts only a recorded distribution | Complete. The JWS covers the archive's SHA-256, so changing any byte — a permission, a file — breaks it. |
+
+#### What a tool says it is
+
+Every tool in `permissions.tools` declares all four of MCP's tool
+annotations: `readOnlyHint` (it changes nothing anywhere),
+`destructiveHint` (a change it makes can delete or overwrite something),
+`idempotentHint` (calling it again changes nothing more) and
+`openWorldHint` (it reaches beyond its own system — the web, another
+service, somebody else's data). MCP makes each optional; igni does not,
+because the permission modes decide on them and a default is a claim the
+author never made. A read-only tool cannot also be destructive. igni
+refuses a manifest that leaves one out, and so does igni server when the
+bundle is uploaded. The Services page and the extensions panel show each
+tool's hints.
+
+igni's own tools are classified by name; an extension's by its hints.
+The modes treat them alike:
+
+| Mode | Reads its own data (`readOnly`, not `openWorld`) | Reads beyond it (`readOnly`, `openWorld`) | Contained write (not `readOnly`, not `destructive`, not `openWorld`) | Destructive, or reaching outside |
+|---|---|---|---|---|
+| Default | runs | runs | asks | asks |
+| Accept Edits | runs | runs | runs | asks |
+| Plan, and `--read-only` | runs | runs | refused until the plan is approved | refused until the plan is approved |
+| Bypass | runs | runs, after Bypass's last check | runs, after Bypass's last check | runs, after Bypass's last check |
+| `dontAsk` (`--strict`) | runs | refused | refused | refused |
+
+The table is the mode's own decision. Rules come first as they do for
+every tool — a `deny` rule wins in every mode, and an `allow` rule lets
+a tool run in `dontAsk` — and where a cell says "asks", an `allow` rule
+answers for the person. "Reads beyond it" runs where igni's web search
+runs, and is refused under `--strict` as web search is. Bypass's last
+check (Laya, and the rules for dangerous shapes) waves through a local
+read as it does igni's own, and looks at everything else.
+`idempotentHint` decides nothing yet; it is shown, and it is there for
+the retry policies that will.
+
+**The manifest is what counts.** An administrator approved a signed
+manifest, hints included. The extension's server reports its own
+annotations too, and the SDK sends them; when a server reports
+different hints for a tool than its manifest declares, the manifest's
+apply and the extensions panel says so — the extension keeps working as
+it was approved, and its author has something to fix. `igni-extension`
+makes the hints a required argument of every tool (`ToolHints`), so an
+extension written with it cannot leave one out.
 
 **`decide` sends text to a model, but not off the machine.** `host.decide` runs igni's local decision model (Laya) on what the extension sends; nothing leaves the person's machine, and igni does not log the text. It is a grant like any other because it spends the person's CPU and memory — the first call loads a model of about 400M parameters — and because the Bypass guard shares the model: igni answers the guard first, so an extension's questions can wait but never delay an approval. Zero-shot accuracy is modest; an extension acting on an answer should have measured it on its own data (HOST_OBJECT_MODEL, *Typed decisions on this machine*).
 

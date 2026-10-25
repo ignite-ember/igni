@@ -4,18 +4,27 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from igni_extension import IgniExtension, Signal, WorkspaceMode
+import pytest
+from pydantic import ValidationError
+
+from igni_extension import IgniExtension, Signal, ToolHints, ToolHintsMissing, WorkspaceMode
 from igni_extension.testing import HostHarness
 
+READS = ToolHints(read_only=True, destructive=False, idempotent=True, open_world=False)
 
-async def test_tools_are_registered_with_or_without_arguments() -> None:
+
+async def test_tools_are_registered_with_their_hints() -> None:
     ext = IgniExtension("acme.example", environ={})
 
-    @ext.tool
+    @ext.tool(hints=READS)
     async def greet(name: str) -> str:
         return f"hello {name}"
 
-    @ext.tool(name="shout", description="Says it louder.")
+    @ext.tool(
+        hints=ToolHints(read_only=False, destructive=True, idempotent=False, open_world=True),
+        name="shout",
+        description="Says it louder.",
+    )
     async def loud(text: str) -> str:
         return text.upper()
 
@@ -28,6 +37,35 @@ async def test_tools_are_registered_with_or_without_arguments() -> None:
     assert tools["shout"].description == "Says it louder."
     assert greeted.content[0].text == "hello Ada"  # type: ignore[union-attr]
     assert shouted.content[0].text == "HI"  # type: ignore[union-attr]
+    # What igni compares with the manifest: all four, as MCP spells them.
+    assert tools["greet"].annotations is not None
+    assert tools["greet"].annotations.readOnlyHint is True
+    assert tools["greet"].annotations.openWorldHint is False
+    assert tools["shout"].annotations is not None
+    assert tools["shout"].annotations.destructiveHint is True
+
+
+async def test_a_tool_that_leaves_a_hint_unstated_stops_the_extension_serving() -> None:
+    """`ext.mcp` can be reached past `ext.tool`; the check is on what it serves."""
+    ext = IgniExtension("acme.example", environ={})
+
+    @ext.tool(hints=READS)
+    async def fine() -> str:
+        return "ok"
+
+    async def unstated() -> str:
+        return "?"
+
+    ext.mcp.add_tool(unstated, name="unstated")
+
+    with pytest.raises(ToolHintsMissing) as raised:
+        await ext.check_tools()
+    assert raised.value.tools == ["unstated"]
+
+
+def test_a_read_cannot_also_be_destructive() -> None:
+    with pytest.raises(ValidationError):
+        ToolHints(read_only=True, destructive=True, idempotent=True, open_world=False)
 
 
 async def test_a_signal_runs_its_handlers_with_the_value_it_carries() -> None:

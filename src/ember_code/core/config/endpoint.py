@@ -89,7 +89,7 @@ def is_configured(value: str | None) -> bool:
     """Whether an operation that *can* degrade should try at all.
 
     For the paths where not having a server is a supported state rather
-    than an error — local-only models, no CodeIndex — so they can skip
+    than an error — local-only models — so they can skip
     quietly instead of catching :class:`ApiUrlNotConfigured` and
     discarding it, which reads as swallowing a real failure.
     """
@@ -107,9 +107,7 @@ def portal_url_for(api_url: str) -> str:
     vendor's website to sign in. One wrong default was configurable; the
     other was not, which made it the worse of the two.
 
-    The rule is the one ``CodeIndexInstallHint`` already used to build a
-    repository link, lifted here so there is one implementation instead
-    of two that can disagree: drop a leading ``api`` label, or an
+    One implementation, so there are not two that can disagree: drop a leading ``api`` label, or an
     ``api-``/``-api`` affix on the first label. ``api.example.com`` →
     ``example.com``; ``dev-api.example.com`` → ``dev.example.com``. A
     host that does not look like an API host is returned unchanged,

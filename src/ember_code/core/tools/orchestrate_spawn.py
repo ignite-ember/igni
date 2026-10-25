@@ -561,7 +561,7 @@ class AgentSpawn(SpawnRunner):
 
         Fenced as ``json-render`` rather than handed over as bare
         JSON because that is the form it has to end up in: a document
-        carrying this fence renders the chart in ``ArtifactPanel``,
+        carrying this fence renders the chart wherever it is shown,
         and a caller that can copy the block through verbatim cannot
         get the shape wrong on the way. The alternative asks a model
         to re-serialise a forty-element spec from a description of

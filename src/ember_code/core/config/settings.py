@@ -91,7 +91,7 @@ class Settings(BaseModel):
     # parse error deep in httpx, so the empty default comes with a
     # refusal: ``core/config/endpoint.py`` raises with the setting name,
     # the file, and an example. Paths for which no server is a supported
-    # state — local-only models, no CodeIndex — ask ``is_configured``
+    # state — local-only models — ask ``is_configured``
     # and skip quietly instead.
     #
     # The stated future is that this points at the customer's own cloud

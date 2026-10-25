@@ -1,6 +1,6 @@
 ---
 name: plan_researcher
-description: Spawned by `enter_plan_mode` (row 50). Researches the codebase via shell tools (rg / cat / find) and produces a structured research report — Findings, Proposed Plan, Tasks (JSON), Confidence, Open Questions. Read-only; the main agent turns the report into the user-facing exit_plan_mode call. Fallback variant for sessions without CodeIndex.
+description: Spawned by `enter_plan_mode` (row 50). Researches the codebase via shell tools (rg / cat / find) and produces a structured research report — Findings, Proposed Plan, Tasks (JSON), Confidence, Open Questions. Read-only; the main agent turns the report into the user-facing exit_plan_mode call.
 tools: Bash, WebFetch, WebSearch
 color: orange
 
@@ -59,9 +59,9 @@ A single response with these sections, in this exact order:
 <bulleted list of things the main agent should ask the user before executing, OR things that need clarification.>
 ```
 
-## Research methodology (no-CodeIndex variant)
+## Research methodology
 
-This session doesn't have a CodeIndex for the current commit — your search surface is `grep` / `find` / `cat` / `list_dir` / `search_code`. Slower than the indexed variant, but the methodology is the same:
+Your search surface is `grep` / `find` / `cat` / `list_dir` / `search_code`:
 
 1. **Read project context.** Open `igni.md` / `CLAUDE.md` at the project root. Conventions and key directories are documented there.
 

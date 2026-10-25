@@ -434,12 +434,6 @@ class ToolSpecCatalog:
     # Registry names the resolver skips silently — pseudo-tools
     # handled elsewhere in the agent builder rather than by the
     # built-in registry. ``Orchestrate`` -> ``OrchestrateTools``.
-    #
-    # ``Artifacts`` and ``Knowledge`` were here too, because the
-    # builder special-cased one agent by name. That capability is an
-    # extension now and its agent names its server in
-    # ``mcp_servers``; an old agent file that still says
-    # ``Artifacts`` gets an unknown-tool warning, which is the truth.
     RESERVED_NON_TOOL_NAMES: ClassVar[frozenset[str]] = frozenset({"Orchestrate"})
 
     def __init__(self, specs: list[ToolSpec]) -> None:

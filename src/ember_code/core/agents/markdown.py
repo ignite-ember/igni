@@ -99,7 +99,7 @@ class AgentMarkdownFile:
         assert self._body is not None
         fm = self._frontmatter
         # An agent an extension ships may carry an anchor its extension
-        # fills (CodeIndex's agents carry the graph schema), substituted
+        # fills (a schema it describes, say), substituted
         # here so there is one description rather than one per prompt.
         body = expand_anchors(self._body)
 

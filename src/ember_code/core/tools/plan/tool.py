@@ -3,7 +3,7 @@
 The two agent-facing tool methods live here. Everything that
 sequences the underlying enter / submit transactions
 (permission-mode flip, plan_store write, todo_store populate,
-broadcast queue, researcher spawn, confidence-gate) lives on
+broadcast queue, researcher spawn) lives on
 :class:`PlanTransactionCoordinator` in ``submission.py``. This
 module is now a thin Toolkit adapter:
 
@@ -95,22 +95,15 @@ class PlanTool(Toolkit):
         Behavior:
         1. Flips the permission evaluator to ``plan`` (blocks
            file edits + mutating shell).
-        2. Resets the plan-mode attempt counter.
-        3. If ``task`` is provided, spawns the
+        2. If ``task`` is provided, spawns the
            ``plan_researcher`` sub-agent with the task. The
-           researcher does multi-angle CodeIndex queries (or
-           grep fallback), reads the critical files, and
-           returns a structured report (Findings / Proposed
-           Plan / Tasks JSON / Confidence / Open Questions).
-        4. Returns the researcher's report so you can use it
+           researcher searches the codebase from several angles,
+           reads the critical files, and returns a structured
+           report (Findings / Proposed Plan / Tasks JSON /
+           Confidence / Open Questions).
+        3. Returns the researcher's report so you can use it
            verbatim or refine it before calling
            ``exit_plan_mode(plan, tasks)``.
-
-        The validation hook in ``exit_plan_mode`` may reject
-        plans that aren't grounded in concrete codebase facts —
-        if so, the rejection message tells you exactly what's
-        missing, do another research pass, then submit again.
-        Bounded by 3 attempts.
         """
         result = await self._coordinator.enter(reason=reason, task=task)
         return result.reply_text

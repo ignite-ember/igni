@@ -207,6 +207,38 @@ function SwitchedOff({
   );
 }
 
+function Problems({ entries }: { entries: string[] }) {
+  if (entries.length === 0) return null;
+  return (
+    <div className="ext-switched-off" role="note">
+      <div className="meta">Working, with a problem its author should fix:</div>
+      <ul>
+        {entries.map((entry) => (
+          <li key={entry}>
+            <span className="meta">{entry}</span>
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
+function AgentTools({ tools }: { tools: { name: string; hints: string }[] }) {
+  if (tools.length === 0) return null;
+  return (
+    <div className="ext-tools">
+      <div className="meta">Tools for the agent:</div>
+      <ul>
+        {tools.map((tool) => (
+          <li key={tool.name}>
+            <code>{tool.name}</code> <span className="meta">{tool.hints}</span>
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
 /** Installed extensions, their state, and their settings. */
 export function ExtensionsPanel({
   client,
@@ -244,6 +276,8 @@ export function ExtensionsPanel({
           </div>
           {extension.reason && <div className="meta">{extension.reason}</div>}
           <SwitchedOff entries={extension.switched_off ?? []} />
+          <Problems entries={extension.problems ?? []} />
+          <AgentTools tools={extension.tools ?? []} />
           <OpenOnWeb url={extension.web_url} name={extension.name} />
           {extension.settings.length > 0 && (
             <SettingsForm

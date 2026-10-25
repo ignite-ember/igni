@@ -41,6 +41,7 @@ from ember_code.core.hooks.tool_events import (
     PermissionRequestPayload,
     PreToolUsePayload,
 )
+from ember_code.core.mcp.hints import ToolHintsRegistry
 
 logger = logging.getLogger(__name__)
 
@@ -517,9 +518,9 @@ class PermissionEvaluatorStage(PermissionStage):
 _DENIAL_ALTERNATIVES: dict[str, str] = {
     "run_shell_command": (
         " Shell access is off in this session, which also rules out reading "
-        "files with cat/sed. If an extension gives this session a code index, "
-        "ask it instead; otherwise say what you would have run and why, rather "
-        "than retrying."
+        "files with cat/sed. If another of your tools can answer the question "
+        "without the shell, use it; otherwise say what you would have run and "
+        "why, rather than retrying."
     ),
 }
 
@@ -555,13 +556,22 @@ class BypassGuardStage(PermissionStage):
     Runs only after every other stage let the call through, so an
     explicit deny, a protected path or a blocked command still wins
     first, and only in Bypass does it do anything.
+
+    An extension's tool is checked like igni's own: the guard waves
+    through igni's local reads, and so an extension tool whose manifest
+    says it only reads its own data is waved through here. Every other
+    extension tool gets the same check as a shell command.
     """
 
-    def __init__(self, guard: Any | None) -> None:
+    def __init__(self, guard: Any | None, tool_hints: ToolHintsRegistry | None = None) -> None:
         self._guard = guard
+        self._tool_hints = tool_hints if tool_hints is not None else ToolHintsRegistry.shared()
 
     async def evaluate(self, ctx: ToolCallContext) -> StageOutcome:
         if self._guard is None:
+            return Continue()
+        hints = self._tool_hints.get(ctx.name)
+        if hints is not None and hints.is_local_read:
             return Continue()
         agent = getattr(ctx.agent, "name", None)
         message = await self._guard.check(ctx.name, ctx.args, [agent] if agent else [])

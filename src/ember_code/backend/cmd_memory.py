@@ -1,12 +1,7 @@
 """``/memory`` slash command implementation.
 
-Extracted (and slimmed) from the older ``cmd_memory.py`` that
-housed ``/memory`` + ``/artifacts`` + ``/sync-artifacts`` as three
-free functions. Following the ``cmd_*`` family's pattern:
+Following the ``cmd_*`` family's pattern:
 
-* Only ``/memory`` lives here now. The ``/artifacts`` and
-  ``/sync-artifacts`` commands moved to
-  :mod:`ember_code.backend.cmd_artifacts`.
 * All work happens on :class:`MemoryCommand`, a Session-injected
   coordinator with one method per verb. The public
   :func:`cmd_memory` entry point is a two-line shim so

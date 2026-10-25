@@ -29,7 +29,7 @@ from ember_code.core.prompts.contributions import PromptClaim, PromptClaimKind, 
 from ember_code.core.session.broadcast import BroadcastBus as _BroadcastBus
 from ember_code.core.session.core import Session
 from ember_code.core.tools.orchestrate import OrchestrateTools
-from ember_code.core.tools.plan import _MAX_PLAN_ATTEMPTS, PlanStore, PlanTool
+from ember_code.core.tools.plan import PlanStore, PlanTool
 from ember_code.core.tools.todo import TodoItem, TodoStore, TodoTools
 from ember_code.protocol.rpc import RpcMethod
 
@@ -206,9 +206,8 @@ class TestPlanTool:
 
 
 @pytest.fixture
-def code_intelligence():
-    """An extension giving plan mode code intelligence — what CodeIndex
-    does while its index covers HEAD — for the length of one test."""
+def plan_mode_text():
+    """An extension adding to plan mode's prompt for the length of one test."""
     prompt_contributions.set_owner(
         "acme.code",
         "Code",
@@ -224,90 +223,39 @@ def code_intelligence():
     prompt_contributions.remove_owner("acme.code")
 
 
-@pytest.mark.usefixtures("code_intelligence")
-class TestExitPlanModeValidation:
-    """Confidence-check gate (Path B enforcement). While an extension
-    gives plan mode code intelligence, plans without enough file
-    citations bounce back to the agent with specific feedback; bounded
-    by ``_MAX_PLAN_ATTEMPTS`` so we don't ping-pong forever."""
+@pytest.mark.usefixtures("plan_mode_text")
+class TestTheFloorJudgesNoPlan:
+    """igni records the plan it is given and the person judges it.
 
-    def _session_with_codeindex(self):
+    It used to reject a plan that cited fewer than two files, three
+    times at most, while an extension gave plan mode code intelligence.
+    That was the host knowing what an extension made possible; how
+    an extension changes plan mode is the extension's to say.
+    """
+
+    def _session(self):
         session = Session.__new__(Session)
         session.plan_store = PlanStore()
         session.todo_store = TodoStore()
         session.broadcast_bus = _BroadcastBus()
-        session._plan_mode_attempt = 0
         session.permission_evaluator = PermissionEvaluator.from_strings(mode="default")
         session.main_team = None  # no spawn target, enter_plan_mode falls through
         return session
 
     @pytest.mark.asyncio
-    async def test_thin_plan_rejected_when_codeindex_available(self):
-        """A plan with NO file citations should bounce on the
-        first attempt when CodeIndex is available."""
-        session = self._session_with_codeindex()
+    async def test_a_plan_citing_no_files_is_submitted(self):
+        session = self._session()
         tool = PlanTool(session)
         result = tool.exit_plan_mode("Refactor the auth thing. It will be great.")
-        assert "Plan rejected" in result
-        assert "research pass 1/3" in result
-        assert "code index" in result.lower()
-        # Plan store NOT mutated on rejection.
-        assert session.plan_store.latest == ""
-        # Attempt counter incremented.
-        assert session._plan_mode_attempt == 1
-
-    @pytest.mark.asyncio
-    async def test_grounded_plan_accepted(self):
-        """A plan that cites at least 2 specific file paths
-        passes the gate on the first try."""
-        session = self._session_with_codeindex()
-        tool = PlanTool(session)
-        result = tool.exit_plan_mode(
-            "## Refactor\n\n"
-            "Touch `src/ember_code/core/auth/middleware.py` and "
-            "`src/ember_code/backend/server.py` to swap session for JWT."
-        )
         assert "Plan submitted" in result
-        assert "Refactor" in session.plan_store.latest
-        # No attempt counter bump on acceptance.
-        assert session._plan_mode_attempt == 0
+        assert session.plan_store.latest == "Refactor the auth thing. It will be great."
 
     @pytest.mark.asyncio
-    async def test_validation_skipped_without_codeindex(self):
-        """When CodeIndex isn't available, the agent
-        legitimately can't do as deep a research pass — the
-        gate skips so the conversation keeps moving."""
-        session = self._session_with_codeindex()
-        prompt_contributions.remove_owner("acme.code")  # no code intelligence
+    async def test_entering_plan_mode_names_no_extension(self):
+        session = self._session()
         tool = PlanTool(session)
-        result = tool.exit_plan_mode("thin plan, no files cited.")
-        assert "Plan submitted" in result
-        assert session.plan_store.latest == "thin plan, no files cited."
-
-    @pytest.mark.asyncio
-    async def test_attempt_cap_accepts_thin_plan_eventually(self):
-        """After ``_MAX_PLAN_ATTEMPTS`` rejections the gate
-        gives up and accepts whatever came in — better to
-        surface a thin plan to the user (who can refine) than
-        infinite-loop the agent."""
-        session = self._session_with_codeindex()
-        session._plan_mode_attempt = _MAX_PLAN_ATTEMPTS - 1  # last allowed attempt
-        tool = PlanTool(session)
-        result = tool.exit_plan_mode("Still thin, no citations.")
-        # On the last attempt the gate accepts.
-        assert "Plan submitted" in result
-        assert session.plan_store.latest.startswith("Still thin")
-
-    @pytest.mark.asyncio
-    async def test_enter_plan_mode_resets_attempt_counter(self):
-        """A fresh ``enter_plan_mode`` starts the validation
-        loop clean — even if the previous plan-mode session
-        burned through all 3 attempts, the next gets all 3 back."""
-        session = self._session_with_codeindex()
-        session._plan_mode_attempt = 2  # near the cap
-        tool = PlanTool(session)
-        await tool.enter_plan_mode("new task")
-        assert session._plan_mode_attempt == 0
+        result = await tool.enter_plan_mode("new task")
+        assert "codeindex" not in result.lower().replace(" ", "")
 
 
 class TestEnterPlanModeSpawnsResearcher:
@@ -321,7 +269,6 @@ class TestEnterPlanModeSpawnsResearcher:
         session.todo_store = TodoStore()
         session.broadcast_bus = _BroadcastBus()
         session.permission_evaluator = PermissionEvaluator.from_strings(mode="default")
-        session._plan_mode_attempt = 0
         return session
 
     @pytest.mark.asyncio

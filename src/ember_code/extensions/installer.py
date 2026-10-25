@@ -33,7 +33,7 @@ token for it — ``IGNI_SERVICE_URL``, ``IGNI_SERVICE_TOKEN_URL`` and
 ``IGNI_SERVICE_TOKEN_SECRET`` (:mod:`ember_code.extensions.service_token`).
 It never sees the person's igni session. It is also given a directory
 of its own, ``IGNI_EXTENSION_DATA``: what it keeps on this machine —
-CodeIndex keeps a graph database per commit — it runs and stores itself.
+a database, a model — it runs and stores itself.
 igni provides no databases or models to extensions.
 """
 
@@ -49,6 +49,7 @@ from typing import TYPE_CHECKING, Any
 from ember_code.core.agents.tool_audience import ToolAudience
 from ember_code.core.agents.tool_audience import audience as default_audience
 from ember_code.core.mcp.config import MCPServerConfig, MCPTransport
+from ember_code.core.mcp.hints import ToolHints, ToolHintsRegistry
 from ember_code.core.mcp.naming import bare_tool_name
 from ember_code.extensions.host.definition import HOST_SCHEMA
 from ember_code.extensions.host.grants import HostGrants
@@ -122,6 +123,7 @@ class ExtensionInstaller:
         environments: PythonEnvironments | None = None,
         service_tokens: ServiceTokenEndpoint | None = None,
         host_channel: HostChannel | None = None,
+        tool_hints: ToolHintsRegistry | None = None,
     ) -> None:
         """
         Args:
@@ -157,6 +159,8 @@ class ExtensionInstaller:
             host_channel: The loopback socket an extension's process
                 reaches the host object model on (``ext.host``). Without
                 one, a process is not told where igni is.
+            tool_hints: Where its tools' hints go for the permission
+                modes to read. The process's shared registry by default.
         """
         self._registry = registry
         self._rpc = rpc
@@ -170,6 +174,7 @@ class ExtensionInstaller:
         self._environments = environments
         self._service_tokens = service_tokens
         self._host_channel = host_channel
+        self._tool_hints = tool_hints if tool_hints is not None else ToolHintsRegistry.shared()
         # Where a plugin an extension carries is installed.
         # ``None`` means this deployment does not take them —
         # the extension still installs, and its agents do not
@@ -246,6 +251,7 @@ class ExtensionInstaller:
             return entry
 
         self._restrict_tools(manifest, config.name, permissions)
+        await self._apply_tool_hints(manifest, config.name, permissions)
 
         self._rpc.bind(
             manifest.id,
@@ -333,6 +339,7 @@ class ExtensionInstaller:
             logger.warning("stopping %s failed: %s", extension_id, exc)
         self._remove_plugin(extension_id)
         self._audience.release(server_name(extension_id))
+        self._tool_hints.forget(server_name(extension_id))
         self._revoke_token(extension_id)
         self._registry.remove(extension_id)
         logger.info("extension %s removed", extension_id)
@@ -672,6 +679,44 @@ class ExtensionInstaller:
                 refused,
             )
 
+    async def _apply_tool_hints(
+        self, manifest: ExtensionManifest, server: str, permissions: Permissions
+    ) -> None:
+        """Tell the permission modes what each of its tools is.
+
+        The manifest's hints are the ones that count — an administrator
+        approved them — so they go into the registry the permission
+        catalog reads, whatever the server says. A tool that is not
+        read-only pauses the agent before it runs, so the mode decides:
+        plan mode refuses it, Bypass runs it, the default mode asks.
+
+        Then the server is asked what it says, and any tool whose
+        reported hints differ is recorded as a problem the extensions
+        panel shows. Not a failure: the manifest's hints apply, and
+        the extension works as it was approved.
+        """
+        hints: dict[str, ToolHints] = {}
+        for registered in self._mcp.get_tools(server):
+            declared = permissions.tools.hints(bare_tool_name(server, registered))
+            if declared is not None:
+                hints[registered] = declared
+        self._tool_hints.declare(server, hints)
+        self._mcp.require_confirmation(
+            server, {name for name, declared in hints.items() if not declared.read_only}
+        )
+
+        reported = await self._mcp.tool_annotations(server)
+        problems = []
+        for registered, declared in sorted(hints.items()):
+            bare = bare_tool_name(server, registered)
+            said = ToolHints.from_annotations(reported.get(bare))
+            if said is not None and said != declared:
+                problems.append(
+                    f"its tool {bare} reports itself as {said.describe()}, and its "
+                    f"manifest says {declared.describe()}; the manifest's hints apply"
+                )
+        self._registry.set_problems(manifest.id, problems)
+
     @staticmethod
     def _check_tool_audience(manifest: ExtensionManifest) -> None:
         """Refuse ``own-agents`` with no agents to be its own.
@@ -775,8 +820,8 @@ class ExtensionInstaller:
         """Take the carried plugin away with the extension.
 
         An agent left behind is worse than one that never arrived:
-        the archivist with no Artifacts installed is an agent whose
-        every tool call fails, offered in the same list as the ones
+        an agent whose extension is gone is an agent whose every tool
+        call fails, offered in the same list as the ones
         that work.
         """
         if self._plugins_dir is None:

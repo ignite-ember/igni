@@ -8,10 +8,8 @@ whose job is to weigh that declaration — because "an agent that
 could grant itself the capability is the same as having no rule",
 and because a trace calling the tool must belong to one role.
 
-igni used to enforce that by name: ``definition.name ==
-"archivist"`` got the toolkit. The capability is an extension now,
-and igni does not know what extensions exist, so the rule has to
-arrive as a declaration and be enforced without a name in it.
+igni does not know what extensions exist, so the rule has to arrive
+as a declaration and be enforced without a name in it.
 
 **The declaration is ``toolAudience: own-agents``.** The extension
 ships its agents in the plugin it carries, which igni installs at

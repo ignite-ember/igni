@@ -11,7 +11,7 @@ When the user asks for any of these, your VERY FIRST tool call must be `enter_pl
 <!-- /section:when -->
 
 <!-- section:while_planning -->
-After entering plan mode you can read, search, grep, consult the codeindex — but file edits and mutating shell are blocked. When you've gathered enough context, call `exit_plan_mode(plan, tasks=[...])` with a concrete proposal and STOP. The user clicks Approve in the UI; the next turn executes.
+After entering plan mode you can read, search, grep and use any read-only tool — but file edits and mutating shell are blocked. When you've gathered enough context, call `exit_plan_mode(plan, tasks=[...])` with a concrete proposal and STOP. The user clicks Approve in the UI; the next turn executes.
 <!-- /section:while_planning -->
 
 <!-- section:tasks -->

@@ -258,6 +258,11 @@ wheelhouse with the extension's wheel and every dependency's for CPython
 3.12 on macOS arm64, Linux x86_64 and Windows x86_64. The same inputs give
 the same bytes. Needs `uv` and `pip`.
 
+Every tool in the manifest's `permissions.tools` states MCP's four hints
+(`readOnlyHint`, `destructiveHint`, `idempotentHint`, `openWorldHint`) —
+igni's permission modes decide on them, and igni server refuses a bundle
+that leaves one out — so the builder refuses it first.
+
 A dependency with no usable wheel stops the build, by name and platform.
 One that is pure Python and publishes only an sdist is declared in the
 extension's `pyproject.toml` and built from its sdist:

@@ -297,6 +297,12 @@ class StubMcp:
     def get_tools(self, name: str) -> dict[str, Any]:
         return {}
 
+    def require_confirmation(self, server: str, tools: set[str]) -> None:
+        pass
+
+    async def tool_annotations(self, name: str) -> dict[str, Any]:
+        return {}
+
 
 def dev_bundle(tmp_path: Path, **changes: Any) -> Path:
     bundle = tmp_path / "dev"

@@ -293,9 +293,9 @@ class SuiteRunner:
         # session DB on every ``arun()``, so without this every case
         # after the first sees the previous cases' tool calls in
         # ``response.messages`` — CaseRunner's own docstring warns
-        # about it, and nothing was passing the argument. Measured:
-        # ``never_writes_through_cypher`` failed inside the suite and
-        # passed 2 of 3 times run alone, at temperature 0.
+        # about it, and nothing was passing the argument. Measured: a
+        # case failed inside the suite and passed 2 of 3 times run
+        # alone, at temperature 0.
         run_tag = uuid.uuid4().hex[:8]
         for idx, case in enumerate(self._suite.cases, start=1):
             print(f"  [case {idx}/{total}] {case.name} starting...", flush=True)

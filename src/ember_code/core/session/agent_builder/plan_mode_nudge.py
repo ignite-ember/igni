@@ -26,9 +26,8 @@ class PlanModeNudge(BaseModel):
     """Render the plan-mode instructions block appended to the main
     agent's ``instructions`` list.
 
-    The prose as extensions have shaped it: what CodeIndex says about
-    researching through its index in plan mode arrives in the
-    ``code_intelligence`` slot, while its index covers HEAD.
+    The prose as extensions have shaped it: whatever an extension says
+    about researching in plan mode arrives in a slot it fills.
     """
 
     model_config = ConfigDict(arbitrary_types_allowed=True)

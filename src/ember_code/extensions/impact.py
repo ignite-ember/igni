@@ -15,8 +15,9 @@ decisions when it loads.
 :class:`ExtensionImpact` is everything a manifest changes, read off it:
 the prompt it replaces and the slots it adds to, the agents it stands
 in for, its commands and anchors, and — for review rather than for
-collisions — its pages, menu entries, indicators, settings, tools,
-host-model grants, RPC grants, egress and secrets.
+collisions — its pages, menu entries, indicators, settings, tools (each
+with the four hints igni's permission modes decide on), host-model
+grants, RPC grants, egress and secrets.
 
 ## What collides
 
@@ -86,6 +87,7 @@ from pathlib import Path
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from ember_code.core.mcp.hints import ToolHints
 from ember_code.extensions.manifest import ExtensionManifest
 
 
@@ -128,6 +130,26 @@ class Claim:
         return name.partition(".")[0] if kind == ClaimKind.PROMPT.value else None
 
 
+class ImpactTool(BaseModel):
+    """A tool it gives the agent, and the four hints igni's permission modes decide on.
+
+    MCP's spelling of the hints, as the manifest has them, because a
+    super admin compares the two.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    name: str
+    readOnlyHint: bool  # noqa: N815 — MCP's name for it
+    destructiveHint: bool  # noqa: N815
+    idempotentHint: bool  # noqa: N815
+    openWorldHint: bool  # noqa: N815
+
+    @classmethod
+    def of(cls, name: str, hints: ToolHints) -> ImpactTool:
+        return cls(name=name, **hints.as_annotations())
+
+
 class ExtensionImpact(BaseModel):
     """What one extension changes, as a super admin reviews it."""
 
@@ -149,7 +171,8 @@ class ExtensionImpact(BaseModel):
     #: ``{claim or slot claim: condition}`` for what holds only under one.
     conditions: dict[str, str] = Field(default_factory=dict)
 
-    tools: list[str] = Field(default_factory=list)
+    #: Every tool it gives the agent, with its hints.
+    tools: list[ImpactTool] = Field(default_factory=list)
     pages: list[str] = Field(default_factory=list)
     menu: list[str] = Field(default_factory=list)
     indicators: list[str] = Field(default_factory=list)
@@ -186,7 +209,10 @@ class ExtensionImpact(BaseModel):
             anchors=sorted(f.anchor for f in contributes.promptFragments),
             commands=sorted(c.command for c in contributes.commands),
             conditions=conditions,
-            tools=sorted(permissions.tools),
+            tools=sorted(
+                (ImpactTool.of(tool.name, tool.hints) for tool in permissions.tools),
+                key=lambda tool: tool.name,
+            ),
             pages=sorted(p.kind for p in contributes.pages),
             menu=sorted(m.command for m in contributes.menu),
             indicators=sorted(i.id for i in contributes.indicators),

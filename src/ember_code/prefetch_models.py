@@ -7,9 +7,8 @@ bootstraps (Tauri's ``runtime.rs``, ``EmberRuntime.kt`` for JetBrains,
 ``runtime.ts`` for VS Code) call this after installing igni, so the
 download is a visible install step rather than a hung first call.
 
-It is the only model igni has. An extension that needs one — CodeIndex
-embeds its chunks with a sentence-transformer — ships and fetches it
-itself.
+It is the only model igni has. An extension that needs one ships and
+fetches it itself.
 
 Output:
   * Progress lines go to stdout so the bootstrap can surface them.

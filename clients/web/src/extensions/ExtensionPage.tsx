@@ -60,6 +60,16 @@ export interface ExtensionSummary {
    * — decided against it on igni server, or not decided yet.
    */
   switched_off?: { claim: string; reason: string }[];
+  /**
+   * What is wrong with it that does not stop it working — a tool whose
+   * server reports other hints than its manifest declares.
+   */
+  problems?: string[];
+  /**
+   * The tools it gives the agent, and what each says it is (`read-only,
+   * local, idempotent`) — what the permission modes decide on.
+   */
+  tools?: { name: string; hints: string }[];
 }
 
 export interface ExtensionPageProps {

@@ -109,10 +109,15 @@ class PermissionOutcome(BaseModel):
 # so no MCP tool could be named in a permission rule at all — and
 # ``parse_many`` dropped them without a word, leaving an
 # administrator with a deny list that silently governed nothing.
+#
+# ``.`` too, for the same reason one level down: an extension's server
+# is named for its reverse-DNS id, so its tools are registered as
+# ``mcp_ext:acme.scanner_lookup``, and a rule naming one parsed to
+# ``None`` until the dot was admitted.
 
 logger = logging.getLogger(__name__)
 
-_RULE_RE = re.compile(r"^(?P<tool>[A-Za-z_][A-Za-z0-9_:-]*)(?:\((?P<pattern>.*)\))?$")
+_RULE_RE = re.compile(r"^(?P<tool>[A-Za-z_][A-Za-z0-9_:.-]*)(?:\((?P<pattern>.*)\))?$")
 
 
 class PermissionRule(BaseModel):

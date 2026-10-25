@@ -284,11 +284,6 @@ class Session:
         # ── Delegated managers ───────────────────────────────────────
         self.persistence = SessionPersistence(self.db, self.session_id)
         self.memory_mgr = SessionMemoryManager(self.db, settings, self.user_id)
-        # A `SessionArtifactManager` was built here and shared with
-        # the pool, so every sub-agent got the artifact toolkit.
-        # Both are gone with the capability: the archivist ships
-        # inside the Artifacts extension and its tools reach the
-        # agent over MCP, which is how every other extension's do.
 
         # ── Learning coordinator (owns _learning + inject/extract) ──
         # Composed after ``persistence`` / ``memory_mgr`` so the
@@ -391,7 +386,6 @@ class Session:
         """
         self.todo_store = TodoStore()
         self.plan_store = PlanStore()
-        self._plan_mode_attempt: int = 0
         ProjectMemoryBank(self.project_dir).ensure()
         self.output_styles: dict[str, OutputStyle] = {}
         self._active_output_style: str = ""

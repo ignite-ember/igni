@@ -36,6 +36,17 @@ from ember_code.extensions.rpc import ExtensionRpc
 
 FIXTURE = Path(__file__).parent / "fixtures" / "dev_extension"
 
+#: A declared tool, with the four hints every declared tool carries.
+LOOKUP = {
+    "name": "acme.scanner.lookup",
+    "annotations": {
+        "readOnlyHint": True,
+        "destructiveHint": False,
+        "idempotentHint": True,
+        "openWorldHint": False,
+    },
+}
+
 
 def manifest_of(**changes: object) -> ExtensionManifest:
     raw: dict = {
@@ -92,14 +103,14 @@ def test_a_declared_endpoint_host_is_allowed():
 
 
 def test_an_undeclared_tool_is_refused():
-    permissions = Permissions(manifest_of(permissions={"tools": ["acme.scanner.lookup"]}))
+    permissions = Permissions(manifest_of(permissions={"tools": [LOOKUP]}))
     assert permissions.tools.allowed("lookup") is True
     assert permissions.tools.allowed("acme.scanner.lookup") is True
     assert permissions.tools.allowed("delete_everything") is False
 
 
 def test_what_the_service_offers_beyond_its_grant_is_listed():
-    permissions = Permissions(manifest_of(permissions={"tools": ["acme.scanner.lookup"]}))
+    permissions = Permissions(manifest_of(permissions={"tools": [LOOKUP]}))
     assert permissions.tools.refused(["lookup", "shell", "read_file"]) == [
         "read_file",
         "shell",
@@ -121,7 +132,7 @@ def test_this_check_speaks_the_server_s_own_names():
     know what a tool registry prefixes.
     """
     server = "ext:acme.scanner"
-    permissions = Permissions(manifest_of(permissions={"tools": ["acme.scanner.lookup"]}))
+    permissions = Permissions(manifest_of(permissions={"tools": [LOOKUP]}))
     registered = ["mcp_ext:acme.scanner_lookup", "mcp_ext:acme.scanner_shell"]
     assert permissions.tools.refused(registered) == sorted(registered)
 

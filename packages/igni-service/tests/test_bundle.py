@@ -258,6 +258,19 @@ def test_a_manifest_without_the_python_packaging_is_refused(tmp_path: Path, inde
         builder(extension, index).build(tmp_path / "bundle.tar.gz")
 
 
+def test_a_tool_that_leaves_a_hint_unstated_is_refused(tmp_path: Path, index: Path) -> None:
+    """igni and igni server would refuse it; building it would only defer the news."""
+    extension = write_extension(tmp_path / "extension", dependencies=[])
+    manifest = json.loads((extension / "manifest.json").read_text())
+    manifest["permissions"] = {
+        "tools": [{"name": "acme.example.lookup", "annotations": {"readOnlyHint": True}}]
+    }
+    (extension / "manifest.json").write_text(json.dumps(manifest))
+
+    with pytest.raises(BundleError, match="hints"):
+        builder(extension, index).build(tmp_path / "bundle.tar.gz")
+
+
 class TestEveryFileIsPinnedByHash:
     """A same-named package published anywhere else cannot enter a bundle.
 

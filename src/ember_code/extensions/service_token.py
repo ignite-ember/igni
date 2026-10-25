@@ -1,7 +1,7 @@
 """An extension's token for its own service, fetched by the host.
 
 igni server's ``docs/service-identity.md`` §9. An extension talks to the service it
-belongs to — Artifacts' extension to the Artifacts service — and that
+belongs to — an extension to the service that shipped it — and that
 service accepts a token igni issued for **its** URL. The extension
 must never hold the person's igni session: whoever holds that can act
 as them everywhere. So the host trades the session for a ten-minute

@@ -14,7 +14,7 @@ typed envelopes :class:`PlanTransactionCoordinator` returns —
 :class:`PlanExitResult` for ``exit_plan_mode``. :class:`PlanTool`
 consumes those envelopes and renders the agent-visible reply
 string from a single call site each, so the "Error: ..." /
-"Plan submitted" / "Plan rejected" / "Entered plan mode"
+"Plan submitted" / "Entered plan mode"
 substrings the tool used to build inline now live on the
 coordinator side of the boundary as ``reply_text``. And
 :class:`PlanExitInput` is the strict input model at the
@@ -167,18 +167,12 @@ class PlanEnterResult(BaseModel):
 class PlanExitResult(BaseModel):
     """Typed envelope :meth:`PlanTransactionCoordinator.submit`
     returns. Replaces the old string-only reply with a structured
-    shape carrying the store snapshot, validation errors, and the
-    reject-vs-accepted signal.
+    shape carrying the store snapshot and validation errors.
 
     Fields:
 
     * ``ok`` — did the submit transaction commit? False on empty
-      plan, missing plan_store on the session, or a confidence-
-      rejected plan (which is a soft refusal, not an error).
-    * ``rejected`` — narrower flag: True only when the confidence
-      validator rejected the plan (as opposed to a hard error
-      like empty plan). Callers can tell "try again with more
-      research" apart from "you called me wrong".
+      plan or a missing plan_store on the session.
     * ``task_snapshot`` — the TodoStore snapshot after commit
       (each dict has ``content``/``status``/``activeForm``).
     * ``validation_errors`` — malformed task rows that
@@ -187,23 +181,19 @@ class PlanExitResult(BaseModel):
     * ``task_count`` — length of ``task_snapshot``; carried
       separately so the reply-text renderer doesn't need to
       re-count.
-    * ``plan_rejection_feedback`` — the confidence-validator's
-      rejection prose. Populated only when ``rejected=True``.
     * ``reason`` — machine-readable refusal reason (empty on ok).
     * ``error`` — human-readable error string on hard refusals.
     * ``reply_text`` — the string the tool returns to the agent
-      verbatim. Contains "Plan submitted" / "Plan rejected" /
+      verbatim. Contains "Plan submitted" /
       "Error" substrings the tests match on.
     """
 
     model_config = ConfigDict(extra="forbid")
 
     ok: bool
-    rejected: bool = False
     task_snapshot: list[dict[str, Any]] = Field(default_factory=list)
     validation_errors: list[str] = Field(default_factory=list)
     task_count: int = 0
-    plan_rejection_feedback: str = ""
     reason: str = ""
     error: str = ""
     reply_text: str

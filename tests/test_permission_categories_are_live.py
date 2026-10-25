@@ -133,32 +133,51 @@ class TestReadOnlyIsAWall:
         assert _decide(perms, "run_shell_command", {"command": "cat setup.py"}) == "DENY"
         assert _decide(perms, "edit_file", {"file_path": "a.py"}) == "DENY"
 
-    def test_the_graph_stays_reachable(self):
-        """The mode is only useful if something can still read the codebase.
+    def test_an_extension_s_read_only_tool_stays_reachable(self):
+        """The mode is only useful if something can still read.
 
-        CodeIndex's ``codeindex_cypher`` is read-only by construction — its own
-        guard rejects every write — so it is the intended way to explore in
-        this mode and must not be swept up by the shell deny.
+        An extension tool whose manifest says it changes nothing is not
+        swept up by the shell deny: ``--read-only`` is plan mode, and
+        plan mode runs read-only tools. igni does not know which
+        extension it is, only what the tool says it is.
         """
         from ember_code.cli.options import CliOptions
         from ember_code.core.config.models import CliOverrides
         from ember_code.core.config.settings import load_settings
+        from ember_code.core.mcp.hints import ToolHints, ToolHintsRegistry
 
         payload = CliOverrides.from_options(CliOptions(read_only=True)).to_settings_payload()
         perms = load_settings(cli_overrides=payload).permissions
+        registry = ToolHintsRegistry.shared()
+        registry.declare(
+            "ext:acme.index",
+            {
+                "mcp_ext:acme.index_query": ToolHints(
+                    read_only=True, destructive=False, idempotent=True, open_world=False
+                ),
+                "mcp_ext:acme.index_rebuild": ToolHints(
+                    read_only=False, destructive=True, idempotent=True, open_world=False
+                ),
+            },
+        )
+        try:
+            assert _decide(perms, "mcp_ext:acme.index_query", {"q": "x"}) == "ALLOW"
+            assert _decide(perms, "mcp_ext:acme.index_rebuild", {}) == "DENY"
+        finally:
+            registry.forget("ext:acme.index")
 
-        assert _decide(perms, "codeindex_cypher", {"cypher": "MATCH (n) RETURN n"}) != "DENY"
-
-    def test_a_denied_shell_call_names_the_alternative(self):
+    def test_a_denied_shell_call_names_the_way_forward(self):
         """Otherwise the agent's first move in a read-only session is a refusal
         with no stated way forward, and a model given no alternative retries the
-        same call in a new costume."""
+        same call in a new costume. It names no extension: igni does not know
+        which tools an installed extension gives the session."""
         from ember_code.core.hooks.permission_pipeline import _denial_message
 
         message = _denial_message("run_shell_command")
 
-        assert "code index" in message
+        assert "another of your tools" in message
         assert "rather than retrying" in message
+        assert "index" not in message
 
     def test_an_ordinary_denial_stays_terse(self):
         """Only the case that strands the model gets the extra paragraph."""

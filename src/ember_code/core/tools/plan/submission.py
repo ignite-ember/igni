@@ -43,7 +43,6 @@ from ember_code.core.tools.plan.schemas import (
     PlanSubmittedPayload,
     PlanTaskInput,
 )
-from ember_code.core.tools.plan.validator import PlanConfidenceValidator
 from ember_code.core.tools.todo import _coerce_items
 
 if TYPE_CHECKING:
@@ -86,21 +85,18 @@ class PlanTransactionCoordinator:
     Public API:
 
     * :meth:`enter` — ``PlanEnterResult`` for the ``enter_plan_mode``
-      transaction (flip mode → reset attempts → broadcast the
+      transaction (flip mode → broadcast the
       agent-attributed follow-up → optionally spawn the
       researcher).
     * :meth:`submit` — ``PlanExitResult`` for the
-      ``exit_plan_mode`` transaction (confidence-gate → set
-      plan → populate todos → queue the ``plan_submitted``
+      ``exit_plan_mode`` transaction (set plan → populate todos → queue the ``plan_submitted``
       broadcast).
     """
 
     def __init__(self, session: Session) -> None:
         self._session = session
-        # Compose the sibling collaborators. Both accept a bare
-        # session and lazily read attributes — safe against
-        # partial-construction test stubs.
-        self._validator = PlanConfidenceValidator(session)
+        # Accepts a bare session and lazily reads attributes — safe
+        # against partial-construction test stubs.
         self._researcher = PlanResearcherRunner(session)
 
     # ── enter_plan_mode transaction ────────────────────────────
@@ -148,10 +144,6 @@ class PlanTransactionCoordinator:
                 error=mode_status,
                 reply_text=mode_status,
             )
-
-        # Reset the per-plan-mode-session validation state so
-        # the iteration counter starts fresh on every fresh entry.
-        self._validator.reset()
 
         # Re-broadcast with the agent attribution + reason so
         # the FE can render a small info banner. The broadcast
@@ -212,9 +204,9 @@ class PlanTransactionCoordinator:
                 f"{researcher_report}"
             )
         return (
-            # See validator.py: `file_read` is a permission category, and PRD-12's
-            # fix reached the plan prompts but not these two tool results.
-            f"{header} Gather context (CodeIndex queries first, then "
+            # `file_read` is a permission category, not a function: PRD-12's
+            # fix reached the plan prompts and missed this tool result.
+            f"{header} Gather context (your read-only tools, and "
             'run_shell_command "cat <path>"), '
             "then call exit_plan_mode(plan, tasks=[...]) with a concrete proposal. "
             "Tip: pass the user's request as `task=` next time and this tool will "
@@ -262,23 +254,6 @@ class PlanTransactionCoordinator:
         if store is None:
             msg = "Error: plan store not initialised on this session."
             raise PlanSessionShapeError(missing="plan_store", reply_text=msg)
-
-        # ── Confidence check (row 50 enforcement) ─────────────
-        # Reject submissions that aren't grounded in concrete
-        # codebase facts. The rejection is bounded by an attempt
-        # counter (owned by the validator) so the loop converges
-        # even when the model can't satisfy us; after the cap we
-        # accept whatever came in (the user still reviews +
-        # can refine).
-        verdict = self._validator.validate(plan_text, raw_tasks)
-        if verdict.reject and verdict.attempts_remaining > 0:
-            return PlanExitResult(
-                ok=False,
-                rejected=True,
-                plan_rejection_feedback=verdict.feedback,
-                reason="confidence_rejected",
-                reply_text=verdict.feedback,
-            )
 
         # Construct the strict input envelope for the todo
         # pipeline. Agent-supplied dicts round-trip through

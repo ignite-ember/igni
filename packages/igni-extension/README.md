@@ -6,12 +6,14 @@ runs in — without an address, a token or a protocol message in the
 extension's code.
 
 ```python
-from igni_extension import IgniExtension, LocalNotification, NotSignedIn, Target
+from igni_extension import IgniExtension, LocalNotification, NotSignedIn, Target, ToolHints
 
 ext = IgniExtension("acme.example")
 
+READS = ToolHints(read_only=True, destructive=False, idempotent=True, open_world=False)
 
-@ext.tool
+
+@ext.tool(hints=READS)
 async def summarise(slug: str) -> str:
     """Summarise one of the organisation's documents."""
     try:
@@ -22,7 +24,7 @@ async def summarise(slug: str) -> str:
     return response.json()["summary"]
 
 
-@ext.tool
+@ext.tool(hints=ToolHints(read_only=False, destructive=False, idempotent=False, open_world=False))
 async def export(slug: str) -> str:
     """Export a document to PDF and say so when it is ready."""
     export_id = await render_pdf(slug)
@@ -41,6 +43,31 @@ async def export(slug: str) -> str:
 def main() -> None:   # the console script the manifest's `python.entry` names
     ext.run()
 ```
+
+## Tools, and what each says it is
+
+Every tool states MCP's four hints — `read_only`, `destructive`,
+`idempotent`, `open_world` — because igni's permission modes decide on
+them: plan mode runs a read-only tool and refuses one that changes
+things, Accept Edits runs a write that destroys nothing and stays inside
+its own system, the default mode asks before any write, Bypass runs
+everything (igni's `docs/EXTENSIBILITY.md` has the whole table).
+`ext.tool(hints=...)` requires them, and `ext.run()` refuses to start
+while any tool on `ext.mcp` leaves one out (`ToolHintsMissing`) — a tool
+added with `ext.mcp.add_tool` passes `annotations=hints.annotations()`.
+
+A tool the agent calls is also listed in the manifest's
+`permissions.tools`, with the same four:
+
+```json
+{ "name": "acme.example.summarise",
+  "annotations": { "readOnlyHint": true, "destructiveHint": false,
+                   "idempotentHint": true, "openWorldHint": false } }
+```
+
+The manifest's are the ones that count — an administrator approved
+them. igni compares them with what the server reports and shows a
+difference in its extensions panel.
 
 ## Installing
 

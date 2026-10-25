@@ -22,13 +22,13 @@ Splits five concerns off of the old ``core/pool.py``:
   keyword surface.
 * :class:`LoadReport` + :class:`LoadError` — typed Result over the
   old "print to stderr and swallow" pattern.
-* :class:`AgentBuildContext` — the six shared-state params
-  (settings, base_dir, mcp_clients, artifact_mgr, db, broadcast)
+* :class:`AgentBuildContext` — the five shared-state params
+  (settings, base_dir, mcp_clients, db, broadcast)
   bundled once so :class:`AgentBuilder` takes one construction
-  param instead of six.
+  param instead of five.
 * Typed :class:`typing.Protocol` s — replaces ``Any`` on the public
   API surface (audit AP5). Keeps runtime imports cheap (the real
-  Agno / ArtifactManager / etc types stay behind
+  Agno types stay behind
   ``TYPE_CHECKING``).
 """
 

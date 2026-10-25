@@ -1,4 +1,4 @@
-"""Path-oriented config schemas — ``storage``, ``auth``, ``code_index``.
+"""Path-oriented config schemas — ``storage`` and ``auth``.
 
 Grouped into one file because each is a small path-oriented struct.
 A per-schema file would bloat the schemas package with 10-line

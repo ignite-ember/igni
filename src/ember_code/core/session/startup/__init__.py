@@ -9,7 +9,6 @@ already call.
 
 Coverage:
 
-  the artifact store (heavy transitive deps).
 * :class:`MarketplaceWarmupPhase` — refresh every registered
   plugin marketplace catalog + auto-register defaults on
   brand-new installs.

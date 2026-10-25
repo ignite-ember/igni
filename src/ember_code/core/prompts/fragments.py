@@ -5,11 +5,8 @@ has to say what that something *is*, and the description belongs with
 the extension rather than copied into the prompt. ``{{ANCHOR}}`` marks
 where it goes; whoever owns the anchor supplies the text at load time.
 
-This generalises what was one hardcoded case: ``{{CODEINDEX_GRAPH_SCHEMA}}``
-was substituted by a function that imported the schema module
-directly. The base cannot import from a capability that may not be
-installed, so it holds a table of anchors, empty until extensions
-register theirs.
+The base cannot import from a capability that may not be installed, so
+it holds a table of anchors, empty until extensions register theirs.
 
 The reason the original was a placeholder at all is worth keeping in
 view. The schema was maintained twice — once in the module the

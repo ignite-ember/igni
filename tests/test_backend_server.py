@@ -290,7 +290,6 @@ class TestBackendServerRealConstruction:
         assert session.todo_store is not None
         assert session.plan_store is not None
         assert session.event_log == []
-        assert session._plan_mode_attempt == 0
         # BroadcastBus is composed in ``__init__`` — the class
         # invariant that replaces the old raw-list init.
         from ember_code.core.session.broadcast import BroadcastBus

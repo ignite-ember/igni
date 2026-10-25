@@ -51,6 +51,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from urllib.parse import urlparse
 
+from ember_code.core.mcp.hints import ToolHints
 from ember_code.extensions.manifest import ExtensionManifest, Workspace
 
 logger = logging.getLogger(__name__)
@@ -221,11 +222,18 @@ class Tools:
 
     def __init__(self, manifest: ExtensionManifest) -> None:
         self._id = manifest.id
-        self._declared = set(manifest.permissions.tools)
+        self._hints = {tool.name: tool.hints for tool in manifest.permissions.tools}
+        self._declared = set(self._hints)
 
     @property
     def declared(self) -> set[str]:
         return set(self._declared)
+
+    def hints(self, tool: str) -> ToolHints | None:
+        """What the manifest says ``tool`` is — by the server's name or the namespaced one."""
+        if tool in self._hints:
+            return self._hints[tool]
+        return self._hints.get(f"{self._id}.{tool}")
 
     def allowed(self, tool: str) -> bool:
         """Whether ``tool`` may reach the agent.

@@ -73,6 +73,14 @@ class ExtensionSwitchedOff(BaseModel):
     reason: str
 
 
+class ExtensionTool(BaseModel):
+    """One tool an extension gives the agent, as the panel lists it."""
+
+    name: str
+    #: Its hints, for a person: ``read-only, local, idempotent``.
+    hints: str
+
+
 class ExtensionSummary(BaseModel):
     """One installed extension, as the frontend sees it."""
 
@@ -113,6 +121,12 @@ class ExtensionSummary(BaseModel):
     #: panel says what and why, because "my prompt section is not
     #: there" is otherwise a mystery.
     switched_off: list[ExtensionSwitchedOff] = Field(default_factory=list)
+    #: What is wrong with it that does not stop it working — a tool
+    #: whose server reports other hints than its manifest declares.
+    problems: list[str] = Field(default_factory=list)
+    #: The tools it gives the agent, and what each says it is — what
+    #: the permission modes decide on.
+    tools: list[ExtensionTool] = Field(default_factory=list)
 
     @classmethod
     def of(
@@ -143,6 +157,11 @@ class ExtensionSummary(BaseModel):
             switched_off=[
                 ExtensionSwitchedOff(claim=off.claim, reason=off.reason)
                 for off in entry.switched_off
+            ],
+            problems=list(entry.problems),
+            tools=[
+                ExtensionTool(name=tool.name, hints=tool.hints.describe())
+                for tool in manifest.permissions.tools
             ],
         )
 

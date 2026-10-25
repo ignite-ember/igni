@@ -2,7 +2,7 @@
 
 ext = IgniExtension("acme.example")
 
-@ext.tool
+@ext.tool(hints=ToolHints(read_only=True, destructive=False, idempotent=True, open_world=False))
 async def summarise(slug: str) -> str:
     response = await ext.service.get(f"/v1/things/{slug}")
     ...
@@ -15,7 +15,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 from collections.abc import Awaitable, Callable, Coroutine, Mapping
-from typing import Any, overload
+from typing import Any
 
 import anyio
 import httpx
@@ -27,6 +27,7 @@ from igni_extension.channel import HostConnection
 from igni_extension.clock import Clock
 from igni_extension.environment import ExtensionEnvironment
 from igni_extension.errors import NotConfigured
+from igni_extension.hints import ToolHints, ToolHintsMissing
 from igni_extension.host import Host
 from igni_extension.members import Signal
 from igni_extension.prompt import PromptConditions
@@ -71,25 +72,20 @@ class IgniExtension:
 
     # ── What the extension offers ───────────────────────────────────
 
-    @overload
-    def tool(self, fn: AnyFunction, /) -> AnyFunction: ...
-
-    @overload
-    def tool(
-        self, fn: None = None, /, *, name: str | None = None, description: str | None = None
-    ) -> Callable[[AnyFunction], AnyFunction]: ...
-
     def tool(
         self,
-        fn: AnyFunction | None = None,
-        /,
         *,
+        hints: ToolHints,
         name: str | None = None,
         description: str | None = None,
-    ) -> AnyFunction | Callable[[AnyFunction], AnyFunction]:
-        """Register a tool igni can call. `@ext.tool` or `@ext.tool(name=...)`."""
-        register = self.mcp.tool(name=name, description=description)
-        return register(fn) if fn is not None else register
+    ) -> Callable[[AnyFunction], AnyFunction]:
+        """Register a tool igni can call: `@ext.tool(hints=ToolHints(...))`.
+
+        `hints` is required: igni's permission modes decide on what a
+        tool says it is (`igni_extension.hints`). The same four go in
+        the manifest's `permissions.tools` for a tool the agent calls.
+        """
+        return self.mcp.tool(name=name, description=description, annotations=hints.annotations())
 
     def on[T](
         self, signal: Signal[T]
@@ -160,7 +156,17 @@ class IgniExtension:
         """Serve igni over stdio until it closes the pipe. The console script calls this."""
         anyio.run(self._run_stdio)
 
+    async def check_tools(self) -> None:
+        """Refuse to serve a tool that leaves one of its four hints unstated.
+
+        `ext.run()` and `serve()` call it first. A tool registered on
+        `ext.mcp` directly, rather than through `ext.tool`, is checked
+        the same way.
+        """
+        ToolHintsMissing.check(await self.mcp.list_tools())
+
     async def _run_stdio(self) -> None:
+        await self.check_tools()
         # The host's socket alongside MCP, so signals arrive whether or
         # not igni is calling a tool.
         host = asyncio.create_task(self.connection.serve_forever())
@@ -180,5 +186,6 @@ class IgniExtension:
         write_stream: MemoryObjectSendStream[SessionMessage],
     ) -> None:
         """Serve one MCP session over the given streams (what `run` does over stdio)."""
+        await self.check_tools()
         server = self.mcp._mcp_server
         await server.run(read_stream, write_stream, server.create_initialization_options())

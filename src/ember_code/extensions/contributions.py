@@ -1,8 +1,8 @@
 """What an extension adds to the agent, beyond tools.
 
 EXTENSIBILITY §1 calls this the whole justification for a contract:
-MCP carries tools and carries none of the below, and CodeIndex needs
-all of it. Without it an extension was a web panel with a backend — it
+MCP carries tools and carries none of the below, and a capability
+needs all of it. Without it an extension was a web panel with a backend — it
 could not tell the agent what it knows, which is the difference
 between installing a capability and installing a page.
 
@@ -46,7 +46,7 @@ Prompt assembly is synchronous, and a ``source: tool`` text needs an
 MCP round trip. So the text is fetched when the extension becomes
 ``READY`` and cached. It changes when its extension restarts, or when
 the extension says it has (``refresh`` on its conditions notice —
-CodeIndex's project map is another commit's when HEAD moves); never on
+text about a commit is another commit's when HEAD moves); never on
 a timer — something that moves minute to minute does not belong in a
 prompt. What *can* change at any moment is whether a ``when``
 condition holds, and that the extension reports

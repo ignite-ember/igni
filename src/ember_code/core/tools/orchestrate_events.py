@@ -282,9 +282,9 @@ class AgnoRunnable(Protocol):
 #: The spec is streamed to the client as a chat card, and the caller
 #: used to receive only the visualizer's prose — "Rendered a 6-element
 #: 'Database Migration' card". Fine for an orchestrator that just
-#: wanted the user to see something; useless to the archivist, which
-#: has to put the spec *in a document*, where ``ArtifactPanel``
-#: renders the fence live. A description of a chart cannot be stored
+#: wanted the user to see something; useless to an agent that has to
+#: put the spec *in a document*, where the document's viewer renders
+#: the fence live. A description of a chart cannot be stored
 #: as one.
 #:
 #: The activity log is the channel because it already exists and is

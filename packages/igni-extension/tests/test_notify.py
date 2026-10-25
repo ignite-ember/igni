@@ -7,7 +7,7 @@ import asyncio
 import pytest
 from pydantic import ValidationError
 
-from igni_extension import IgniExtension, LocalNotification, Target
+from igni_extension import IgniExtension, LocalNotification, Target, ToolHints
 from igni_extension.testing import HostHarness
 
 EXPORT_READY = LocalNotification(
@@ -22,7 +22,9 @@ EXPORT_READY = LocalNotification(
 def an_extension() -> IgniExtension:
     ext = IgniExtension("acme.example", environ={})
 
-    @ext.tool
+    @ext.tool(
+        hints=ToolHints(read_only=False, destructive=False, idempotent=True, open_world=False)
+    )
     async def export(slug: str) -> str:
         await ext.host.notifications.notify(EXPORT_READY)
         return f"exported {slug}"

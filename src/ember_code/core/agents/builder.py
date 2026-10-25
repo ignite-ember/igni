@@ -106,7 +106,7 @@ class AgentBuilder:
 
     def replace_context(self, new_context: AgentBuildContext) -> None:
         """Swap the shared context. Used by :class:`AgentPool` after
-        MCP connects or when the artifact manager attaches."""
+        MCP connects."""
         self._context = new_context
 
     def build(self, definition: AgentDefinition) -> Agent:
@@ -187,12 +187,9 @@ class AgentBuilder:
 
         if tools:
             tools.append(ScheduleTools(project_dir=ctx.base_dir))
-        # The archivist's toolkit used to be appended here, by name:
-        # `definition.name == ARCHIVIST` got `ArtifactTools`. Both
-        # are gone with the capability. The archivist ships inside
-        # the Artifacts extension now and its tools arrive over MCP
-        # like any other extension's, so the host no longer has a
-        # branch that knows one agent by name.
+        # No agent gets a toolkit here by name: an extension's agents
+        # reach its tools over MCP, so the host has no branch that
+        # knows one agent.
 
         agent_mcp: dict[str, Any] = {}
         if tools and ctx.mcp_clients:

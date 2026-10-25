@@ -1,10 +1,10 @@
 """What the project is doing, polled, for the two workspace events.
 
-``workspace.head-changed`` is the event CodeIndex exists to wait
-for: it indexes a commit, so a commit that has not moved is work it
-does not need to do. Without the event it polls ``git rev-parse``
-itself, once a second, forever — which is the thing an extension
-platform is supposed to stop every extension having to write.
+``workspace.head-changed`` is the event an extension that works per
+commit waits for: a commit that has not moved is work it does not need
+to do. Without the event it polls ``git rev-parse`` itself, once a
+second, forever — which is the thing an extension platform is supposed
+to stop every extension having to write.
 
 So the host polls once, and tells whoever asked.
 
@@ -75,10 +75,7 @@ class GitWorkspace:
 
     Deliberately not :class:`~ember_code.core.plugins.git.GitClient`
     — that one clones, fetches and resets, and a thing polled every
-    second should not be holding something that can. Deliberately
-    not ``core.code_index.sync.GitHead`` either: that module belongs
-    to CodeIndex, and the entire point of ``workspace.head-changed``
-    is that CodeIndex stops being part of the host.
+    second should not be holding something that can.
 
     Every method returns ``None`` rather than raising. A project
     that is not a repository, a ``git`` that is not installed and a

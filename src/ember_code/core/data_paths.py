@@ -14,7 +14,7 @@ name — and this one holds *where a project's state lives*.
 The data root is configurable (``settings.storage.data_dir``) and
 defaults to ``~/.igni``. What an extension keeps on this machine is
 not here: each has its own directory beside the extension store
-(``IGNI_EXTENSION_DATA``) — CodeIndex's per-commit graphs among it.
+(``IGNI_EXTENSION_DATA``).
 """
 
 from __future__ import annotations
@@ -72,8 +72,7 @@ def global_db_path(data_dir: str | Path = DEFAULT_DATA_DIR) -> Path:
 def project_data_dir(project: str | Path, *, data_dir: str | Path = DEFAULT_DATA_DIR) -> Path:
     """Per-project data directory, keyed by :func:`resolve_project_id`.
 
-    Named ``project_data_dir`` rather than ``project_dir``, which is
-    what it was called inside CodeIndex: ``project_dir`` is the name
+    Named ``project_data_dir`` rather than ``project_dir``: that is the name
     of a *parameter* in 238 places in this repository, and a function
     that shadows it in every module that imports it is a function
     somebody will call by accident.

@@ -36,6 +36,7 @@ import pytest
 from jsonschema import Draft202012Validator
 from pydantic import BaseModel, ValidationError
 
+from ember_code.core.mcp.hints import ToolHints
 from ember_code.extensions.manifest import (
     AgentReplacementContribution,
     CommandContribution,
@@ -56,6 +57,7 @@ from ember_code.extensions.manifest import (
     PythonPackage,
     Setting,
     Sidecar,
+    ToolGrant,
 )
 from tests.manifest_corpus import BASE, REFUSALS
 
@@ -79,6 +81,8 @@ PAIRS: list[tuple[str, type[BaseModel]]] = [
     ("python", PythonPackage),
     ("python.mcp", McpBinding),
     ("permissions", Permissions),
+    ("permissions.tools[]", ToolGrant),
+    ("permissions.tools[].annotations", ToolHints),
     ("contributes", Contributes),
     ("contributes.pages[]", PageContribution),
     ("contributes.menu[]", MenuContribution),

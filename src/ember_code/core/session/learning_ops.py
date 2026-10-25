@@ -7,9 +7,8 @@ learning-context injection / extraction flow (``inject_learnings``,
 learning-machine accessors (``learning``, ``learning_machine``)
 migrate to one class here.
 
-Mirrors the sibling shape of :class:`SessionMemoryManager` and
-:class:`SessionArtifactManager` — the three "context" managers
-now all live next to each other in ``core/session/`` and share
+Mirrors the sibling shape of :class:`SessionMemoryManager` — the
+"context" managers live next to each other in ``core/session/`` and share
 the same "narrow constructor + one-line forwarder from Session"
 contract.
 

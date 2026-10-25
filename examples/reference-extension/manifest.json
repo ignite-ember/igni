@@ -21,7 +21,16 @@
     "workspacePaths": ["src/**", "*.toml"],
     "egress": [],
     "secrets": [],
-    "tools": ["acme.scanner.list_violations", "acme.scanner.explain_rule"],
+    "tools": [
+      {
+        "name": "acme.scanner.list_violations",
+        "annotations": { "readOnlyHint": true, "destructiveHint": false, "idempotentHint": true, "openWorldHint": false }
+      },
+      {
+        "name": "acme.scanner.explain_rule",
+        "annotations": { "readOnlyHint": true, "destructiveHint": false, "idempotentHint": true, "openWorldHint": false }
+      }
+    ],
     "rpc": ["ext.acme.scanner.*"]
   },
 

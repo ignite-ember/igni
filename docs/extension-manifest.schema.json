@@ -266,13 +266,76 @@
         },
         "tools": {
           "type": "array",
-          "description": "MCP tool names this extension may register with the agent. Namespaced by `id`, so a tool cannot shadow a base tool or another extension's. This is about the *agent's* tools — see `rpc` for what the extension's own UI may call.",
+          "description": "MCP tools this extension may register with the agent, each with all four of MCP's tool hints. Namespaced by `id`, so a tool cannot shadow a base tool or another extension's. igni's permission modes decide on the hints (plan mode runs read-only tools, Accept Edits runs contained writes, Bypass runs everything) — see docs/EXTENSIBILITY.md. The hints the server reports at runtime must match these; when they do not, these apply. This is about the *agent's* tools — see `rpc` for what the extension's own UI may call.",
           "items": {
-            "type": "string"
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "name",
+              "annotations"
+            ],
+            "properties": {
+              "name": {
+                "type": "string",
+                "minLength": 1,
+                "description": "The tool, namespaced by the extension's id: `acme.ledgersync.lookup_account`."
+              },
+              "annotations": {
+                "type": "object",
+                "description": "MCP's ToolAnnotations, every hint stated. A read-only tool cannot also be destructive.",
+                "additionalProperties": false,
+                "required": [
+                  "readOnlyHint",
+                  "destructiveHint",
+                  "idempotentHint",
+                  "openWorldHint"
+                ],
+                "properties": {
+                  "readOnlyHint": {
+                    "type": "boolean",
+                    "description": "It changes nothing anywhere."
+                  },
+                  "destructiveHint": {
+                    "type": "boolean",
+                    "description": "A change it makes can delete or overwrite something. false for a read-only tool."
+                  },
+                  "idempotentHint": {
+                    "type": "boolean",
+                    "description": "Calling it again with the same arguments changes nothing more."
+                  },
+                  "openWorldHint": {
+                    "type": "boolean",
+                    "description": "It reaches beyond its own system: the web, another service, somebody else's data."
+                  }
+                },
+                "not": {
+                  "properties": {
+                    "readOnlyHint": {
+                      "const": true
+                    },
+                    "destructiveHint": {
+                      "const": true
+                    }
+                  },
+                  "required": [
+                    "readOnlyHint",
+                    "destructiveHint"
+                  ]
+                }
+              }
+            }
           },
           "examples": [
             [
-              "acme.ledgersync.lookup_account"
+              {
+                "name": "acme.ledgersync.lookup_account",
+                "annotations": {
+                  "readOnlyHint": true,
+                  "destructiveHint": false,
+                  "idempotentHint": true,
+                  "openWorldHint": false
+                }
+              }
             ]
           ]
         },

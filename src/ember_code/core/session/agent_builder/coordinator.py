@@ -180,8 +180,8 @@ class MainAgentBuilder:
             add_session_summary_to_context=True,
             stream=True,
             stream_events=True,
-            # Agents reach the index via ``ArtifactTools``, not
-            # Agno's built-in ``search_knowledge`` — pass nothing.
+            # No Agno knowledge base: what an agent may search arrives
+            # as tools.
             knowledge=None,
             search_knowledge=False,
             pre_hooks=self._guardrails_factory(s.settings),

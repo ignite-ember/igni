@@ -31,6 +31,8 @@ from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from ember_code.core.mcp.hints import ToolHints
+
 #: Reverse-DNS, and the namespace for everything the extension
 #: contributes. Changing it is a new extension, not a new version.
 EXTENSION_ID = re.compile(r"^[a-z][a-z0-9]*(\.[a-z][a-z0-9-]*)+$")
@@ -188,6 +190,24 @@ class Workspace(StrEnum):
     WRITE = "write"
 
 
+class ToolGrant(Strict):
+    """One tool the agent may call, and what it says about itself.
+
+    ``annotations`` is MCP's ``ToolAnnotations``, with every hint
+    required: igni's permission modes decide on them (plan mode lets a
+    read-only tool run, Accept Edits a contained write, and so on —
+    ``docs/EXTENSIBILITY.md``), so a hint left to MCP's default would
+    be a decision made on a claim nobody made.
+    """
+
+    name: str = Field(min_length=1)
+    annotations: ToolHints
+
+    @property
+    def hints(self) -> ToolHints:
+        return self.annotations
+
+
 class Permissions(Strict):
     """Declared here, granted by an administrator, enforced by the
     base, denied by default."""
@@ -196,8 +216,10 @@ class Permissions(Strict):
     workspacePaths: list[str] = Field(default_factory=list)
     egress: list[Annotated[str, Field(pattern=EGRESS.pattern)]] = Field(default_factory=list)
     secrets: list[str] = Field(default_factory=list)
-    #: MCP tool names the extension may register **with the agent**.
-    tools: list[str] = Field(default_factory=list)
+    #: MCP tools the extension may register **with the agent**, each
+    #: with all four of MCP's hints — what every permission mode
+    #: decides on. See :class:`ToolGrant`.
+    tools: list[ToolGrant] = Field(default_factory=list)
     #: Backend RPC methods the extension's **own UI** may call over
     #: the bridge. A different list, granted by the same person,
     #: enforced somewhere else entirely.
@@ -221,6 +243,17 @@ class Permissions(Strict):
     #: ``host.workspace``. Its own state, settings and notifications
     #: need no grant. See :mod:`ember_code.extensions.host.grants`.
     host: list[Annotated[str, Field(pattern=HOST_GRANT.pattern)]] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def _each_tool_once(self) -> Permissions:
+        names = [tool.name for tool in self.tools]
+        repeated = sorted({name for name in names if names.count(name) > 1})
+        if repeated:
+            raise ValueError(f"permissions.tools names {', '.join(repeated)} more than once")
+        return self
+
+    def tool_names(self) -> list[str]:
+        return [tool.name for tool in self.tools]
 
 
 class PageContribution(Strict):
@@ -258,8 +291,7 @@ class IndicatorContribution(Strict):
 
     For a capability whose health somebody needs at a glance without
     opening its page — an index that has gone stale is the case this
-    exists for, and `CodeIndexIndicator` is the one already in the
-    composer today.
+    exists for.
 
     **Not a frame.** A chip is twenty pixels and an iframe is not
     what twenty pixels costs. The host renders it from a value the
@@ -401,7 +433,7 @@ class Contributes(Strict):
     #: **Agents, skills and hooks are not contribution types, and
     #: this is why they do not need to be.** A capability usually
     #: brings agents — a document store has the one agent allowed to
-    #: touch it, and CodeIndex has ten variant files. igni already has a way to deliver
+    #: touch it, an index has the specialists that query it. igni already has a way to deliver
     #: those, and adding ``contributes.agents`` beside it would be
     #: the second path this contract says not to build.
     #:

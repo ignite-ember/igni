@@ -2,7 +2,7 @@
 
     ext = IgniExtension("acme.example")
 
-    @ext.tool
+    @ext.tool(hints=ToolHints(read_only=True, destructive=False, idempotent=True, open_world=False))
     async def do_thing() -> str: ...
 
     ext.run()
@@ -25,6 +25,7 @@ from igni_extension.errors import (
     NotSignedIn,
 )
 from igni_extension.extension import IgniExtension
+from igni_extension.hints import ToolHints, ToolHintsMissing
 from igni_extension.host import Host, Notifications
 from igni_extension.host_model import SCHEMA_VERSION
 from igni_extension.members import Property, Signal
@@ -53,6 +54,8 @@ __all__ = [
     "Signal",
     "SignedIn",
     "Target",
+    "ToolHints",
+    "ToolHintsMissing",
     "Workspace",
     "WorkspaceMode",
 ]

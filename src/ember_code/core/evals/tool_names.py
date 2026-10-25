@@ -68,16 +68,6 @@ class ToolNameCatalog:
             "list_scheduled_tasks",
             "cancel_scheduled_task",
         ],
-        # ArtifactTools — pass through individual function names. Listed
-        # here so eval YAMLs can use the umbrella name "Artifacts" when
-        # a case wants to allow any operation on the document store.
-        #
-        # ``Artifacts`` was expanded here, derived from the toolkit
-        # so the catalog could not drift from what the agent held.
-        # The toolkit left with the capability. An eval naming
-        # ``Artifacts`` now falls through unchanged and matches no
-        # call, which this module's docstring already calls the
-        # right answer for a name it does not know.
     }
 
     #: Tools that Agno may auto-invoke regardless of what the case asked
@@ -87,12 +77,6 @@ class ToolNameCatalog:
     #: when, e.g., ``update_user_memory`` fires during a tasks-mode run.
     #: Don't add tools here that the case is meant to *test* (file ops,
     #: spawn_*, etc.) — those should be explicit in the case YAML.
-    #: The three artifact entries that used to sit here are gone. They
-    #: were here because the knowledge base was something the main
-    #: agent touched on its own; the document store is not. No artifact
-    #: tool is on the main agent's manifest at all — only the archivist
-    #: holds them — so a main-agent eval could never have seen one fire,
-    #: and an archivist eval testing a write wants it to count.
     DEFAULT_ALWAYS_ALLOWED_SYSTEM_TOOLS: ClassVar[tuple[str, ...]] = ("update_user_memory",)
 
     def __init__(

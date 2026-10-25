@@ -237,7 +237,6 @@ One-paragraph description of what this feature does, derived from reading the so
 - `auth` — Authentication and credentials
 - `config` — Configuration management
 - `hooks` — Pre/post tool execution hooks
-- `knowledge` — Vector store / CodeIndex integration
 - `mcp` — MCP server and client
 - `memory` — Memory management
 - `prompts` — Prompt templates

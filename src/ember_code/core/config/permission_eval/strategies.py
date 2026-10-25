@@ -22,6 +22,7 @@ from ember_code.core.config.permission_eval.schemas import (
     PermissionDecision,
     PermissionMode,
 )
+from ember_code.core.mcp.hints import ToolHints
 
 
 class PermissionModeStrategy:
@@ -49,7 +50,32 @@ class PermissionModeStrategy:
         """Step 4 of the pipeline for this mode. Returns
         :attr:`PermissionDecision.DEFER` when the mode has nothing to
         say — the pipeline then continues to step 5 (allow) and
-        step 6 (defer / dontAsk deny)."""
+        step 6 (defer / dontAsk deny).
+
+        An extension's tool is decided by what it says it is
+        (:meth:`hinted_step`); igni's own by name (:meth:`named_step`).
+        """
+        hints = catalog.hints(tool_name)
+        if hints is not None:
+            return self.hinted_step(hints)
+        return self.named_step(tool_name, tool_args, catalog)
+
+    def named_step(
+        self,
+        tool_name: str,
+        tool_args: dict[str, Any],
+        catalog: ToolCategoryCatalog,
+    ) -> PermissionDecision:
+        """This mode's decision on one of igni's own tools."""
+        return PermissionDecision.DEFER
+
+    def hinted_step(self, hints: ToolHints) -> PermissionDecision:
+        """This mode's decision on an extension's tool, from its hints.
+
+        ``DEFER`` here means what it means for igni's own tools: rules
+        decide, and then a tool that is not read-only pauses for the
+        person (the installer marks it so) while a read-only one runs.
+        """
         return PermissionDecision.DEFER
 
     def deny_reason(
@@ -109,6 +135,15 @@ class DontAskMode(PermissionModeStrategy):
     def prompts_user(self) -> bool:
         return False
 
+    def hinted_step(self, hints: ToolHints) -> PermissionDecision:
+        """A read of the extension's own data runs; anything else needs an allow rule.
+
+        It changes nothing and reaches nothing outside, so there is
+        nothing a person would have been asked about. A read that
+        reaches outside is denied like igni's web tools are here.
+        """
+        return PermissionDecision.ALLOW if hints.is_local_read else PermissionDecision.DEFER
+
     def deny_reason(
         self,
         tool_name: str,
@@ -124,7 +159,7 @@ class AcceptEditsMode(PermissionModeStrategy):
 
     mode = PermissionMode.ACCEPT_EDITS
 
-    def mode_step(
+    def named_step(
         self,
         tool_name: str,
         tool_args: dict[str, Any],
@@ -133,6 +168,15 @@ class AcceptEditsMode(PermissionModeStrategy):
         if catalog.is_edit(tool_name):
             return PermissionDecision.ALLOW
         return PermissionDecision.DEFER
+
+    def hinted_step(self, hints: ToolHints) -> PermissionDecision:
+        """A contained write is this mode's "edit": it runs.
+
+        One that can destroy something, or that reaches outside its own
+        system, is asked about — accepting edits is not accepting
+        deletions or messages to somebody else.
+        """
+        return PermissionDecision.ALLOW if hints.is_contained_write else PermissionDecision.DEFER
 
 
 class BypassPermissionsMode(PermissionModeStrategy):
@@ -148,6 +192,8 @@ class BypassPermissionsMode(PermissionModeStrategy):
         tool_args: dict[str, Any],
         catalog: ToolCategoryCatalog,
     ) -> PermissionDecision:
+        """Everything, an extension's tools included. Bypass's last
+        check still sees each call that is not a local read."""
         return PermissionDecision.ALLOW
 
 
@@ -167,7 +213,17 @@ class PlanMode(PermissionModeStrategy):
         "are fine. Use exit_plan_mode(plan) when ready to execute."
     )
 
-    def mode_step(
+    _CHANGE_REASON = (
+        "plan mode runs only tools that change nothing, and this one says "
+        "it is not read-only. Use exit_plan_mode(plan) when you're ready "
+        "for the user to approve execution."
+    )
+
+    def hinted_step(self, hints: ToolHints) -> PermissionDecision:
+        """Reads run — in plan mode the point is to look. Anything else waits for the plan."""
+        return PermissionDecision.ALLOW if hints.read_only else PermissionDecision.DENY
+
+    def named_step(
         self,
         tool_name: str,
         tool_args: dict[str, Any],
@@ -194,6 +250,9 @@ class PlanMode(PermissionModeStrategy):
         tool_args: dict[str, Any],
         catalog: ToolCategoryCatalog,
     ) -> str | None:
+        hints = catalog.hints(tool_name)
+        if hints is not None:
+            return None if hints.read_only else self._CHANGE_REASON
         if catalog.is_edit(tool_name):
             return self._EDIT_REASON
         if catalog.is_shell(tool_name):

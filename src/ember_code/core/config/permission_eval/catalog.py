@@ -24,7 +24,9 @@ from __future__ import annotations
 import re
 from typing import Any, ClassVar
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
+
+from ember_code.core.mcp.hints import ToolHints, ToolHintsRegistry
 
 # ── Tool sets — kept as module-level frozensets so the package
 #    ``__init__`` can re-export them for legacy imports. The
@@ -175,11 +177,24 @@ class ToolCategoryCatalog(BaseModel):
     ``catalog.is_edit(name)`` instead of ``name in FILE_EDIT_TOOLS``.
     Alternative catalogs (with extra tools) can be built for tests
     without monkey-patching module globals.
+
+    igni's own tools are classified by name, here. An extension's are
+    classified by what its manifest says they are — MCP's four hints,
+    read through :meth:`hints` from the registry the installer fills.
+    igni does not know an extension's tools by name, and does not
+    need to.
     """
+
+    model_config = ConfigDict(arbitrary_types_allowed=True)
 
     file_edit_tools: frozenset[str] = Field(default_factory=lambda: FILE_EDIT_TOOLS)
     file_read_tools: frozenset[str] = Field(default_factory=lambda: FILE_READ_TOOLS)
     shell_tools: frozenset[str] = Field(default_factory=lambda: SHELL_TOOLS)
+    tool_hints: ToolHintsRegistry = Field(default_factory=ToolHintsRegistry.shared)
+
+    def hints(self, tool_name: str) -> ToolHints | None:
+        """What an extension's tool says it is, or ``None`` for one igni classifies by name."""
+        return self.tool_hints.get(tool_name)
 
     def is_edit(self, tool_name: str) -> bool:
         """Is ``tool_name`` a filesystem-mutating file tool?"""

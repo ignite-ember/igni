@@ -56,12 +56,6 @@ class SessionStartupCoordinator:
         self.mcp.initialized = value
 
     # ── Marketplace warmup ───────────────────────────────────
-    #
-    # There was a knowledge warmup here, opening the local
-    # artifact index in the background so the first `/artifacts`
-    # press did not block. There is no local index: Artifacts is
-    # an extension, and igni starts its service the way it starts
-    # any other one.
 
     def start_marketplace_refresh_background(self) -> None:
         """See :meth:`MarketplaceWarmupPhase.start_background`."""

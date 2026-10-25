@@ -30,7 +30,7 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 # Optional deps — ``agno[mcp]`` isn't a hard requirement of the base
 # install. The module still loads without them; ``connect`` reports
@@ -384,6 +384,28 @@ class MCPClientManager:
         re-applies the filter so the change is visible to the
         next agent run."""
         self._tool_filter.set_enabled(server, tool, enabled, self._clients.get(server))
+
+    def require_confirmation(self, server: str, tools: set[str]) -> None:
+        """Pause the agent before each of ``tools`` (registered names), for the permission mode to decide."""
+        self._tool_filter.require_confirmation(server, tools, self._clients.get(server))
+
+    async def tool_annotations(self, name: str) -> dict[str, Any]:
+        """``{server's own tool name: the annotations it reports}``, asked of the server now.
+
+        Empty when the server is not connected or will not say. Agno
+        drops the annotations when it builds its functions, so they
+        are read from the session rather than from the toolkit.
+        """
+        client = self._clients.get(name)
+        session = getattr(client, "session", None) if client is not None else None
+        if session is None:
+            return {}
+        try:
+            listed = await session.list_tools()
+        except Exception as exc:  # noqa: BLE001 — reported as "said nothing", not raised
+            logger.info("MCP '%s' did not list its tools' annotations: %s", name, exc)
+            return {}
+        return {tool.name: tool.annotations for tool in listed.tools}
 
     # ── Resources / prompts (typed wire shapes) ─────────────────
 

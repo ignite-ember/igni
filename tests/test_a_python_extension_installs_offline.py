@@ -293,6 +293,12 @@ class StubMcp:
     def get_tools(self, name: str) -> dict[str, Any]:
         return {}
 
+    def require_confirmation(self, server: str, tools: set[str]) -> None:
+        pass
+
+    async def tool_annotations(self, name: str) -> dict[str, Any]:
+        return {}
+
 
 async def test_the_installer_starts_the_installed_entry(tmp_path):
     bundle = bundle_with_wheels(tmp_path)

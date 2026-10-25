@@ -12,10 +12,10 @@ On torch / torchvision wheel pairs whose native bindings don't match
 ``transformers`` then catches the failure inside its lazy
 ``__getattr__`` and re-raises it as a misleading
 ``ModuleNotFoundError: Could not import module 'PreTrainedModel'``,
-which kills sentence-transformers, chroma embeddings, and the
-CodeIndex ``apply_delta`` path along with it.
+which kills every ``transformers`` user along with it — Laya, the
+decision model igni runs, among them.
 
-We don't use torchvision — ember-code embeds text only. The fix is to
+We don't use torchvision — igni's models read text only. The fix is to
 make sure ``transformers`` never reaches torchvision's auto-discovery
 in the first place. Eagerly probe the import; if it explodes, mark
 the module unimportable in ``sys.modules`` so future ``import

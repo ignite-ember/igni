@@ -152,7 +152,7 @@ async def test_a_blanket_shell_denial_still_names_the_alternative() -> None:
     )
 
     assert "Shell access is off" in result
-    assert "code index" in result
+    assert "another of your tools" in result
 
 
 # ── An ask nobody will answer is a deny, not an approval ───────────
