@@ -115,9 +115,6 @@ export const VIEW_STATE: Record<string, Partial<Record<Category, string[]>>> = {
     page: ["activeIdx"],
     pending: ["pending"],
   },
-  "components/CodeIndexIndicator.tsx": {
-    data: ["status"],
-  },
   "components/Composer.tsx": {
     pending: ["attachments"],
     hover: ["dragHot"],
@@ -203,11 +200,6 @@ export const VIEW_STATE: Record<string, Partial<Record<Category, string[]>>> = {
     data: ["agents"],
     page: ["selected"],
     pending: ["busy"],
-  },
-  "components/panels/CodeIndexPanel.tsx": {
-    data: ["status", "breakdown", "activity"],
-    pending: ["busy", "runningVerb"],
-    hover: ["hover", "hover"],
   },
   "components/panels/DirectoryPicker.tsx": {
     data: ["listing"],

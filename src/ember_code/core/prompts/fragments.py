@@ -87,9 +87,8 @@ class PromptFragments:
         """Fill the anchors this table knows. Leave the rest alone.
 
         **Untouched, not removed.** This is a pass over text that other
-        layers also write into: ``{{PERSISTING}}``, ``{{AGENT_CATALOG}}``
-        and ``{{CODEINDEX_TOOLS}}`` are filled by the prompt builder
-        *after* ``load_prompt`` has run. The first version of this
+        layers also write into: ``{{PERSISTING}}`` and ``{{AGENT_CATALOG}}``
+        are filled by the prompt builder *after* ``load_prompt`` has run. The first version of this
         dropped every anchor it had no supplier for, on the reasoning
         that a literal brace sequence reaching a model is worse than
         nothing. That is true of the finished prompt and false here —

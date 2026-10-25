@@ -6,7 +6,7 @@ handler and returned raw :class:`CommandResult` objects. Every
 markdown template that the :class:`AgentsCommand` coordinator emits
 now lives here as a Pydantic view model with a single
 ``.to_command_result()`` render entry point. Mirrors the sibling
-:mod:`schemas_codeindex` pattern.
+:mod:`schemas_context` pattern.
 """
 
 from __future__ import annotations

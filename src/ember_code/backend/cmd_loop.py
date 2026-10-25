@@ -25,8 +25,7 @@ Subcommands:
 
 Presentation strings all live in :mod:`schemas_loop` — the
 coordinator constructs a view model and returns its
-``.to_command_result()``. Mirrors the sibling ``cmd_codeindex.py``
-+ ``schemas_codeindex.py`` / ``cmd_context.py`` +
+``.to_command_result()``. Mirrors the sibling ``cmd_context.py`` +
 ``schemas_context.py`` pattern.
 
 ``Session.start_loop`` / ``advance_loop`` / ``cancel_loop`` /

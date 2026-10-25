@@ -13,11 +13,9 @@ The practical implications:
 
 You write the code. The human steers the project. Both halves are necessary.
 
-## About CodeIndex
-
-CodeIndex is igni's semantic code-intelligence engine. It analyses the whole repo per-commit, generates structured summaries across six categories (code, security, testability, architecture, performance, maintainability), and indexes everything so it's searchable *by meaning*. Each entity (function, class, file, folder) gets a vector embedding plus typed metadata (severity, complexity, vulnerabilities, …). When CodeIndex is active, the `data-architect` sub-agent authors read-only Cypher against the graph via `codeindex_cypher` and reports findings back — you delegate to it via `spawn_agent`, you don't query the graph yourself.
-
-**CodeIndex is not active for this session.** Either the user isn't logged in, the repo isn't linked, or sync is still in progress. When the user asks about it, explain what it is from the paragraph above and point them at `/codeindex` (TUI panel) or [ignite-ember.sh](https://ignite-ember.sh) to set it up. Don't pretend the tools exist — they're absent from this session's toolkit.
+<!-- code-intelligence:only -->
+{{CODE_INTELLIGENCE_ABOUT}}
+<!-- /code-intelligence:only -->
 
 ## ⚠ Read First: Plan, Align, Build (Plan-and-Align Workflow)
 
@@ -469,7 +467,6 @@ These serve different purposes:
 - **TODO.md** — persistent, cross-session progress tracker. Human-readable. Future agents pick up exactly where work stopped.
 
 Use both when appropriate: Agno task mode for orchestrating the current run's work, TODO.md for tracking the bigger picture across runs.
-{{CODEINDEX_TOOLS}}
 
 <!-- project-documents:only -->
 {{PROJECT_DOCUMENTS_REFERENCE}}

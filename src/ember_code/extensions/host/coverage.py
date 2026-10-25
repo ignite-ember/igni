@@ -52,12 +52,6 @@ NOT_REACHABLE: tuple[Unreachable, ...] = (
         why="Quitting igni is the person's decision.",
     ),
     Unreachable(
-        key="capabilities",
-        what="`codeindex_*`",
-        why="These are not the floor. They belong to the CodeIndex extension, and "
-        "they leave the host as it takes them over.",
-    ),
-    Unreachable(
         key="channel",
         what="The model's own plumbing: the `host_model` and `window_model` RPCs, and the "
         "`host_signal` and `window_model_changed` pushes",
@@ -184,11 +178,6 @@ RPC_UNREACHABLE: dict[RpcMethod, str] = {
     RpcMethod.EXTENSION_SERVICE_TOKEN: "service",
 }
 
-#: Prefixes whose every method is unreachable, by row.
-RPC_UNREACHABLE_PREFIXES: dict[str, str] = {
-    "codeindex_": "capabilities",
-}
-
 
 def rpc_destination(method: RpcMethod) -> tuple[str, str] | None:
     """``("member", path)`` or ``("unreachable", row)``; ``None`` if unmapped."""
@@ -196,9 +185,6 @@ def rpc_destination(method: RpcMethod) -> tuple[str, str] | None:
         return ("member", RPC[method])
     if method in RPC_UNREACHABLE:
         return ("unreachable", RPC_UNREACHABLE[method])
-    for prefix, row in RPC_UNREACHABLE_PREFIXES.items():
-        if method.value.startswith(prefix):
-            return ("unreachable", row)
     return None
 
 
@@ -324,7 +310,6 @@ __all__ = [
     "PUSH_UNREACHABLE",
     "RPC",
     "RPC_UNREACHABLE",
-    "RPC_UNREACHABLE_PREFIXES",
     "Unreachable",
     "rows",
     "rpc_destination",

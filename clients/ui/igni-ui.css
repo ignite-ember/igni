@@ -217,8 +217,7 @@
 
 /* ── Form controls ────────────────────────────────────────────────
    Generic versions of controls the app only had feature-scoped
-   copies of — `kb-add-textarea`, `mcp-tool-switch`, `kb-aside-tab`,
-   `codeindex-progress`. An extension cannot use any of those, and a
+   copies of — `kb-add-textarea`, `mcp-tool-switch`, `kb-aside-tab`. An extension cannot use any of those, and a
    floor that stops at buttons is one where every extension writes
    its own select. */
 

@@ -95,14 +95,17 @@ def _edges() -> list[tuple[str, int, str, bool]]:
 #: fifty-nine legacy RPC *names*, routed there by
 #: ``backend/rpc_handlers/artifacts.py``.
 #:
-#: What is left is CodeIndex, and most of it is CodeIndex talking
-#: to itself across two directories.
-MAY_NOT_GROW = 18
+#: 8 once CodeIndex's panel, its ``codeindex_*`` RPCs and ``/codeindex``
+#: left for its extension's page (``igni__code-index/extension``).
+#:
+#: What is left is CodeIndex's local index and the agent tool that
+#: reads it, which move when the index does.
+MAY_NOT_GROW = 8
 
 
 def test_the_measurement_finds_something():
     """A walk that finds nothing makes the ratchet meaningless."""
-    assert len(_edges()) > 10
+    assert len(_edges()) > 0
 
 
 def test_the_host_is_not_growing_new_edges_into_a_capability():
@@ -204,9 +207,9 @@ def test_the_backend_starts_without_artifacts():
 @pytest.mark.xfail(
     reason=(
         "CodeIndex has not left yet. `core/code_index/` is still the local "
-        "index, `core/tools/codeindex/` its agent tool and "
-        "`backend/server_codeindex.py` its RPCs. Artifacts is the worked "
-        "example; this is the same move again, and smaller."
+        "index and `core/tools/codeindex/` its agent tool; its page, RPCs "
+        "and command have moved to the extension. The index moves with the "
+        "graph-db sidecar."
     ),
     strict=True,
 )

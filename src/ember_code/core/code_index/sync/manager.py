@@ -56,10 +56,6 @@ from ember_code.core.code_index.sync.schemas import (
 from ember_code.core.config.endpoint import is_configured
 
 if TYPE_CHECKING:
-    # ``CodeIndexActivityEntry`` is a wire-name alias for
-    # :class:`ActivityEntry`. Type-only import (a runtime import
-    # would cycle: ``schemas_codeindex_rpc`` sits above us).
-    from ember_code.backend.schemas_codeindex_rpc import CodeIndexActivityEntry
     from ember_code.core.code_index.index import CodeIndex
     from ember_code.core.config.settings import Settings
 
@@ -194,27 +190,15 @@ class CodeIndexSyncManager:
         self._activity_log.record(entry)
 
     def recent_activity(self) -> list[ActivityEntry]:
-        """Most recent sync events, newest first. Used by the panel."""
+        """Most recent sync events, newest first."""
         return self._activity_log.recent()
-
-    def activity_entries(self) -> list[CodeIndexActivityEntry]:
-        """Recent activity, newest-first, as typed wire models.
-
-        Since :class:`ActivityEntry` is aliased to
-        :class:`CodeIndexActivityEntry` in the schemas layer, the
-        two names refer to the same Pydantic class and this is
-        just a re-typed view over :meth:`recent_activity` —
-        callers see the wire name without an adapter step.
-        """
-        return list(self.recent_activity())
 
     def progress_snapshot(self) -> SyncProgressSnapshot:
         """Poll-friendly view of live sync progress.
 
         Publishes the previously ``_``-prefixed sync-manager
-        fields as a typed :class:`SyncProgressSnapshot` so
-        :meth:`CodeIndexController.status` no longer reaches
-        past the leading underscore. Kept as a *snapshot* method
+        fields as a typed :class:`SyncProgressSnapshot`, so no
+        reader reaches past the leading underscore. Kept as a *snapshot* method
         (not @property) to signal "reads live mutable state" at
         every call site.
         """
@@ -251,11 +235,8 @@ class CodeIndexSyncManager:
         # checks BOTH the chroma dir and the manifest entry, so this
         # path can't be taken against a half-deleted index.
         #
-        # ``head_indexed`` in ``codeindex_status`` uses the same check
-        # against the manifest, so the panel renders ``[green]indexed[/green]``
-        # without the misleading ``not indexed · already indexed locally``
-        # combo. ``force_snapshot`` (``/codeindex resync``) intentionally
-        # bypasses this to recover from a drifted local index.
+        # ``force_snapshot`` intentionally bypasses this to recover
+        # from a drifted local index.
         if not force_snapshot and self.code_index.has_commit(target_sha):
             self._last_synced_sha = target_sha
             return SyncResult.already_indexed(target_sha)

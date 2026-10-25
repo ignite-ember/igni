@@ -35,7 +35,7 @@
 | **Cross-tool compatibility** | Reads `CLAUDE.md`, `.claude/agents/*.md`, `.claude/skills/`, `.mcp.json` out of the box when `cross_tool_support` is enabled — explicit positioning for Claude Code refugees. |
 | **Org-level Groups (zero-install departmental rollout)** | Org admins curate per-department override packs — agents (markdown), MCPs (JSON), plugins (git-source or YAML), settings (deep-merged). The end-user CLI fetches the pack at login and materializes it to `~/.igni/group-policy/` at priority 4.5. No per-machine deployment needed; admins push, users receive on next fetch. See [Groups](#org-level-groups-and-overrides) for the full story. |
 
-Source: `README.md:1-251`, `QUICKSTART.md:1-483`, `CLAUDE_CODE_PARITY.md:13-66` (parity tally table), `docs/ARCHITECTURE.md:1-120`, `docs/CODEINDEX.md`, `docs/NEO4J_MIGRATION_DONE.md`, `pyproject.toml:38-67`. (Internal module is still `ember_code` and project-context file is still `igni.md` — preserved per the v0.7.0 rebrand for back-compat with existing installs.)
+Source: `README.md:1-251`, `QUICKSTART.md:1-483`, `CLAUDE_CODE_PARITY.md:13-66` (parity tally table), `docs/ARCHITECTURE.md:1-120`, `igni__code-index/docs/igni-integration.md`, `docs/NEO4J_MIGRATION_DONE.md`, `pyproject.toml:38-67`. (Internal module is still `ember_code` and project-context file is still `igni.md` — preserved per the v0.7.0 rebrand for back-compat with existing installs.)
 
 ### 2.2 Architecture shape
 
@@ -59,7 +59,7 @@ Source: `README.md:1-251`, `QUICKSTART.md:1-483`, `CLAUDE_CODE_PARITY.md:13-66` 
                 Local Neo4j (BE-spawned, per-commit DB)
 ```
 
-The local Neo4j instance (one BE-spawned DB per commit, no Docker) is the consumer endpoint of the producer/consumer split. `ember-server` writes JSONL; igni's consumer pulls over plain HTTPS and applies it. (`docs/ARCHITECTURE.md:1-67`, `docs/CODEINDEX.md`, `docs/NEO4J_MIGRATION_DONE.md`.)
+The local Neo4j instance (one BE-spawned DB per commit, no Docker) is the consumer endpoint of the producer/consumer split. `ember-server` writes JSONL; igni's consumer pulls over plain HTTPS and applies it. (`docs/ARCHITECTURE.md:1-67`, `igni__code-index/docs/igni-integration.md`, `docs/NEO4J_MIGRATION_DONE.md`.)
 
 ---
 
@@ -217,8 +217,8 @@ GitHub/GitLab repo
 
 ### Key properties
 
-- **Producer-only** — per `docs/CODEINDEX.md`, "the server is now a producer-only service: it generates summaries and ships changesets. It does **not** answer search/items/tree queries — those run entirely in the consumer."
-- **Wire-format stability** — JSONL is the integration point. Five op shapes — `commit` / `upsert_item` / `delete_item` / `upsert_reference` / `delete_reference` — content-addressed by UUID5(`path + content`) so unchanged items keep the same ID across commits and the consumer's copy-on-write index handles replays idempotently. Producer-side writer: `ember-server/app/services/jsonl_changeset/writer.py`. Consumer-side schema: `ember-code/core/code_index/delta.py` (`CODEINDEX.md:64-76`).
+- **Producer-only** — per `igni__code-index/docs/igni-integration.md`, "the server is now a producer-only service: it generates summaries and ships changesets. It does **not** answer search/items/tree queries — those run entirely in the consumer."
+- **Wire-format stability** — JSONL is the integration point. Five op shapes — `commit` / `upsert_item` / `delete_item` / `upsert_reference` / `delete_reference` — content-addressed by UUID5(`path + content`) so unchanged items keep the same ID across commits and the consumer's copy-on-write index handles replays idempotently. Producer-side writer: `ember-server/app/services/jsonl_changeset/writer.py`. Consumer-side schema: `ember-code/core/code_index/delta.py` (`igni__code-index/docs/igni-integration.md:64-76`).
 - **Consumer storage = per-commit Neo4j** — the consumer spins up a fresh Neo4j instance per commit (BE-spawned, no Docker). This replaces the earlier chroma+sqlite local-store approach. `docs/NEO4J_MIGRATION_DONE.md` is the working migration document; the migration is described as "done and remaining" — treat the post-migration contract as the source of truth, with chroma as the legacy fallback still potentially dual-running on older sessions.
 
 ### Self-host vs. hosted
@@ -364,10 +364,10 @@ Selected key citations. Line numbers refer to the files as of the snapshot read.
 | Hook / permission / managed-policy parity scores | `CLAUDE_CODE_PARITY.md:13-66`, `## Tallies` line ~79 |
 | Cross-tool compat (`cross_tool_support`) | `CLAUDE_CODE_PARITY.md` rows 17, 18, 30 |
 | 12-case detailed breakdown | `docs/BENCHMARKS.md:69-87` |
-| CodeIndex architecture overview | `docs/CODEINDEX.md` |
-| ember-server 5-phase pipeline | `docs/CODEINDEX.md`, `ember-server/README.md:104-125` |
-| JSONL wire contract | `CODEINDEX.md:64-76` |
-| Tree-sitter 58 languages list | `docs/CODEINDEX.md:55-60` |
+| CodeIndex architecture overview | `igni__code-index/docs/igni-integration.md` |
+| ember-server 5-phase pipeline | `igni__code-index/docs/igni-integration.md`, `ember-server/README.md:104-125` |
+| JSONL wire contract | `igni__code-index/docs/igni-integration.md:64-76` |
+| Tree-sitter 58 languages list | `igni__code-index/docs/igni-integration.md:55-60` |
 | Orchestrator + 5 team modes + unlimited nesting | `docs/ARCHITECTURE.md:1-120` |
 | Tool surface (`Bash`/`Write`/`Edit`; `Read`/`Grep`/`Glob` not on main team by design) | `QUICKSTART.md:212-218`, `CLAUDE_CODE_PARITY.md` row 22 |
 | Apache 2.0 license | `pyproject.toml:9`, `README.md:241` |
@@ -392,7 +392,7 @@ Selected key citations. Line numbers refer to the files as of the snapshot read.
 | Managed settings / managed CLAUDE.md / managed plugin scope | `CLAUDE_CODE_PARITY.md` rows 10, 11, 35 |
 | MEMORY.md 200-line / 25KB cap + cross-tool fallback | `CLAUDE_CODE_PARITY.md` row 18 |
 | Provider/CLI/dev/WIF/Helm deployment story | `ember-server/README.md:178-216` |
-| ember-server `producer-only` | `docs/CODEINDEX.md` final paragraph; `CODEINDEX.md:1-3` |
+| ember-server `producer-only` | `igni__code-index/docs/igni-integration.md` final paragraph; `igni__code-index/docs/igni-integration.md:1-3` |
 | Neo4j migration (in flight) | `docs/NEO4J_MIGRATION_DONE.md` |
 | Self-host CLI config override | `ember-server/README.md:191-216` |
 | Three-environment branch-to-env mapping | `ember-server/README.md:184-188` |

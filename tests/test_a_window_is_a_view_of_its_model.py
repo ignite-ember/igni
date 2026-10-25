@@ -238,7 +238,7 @@ class TestToasts:
                 "ui.toast",
                 text="Indexed",
                 kind="success",
-                target={"kind": "codeindex", "label": "CodeIndex"},
+                target={"kind": "plugins", "label": "Plugins"},
             )
         )
         assert toast["source"] == ext and toast["kind"] == "success"

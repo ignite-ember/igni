@@ -37,9 +37,9 @@ function mount(over: Partial<Parameters<typeof ExtensionFrame>[0]> = {}) {
   // one's iframe, and every assertion would be about the wrong frame.
   const { container, rerender } = render(
     <ExtensionFrame
-      extensionId="igni.codeindex"
+      extensionId="acme.scanner"
       origin={ORIGIN}
-      allow={["codeindex_status", "codeindex_sync_*"]}
+      allow={["acme_status", "acme_sync_*"]}
       onCall={onCall}
       onNavigate={onNavigate}
       onClose={onClose}
@@ -127,12 +127,12 @@ describe("what the host accepts", () => {
       kind: "call",
       nonce,
       id: "1",
-      method: "codeindex_status",
+      method: "acme_status",
       args: {},
     });
 
     await waitFor(() =>
-      expect(onCall).toHaveBeenCalledWith("codeindex_status", {}),
+      expect(onCall).toHaveBeenCalledWith("acme_status", {}),
     );
     await waitFor(() =>
       expect(repliesTo(frame)).toContainEqual(
@@ -154,12 +154,12 @@ describe("what the host accepts", () => {
       kind: "call",
       nonce,
       id: "2",
-      method: "codeindex_sync_start",
+      method: "acme_sync_start",
       args: {},
     });
 
     await waitFor(() =>
-      expect(onCall).toHaveBeenCalledWith("codeindex_sync_start", {}),
+      expect(onCall).toHaveBeenCalledWith("acme_sync_start", {}),
     );
   });
 
@@ -174,7 +174,7 @@ describe("what the host accepts", () => {
       kind: "call",
       nonce,
       id: "3",
-      method: "codeindex_status",
+      method: "acme_status",
       args: {},
     });
 
@@ -233,7 +233,7 @@ describe("what the host refuses", () => {
 
     send(
       frame,
-      { kind: "call", nonce, id: "5", method: "codeindex_status", args: {} },
+      { kind: "call", nonce, id: "5", method: "acme_status", args: {} },
       { origin: "http://127.0.0.1:9999" },
     );
 
@@ -247,7 +247,7 @@ describe("what the host refuses", () => {
 
     send(
       frame,
-      { kind: "call", nonce, id: "6", method: "codeindex_status", args: {} },
+      { kind: "call", nonce, id: "6", method: "acme_status", args: {} },
       { source: window },
     );
 
@@ -263,7 +263,7 @@ describe("what the host refuses", () => {
       kind: "call",
       nonce: "not-the-one-we-issued",
       id: "7",
-      method: "codeindex_status",
+      method: "acme_status",
       args: {},
     });
 
@@ -296,7 +296,7 @@ describe("what the host refuses", () => {
         kind: "call",
         nonce,
         id: "8",
-        method: "codeindex_status",
+        method: "acme_status",
         args: {},
       },
       origin: ORIGIN,
@@ -311,12 +311,12 @@ describe("what the host refuses", () => {
 
 describe("the grant pattern language", () => {
   it("matches exactly, or on a trailing star, and nothing else", () => {
-    expect(methodAllowed("codeindex_status", ["codeindex_status"])).toBe(true);
-    expect(methodAllowed("codeindex_status", ["codeindex_"])).toBe(false);
-    expect(methodAllowed("codeindex_sync_start", ["codeindex_sync_*"])).toBe(
+    expect(methodAllowed("acme_status", ["acme_status"])).toBe(true);
+    expect(methodAllowed("acme_status", ["acme_"])).toBe(false);
+    expect(methodAllowed("acme_sync_start", ["acme_sync_*"])).toBe(
       true,
     );
-    expect(methodAllowed("codeindex_status", ["codeindex_sync_*"])).toBe(false);
+    expect(methodAllowed("acme_status", ["acme_sync_*"])).toBe(false);
     // A star anywhere but the end is a literal, not a wildcard: the
     // list is read by whoever approves an install.
     expect(methodAllowed("run_shell", ["*_shell"])).toBe(false);
@@ -332,7 +332,7 @@ describe("the handshake", () => {
     expect(repliesTo(frame)).toContainEqual(
       expect.objectContaining({
         kind: "hello",
-        extensionId: "igni.codeindex",
+        extensionId: "acme.scanner",
         params: { tab: "browse" },
         theme: "light",
       }),
@@ -360,7 +360,7 @@ describe("following the host", () => {
 
     rerender(
       <ExtensionFrame
-        extensionId="igni.codeindex"
+        extensionId="acme.scanner"
         origin={ORIGIN}
         allow={[]}
         onCall={vi.fn()}
@@ -444,7 +444,7 @@ describe("the host object model, from a frame", () => {
     handshake(frame);
     rerender(
       <ExtensionFrame
-        extensionId="igni.codeindex"
+        extensionId="acme.scanner"
         origin={ORIGIN}
         allow={[]}
         onCall={vi.fn()}

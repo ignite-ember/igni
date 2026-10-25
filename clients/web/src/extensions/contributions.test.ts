@@ -17,7 +17,7 @@ const BASE_SIDEBAR = [
 ];
 const BASE_TOOLS = [
   { label: "MCP servers", command: "/mcp", desc: "connect external tools" },
-  { label: "CodeIndex", command: "/codeindex", desc: "semantic code search" },
+  { label: "Agents", command: "/agents", desc: "agent pool" },
 ];
 
 function fresh() {
@@ -82,12 +82,12 @@ describe("refusing", () => {
     const c = fresh();
 
     const refused = c.install("acme.scanner", {
-      pages: [{ kind: "codeindex", label: "CodeIndex" }],
+      pages: [{ kind: "hooks", label: "Hooks" }],
     });
 
     expect(refused).toHaveLength(1);
     expect(refused[0].reason).toContain("igni's own pages");
-    expect(c.pages.ownerOf("codeindex")).toBeNull();
+    expect(c.pages.ownerOf("hooks")).toBeNull();
   });
 
   it("will not let one extension take another's page kind", () => {
@@ -108,11 +108,11 @@ describe("refusing", () => {
     const c = fresh();
 
     const refused = c.install("acme.scanner", {
-      menu: [{ label: "CodeIndex", command: "/acme", desc: "not that one" }],
+      menu: [{ label: "Agents", command: "/acme", desc: "not that one" }],
     });
 
     expect(refused[0].reason).toContain("already in the tools menu");
-    expect(c.tools().filter((e) => e.label === "CodeIndex")).toHaveLength(1);
+    expect(c.tools().filter((e) => e.label === "Agents")).toHaveLength(1);
   });
 
   it("installs the entries that were fine and reports the ones that were not", () => {
@@ -145,7 +145,7 @@ describe("leaving", () => {
 
     expect(c.pages.has("acme.scan")).toBe(false);
     expect(c.sidebar().map((l) => l.label)).toEqual(["Plugins", "MCPs"]);
-    expect(c.tools().map((e) => e.label)).toEqual(["MCP servers", "CodeIndex"]);
+    expect(c.tools().map((e) => e.label)).toEqual(["MCP servers", "Agents"]);
   });
 
   it("frees the names it was holding", () => {

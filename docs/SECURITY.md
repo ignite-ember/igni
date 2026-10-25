@@ -368,7 +368,7 @@ safety:
 
 ### CodeIndex Data Residency
 
-For teams that can't send code to the cloud, self-hosted CodeIndex is planned for a future release. This will allow all code analysis and embeddings to stay on your infrastructure. See [CodeIndex](CODEINDEX.md#self-hosting-planned) for details.
+For teams that can't send code to the cloud, self-hosted CodeIndex is planned for a future release. This will allow all code analysis and embeddings to stay on your infrastructure. See *Self-hosting* in the CodeIndex repository's `igni-integration.md` for details.
 
 ---
 

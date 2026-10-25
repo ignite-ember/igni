@@ -250,7 +250,7 @@ Agents can pause execution to request confirmation or user input before proceedi
 - [Tools](docs/TOOLS.md) — Available toolkits and capabilities
 - [MCP](docs/MCP.md) — IDE integration via Model Context Protocol
 - [Configuration](docs/CONFIGURATION.md) — Settings, permissions, and customization
-- [CodeIndex](docs/CODEINDEX.md) — Semantic code intelligence engine
+- CodeIndex — semantic code intelligence engine; an extension, documented in the CodeIndex repository (`igni__code-index/docs/igni-integration.md`)
 - [Benchmarks](docs/BENCHMARKS.md) — Head-to-head comparison vs Claude Code on a 12-case suite
 - [Evals](docs/EVALS.md) — Agent evaluation framework and regression testing
 - [Hooks](docs/HOOKS.md) — Pre/post tool execution hooks

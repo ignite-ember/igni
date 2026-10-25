@@ -184,19 +184,6 @@ class TestThePortalHostIsDerived:
         with pytest.raises(ApiUrlNotConfigured):
             portal_url_for("")
 
-    def test_the_install_hint_uses_the_same_rule(self):
-        """The rules lived here and in `CodeIndexInstallResult`, which
-        builds a "link your repository" URL. Two copies of a
-        hostname-guessing rule is one too many — a customer following
-        one link and not the other is a support ticket nobody can
-        reproduce."""
-        from ember_code.backend.schemas_codeindex_rpc import CodeIndexInstallResult
-
-        hint = CodeIndexInstallResult.from_api_url("https://dev-api.acme.example")
-
-        assert hint.install_url == "https://dev.acme.example/repositories"
-        assert hint.install_url.startswith(portal_url_for("https://dev-api.acme.example"))
-
 
 class TestPathsThatDegradeRatherThanRefuse:
     """Not having a server is a supported state for some things.
@@ -291,16 +278,6 @@ class TestAPortalThatDiffersByPort:
         portal = PortalClient(api_url="http://127.0.0.1:7777", portal_url="http://127.0.0.1:3000")
 
         assert portal.api_url == "http://127.0.0.1:7777"
-
-    def test_the_install_hint_honours_it_too(self):
-        # One setting, every portal link. A deployment that had to say
-        # where its portal is should not watch one link go to the right
-        # place and the other to a 404.
-        from ember_code.backend.schemas_codeindex_rpc import CodeIndexInstallResult
-
-        hint = CodeIndexInstallResult.from_api_url("http://127.0.0.1:7777", "http://127.0.0.1:3000")
-
-        assert hint.install_url == "http://127.0.0.1:3000/repositories"
 
     def test_the_setting_has_no_default(self):
         # Empty means "guess", which is what every deployment that was

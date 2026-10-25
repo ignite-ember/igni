@@ -50,7 +50,7 @@ function hello(over: Record<string, unknown> = {}) {
   return {
     kind: "hello",
     nonce: NONCE,
-    extensionId: "igni.codeindex",
+    extensionId: "acme.scanner",
     params: {},
     theme: "dark",
     tokens: { "--bg": "#262624", "--fg": "#f0efea" },
@@ -78,7 +78,7 @@ describe("connecting", () => {
 
     const bridge = await pending;
 
-    expect(bridge.extensionId).toBe("igni.codeindex");
+    expect(bridge.extensionId).toBe("acme.scanner");
     expect(bridge.params).toEqual({ tab: "browse" });
     expect(bridge.theme).toBe("light");
   });
@@ -117,16 +117,16 @@ describe("calling", () => {
 
   it("carries the nonce the host issued", async () => {
     const { host, bridge } = await connected();
-    void bridge.rpc("codeindex_status");
+    void bridge.rpc("acme_status");
 
     expect(host.lastCall().nonce).toBe(NONCE);
-    expect(host.lastCall().method).toBe("codeindex_status");
+    expect(host.lastCall().method).toBe("acme_status");
     expect(host.lastCall().args).toEqual({});
   });
 
   it("resolves with the host's value", async () => {
     const { host, bridge } = await connected();
-    const call = bridge.rpc<{ indexed: number }>("codeindex_status");
+    const call = bridge.rpc<{ indexed: number }>("acme_status");
     const { id } = host.lastCall();
 
     host.send({ kind: "result", id, ok: true, value: { indexed: 42 } });
@@ -151,9 +151,9 @@ describe("calling", () => {
 
   it("keeps two calls apart", async () => {
     const { host, bridge } = await connected();
-    const first = bridge.rpc("codeindex_status");
+    const first = bridge.rpc("acme_status");
     const firstId = host.lastCall().id;
-    const second = bridge.rpc("codeindex_head");
+    const second = bridge.rpc("acme_head");
     const secondId = host.lastCall().id;
 
     expect(firstId).not.toBe(secondId);
@@ -166,7 +166,7 @@ describe("calling", () => {
 
   it("gives up on a call the host never answers", async () => {
     const { bridge } = await connected();
-    const call = bridge.rpc("codeindex_status", {}, 40);
+    const call = bridge.rpc("acme_status", {}, 40);
     await expect(call).rejects.toThrow(/timed out after 40ms/);
   });
 

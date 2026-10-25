@@ -92,7 +92,6 @@ class CommandAction(StrEnum):
     EXTENSIONS = "extensions"
     AGENTS = "agents"
     SKILLS = "skills"
-    CODEINDEX = "codeindex"
     HOOKS = "hooks"
     LOOP = "loop"
     SCHEDULE = "schedule"

@@ -194,32 +194,6 @@ class HelpTopicCatalog(BaseModel):
                     ),
                 ),
                 HelpTopic(
-                    name="codeindex",
-                    markdown=(
-                        "## CodeIndex\n\n"
-                        "Semantic code intelligence over your repo. The igni GitHub App "
-                        "indexes every commit on the server and ships per-commit changesets "
-                        "to your machine, where they're applied to a local Chroma index. "
-                        "Search runs entirely locally — your code summaries never leave "
-                        "your laptop after the initial fetch.\n\n"
-                        "**Setup (one-time):**\n"
-                        "- `/codeindex install` — open the GitHub App install page,\n"
-                        "  pre-pointed at your current repo. Click **Install** and you're done.\n\n"
-                        "**Daily commands:**\n"
-                        "- `/codeindex sync` — pull and apply the changeset for the current commit\n"
-                        "- `/codeindex resync` — wipe local state and re-pull a full snapshot\n"
-                        "- `/codeindex search <query>` — semantic search the indexed commit\n"
-                        "- `/codeindex item <id>` — full details for one item\n"
-                        "- `/codeindex commits` — list locally-indexed commits\n"
-                        "- `/codeindex clean` — drop stale, non-branch commits\n"
-                        "- `/codeindex status` — show local HEAD, last-synced sha, install state\n\n"
-                        "**Auto-sync:**\n"
-                        "Sync fires on app startup, on `/clear`, and whenever your local "
-                        "HEAD moves (after `git pull`, branch switch, etc.) — no manual "
-                        "trigger needed in the steady state."
-                    ),
-                ),
-                HelpTopic(
                     name="memory",
                     markdown=(
                         "## Memory & Learning\n\n"

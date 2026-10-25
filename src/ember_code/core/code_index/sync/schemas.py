@@ -1,16 +1,12 @@
 """Pydantic schemas for the code-index sync subpackage.
 
-Two typed models used across the sync coordinator and the wire layer:
+Typed models used across the sync coordinator:
 
 * :class:`SyncResult` — return shape of
   :meth:`CodeIndexSyncManager.sync_now`. Carries the outcome of a
   single sync attempt: skipped reason, applied stats, preflight
   status, and (when the server is still indexing) progress hints.
-* :class:`ActivityEntry` — one row in the panel's recent-activity
-  log. Same wire shape as
-  :class:`ember_code.backend.schemas_codeindex_rpc.CodeIndexActivityEntry`
-  — kept as one class so the RPC layer re-exports the Pydantic
-  type directly without a dataclass↔BaseModel adapter.
+* :class:`ActivityEntry` — one row in the recent-activity log.
 
 Factory classmethods (:meth:`SyncResult.from_preflight`,
 :meth:`SyncResult.already_indexed`, …, :meth:`ActivityEntry.from_result`)
@@ -273,13 +269,7 @@ class SyncProgressSnapshot(BaseModel):
 
 
 class ActivityEntry(BaseModel):
-    """One row in the panel's recent-activity log.
-
-    Wire-identical to (and re-exported as)
-    :class:`ember_code.backend.schemas_codeindex_rpc.CodeIndexActivityEntry`
-    — there is only one class, defined here, aliased there. Rule 1:
-    the internal shape and the wire shape are the same Pydantic type.
-    """
+    """One row in the recent-activity log."""
 
     ts: str = ""  # ISO-8601 UTC
     sha: str = ""

@@ -15,6 +15,20 @@ Everything here was measured from the tree, not remembered.
 > `promptFragments`. igni has no `artifact_*` RPC, no Artifacts panel,
 > no `/artifacts` builtin and no prompt text naming either. What is
 > below is the record of how it was measured and planned.
+>
+> **Status (2026-10-25): CodeIndex's surface is out; its local index is
+> not.** The panel is the extension's page (`igni__code-index/extension/page`,
+> calling `ext.igni.codeindex.overview` / `breakdown`), `/codeindex` is the
+> extension's command, and the seven `codeindex_*` RPCs, the composer chip,
+> `/codeindex`'s builtin and the panel's controller are deleted from igni.
+> The "About CodeIndex" text in the main prompt is the extension's
+> `{{CODE_INTELLIGENCE_ABOUT}}` fragment, behind the `code-intelligence`
+> conditional it declares. What stays in igni is the local index
+> (`core/code_index/`), its agent tool (`core/tools/codeindex/`) and the
+> two prompt files chosen by whether that index covers HEAD
+> (`main_agent.codeindex.md`, `plan_mode.codeindex.md`): an extension's
+> `promptVariants` replace *agent definitions*, and the main agent's
+> prompt is not one, so no extension can supply them yet. See §5b.
 
 ---
 
@@ -251,17 +265,21 @@ here: the page, the menu entry, `/codeindex`, the status chip,
 component's 127 lines were CodeIndex's opinion about its own states.
 
 What has **not** moved is the local index, and with it
-`codeindex_cypher` and six of the seven RPCs. They are not declared
-in the manifest rather than stubbed. So igni still answers Cypher
-queries itself, and the extension contributes everything else.
+`codeindex_cypher`. It is not declared in the manifest rather than
+stubbed. So igni still answers Cypher queries itself, and the extension
+contributes everything else — including, now, the page that replaced
+igni's panel. The panel's seven RPCs were about that local index (sync,
+resync, clean, cached commits, activity); they are deleted rather than
+moved, and the page shows what the service knows instead: the
+repository, the commit's indexing state, what to link or connect, and
+the recent commits with each one's state.
 
 That is also why the import edges in §5 still matter: the index
 cannot move while `tool_spec.py` imports it unconditionally.
 
-Most of the twenty-one remaining importers are CodeIndex talking to
-itself across two directories — `core/tools/codeindex/` is its agent
-tool and `backend/server_codeindex.py` its RPCs, and both leave with
-it. The edges above are what stops them going.
+Most of the remaining importers are CodeIndex talking to itself —
+`core/tools/codeindex/` is its agent tool, and it leaves with the
+index. The edges above are what stops it going.
 
 ## 6. The order
 
@@ -304,4 +322,4 @@ in the host:
 
 The last line is the test. A host that still mentions `codeindex`
 anywhere after its extension is removed has not finished extracting
-it — and `App.tsx` mentions it in six places today.
+it. `App.tsx` mentioned it in six places; it mentions it in none now, and what is left is the local index in `core/`.

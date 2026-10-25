@@ -65,7 +65,6 @@ You are responsible for maintaining these files:
 - **SECURITY.md** — Threat model and security hardening
 - **SKILLS.md** — Reusable prompted workflows
 - **TOOLS.md** — Available toolkits and capabilities
-- **CODEINDEX.md** — Semantic code intelligence engine
 
 ## Core Process
 

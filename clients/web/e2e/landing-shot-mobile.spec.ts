@@ -40,13 +40,6 @@ test("capture phone product shot", async ({ page, backend, appUrl }) => {
     }),
   );
   backend.onRpc("count_context_tokens", () => 8_200);
-  backend.onRpc("codeindex_status", () => ({
-    install_state: "active",
-    head_indexed: true,
-    sync_in_progress: false,
-    sync_error: null,
-    remote_url: "https://github.com/acme/payments-api",
-  }));
   backend.onRpc("get_login_state", () => ({
     logged_in: true,
     email: "dev@acme.com",
@@ -74,9 +67,9 @@ test("capture phone product shot", async ({ page, backend, appUrl }) => {
     type: "tool_started",
     id: "t1",
     run_id: runId,
-    tool_name: "codeindex_search",
-    friendly_name: "CodeIndex",
-    args_summary: "domain:auth + domain:billing",
+    tool_name: "run_shell_command",
+    friendly_name: "Shell",
+    args_summary: "rg -l auth | xargs rg -l billing",
   });
   backend.pushEvent({
     type: "tool_completed",

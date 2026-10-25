@@ -307,7 +307,7 @@
           "examples": [
             [
               "ext.acme.scanner.*",
-              "codeindex_status"
+              "get_status"
             ]
           ]
         },

@@ -1,9 +1,8 @@
 /**
  * Where a window is, as a stack.
  *
- * The browsable destinations — plugins, extensions, codeindex,
- * mcp, watcher, hooks, schedule, agents, skills, workflows, and the
- * three that came later: loop, help, context. They used to share one
+ * The browsable destinations — plugins, extensions, mcp, watcher,
+ * hooks, schedule, agents, skills, workflows, and the three that came later: loop, help, context. They used to share one
  * slot of `PanelState` and render as a centre-screen modal. One slot
  * means no
  * history: a panel that walks into its own detail views had no way to
@@ -43,7 +42,6 @@ export type PageKind = string;
 export const BASE_PAGE_KINDS = [
   "plugins",
   "extensions",
-  "codeindex",
   "mcp",
   "watcher",
   "hooks",

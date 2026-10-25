@@ -35,7 +35,6 @@ from ember_code.backend.plan_snapshot_builder import PlanSnapshotBuilder
 from ember_code.backend.plugin_controller import PluginController
 from ember_code.backend.run_controller import RunController
 from ember_code.backend.server_auth import AuthController
-from ember_code.backend.server_codeindex import CodeIndexController
 from ember_code.backend.server_context import ContextController
 from ember_code.backend.server_files import FilesController
 from ember_code.backend.server_history import ChatHistoryRebuilder
@@ -79,7 +78,6 @@ class Controllers:
         files: FilesController,
         search: SearchController,
         panels: PanelsController,
-        codeindex: CodeIndexController,
         loop: LoopController,
         processes: ProcessesController,
         sessions: SessionsController,
@@ -101,7 +99,6 @@ class Controllers:
         self.files = files
         self.search = search
         self.panels = panels
-        self.codeindex = codeindex
         self.loop = loop
         self.processes = processes
         self.sessions = sessions
@@ -144,7 +141,6 @@ class ControllerRegistry:
         files = FilesController(session)
         search = SearchController(session)
         panels = PanelsController(session)
-        codeindex = CodeIndexController(session)
         processes = ProcessesController()
         rehydrate = RehydrateController(session)
         plan_snapshots = PlanSnapshotBuilder(session)
@@ -226,7 +222,6 @@ class ControllerRegistry:
             files=files,
             search=search,
             panels=panels,
-            codeindex=codeindex,
             loop=loop,
             processes=processes,
             sessions=sessions,

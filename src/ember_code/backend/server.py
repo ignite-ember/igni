@@ -54,7 +54,6 @@ from ember_code.backend.schemas_pause import PauseHandleResult
 from ember_code.backend.schemas_run import CancelAgentRunResult, MediaAttachments
 from ember_code.backend.schemas_sessions import AutoNameResult
 from ember_code.backend.server_auth import AuthController
-from ember_code.backend.server_codeindex import CodeIndexController
 from ember_code.backend.server_context import ContextController
 from ember_code.backend.server_files import FilesController
 from ember_code.backend.server_history import ChatHistoryRebuilder
@@ -72,14 +71,6 @@ from ember_code.core.config.user_config_store import UserConfigStore
 from ember_code.protocol import messages as msg
 
 if TYPE_CHECKING:
-    from ember_code.backend.schemas_codeindex_rpc import (
-        CodeIndexActivityEntry,
-        CodeIndexCleanResult,
-        CodeIndexHeadBreakdown,
-        CodeIndexInstallResult,
-        CodeIndexStatus,
-        CodeIndexSyncResult,
-    )
     from ember_code.backend.schemas_context import (
         DiscardInterruptedRunResult,
         InterruptedRun,
@@ -348,18 +339,6 @@ class BackendServer:
         if cached is None:
             cached = PanelsController(self._session)
             self._panels_ctrl = cached
-        return cached
-
-    @property
-    def codeindex(self) -> CodeIndexController:
-        """CodeIndex panel controller."""
-        ctrl = self._controllers_or_partial()
-        if ctrl is not None:
-            return ctrl.codeindex
-        cached = getattr(self, "_codeindex_ctrl", None)
-        if cached is None:
-            cached = CodeIndexController(self._session)
-            self._codeindex_ctrl = cached
         return cached
 
     @property
@@ -1140,36 +1119,6 @@ class BackendServer:
     def get_slash_commands(self) -> list[SlashCommandEntry]:
         """See :meth:`PanelsController.slash_commands`."""
         return self.panels.slash_commands()
-
-    # ── CodeIndex ─────────────────────────────────────────────────
-
-    async def codeindex_status(self) -> CodeIndexStatus:
-        """See :meth:`CodeIndexController.status`."""
-        return await self.codeindex.status()
-
-    async def codeindex_sync(self, sha: str | None) -> CodeIndexSyncResult:
-        """See :meth:`CodeIndexController.sync`."""
-        return await self.codeindex.sync(sha)
-
-    async def codeindex_resync(self, sha: str | None) -> CodeIndexSyncResult:
-        """See :meth:`CodeIndexController.resync`."""
-        return await self.codeindex.resync(sha)
-
-    async def codeindex_clean(self) -> CodeIndexCleanResult:
-        """See :meth:`CodeIndexController.clean`."""
-        return await self.codeindex.clean()
-
-    async def codeindex_head_breakdown(self) -> CodeIndexHeadBreakdown:
-        """See :meth:`CodeIndexController.head_breakdown`."""
-        return await self.codeindex.head_breakdown()
-
-    def codeindex_activity(self) -> list[CodeIndexActivityEntry]:
-        """See :meth:`CodeIndexController.activity`."""
-        return self.codeindex.activity()
-
-    def codeindex_install(self) -> CodeIndexInstallResult:
-        """See :meth:`CodeIndexController.install`."""
-        return self.codeindex.install()
 
     # ── Plugins ───────────────────────────────────────────────────
 

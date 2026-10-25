@@ -75,7 +75,6 @@ import { Virtuoso, type VirtuosoHandle } from "react-virtuoso";
 import { ChatItemView } from "./components/ChatItems";
 import { ChatSearchBar } from "./components/ChatSearchBar";
 import { Composer, type SlashCommand } from "./components/Composer";
-import { CodeIndexIndicator } from "./components/CodeIndexIndicator";
 import { GroupIndicator } from "./components/GroupIndicator";
 import { WatcherIndicator } from "./components/WatcherIndicator";
 import {
@@ -100,7 +99,6 @@ import { ScrollIndicator } from "./components/ScrollIndicator";
 import { SignInWall } from "./components/SignInWall";
 import { Sidebar, type SessionEntry } from "./components/Sidebar";
 import { AgentsPanel } from "./components/panels/AgentsPanel";
-import { CodeIndexPanel } from "./components/panels/CodeIndexPanel";
 import { FilePreview } from "./components/FilePreview";
 import { FirstRunSetup } from "./components/FirstRunSetup";
 import { HooksPanel } from "./components/panels/HooksPanel";
@@ -192,7 +190,6 @@ const BASE_SIDEBAR_LINKS: { kind: PageKind; label: string }[] = [
  * directly (no slash command visible to the user). */
 const BASE_TOOLS_MENU: { label: string; command: string; desc: string }[] = [
   { label: "MCP servers", command: "/mcp", desc: "connect external tools" },
-  { label: "CodeIndex", command: "/codeindex", desc: "semantic code search" },
   { label: "Agents", command: "/agents", desc: "agent pool" },
   { label: "Skills", command: "/skills", desc: "slash-command workflows" },
   { label: "Plugins", command: "/plugins", desc: "marketplaces & installs" },
@@ -2730,9 +2727,6 @@ export default function App() {
           case "mcp":
             goPage({ kind: "mcp", label: "MCP servers" });
             return;
-          case "codeindex":
-            goPage({ kind: "codeindex", label: "CodeIndex" });
-            return;
           case "loop":
             if (content && echo) append(assistantItem(content));
             goPage({ kind: "loop", label: "Loop" });
@@ -3415,7 +3409,6 @@ export default function App() {
                           "Workflows like /commit and /resolve-issues",
                         ],
                         ["/workflows", "Run a CC-style multi-phase workflow"],
-                        ["/codeindex", "Semantic search across your repo"],
                         ["/schedule", "Background tasks that report back"],
                         ["/loop", "Repeat a prompt across a batch until done"],
                         ["/mcp", "Plug in external tools and data sources"],
@@ -3576,9 +3569,6 @@ export default function App() {
                 onChanged={setExtensions}
                 onClose={goChat}
               />
-            )}
-            {page.kind === "codeindex" && (
-              <CodeIndexPanel client={client} onClose={goChat} />
             )}
             {page.kind === "agents" && (
               <AgentsPanel client={client} onClose={goChat} />
@@ -3848,17 +3838,13 @@ export default function App() {
                   picker itself — the left half tints per mode
                   so the user gets the at-a-glance signal
                   without a separate footer chip. */}
-              <CodeIndexIndicator
-                client={client}
-                onOpen={() => goPage({ kind: "codeindex", label: "CodeIndex" })}
-              />
               <WatcherIndicator
                 client={client}
                 onOpen={() => goPage({ kind: "watcher", label: "Watcher" })}
               />
               <GroupIndicator client={client} />
               {/*
-                Installed extensions' own chips, beside igni's three.
+                Installed extensions' own chips, beside igni's two.
                 Data rather than frames: a chip is twenty pixels. The
                 extension decides what it says and the host draws it.
               */}

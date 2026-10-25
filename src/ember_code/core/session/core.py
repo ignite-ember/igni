@@ -60,7 +60,6 @@ from typing import Any
 from agno.agent import Agent
 from agno.compression.manager import CompressionManager
 
-from ember_code.backend.schemas_codeindex_rpc import RefreshAvailabilityResult
 from ember_code.backend.schemas_model import ModelSwitchResult
 from ember_code.core.agents import AgentPool
 from ember_code.core.auth.credentials import CloudCredentials
@@ -96,6 +95,7 @@ from ember_code.core.session.cloud_auth import SessionCloudAuth
 from ember_code.core.session.cloud_catalog import CloudModelCatalog
 from ember_code.core.session.codeindex_availability import (
     CodeIndexAvailabilityRefresher,
+    RefreshAvailabilityResult,
 )
 from ember_code.core.session.compaction import CompactionCoordinator
 from ember_code.core.session.event_log import SessionEventLog

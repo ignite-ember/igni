@@ -92,15 +92,14 @@ files are `mode: "serial"`; see below for why.
 | Plan mode | 3 | 0 | 3 | 0 |
 | Sessions | 8 | 4 | 4 | 0 |
 | Models & auth | 8 | 1 | 4 | 3 |
-| CodeIndex | 8 | 1 | 6 | 1 |
 | MCP & plugins | 18 | 0 | 18 | 0 |
 | Skills & commands | 4 | 1 | 3 | 0 |
 | Workflows, loops & scheduling | 12 | 0 | 11 | 1 |
 | Background processes | 3 | 0 | 3 | 0 |
 | Knowledge & learnings | 8 | 0 | 8 | 0 |
-| Files, dirs & attachments | 3 | 0 | 2 | 1 |
+| Files, dirs & attachments | 4 | 0 | 3 | 1 |
 | Client shell & state | 9 | 2 | 6 | 1 |
-| **Total** | **104** | **15** | **81** | **8** |
+| **Total** | **97** | **14** | **76** | **7** |
 
 ## Conversation
 
@@ -185,21 +184,6 @@ Which model, and who you are.
 | `check_for_update` | Offline; a newer version available. Sweep: **answers** (`--mutating`). | `answers` |
 | `get_display_config` | A model with no context window published. Sweep: **answers** (default run). | `answers` |
 | `get_output_styles` | An unknown style name. Sweep: **answers** (default run). | `answers` |
-
-## CodeIndex
-
-The semantic index over the repo.
-
-| Function | Edge cases | Status |
-|---|---|---|
-| `codeindex_status` | Not indexed — the state the footer shows today. | `verified` |
-| `codeindex_install` | Install with no server configured. **Refuses well**: "Opening the portal needs to know where your igni server is, and `api_url` is not set" and tells you where to set it — the DEC-11 no-vendor-default decision behaving as intended. Sweep: **refuses** — Opening the portal needs to know where your igni server is, and `api_url` is not set.. | `todo` |
-| `codeindex_sync` | Sync during an active run. Sweep: **answers** (`--mutating`). | `answers` |
-| `codeindex_resync` | Resync of a repo whose HEAD moved mid-sync. Sweep: **answers** (`--mutating`). | `answers` |
-| `codeindex_clean` | Cleaning while a query is in flight. Sweep: **answers** (`--mutating`). | `answers` |
-| `codeindex_activity` | No activity; a failed indexing job. Sweep: **answers** (default run). | `answers` |
-| `codeindex_head_breakdown` | A repo with one commit. Sweep: **answers** (default run). | `answers` |
-| `search_code` | No results; results in a file since deleted. Sweep: **answers** (default run). | `answers` |
 
 ## MCP & plugins
 
@@ -308,6 +292,7 @@ Getting your material in.
 |---|---|---|
 | `upload_attachment` | A file larger than the limit; an unsupported type; upload cancelled midway. Sweep: **answers** (`--mutating`). | `answers` |
 | `list_dirs` | A directory with no read permission. Sweep: **answers** (default run). | `answers` |
+| `search_code` | No results; results in a file since deleted. Sweep: **answers** (default run). | `answers` |
 | `pick_dir_native` | Cancelling the native dialog. Sweep: **never called** — irreversible or blocking — never called. | `todo` |
 
 ## Client shell & state
@@ -425,10 +410,10 @@ was actually there.
 
 | Surface | Size | State |
 |---|---|---|
-| Slash commands | 31 in `Composer.tsx`, 34 registered backend-side | **31 driven**, each asserted inside the surface it opens or against text from its own output. Not run, and why: `/login` and `/logout` (real credentials), `/bug` (opens a browser on the host). `/plan`, `/accept` and `/bypass` are driven *and toggled back*, so the suite cannot leave a session auto-approving tools |
+| Slash commands | 30 in `Composer.tsx`, 33 registered backend-side | **30 driven**, each asserted inside the surface it opens or against text from its own output. Not run, and why: `/login` and `/logout` (real credentials), `/bug` (opens a browser on the host). `/plan`, `/accept` and `/bypass` are driven *and toggled back*, so the suite cannot leave a session auto-approving tools |
 | Model-callable tools | 66 statically-named functions across 24 toolkits, of which ~11 became unreachable when `Read` / `Grep` / `Glob` / `LS` / `Python` left the registry | 13 of igni's own had **no direct test**; all 13 now have one (`stop_process`, `watch_process`, `list_processes`, all of `LoopProgressTool`, all of `ArtifactTools`, `loop_resume`). `test_every_tool_function_is_reachable.py` fails when a registered function has none. Still not driven *through the app* — these are unit tests of the functions, not of the model choosing to call them |
-| UI panels | 15 under `components/panels/` | 7 opened live via their commands — plugins, codeindex, hooks, loop, schedule, watcher, mcp — asserted on content, not merely on the drawer existing. Opening is not driving: nothing inside any of them is clicked |
-| Header tools menu | 13 entries, documented in-code as "no slash command visible to the user" | all 13 clicked, each asserted on the surface it opens, plus that the list is exactly what `App.tsx` defines |
+| UI panels | 15 under `components/panels/` | 6 opened live via their commands — plugins, hooks, loop, schedule, watcher, mcp — asserted on content, not merely on the drawer existing. Opening is not driving: nothing inside any of them is clicked |
+| Header tools menu | 12 entries, documented in-code as "no slash command visible to the user" | all 12 clicked, each asserted on the surface it opens, plus that the list is exactly what `App.tsx` defines |
 | Welcome cards | 9 clickable | all 9 clicked. One, `/workflows`, is a client-side regex intercept and never appears in the slash picker at all |
 | Hook events | 18 | 17 fire in the product and 16 test files exercise the pipeline — the earlier "only listing" note was wrong, and was about the three *RPCs*. What was missing was documentation: eight events were absent from `docs/HOOKS.md`. `Notification` is fired by nothing, and the page says so |
 | CLI flags | 16 on `igni` plus `--help`/`--version` | all 16 driven through Click and through `load_settings_from_options`, both directions (set *and* unset). `--worktree` and `--pipe` have tests for their refusals. A rule fails when an option no test mentions is added |

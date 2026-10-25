@@ -2,7 +2,7 @@
 
 Extracted (and slimmed) from the older ``cmd_memory.py`` that
 housed ``/memory`` + ``/artifacts`` + ``/sync-artifacts`` as three
-free functions. Following the sibling :mod:`cmd_codeindex` pattern:
+free functions. Following the ``cmd_*`` family's pattern:
 
 * Only ``/memory`` lives here now. The ``/artifacts`` and
   ``/sync-artifacts`` commands moved to
@@ -57,9 +57,8 @@ class MemoryCommand:
     The class accepts a :class:`Session` directly rather than the
     :class:`CommandHandler` state object, so we don't reach into
     ``handler._session`` from inside the coordinator (Rule 6: no
-    private-attribute reach-in). Matches the sibling
-    :class:`~ember_code.backend.cmd_codeindex.CodeIndexCommand`
-    contract.
+    private-attribute reach-in), as the other ``cmd_*``
+    coordinators do.
     """
 
     def __init__(self, session: Session) -> None:

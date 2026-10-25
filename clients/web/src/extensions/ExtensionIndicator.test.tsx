@@ -2,9 +2,9 @@
 /**
  * An extension's chip in igni's own chrome.
  *
- * Added because the *first* extension needs one: `CodeIndexIndicator`
- * sits in the composer today, hardcoded, and when CodeIndex becomes
- * an extension that chip either comes from its manifest or is lost.
+ * Added because the *first* extension needed one: its chip sat in the
+ * composer, hardcoded, and when it became an extension that chip had
+ * to come from its manifest or be lost.
  * `indicators` had been moved to "not in v1" on the grounds that
  * nothing specified it — right about the specification, wrong about
  * the need.
@@ -21,10 +21,10 @@ import { ExtensionIndicator, isIndicatorState } from "./ExtensionIndicator";
 afterEach(cleanup);
 
 const INDICATOR = {
-  id: "igni.codeindex.freshness",
-  label: "CodeIndex",
+  id: "acme.scanner.freshness",
+  label: "Scanner",
   source: "indicator",
-  opens: "igni.codeindex",
+  opens: "acme.scanner",
   intervalSeconds: 30,
 };
 
@@ -33,7 +33,7 @@ function draw(answer: unknown, overrides = {}) {
   const onOpen = vi.fn();
   const view = render(
     <ExtensionIndicator
-      extensionId="igni.codeindex"
+      extensionId="acme.scanner"
       indicator={{ ...INDICATOR, ...overrides }}
       onCall={onCall}
       onOpen={onOpen}
@@ -51,7 +51,7 @@ describe("what it draws", () => {
   it("asks the extension's own namespace", async () => {
     const { onCall } = draw({ label: "fresh", tone: "success", detail: "" });
     await screen.findByText("fresh");
-    expect(onCall).toHaveBeenCalledWith("ext.igni.codeindex.indicator", {});
+    expect(onCall).toHaveBeenCalledWith("ext.acme.scanner.indicator", {});
   });
 
   it("maps a tone to one of the four states the floor publishes", async () => {
@@ -86,7 +86,7 @@ describe("what it refuses to draw", () => {
     const onCall = vi.fn().mockRejectedValue(new Error("refused"));
     const { container } = render(
       <ExtensionIndicator
-        extensionId="igni.codeindex"
+        extensionId="acme.scanner"
         indicator={INDICATOR}
         onCall={onCall}
       />,
@@ -115,7 +115,7 @@ describe("clicking", () => {
   it("opens the page the manifest named", async () => {
     const { onOpen } = draw({ label: "stale", tone: "warning", detail: "" });
     fireEvent.click(await screen.findByRole("button"));
-    expect(onOpen).toHaveBeenCalledWith("igni.codeindex");
+    expect(onOpen).toHaveBeenCalledWith("acme.scanner");
   });
 
   it("says what clicking does, not just what the state is", async () => {
@@ -124,7 +124,7 @@ describe("clicking", () => {
     draw({ label: "stale", tone: "warning", detail: "" });
     expect(
       (await screen.findByRole("button")).getAttribute("aria-label"),
-    ).toBe("CodeIndex: stale. Open.");
+    ).toBe("Scanner: stale. Open.");
   });
 
   it("is not a button when the manifest named no page", async () => {
@@ -151,7 +151,7 @@ describe("polling", () => {
     });
     render(
       <ExtensionIndicator
-        extensionId="igni.codeindex"
+        extensionId="acme.scanner"
         indicator={{ ...INDICATOR, intervalSeconds: 0.1 }}
         onCall={onCall}
       />,
@@ -174,7 +174,7 @@ describe("the floor's unread count on the chip", () => {
     const onCall = vi.fn().mockResolvedValue({ label: "fresh", tone: "success", detail: "" });
     render(
       <ExtensionIndicator
-        extensionId="igni.codeindex"
+        extensionId="acme.scanner"
         indicator={INDICATOR}
         onCall={onCall}
         onOpen={() => {}}
@@ -191,7 +191,7 @@ describe("the floor's unread count on the chip", () => {
     const onOpen = vi.fn();
     render(
       <ExtensionIndicator
-        extensionId="igni.codeindex"
+        extensionId="acme.scanner"
         indicator={INDICATOR}
         onCall={onCall}
         onOpen={onOpen}
@@ -201,7 +201,7 @@ describe("the floor's unread count on the chip", () => {
 
     const button = await screen.findByRole("button", { name: /2 unread/ });
     fireEvent.click(button);
-    expect(onOpen).toHaveBeenCalledWith("igni.codeindex");
+    expect(onOpen).toHaveBeenCalledWith("acme.scanner");
   });
 
   it("draws nothing for nothing unread", async () => {

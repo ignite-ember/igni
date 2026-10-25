@@ -54,10 +54,10 @@ type Lands = "page" | "transcript" | "either";
 
 const LANDS: Record<string, Lands> = {
   "/mcp": "page",
-  "/codeindex": "page",
   "/agents": "page",
   "/skills": "page",
   "/plugins": "page",
+  "/extensions": "page",
   "/hooks": "page",
   "/loop": "page",
   "/schedule": "page",
@@ -73,10 +73,10 @@ const LANDS: Record<string, Lands> = {
 /** The header tools menu, in `App.tsx`'s `TOOLS_MENU` order. */
 const TOOLS = [
   "MCP servers",
-  "CodeIndex",
   "Agents",
   "Skills",
   "Plugins",
+  "Extensions",
   "Hooks",
   "Loop",
   "Scheduled tasks",
@@ -89,10 +89,10 @@ const TOOLS = [
 
 const TOOL_COMMAND: Record<string, string> = {
   "MCP servers": "/mcp",
-  CodeIndex: "/codeindex",
   Agents: "/agents",
   Skills: "/skills",
   Plugins: "/plugins",
+  Extensions: "/extensions",
   Hooks: "/hooks",
   Loop: "/loop",
   "Scheduled tasks": "/schedule",
@@ -108,7 +108,6 @@ const CARDS = [
   "/agents",
   "/skills",
   "/workflows",
-  "/codeindex",
   "/schedule",
   "/loop",
   "/mcp",

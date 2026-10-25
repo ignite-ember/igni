@@ -9,7 +9,7 @@
  * one is not a rewrite.
  *
  * The shape it presents is `rpc(method, args, timeoutMs)`, which is
- * the whole surface `CodeIndexPanel` uses. Everything else here —
+ * the whole surface the first panel ported behind it used. Everything else here —
  * navigate, close, theme, params — is what a panel needed from the
  * app around it and used to get by being inside it.
  */

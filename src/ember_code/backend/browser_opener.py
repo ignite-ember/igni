@@ -2,9 +2,8 @@
 
 Consolidates the two previous copies of an ``_open_in_browser``
 helper that lived in :mod:`ember_code.backend.command_handler`
-(module-level free function) and
-:mod:`ember_code.backend.cmd_codeindex` (private static method on
-:class:`CodeIndexCommand`). Both did exactly the same thing: try
+(module-level free function) and a slash command's coordinator
+(private static method). Both did exactly the same thing: try
 :func:`webbrowser.open`, log-and-swallow anything that goes
 wrong. Kept as a tiny stateless class so the entry point is a
 method call (matches the project's OOP posture) rather than a

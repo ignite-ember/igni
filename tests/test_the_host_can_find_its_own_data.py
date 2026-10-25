@@ -106,11 +106,13 @@ class TestTheSplitHolds:
 #: both capabilities query through is ``core/graph/`` now, not
 #: something Artifacts imported out of CodeIndex.
 #:
-#: Most of what is left is CodeIndex talking to itself across two
-#: directories: ``core/tools/codeindex/`` is its agent tool and
-#: ``backend/server_codeindex.py`` its RPCs, and both leave with it.
-#: The rest is the real remaining work.
-MAY_NOT_GROW = 19
+#: Down to 15 when the panel's RPCs (``backend/server_codeindex.py``)
+#: and ``/codeindex`` left for the extension's page.
+#:
+#: Most of what is left is CodeIndex talking to itself:
+#: ``core/tools/codeindex/`` is its agent tool, and it leaves with the
+#: local index. The rest is the real remaining work.
+MAY_NOT_GROW = 15
 
 
 def test_the_host_is_not_growing_new_dependencies_on_the_index():

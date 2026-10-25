@@ -28,7 +28,6 @@ from typing import TYPE_CHECKING
 
 from ember_code.backend.cmd_agents import cmd_agents
 from ember_code.backend.cmd_auth import cmd_login, cmd_logout, cmd_whoami
-from ember_code.backend.cmd_codeindex import cmd_codeindex
 from ember_code.backend.cmd_config import cmd_config
 from ember_code.backend.cmd_context import cmd_compact, cmd_ctx, cmd_output_style
 from ember_code.backend.cmd_eject import cmd_eject
@@ -148,7 +147,6 @@ class BuiltinCommandRegistry:
             BuiltinCommand("/rename", "Rename the current session", cmd_rename),
             BuiltinCommand("/fork", "Fork the current session under a new id", cmd_fork),
             BuiltinCommand("/memory", "Inspect or optimise learned memories", cmd_memory),
-            BuiltinCommand("/codeindex", "Manage the semantic code index", cmd_codeindex),
             BuiltinCommand("/config", "Show current settings", cmd_config),
             BuiltinCommand("/model", "Switch the active model", cmd_model),
             BuiltinCommand("/mcp", "Open the MCP servers panel", cmd_mcp),

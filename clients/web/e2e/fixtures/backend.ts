@@ -142,7 +142,6 @@ function defaultHandlers(): Record<string, RpcHandler> {
     list_chat_history: () => [],
     get_skill_definitions: () => [],
     refresh_cache: () => ({ ok: true }),
-    get_codeindex_state: () => ({ state: "unknown" }),
     get_login_state: () => ({ logged_in: false }),
   };
 }

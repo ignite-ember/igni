@@ -138,7 +138,6 @@ export type CommandAction =
   | "extensions"
   | "agents"
   | "skills"
-  | "codeindex"
   | "hooks"
   | "loop"
   | "schedule"

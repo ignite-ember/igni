@@ -110,7 +110,6 @@ const READ_ONLY: {
   { cmd: "/skills", where: ".page", shows: /skill/i },
   { cmd: "/mcp", where: ".page", shows: /mcp|server/i },
   { cmd: "/plugins", where: ".page", shows: /marketplace|installed/i },
-  { cmd: "/codeindex", where: ".page", shows: /sync|resync|clean/i },
   { cmd: "/hooks", where: ".page", shows: /hook/i },
   { cmd: "/loop", where: ".page", shows: /loop/i },
   { cmd: "/schedule", where: ".page", shows: /scheduled|task/i },

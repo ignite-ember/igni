@@ -83,16 +83,6 @@ test("capture landing product shot", async ({ page, backend, appUrl }) => {
   backend.onRpc("get_status", () => status(12_400));
   backend.onRpc("get_session_id", () => "a1f9c2e4");
   backend.onRpc("count_context_tokens", () => 12_400);
-  // The footer pill polls ``codeindex_status`` (not the state RPC);
-  // ``head_indexed`` is what classify() turns into the green
-  // "indexed" badge — see CodeIndexIndicator.classify.
-  backend.onRpc("codeindex_status", () => ({
-    install_state: "active",
-    head_indexed: true,
-    sync_in_progress: false,
-    sync_error: null,
-    remote_url: "https://github.com/acme/payments-api",
-  }));
   backend.onRpc("get_login_state", () => ({
     logged_in: true,
     email: "dev@acme.com",
@@ -130,18 +120,18 @@ test("capture landing product shot", async ({ page, backend, appUrl }) => {
     type: "content_delta",
     id: runId,
     text:
-      "Querying CodeIndex for entities tagged both `auth` and `billing`, " +
-      "including tags inherited through imports.\n\n",
+      "Searching for files that touch both `auth` and `billing`, " +
+      "including through imports.\n\n",
   });
 
   tool(
     backend,
     runId,
     "t1",
-    "codeindex_search",
-    "CodeIndex",
-    "domain:auth + domain:billing + security:major-issues|minor-issues",
-    "3 findings across 5 files (3 with auth inherited via imports) · 0.2s",
+    "run_shell_command",
+    "Shell",
+    "rg -l auth | xargs rg -l billing",
+    "5 files · 0.2s",
   );
 
   backend.pushEvent({

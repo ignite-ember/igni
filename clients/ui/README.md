@@ -19,7 +19,7 @@ Then connect. The bridge applies the live theme before your first paint:
 import { connect } from "@igni/extension-bridge";  // not published yet — see below
 
 const igni = await connect();          // tokens are on :root by now
-const status = await igni.rpc("codeindex_status");
+const status = await igni.rpc("ext.acme.scanner.status");
 ```
 
 That is the whole setup. No build step is required beyond whatever bundles your own code.
@@ -104,7 +104,7 @@ This is a build change rather than a code change, and it is the first thing to d
 Worth knowing before you design around it:
 
 - **Be installed.** Calling your own backend works — `ext.<your-id>.<method>` is a real namespace, authorised against your manifest's `permissions.rpc` and routed to your service as an MCP tool call. What does not exist yet is the pipeline that starts your sidecar or registers your endpoint, so there is nothing to route *to* outside a test.
-- **Receive a push.** The host sends `hello`, `theme` and `result`. Following a long-running job means polling an RPC on an interval — which is what igni's own CodeIndex panel does.
+- **Receive a push.** The host sends `hello`, `theme` and `result`. Following a long-running job means polling an RPC on an interval.
 - **Be mounted.** Nothing renders `ExtensionFrame` in the app yet, and no manifest loader exists.
 
 These are named here rather than left to be discovered three days into a build.

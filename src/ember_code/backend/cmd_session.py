@@ -23,8 +23,7 @@ while the FE displays the new one. That three-attribute
 invariant is encapsulated on :meth:`Session.rotate_id`, so
 this module never touches the three attrs directly.
 
-Architecture mirrors :mod:`ember_code.backend.cmd_codeindex`
-(the canonical OOP reference in the ``cmd_*`` family): the
+Architecture follows the ``cmd_*`` family's OOP shape: the
 four verbs are methods on a single :class:`SessionCommand`
 coordinator; module-level ``cmd_*`` functions are two-line
 shims so :mod:`ember_code.backend.command_handler`'s dispatch
@@ -59,9 +58,7 @@ class SessionCommand:
     The class accepts a ``Session`` directly rather than the
     :class:`CommandHandler` state object, so we don't reach into
     ``handler._session`` from inside the coordinator (Rule 6:
-    no private-attribute reach-in). See
-    :class:`ember_code.backend.cmd_codeindex.CodeIndexCommand`
-    for the canonical OOP reference this class mirrors.
+    no private-attribute reach-in).
     """
 
     def __init__(self, session: Session) -> None:

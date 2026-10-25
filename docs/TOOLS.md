@@ -81,7 +81,7 @@ the full matcher convention and the rest of the translation table.
 
 CodeIndex is the most important tool in igni's arsenal. While other tools operate on raw text (grep for patterns, read for contents), CodeIndex provides **pre-processed, semantic understanding** of the entire codebase.
 
-See [CodeIndex](CODEINDEX.md) for the full documentation on categories, hierarchical summaries, indexing pipeline, and self-hosting.
+See `igni-integration.md` in the CodeIndex repository's docs (`igni__code-index`) for the full documentation on categories, hierarchical summaries, indexing pipeline, and self-hosting.
 
 ### What It Does
 

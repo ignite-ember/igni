@@ -4,9 +4,7 @@ history-truncation surface.
 Extracted out of :mod:`ember_code.backend.cmd_context` and
 :mod:`ember_code.backend.server_context` — the wire types the
 :class:`ContextController` RPCs return live here now, alongside
-the pre-existing chat-view models. Same naming + purpose pattern
-as the sibling :mod:`schemas_codeindex` module already in
-``backend/``.
+the pre-existing chat-view models.
 
 Wire schemas (RPC-returned Pydantic models):
 

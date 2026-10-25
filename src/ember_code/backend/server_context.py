@@ -4,8 +4,7 @@ Thin coordinator over :class:`Session` + :class:`PendingMessageStore`
 that fronts the RPCs the FE calls on the status / compaction /
 history-truncation surface. Wire schemas
 (:class:`TruncateHistoryResult`, :class:`PendingMessage`) live in
-the sibling :mod:`schemas_context` module — same pattern as
-:mod:`server_codeindex` + :mod:`schemas_codeindex_rpc`.
+the sibling :mod:`schemas_context` module.
 
 * :meth:`ContextController.get_status` — status-bar snapshot.
 * :meth:`ContextController.count_context_tokens` — locally count

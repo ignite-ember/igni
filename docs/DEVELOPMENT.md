@@ -262,7 +262,6 @@ Built-in commands available in interactive mode:
 | `/plugin marketplace add\|list\|remove\|refresh` | Manage registered marketplaces — Claude-Code-compatible catalogs at the root of any git repo. |
 | `/compact` | Manually compact session history (otherwise triggers at 80% of the context window) |
 | `/bug` | Capture a bug report with session context |
-| `/codeindex` | Show CodeIndex sync status for the current project |
 | `/mcp` | List configured MCP servers and their connection status |
 | `/model` | Switch the active model (or show current) |
 | `/whoami` | Show the active your igni server login |

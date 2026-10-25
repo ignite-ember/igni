@@ -4,7 +4,7 @@
  * Somebody whose agents come from their organisation should be able to
  * see whose they are without asking an admin. That is now the whole of
  * the pill's user-facing behaviour, so it is what is tested here; the
- * polling effect is not, in line with the CodeIndex pill.
+ * polling effect is not.
  *
  * Five of these used to cover a pending-conflict state: the group had
  * changed something under a local edit and the pill showed a count

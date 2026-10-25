@@ -21,10 +21,27 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
-from ember_code.backend.schemas_codeindex_rpc import RefreshAvailabilityResult
+from pydantic import BaseModel
+
 from ember_code.core.config.settings import Settings
 
 logger = logging.getLogger(__name__)
+
+
+class RefreshAvailabilityResult(BaseModel):
+    """Result-shaped return of
+    :meth:`Session.refresh_codeindex_availability`.
+
+    ``ok`` is ``True`` when the call completed (regardless of
+    whether the availability flag actually flipped —
+    :attr:`changed` carries that). ``error`` is a human-readable
+    reason string when ``ok`` is ``False``. Callers branch on
+    :attr:`ok` and can log :attr:`error` at debug level.
+    """
+
+    ok: bool = True
+    changed: bool = False
+    error: str = ""
 
 
 class CodeIndexAvailabilityRefresher:

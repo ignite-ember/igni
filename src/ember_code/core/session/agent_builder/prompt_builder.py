@@ -45,6 +45,7 @@ class PromptBuilder:
     #: capability switchable.
     _CONDITIONALS: ClassVar[tuple[str, ...]] = (
         "project-documents",
+        "code-intelligence",
         "codeindex",
         "user-memory",
         "can-persist",
@@ -77,20 +78,15 @@ class PromptBuilder:
         When CodeIndex is available we load
         ``main_agent.codeindex.md`` — a wholly CodeIndex-first
         variant with the tool reference inline and read-before-
-        edit / search guidance re-framed around the index. The
-        ``{{CODEINDEX_TOOLS}}`` placeholder only exists in the
-        plain variant; for the codeindex variant the replacement
-        is a no-op.
+        edit / search guidance re-framed around the index.
         """
         name = "main_agent.codeindex" if self._codeindex_available else "main_agent"
         return self._prompt_loader(name)
 
     def substitute_placeholders(self, prompt: str) -> str:
-        """Substitute ``{{AGENT_CATALOG}}``, ``{{CODEINDEX_TOOLS}}``,
-        ``{{PERSISTING}}``."""
+        """Substitute ``{{AGENT_CATALOG}}`` and ``{{PERSISTING}}``."""
         catalog = self._agent_catalog or "(no agents loaded)"
         prompt = prompt.replace("{{AGENT_CATALOG}}", catalog)
-        prompt = prompt.replace("{{CODEINDEX_TOOLS}}", "")
         prompt = prompt.replace("{{PERSISTING}}", self._load_section("persisting"))
         return prompt
 
@@ -179,6 +175,10 @@ class PromptBuilder:
             # ``PROJECT_DOCUMENTS_*`` anchors the ``only`` branches hold.
             # The host does not know what is installed, nor should it.
             "project-documents": "project-documents" in live,
+            # Likewise declared: an extension that indexes the code says
+            # so, and supplies ``{{CODE_INTELLIGENCE_ABOUT}}`` — what it
+            # is and how to set it up, for a session that cannot use it.
+            "code-intelligence": "code-intelligence" in live,
             "codeindex": self._codeindex_available,
             # agno attaches ``update_user_memory`` only when the session
             # has a LearningMachine *and* ``learning.user_memory`` is on,

@@ -6,7 +6,7 @@ inside the handler, reaching into ``session.settings`` and calling
 the free ``load_credentials`` directly. :class:`ConfigView` now
 owns every rendered field so the coordinator becomes
 ``ConfigView.from_session(session).to_command_result()`` — mirrors
-the :mod:`schemas_codeindex` pattern.
+the :mod:`schemas_context` pattern.
 
 The credentials read routes through a
 :class:`~ember_code.core.auth.credentials.CredentialsStore` (default

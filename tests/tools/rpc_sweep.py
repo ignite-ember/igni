@@ -143,7 +143,7 @@ MUTATING = re.compile(
     r"^(set_|delete_|remove_|install_|update_|add_|clear_|cancel_|stop_|discard_|"
     r"truncate_|switch_|attach_|shutdown|login|logout|approve_|dismiss_|save_|"
     r"promote_|upload_|execute_|start_|run_|reload_|refresh_|compact_|extract_|"
-    r"codeindex_(install|sync|resync|clean)|mcp_|ensure_|knowledge_(add|remove)|"
+    r"mcp_|ensure_|knowledge_(add|remove)|"
     r"auto_sync|loop_|pop_|fire_|toggle_|pick_|dispatch_|check_for_update|"
     r"notifications_mark_read)"
 )

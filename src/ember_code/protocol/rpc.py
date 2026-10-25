@@ -65,10 +65,6 @@ class RpcMethod(StrEnum):
     GET_MCP_SERVER_DETAILS = "get_mcp_server_details"
     SET_MCP_TOOL_ENABLED = "set_mcp_tool_enabled"
 
-    # ── CodeIndex extras ──────────────────────────────────────────
-    CODEINDEX_HEAD_BREAKDOWN = "codeindex_head_breakdown"
-    CODEINDEX_ACTIVITY = "codeindex_activity"
-
     # ── Session / status ──────────────────────────────────────────
     GET_SESSION_ID = "get_session_id"
     GET_RUN_TIMEOUT = "get_run_timeout"
@@ -239,13 +235,6 @@ class RpcMethod(StrEnum):
     #: "how big", this answers "made of what" — the split ``/compact``
     #: can shrink versus the floor it cannot.
     GET_CONTEXT_BREAKDOWN = "get_context_breakdown"
-
-    # ── CodeIndex ─────────────────────────────────────────────────
-    CODEINDEX_STATUS = "codeindex_status"
-    CODEINDEX_SYNC = "codeindex_sync"
-    CODEINDEX_RESYNC = "codeindex_resync"
-    CODEINDEX_CLEAN = "codeindex_clean"
-    CODEINDEX_INSTALL = "codeindex_install"
 
     # ── Workflows (CC ``/workflows`` parity) ───────────────────────
     # The BE acts as a runner for ``.claude/workflows/*.mjs``
