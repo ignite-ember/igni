@@ -133,6 +133,9 @@ is unreachable, so the service starts and serves either way:
 - `Depends(igni.web.super_admin)` — the same, for super admins only.
 - `Depends(igni.web.org_admin)` — the same, for admins of the organisation
   the person signed in to; 403 for anybody else, super admins included.
+- `Depends(igni.web.signed_in)` — the person, or `None`: for a page
+  anybody may read that says more to somebody signed in. Never sends
+  anybody to sign in; a session igni cannot renew counts as nobody.
 
 ## igni, for one organisation
 
@@ -161,6 +164,21 @@ can say. Erasure must be idempotent; igni repeats it until every service
 confirms. A service without a handler answers that it has none, rather
 than claiming an erasure it did not do — a service that holds nothing
 about anybody registers a handler that does nothing.
+
+## A deleted organisation
+
+`@igni.on_organisation_deleted` receives the id of an organisation igni
+deleted (`DELETE /v1/igni/organisations/{org_id}`, mounted by
+`igni.router`). Stop routing to its data; keeping or dropping the data
+itself is the service's decision. It must be idempotent: igni keeps
+telling a service until it confirms, so a service that was down at the
+time hears about it when it is back. A token for one organisation is
+refused for another's path, and a service without a handler answers 501
+— unconfirmed, so igni keeps asking.
+
+In tests, `fake.delete_organisation(org_id)` removes the organisation from
+the fake's directory and returns the call igni owes the service; `await
+deletion.send(http)` delivers it.
 
 ## Deploying
 

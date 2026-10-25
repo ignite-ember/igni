@@ -46,3 +46,5 @@ class IgniPaths:
 
     #: Where igni calls a service about one person (erasure, export).
     SUBJECTS = "/v1/igni/subjects"
+    #: Where igni tells a service that an organisation was deleted.
+    ORGANISATIONS = "/v1/igni/organisations"

@@ -265,16 +265,23 @@ class WebSignIn:
         A page (a request that accepts HTML) is sent to sign in and brought
         back; anything else is answered 401.
         """
-        session_id = request.cookies.get(self.COOKIE, "")
-        session = await self._store.get(session_id) if session_id else None
-        if (
-            session is not None
-            and self._clock.wall() >= session.access_expires_at - self.RENEW_BEFORE
-        ):
-            session = await self._refreshed(session_id)
-        if session is None:
+        person = await self._current(request)
+        if person is None:
             raise self._sign_in(request)
-        return session.person
+        return person
+
+    async def signed_in(self, request: Request) -> Person | None:
+        """FastAPI dependency: the person signed in to these pages, or `None`.
+
+        For a page anybody may read that says more to somebody signed in.
+        Never sends anybody to sign in; a session that cannot be renewed
+        because igni is away counts as nobody, rather than failing a page
+        that did not need one.
+        """
+        try:
+            return await self._current(request)
+        except HTTPException:
+            return None
 
     async def super_admin(self, request: Request) -> Person:
         """FastAPI dependency: a signed-in super admin; 403 for anybody else."""
@@ -297,6 +304,16 @@ class WebSignIn:
         return person
 
     # ── Inside ──────────────────────────────────────────────────────
+
+    async def _current(self, request: Request) -> Person | None:
+        session_id = request.cookies.get(self.COOKIE, "")
+        session = await self._store.get(session_id) if session_id else None
+        if (
+            session is not None
+            and self._clock.wall() >= session.access_expires_at - self.RENEW_BEFORE
+        ):
+            session = await self._refreshed(session_id)
+        return session.person if session is not None else None
 
     async def _revoke(self, refresh_token: str) -> None:
         """Revoke at igni, best effort: signing out here has already happened."""

@@ -45,6 +45,10 @@ def web_app(igni: IgniService) -> FastAPI:
     async def admin(person: Person = Depends(igni.web.super_admin)) -> dict[str, str]:
         return {"admin": person.user_id}
 
+    @app.get("/public")
+    async def public(person: Person | None = Depends(igni.web.signed_in)) -> dict[str, str]:
+        return {"reader": person.user_id if person else ""}
+
     @app.get("/organisation")
     async def organisation(person: Person = Depends(igni.web.org_admin)) -> dict[str, str]:
         return {"admin": person.user_id}
@@ -171,6 +175,22 @@ async def test_a_page_sends_a_stranger_to_sign_in_and_an_api_call_gets_401(
     assert page.status_code == 303
     assert page.headers["location"] == "/auth/login?return_to=%2Fsettings%3Ftab%3Dpeople"
     assert api.status_code == 401
+
+
+async def test_a_page_for_anybody_knows_who_is_signed_in_and_sends_nobody_away(
+    browser: httpx.AsyncClient, fake: FakeIgni, clock: ManualClock
+) -> None:
+    stranger = await browser.get("/public", headers=PAGE)
+    assert (stranger.status_code, stranger.json()) == (200, {"reader": ""})
+
+    await sign_in(browser, fake)
+    assert (await browser.get("/public", headers=PAGE)).json() == {"reader": "u-max"}
+
+    # A session igni cannot renew is nobody here, not a failed page.
+    fake.failing[IgniPaths.TOKEN] = 503
+    clock.advance(700)
+    away = await browser.get("/public", headers=PAGE)
+    assert (away.status_code, away.json()) == (200, {"reader": ""})
 
 
 async def test_the_session_is_renewed_before_the_token_runs_out(

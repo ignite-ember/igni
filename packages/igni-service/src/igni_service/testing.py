@@ -15,7 +15,8 @@ against the registered key with single-use `jti`s, bundle signatures and
 digests, notification limits — and records what it was sent:
 `fake.notify_calls` (each call as sent), `fake.deliveries` (each
 person told, after igni's rules) and `fake.revoked` (each refresh token
-revoked, RFC 7009).
+revoked, RFC 7009). `fake.delete_organisation(org_id)` plays igni deleting
+an organisation and hands back the call it owes the service.
 """
 
 from __future__ import annotations
@@ -138,6 +139,20 @@ class Delivery(BaseModel):
     notification: Notification
 
 
+class OrganisationDeletion(BaseModel):
+    """What igni sends a service when it deletes an organisation."""
+
+    model_config = ConfigDict(frozen=True)
+
+    org_id: str
+    path: str
+    headers: dict[str, str]
+
+    async def send(self, http: httpx.AsyncClient) -> httpx.Response:
+        """Deliver it to the service `http` reaches, as igni does — again, if called again."""
+        return await http.delete(self.path, headers=self.headers)
+
+
 class FakeOrganisation(BaseModel):
     organisation: Organisation
     members: dict[str, Member] = Field(default_factory=dict)
@@ -258,6 +273,19 @@ class FakeIgni:
         )
         self.organisations[org_id].members[user_id] = member
         return member
+
+    def delete_organisation(self, org_id: str) -> OrganisationDeletion:
+        """Delete an organisation, as igni does: it leaves the directory,
+        and the service is owed the call that says so.
+
+        `await fake.delete_organisation(ORG).send(http)` delivers it.
+        """
+        self.organisations.pop(org_id, None)
+        return OrganisationDeletion(
+            org_id=org_id,
+            path=f"{IgniPaths.ORGANISATIONS}/{org_id}",
+            headers={"Authorization": f"Bearer {self.igni_token(org_id)}"},
+        )
 
     def service(
         self,

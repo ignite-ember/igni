@@ -7,6 +7,9 @@ app.include_router(igni.router)
 @igni.on_erase
 async def erase(subject: Subject) -> None: ...
 
+@igni.on_organisation_deleted
+async def organisation_deleted(org_id: str) -> None: ...
+
 @app.get("/things")
 async def things(person: Person = Depends(igni.person)): ...
 
@@ -33,6 +36,11 @@ from igni_service.host import Host
 from igni_service.jwks import IgniKeys
 from igni_service.keystore import KeyCipher, KeyStore
 from igni_service.notifications import Notifier
+from igni_service.organisations import (
+    OrganisationDeletedHandler,
+    OrganisationHandlers,
+    OrganisationRoutes,
+)
 from igni_service.registration import ServiceRegistration
 from igni_service.server import IgniServer
 from igni_service.service_tokens import ServiceTokens
@@ -123,6 +131,7 @@ class IgniService:
             clock=self.clock,
         )
         self._handlers = SubjectHandlers()
+        self._organisations = OrganisationHandlers()
         self._router: APIRouter | None = None
         self._owned_engine: AsyncEngine | None = None
 
@@ -187,9 +196,15 @@ class IgniService:
 
     @property
     def router(self) -> APIRouter:
-        """The routes igni calls: erasure and export of one person."""
+        """The routes igni calls: erasure and export of one person, and a
+        deleted organisation."""
         if self._router is None:
-            self._router = SubjectRoutes(self._handlers, self.directory, self.igni_call).router()
+            router = APIRouter()
+            router.include_router(
+                SubjectRoutes(self._handlers, self.directory, self.igni_call).router()
+            )
+            router.include_router(OrganisationRoutes(self._organisations, self.igni_call).router())
+            self._router = router
         return self._router
 
     def on_erase(self, handler: EraseHandler) -> EraseHandler:
@@ -199,6 +214,16 @@ class IgniService:
     def on_export(self, handler: ExportHandler) -> ExportHandler:
         """Register what lists one person's data in one organisation."""
         return self._handlers.on_export(handler)
+
+    def on_organisation_deleted(
+        self, handler: OrganisationDeletedHandler
+    ) -> OrganisationDeletedHandler:
+        """Register what stops routing to an organisation igni deleted.
+
+        Receives the organisation's id. Must be idempotent: igni repeats it
+        until the service confirms.
+        """
+        return self._organisations.on_deleted(handler)
 
     async def person(
         self, credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(_BEARER)]
