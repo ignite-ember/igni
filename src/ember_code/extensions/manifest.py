@@ -579,6 +579,24 @@ class ExtensionManifest(Strict):
         return self
 
     @model_validator(mode="after")
+    def _intercepts_need_a_process(self) -> ExtensionManifest:
+        """Only a process igni starts can be asked about an event.
+
+        igni asks over the host channel it hands the processes it
+        starts; an endpoint is somebody else's and never connects. Its
+        intercepts could never answer, and silence on a fail-closed
+        event — a tool call, a message — blocks it, every time.
+        """
+        if self.permissions.intercepts and not self.runs_here:
+            events = ", ".join(grant.event for grant in self.permissions.intercepts)
+            raise ValueError(
+                f"{self.id}: permissions.intercepts ({events}) needs a process igni starts — "
+                "'python', 'sidecar' or 'dev'. An 'endpoint' is never asked, and silence "
+                "blocks a fail-closed event every time"
+            )
+        return self
+
+    @model_validator(mode="after")
     def _dev_is_unsigned(self) -> ExtensionManifest:
         if self.dev is not None and self.trust is not Trust.UNSIGNED:
             raise ValueError(

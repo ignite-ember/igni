@@ -12,20 +12,20 @@ a slash command (``contributes.prompt``, ``promptFragments``,
 ``commands``). This registers all of it into ``core``'s tables, and
 takes it out again.
 
-## Collisions are decided before anything is registered
+## Collisions are settled before anything is registered
 
-Two extensions that claim one thing collide, and a super admin decides
-which wins on igni server; the decisions arrive with the distribution
-listing and are kept in the store. Every change to what is installed
-runs :class:`~ember_code.extensions.impact.ImpactResolver` over all of
-it, and only what that allows is registered. A collision nobody has
-decided is switched off for everyone in it, and
-:meth:`ExtensionContributions.switched_off` says why, for the
-extensions panel — as :meth:`ExtensionContributions.dropped` does for
-an edit aimed at a section another extension's override does not have.
+Two extensions that claim one thing collide, and the one higher in the
+super admin's priority order has it. The order arrives with the
+distribution listing and is kept in the store. Every change to what is
+installed runs :class:`~ember_code.extensions.impact.ImpactResolver`
+over all of it, and only what that allows is registered;
+:meth:`ExtensionContributions.switched_off` says what lost and to whom,
+for the extensions panel — as :meth:`ExtensionContributions.dropped`
+does for an edit aimed at a section another extension's override does
+not have.
 
-The order edits from several extensions apply in is a super admin's
-too, and arrives the same way.
+The same order is the one edits from several extensions apply in, and
+interceptors run in.
 
 ## Following the state, not the install
 
@@ -88,7 +88,6 @@ from ember_code.extensions.impact import (
     IgniCommands,
     ImpactEdit,
     ImpactResolver,
-    Resolution,
     ResolvedImpact,
     SwitchedOff,
 )
@@ -117,8 +116,7 @@ class ExtensionContributions:
         rpc: Any,
         bundles: dict[str, Path] | None = None,
         plugins_dir: Path | None = None,
-        resolutions: Callable[[], list[Resolution]] | None = None,
-        order: Callable[[], list[str]] | None = None,
+        priority: Callable[[], list[str]] | None = None,
         igni_commands: IgniCommands | None = None,
         fragments: PromptFragments | None = None,
         prompts: PromptContributions | None = None,
@@ -135,10 +133,9 @@ class ExtensionContributions:
             plugins_dir: Where an extension's plugin is installed. An
                 agent an extension overrides is read from there, so it
                 counts as one of the extension's own agents.
-            resolutions: The decisions on collisions, as the store
-                holds them now.
-            order: The order edits from several extensions apply in,
-                as a super admin set it and the store holds it now.
+            priority: The super admin's priority order of extensions,
+                highest first, as the store holds it now. It settles
+                collisions, and edits apply and interceptors run in it.
             igni_commands: igni's own slash commands. An extension
                 declaring one has it switched off, and is told why.
         """
@@ -146,8 +143,7 @@ class ExtensionContributions:
         self._rpc = rpc
         self._bundles = bundles if bundles is not None else {}
         self._plugins_dir = plugins_dir
-        self._resolutions = resolutions or (lambda: [])
-        self._order = order or (lambda: [])
+        self._priority = priority or (lambda: [])
         self._igni_commands = igni_commands or IgniCommands()
         self._fragments = fragments if fragments is not None else default_fragments
         self._prompts = prompts if prompts is not None else prompt_contributions
@@ -186,19 +182,19 @@ class ExtensionContributions:
             for extension_id in self._registry.ids()
             if (entry := self._registry.get(extension_id)) is not None
         ]
+        priority = self._priority()
         self._resolved = ImpactResolver(
-            impacts, self._resolutions(), reserved=self._igni_commands.claims()
-        ).enforce()
-        self._prompts.set_order(self._order())
-        # Interceptors run in the order edits apply in.
-        self._interceptors.set_order(self._order())
+            impacts, priority, reserved=self._igni_commands.claims()
+        ).resolve()
+        self._prompts.set_priority(priority)
+        self._interceptors.set_priority(priority)
         self._publish()
-        for collision in self._resolved.undecided:
-            logger.warning(
-                "extensions %s collide over %s and nobody has decided which wins; "
-                "it is switched off for all of them",
+        for collision in self._resolved.collisions:
+            logger.info(
+                "extensions %s collide over %s; %s has it by priority",
                 ", ".join(collision.extensions),
                 collision.claim,
+                collision.winner or "none of them",
             )
         return self._resolved
 
@@ -210,15 +206,15 @@ class ExtensionContributions:
                 entry.switched_off = self.switched_off(extension_id)
                 entry.dropped = self.dropped(extension_id)
 
-    def resolutions_changed(self) -> None:
-        """New decisions arrived: apply them to everything ready."""
+    def priority_changed(self) -> None:
+        """A new priority order arrived: settle everything ready by it."""
         self._reapply_if_moved(self._resolved, except_for=None)
 
     def _reapply_if_moved(self, before: ResolvedImpact, *, except_for: str | None) -> None:
         """Re-resolve; when who gets what moved, fold every ready extension in again.
 
         What an extension lost goes now, synchronously, so nothing
-        decided against it is in a prompt built in between; what it
+        settled against it is in a prompt built in between; what it
         gained arrives with the re-fold, which may need a tool call.
         """
         self.resolve()

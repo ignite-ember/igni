@@ -124,7 +124,7 @@ async def test_changes_chain_in_priority_order(
 ) -> None:
     install(registry, "acme.a", {"event": "tools.calling", "modify": True})
     install(registry, "acme.b", {"event": "tools.calling", "modify": True})
-    interceptors.set_order(["acme.b", "acme.a"])
+    interceptors.set_priority(["acme.b", "acme.a"])
 
     def add(key: str) -> Answering:
         def answer(value: dict[str, Any]) -> dict[str, Any]:

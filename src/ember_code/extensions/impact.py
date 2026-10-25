@@ -3,12 +3,13 @@
 An extension can take over a great deal — the whole of the agent's
 prompt, if that is what a deployment wants. That is allowed on
 purpose, and it makes one question unavoidable: what happens when two
-extensions want the same thing? This module answers it, and it is
-the same answer in three places — the Services page on igni server,
-where a super admin sees an extension's impact before it is
-distributed; igni server's distribution, which holds a version back
-until its collisions are decided; and the host, which applies the
-decisions when it loads.
+extensions want the same thing? A super admin answers it once, for
+every case, by putting the extensions in one **priority** order: the
+higher one wins. This module applies that order, and it is the same
+answer in two places — the Services page on igni server, where a super
+admin sees who wins and who loses before anything ships, and the host,
+which applies it when it loads. Nothing is ever held back from
+distribution for a collision.
 
 ## The impact
 
@@ -16,34 +17,37 @@ decisions when it loads.
 the prompts it overrides and the edits it makes to them, its commands
 and anchors, and — for review rather than for collisions — its pages,
 menu entries, indicators, settings, tools (each with the four hints
-igni's permission modes decide on), host-model grants, RPC grants,
-egress and secrets.
+igni's permission modes decide on), host-model grants, intercepts, RPC
+grants, egress and secrets.
 
 ## Prompts: overrides and edits
 
 Per prompt — ``main``, ``plan_mode``, ``agent:<name>`` — an extension
 either overrides it whole or edits it: appends a section, inserts one
 before or after a named section, replaces a named section. Edits from
-several extensions stack, in the order a super admin set, and never
-collide with each other unless they replace the same section.
+several extensions stack, in priority order, and never collide with
+each other unless they replace the same section.
 
 An override is the new starting point, not a rival to the edits: the
 others' appends land on it, and their inserts and replacements land
 where it has the section they name. Where it does not, they are
-**dropped** — not a collision, nothing to decide — and the drop is
-listed (:attr:`ResolvedImpact.dropped`), because an override declares
-its sections and the gap is visible before anything ships.
+**dropped** — not a collision — and the drop is listed
+(:attr:`ResolvedImpact.dropped`).
 
-## What collides
+## What collides, and who wins
 
 A **claim** is something only one extension can have, spelled
-``<kind>:<name>``:
+``<kind>:<name>``. In every collision the extension highest in the
+priority order (:class:`Priority`) keeps the claim, and every other
+loses that claim only — the rest of each loser still works:
 
-* ``prompt:<target>`` — overriding a whole prompt. Two overrides of one
-  prompt collide. An ``exclusive`` override also collides with every
-  other extension that edits that prompt at all: the super admin picks
-  the override (their edits are off) or the edits (the override is
-  off — and so is any other override in that collision);
+* ``prompt:<target>`` — overriding a whole prompt. Of two overrides the
+  higher wins. An ``exclusive`` override also takes on every extension
+  that edits that prompt, and holds only if it is above all of them:
+  then their edits of that prompt are off. If any of them is higher,
+  the exclusive override is off and the edits stand (the next override
+  down, if there is one, has the prompt). One rule — the higher wins
+  each battle — applied to the battles an exclusive override starts;
 * ``prompt:<target>#<section>`` — replacing one section;
 * ``command:/<name>`` — a slash command;
 * ``anchor:<NAME>`` — the text at a ``{{NAME}}`` in a prompt.
@@ -52,8 +56,7 @@ An insert or an append is spelled ``prompt:<target>+<name>`` where an
 item has to be named — switched off, dropped — and is never a claim.
 
 **igni's own commands** are not anybody's to claim. An extension
-declaring ``/clear`` does not collide with another extension, it
-collides with igni, and there is nothing for a super admin to decide:
+declaring ``/clear`` collides with igni, not with another extension:
 igni's command runs first and the extension's never would. igni server
 refuses such a bundle at upload; the host, which may be a newer igni
 with a command the bundle did not know about, switches the claim off
@@ -62,29 +65,16 @@ with a command the bundle did not know about, switches the claim off
 for igni server, and a test holds it to the dispatcher.
 
 **Not collisions**, because they cannot be: inserts and appends stack;
-interceptors (``permissions.intercepts``) chain in the super admin's
-priority order — the first reject ends the chain, and each change is what
-the next one is handed — whether they reject or change;
-tools are registered under the extension's server name; pages and
-indicators are named in the extension's own namespace; settings are
-stored per extension; a plugin's own agents load under the extension's
-id; grants and egress only add. A condition (``when``) does not avoid a
-collision either — two extensions that would replace one section under
-different conditions still claim it.
+interceptors (``permissions.intercepts``) chain in priority order — the
+first reject ends the chain, and each change is what the next one is
+handed; tools are registered under the extension's server name; pages
+and indicators are named in the extension's own namespace; settings
+are stored per extension; a plugin's own agents load under the
+extension's id; grants and egress only add. A condition (``when``)
+does not avoid a collision either — two extensions that would replace
+one section under different conditions still claim it.
 
-## Deciding
-
-A super admin picks the winner of each collision on igni server. A
-:class:`Resolution` names the claim, the extensions it was between,
-and the winner, with who decided and when. It applies while the same
-extensions are in the collision; a third extension joining it is a new
-collision. The losers' part in it is switched off — the rest of each
-loser still works.
-
-**Undecided**, the host switches it off for every extension in the
-collision (:meth:`ImpactResolver.enforce`), and says why. Listing for a
-super admin keeps undecided claims in play (:meth:`ImpactResolver.survey`),
-so every collision there is to decide is shown at once.
+Every loss says why, beginning ``lower priority than <extension>``.
 
 ``tests/fixtures/extension_impact_cases.json`` holds cases igni server
 runs too: two implementations of one rule, held to the same answers.
@@ -93,7 +83,6 @@ runs too: two implementations of one rule, held to the same answers.
 from __future__ import annotations
 
 from collections.abc import Iterable
-from datetime import datetime
 from enum import StrEnum
 from pathlib import Path
 
@@ -361,36 +350,21 @@ class IgniCommands(BaseModel):
 
 
 class Collision(BaseModel):
-    """Two or more extensions wanting one thing."""
+    """Two or more extensions wanting one thing, and which of them has it."""
 
     model_config = ConfigDict(frozen=True)
 
     claim: str
     #: Sorted.
     extensions: list[str]
-
-
-class Resolution(BaseModel):
-    """A super admin's decision on one collision."""
-
-    model_config = ConfigDict(frozen=True)
-
-    claim: str
-    #: The extensions it was between, sorted.
-    extensions: list[str]
-    winner: str
-    decided_by: str = ""
-    decided_at: datetime | None = None
-
-    def settles(self, collision: Collision) -> bool:
-        """Whether this decision covers that collision.
-
-        It does when every extension in the collision was in the decision:
-        a decision among three still holds between two of them — on a
-        machine that has only those two, or after the third is gone. An
-        extension the decision did not consider makes it a new collision.
-        """
-        return self.claim == collision.claim and set(collision.extensions) <= set(self.extensions)
+    #: The extension that keeps the claim: the highest in the priority
+    #: order. ``None`` only for an exclusive override that a higher
+    #: extension's edits switched off, with no other override left —
+    #: then nobody holds the whole prompt and the edits stand.
+    winner: str | None = None
+    #: Sorted: the extensions that lost something in it, each by being
+    #: lower in priority than another in it.
+    losers: list[str] = Field(default_factory=list)
 
 
 class SwitchedOff(BaseModel):
@@ -410,54 +384,72 @@ class Dropped(SwitchedOff):
 
 
 class ResolvedImpact(BaseModel):
-    """The outcome: every collision, the undecided ones, what is off, and what is dropped."""
+    """The outcome: every collision, what is off, and what is dropped."""
 
     collisions: list[Collision] = Field(default_factory=list)
-    undecided: list[Collision] = Field(default_factory=list)
     #: ``{extension_id: [what it does not get]}``.
     off: dict[str, list[SwitchedOff]] = Field(default_factory=dict)
     #: ``{extension_id: [edits that land nowhere, and why]}`` — an
     #: insert or a replace aimed at a section another extension's
-    #: override does not have. Not decided, not a collision: listed.
+    #: override does not have. Not a collision: listed.
     dropped: dict[str, list[Dropped]] = Field(default_factory=dict)
 
     def allows(self, extension_id: str, claim: str) -> bool:
         return all(entry.claim != claim for entry in self.off.get(extension_id, []))
 
     def involving(self, extension_id: str) -> list[Collision]:
-        """The undecided collisions this extension is in."""
-        return [c for c in self.undecided if extension_id in c.extensions]
+        """The collisions this extension is in."""
+        return [c for c in self.collisions if extension_id in c.extensions]
+
+
+class Priority:
+    """The super admin's one order of extensions: first is highest.
+
+    An extension the order does not name ranks below every one it does,
+    by id — igni server always sends the whole order, so that is only
+    a machine with a development install.
+    """
+
+    def __init__(self, order: Iterable[str] = ()) -> None:
+        self._rank = {extension_id: index for index, extension_id in enumerate(order)}
+
+    def key(self, extension_id: str) -> tuple[int, str]:
+        return (self._rank.get(extension_id, len(self._rank)), extension_id)
+
+    def ordered(self, extension_ids: Iterable[str]) -> list[str]:
+        return sorted(extension_ids, key=self.key)
+
+    def above(self, first: str, second: str) -> bool:
+        return self.key(first) < self.key(second)
+
+
+def lower_than(winner: str) -> str:
+    """How every loss by priority begins: ``lower priority than <extension>``."""
+    return f"lower priority than {winner}"
 
 
 class ImpactResolver:
-    """Finds the collisions among a set of extensions and applies the decisions."""
+    """Finds the collisions among a set of extensions and settles each by priority."""
 
     def __init__(
         self,
         impacts: Iterable[ExtensionImpact],
-        resolutions: Iterable[Resolution] = (),
+        priority: Iterable[str] = (),
         *,
         reserved: Iterable[str] = (),
     ) -> None:
         """
         Args:
+            priority: The super admin's order of extension ids, highest first.
             reserved: Claims igni keeps for itself — its own commands
                 (:meth:`IgniCommands.claims`). An extension claiming
-                one loses it, always; there is nothing to decide.
+                one loses it, always.
         """
         self._impacts = {impact.extension_id: impact for impact in impacts}
-        self._resolutions = list(resolutions)
+        self._priority = Priority(priority)
         self._reserved = set(reserved)
 
-    def enforce(self) -> ResolvedImpact:
-        """What the host applies: an undecided claim is off for everyone in it."""
-        return self._resolve(enforce=True)
-
-    def survey(self) -> ResolvedImpact:
-        """What a super admin is shown: every collision there is to decide."""
-        return self._resolve(enforce=False)
-
-    def _resolve(self, *, enforce: bool) -> ResolvedImpact:
+    def resolve(self) -> ResolvedImpact:
         active = {ext: set(impact.items()) for ext, impact in self._impacts.items()}
         outcome = ResolvedImpact()
 
@@ -472,36 +464,91 @@ class ImpactResolver:
                 )
 
         for key in self._keys(active):
-            participants = self._participants(key, active)
-            if len(participants) < 2:
+            document = Claim.whole_prompt(key)
+            if document is not None:
+                self._settle_prompt(key, document, active, outcome)
                 continue
-            collision = Collision(claim=key, extensions=sorted(participants))
-            outcome.collisions.append(collision)
-            decision = next((r for r in self._resolutions if r.settles(collision)), None)
-            if decision is not None:
-                reason = f"{decision.winner} has {key}: decided"
-                if decision.decided_by:
-                    reason += f" by {decision.decided_by}"
-                if decision.decided_at:
-                    reason += f" on {decision.decided_at.date().isoformat()}"
-                for loser, lost in self._losses(key, decision.winner, participants, active).items():
-                    self._switch_off(outcome, active, loser, lost, reason)
+            holders = self._priority.ordered(ext for ext, items in active.items() if key in items)
+            if len(holders) < 2:
                 continue
-            outcome.undecided.append(collision)
-            if enforce:
-                for ext in sorted(participants):
-                    others = ", ".join(sorted(participants - {ext}))
-                    self._switch_off(
-                        outcome,
-                        active,
-                        ext,
-                        self._stake(key, ext, active),
-                        f"collides with {others} over {key}, and no super admin has "
-                        "decided which wins; switched off for all of them until one does",
-                    )
+            winner = holders[0]
+            outcome.collisions.append(
+                Collision(
+                    claim=key, extensions=sorted(holders), winner=winner, losers=sorted(holders[1:])
+                )
+            )
+            for loser in holders[1:]:
+                self._switch_off(
+                    outcome, active, loser, {key}, f"{lower_than(winner)}, which also claims {key}"
+                )
 
         self._drop(outcome, active)
         return outcome
+
+    def _settle_prompt(
+        self, key: str, document: str, active: dict[str, set[str]], outcome: ResolvedImpact
+    ) -> None:
+        """Overrides of one prompt, and an exclusive one against the edits.
+
+        An exclusive override holds only above every extension editing
+        its prompt: priority is "the higher one wins every battle", and
+        an exclusive override battles each of them. Outranked, it is off
+        and the edits stand. Of the overrides left, the highest has the
+        prompt; if it is exclusive, everybody else's edits of it are off.
+        """
+        overriders = self._priority.ordered(ext for ext, items in active.items() if key in items)
+        if not overriders:
+            return
+        editors = self._priority.ordered(
+            ext for ext in active if ext not in overriders and self._edits_of(ext, document, active)
+        )
+        exclusive = [ext for ext in overriders if self._exclusive(ext, document)]
+        participants = set(overriders) | (set(editors) if exclusive else set())
+        if len(participants) < 2:
+            return
+
+        standing: list[str] = []
+        losers: set[str] = set()
+        for ext in overriders:
+            higher = [e for e in editors if self._priority.above(e, ext)]
+            if self._exclusive(ext, document) and higher:
+                self._switch_off(
+                    outcome,
+                    active,
+                    ext,
+                    {key},
+                    f"{lower_than(higher[0])}, which edits {document}; an exclusive override "
+                    "holds only above every extension editing its prompt",
+                )
+                losers.add(ext)
+                continue
+            standing.append(ext)
+
+        winner = standing[0] if standing else None
+        for ext in standing[1:]:
+            losers.add(ext)
+            self._switch_off(
+                outcome,
+                active,
+                ext,
+                {key},
+                f"{lower_than(winner)}, which also overrides {document}",
+            )
+        if winner is not None and self._exclusive(winner, document):
+            for ext in editors:
+                losers.add(ext)
+                self._switch_off(
+                    outcome,
+                    active,
+                    ext,
+                    self._edits_of(ext, document, active),
+                    f"{lower_than(winner)}, whose override of {document} is exclusive",
+                )
+        outcome.collisions.append(
+            Collision(
+                claim=key, extensions=sorted(participants), winner=winner, losers=sorted(losers)
+            )
+        )
 
     # ── Who is in it ───────────────────────────────────────────────
 
@@ -509,8 +556,8 @@ class ImpactResolver:
     def _keys(active: dict[str, set[str]]) -> list[str]:
         """Every claim worth checking: whole prompts first, then the rest by name.
 
-        Whole prompts first because an exclusive override's decision
-        settles the edits under it, sections included.
+        Whole prompts first because an exclusive override that holds
+        switches the edits under it off, section replacements included.
         """
         everything = set().union(*active.values()) if active else set()
         claims = {item for item in everything if "+" not in item.partition(":")[2]}
@@ -523,63 +570,8 @@ class ImpactResolver:
         return override is not None and override.exclusive
 
     @staticmethod
-    def _editors(document: str, active: dict[str, set[str]]) -> set[str]:
-        return {
-            ext
-            for ext, items in active.items()
-            if any(Claim.is_edit(i) and Claim.prompt_document(i) == document for i in items)
-        }
-
-    def _participants(self, key: str, active: dict[str, set[str]]) -> set[str]:
-        document = Claim.whole_prompt(key)
-        holders = {ext for ext, items in active.items() if key in items}
-        if document is None or not holders:
-            return holders
-        # An exclusive override takes on everyone who edits that prompt.
-        if any(self._exclusive(ext, document) for ext in holders):
-            return holders | (self._editors(document, active) - holders)
-        return holders
-
-    def _stake(self, key: str, ext: str, active: dict[str, set[str]]) -> set[str]:
-        """What ``ext`` has riding on the collision over ``key``."""
-        if key in active[ext]:
-            return {key}
-        # An editor in an exclusive override's collision: its edits of that prompt.
-        document = Claim.whole_prompt(key)
+    def _edits_of(ext: str, document: str, active: dict[str, set[str]]) -> set[str]:
         return {i for i in active[ext] if Claim.is_edit(i) and Claim.prompt_document(i) == document}
-
-    def _losses(
-        self, key: str, winner: str, participants: set[str], active: dict[str, set[str]]
-    ) -> dict[str, set[str]]:
-        """``{loser: what it loses}`` once ``winner`` has ``key``."""
-        if winner not in participants:
-            # Decided among more extensions than this set has, and the
-            # winner is not here: everyone who is lost.
-            return {ext: self._stake(key, ext, active) for ext in participants}
-        document = Claim.whole_prompt(key)
-        if document is None:
-            return {ext: {key} for ext in participants - {winner}}
-        losses: dict[str, set[str]] = {}
-        if key in active[winner]:
-            # An override won: the other overrides are off, and if it is
-            # exclusive so is everybody's editing of the prompt.
-            exclusive = self._exclusive(winner, document)
-            for ext in participants - {winner}:
-                lost = {key} & active[ext]
-                if exclusive:
-                    lost |= {
-                        i
-                        for i in active[ext]
-                        if Claim.is_edit(i) and Claim.prompt_document(i) == document
-                    }
-                losses[ext] = lost
-        else:
-            # The edits won over an exclusive override: every override
-            # in the collision is off.
-            for ext in participants - {winner}:
-                if key in active[ext]:
-                    losses[ext] = {key}
-        return losses
 
     @staticmethod
     def _switch_off(
@@ -631,7 +623,8 @@ __all__ = [
     "ImpactOverride",
     "ImpactResolver",
     "ImpactTool",
-    "Resolution",
+    "Priority",
     "ResolvedImpact",
     "SwitchedOff",
+    "lower_than",
 ]

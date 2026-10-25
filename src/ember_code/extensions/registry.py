@@ -103,8 +103,8 @@ class InstalledExtension:
     state: ExtensionState = ExtensionState.PREPARING
     #: Why it is not :attr:`ExtensionState.READY`, and what to do.
     reason: str = ""
-    #: What it does not get because it collides with another
-    #: extension — decided against it, or not decided yet. Kept by
+    #: What it does not get because it collides with an extension
+    #: higher in the priority order. Kept by
     #: :class:`~ember_code.extensions.contributions.ExtensionContributions`.
     switched_off: list[SwitchedOff] = field(default_factory=list)
     #: Its prompt edits that land nowhere: aimed at a section another

@@ -252,14 +252,13 @@ class BackendApp:
         # READY rather than to being installed: an extension whose
         # service has died must stop telling the model about data it
         # can no longer fetch. Collisions between extensions are
-        # applied as a super admin decided them, from the store.
+        # settled by the super admin's priority order, from the store.
         extension_store = ExtensionStore()
         self._extension_contributions = ExtensionContributions(
             registry=self._extensions.registry,
             rpc=self._extensions,
             plugins_dir=PluginInstaller(data_dir=settings.storage.data_dir).plugins_dir,
-            resolutions=extension_store.resolutions,
-            order=extension_store.edit_order,
+            priority=extension_store.priority,
             igni_commands=IgniCommands.of(CommandHandler.builtin_names()),
         )
         self._extension_contributions.attach()
@@ -509,8 +508,8 @@ class BackendApp:
             api_url=self._igni_api_url,
             session=session,
             lifecycle=launcher,
-            on_resolutions=(
-                self._extension_contributions.resolutions_changed
+            on_priority=(
+                self._extension_contributions.priority_changed
                 if self._extension_contributions is not None
                 else None
             ),

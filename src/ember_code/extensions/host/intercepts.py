@@ -79,7 +79,7 @@ class Interceptors:
         self._types = SchemaTypes(schema)
         self._timeout = self.TIMEOUT_S if timeout is None else timeout
         self._registry: ExtensionRegistry | None = None
-        self._order: list[str] = []
+        self._priority: list[str] = []
         self._senders: dict[str, Callable[[str], None]] = {}
         self._connected: dict[str, asyncio.Event] = {}
         self._waiting: dict[str, tuple[str, asyncio.Future[InterceptAnswer]]] = {}
@@ -103,9 +103,9 @@ class Interceptors:
         """Read who intercepts what from the installed extensions."""
         self._registry = registry
 
-    def set_order(self, order: list[str]) -> None:
-        """The super admin's priority order of extensions: the order interceptors run in."""
-        self._order = list(order)
+    def set_priority(self, priority: list[str]) -> None:
+        """The super admin's priority order of extensions, highest first: interceptors run in it."""
+        self._priority = list(priority)
 
     def connect(self, extension_id: str, send: Callable[[str], None]) -> None:
         """An extension's process connected: ``send`` puts a frame on its socket."""
@@ -164,7 +164,7 @@ class Interceptors:
             found.append(
                 Interceptor(extension_id=extension_id, modify=grant.modify and bool(spec.modify))
             )
-        rank = {extension_id: i for i, extension_id in enumerate(self._order)}
+        rank = {extension_id: i for i, extension_id in enumerate(self._priority)}
         found.sort(key=lambda i: (rank.get(i.extension_id, len(rank)), i.extension_id))
         return found
 

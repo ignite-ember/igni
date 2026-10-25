@@ -128,18 +128,18 @@ class World:
         self.store = ExtensionStore(tmp_path / "store")
         self.lifecycle = Recorded()
         self.signed_in = signed_in
-        self.resolutions_changed = 0
+        self.priority_changed = 0
         self.distribution = ExtensionDistribution(
             self.store,
             api_url=lambda: API_URL,
             session=self.session,
             lifecycle=self.lifecycle,
             transport=self.igni.transport(),
-            on_resolutions=self._resolutions_changed,
+            on_priority=self._priority_changed,
         )
 
-    def _resolutions_changed(self) -> None:
-        self.resolutions_changed += 1
+    def _priority_changed(self) -> None:
+        self.priority_changed += 1
 
     def session(self) -> IgniSession | None:
         return IgniSession(access_token=SESSION) if self.signed_in else None
@@ -175,48 +175,34 @@ async def test_a_listed_extension_is_installed_with_its_record(world):
     assert world.lifecycle.calls == [("deactivate", "acme.notes"), ("activate", "acme.notes")]
 
 
-async def test_the_decisions_on_collisions_are_kept_and_announced_once(world):
-    """Kept, so the next start applies them before igni is asked anything;
-    announced only when they changed, so a sync does not rebuild every
-    agent for nothing."""
+async def test_the_priority_order_is_kept_and_announced_once(world):
+    """Kept, so the next start settles collisions before igni is asked
+    anything; announced only when it changed, so a sync does not rebuild
+    every agent for nothing."""
     world.publish()
-    decision = {
-        "claim": "prompt:main.workflow",
-        "extensions": ["acme.notes", "acme.review"],
-        "winner": "acme.notes",
-        "decided_by": "admin@acme.test",
-        "decided_at": "2026-10-25T09:00:00Z",
-    }
-    world.igni.resolutions = [decision]
+    world.igni.priority = ["acme.notes", "acme.review"]
 
     report = await world.distribution.sync()
-    assert report.resolutions_changed
-    [kept] = world.store.resolutions()
-    assert (kept.claim, kept.winner, kept.decided_by) == (
-        "prompt:main.workflow",
-        "acme.notes",
-        "admin@acme.test",
-    )
-    assert world.resolutions_changed == 1
+    assert report.priority_changed
+    assert world.store.priority() == ["acme.notes", "acme.review"]
+    assert world.priority_changed == 1
 
     again = await world.distribution.sync()
-    assert not again.resolutions_changed
-    assert world.resolutions_changed == 1
+    assert not again.priority_changed
+    assert world.priority_changed == 1
 
-    world.igni.resolutions = []
+    world.igni.priority = ["acme.review", "acme.notes"]
     await world.distribution.sync()
-    assert world.store.resolutions() == []
-    assert world.resolutions_changed == 2
+    assert world.store.priority() == ["acme.review", "acme.notes"]
+    assert world.priority_changed == 2
 
 
-async def test_a_failed_listing_keeps_the_decisions(world):
-    world.igni.resolutions = [
-        {"claim": "command:/x", "extensions": ["a.b", "c.d"], "winner": "a.b"}
-    ]
+async def test_a_failed_listing_keeps_the_priority_order(world):
+    world.igni.priority = ["a.b", "c.d"]
     await world.distribution.sync()
     world.igni.listing_status = 503
     await world.distribution.sync()
-    assert [r.claim for r in world.store.resolutions()] == ["command:/x"]
+    assert world.store.priority() == ["a.b", "c.d"]
 
 
 async def test_the_listing_is_asked_for_as_the_signed_in_person(world):

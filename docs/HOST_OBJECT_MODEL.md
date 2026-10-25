@@ -390,6 +390,13 @@ intercepts, and where it stands in that order.
 happens to be open. Intercepting is the process's, over its socket
 (`docs/HOST_MODEL_PROTOCOL.md`, *Intercepts*).
 
+**Nor can an extension with no process.** An `endpoint` extension is a
+service somebody else runs; it never connects to the host channel, so
+it could never answer, and its silence would block every fail-closed
+event. igni refuses a manifest that declares intercepts without a
+process igni starts, and so do igni server at upload and the bundle
+builder.
+
 ## An extension's own service is not the host
 
 The host is for host things. An extension's page and process talk to

@@ -573,7 +573,7 @@ export interface ExtensionInfo {
   reason: string;
   /** Its home on the web — its service's URL, which is the service's `client_uri` — when one is known. */
   web_url?: string | null;
-  /** What it does not get: a collision with another extension decided against it or not decided yet, or an override whose text lacks the sections its manifest declares. */
+  /** What it does not get: a collision with an extension higher in the super admin's priority order (the reason begins `lower priority than <extension>`), or an override whose text lacks the sections its manifest declares. */
   switched_off: Withheld[];
   /** Its prompt edits that land nowhere: another extension overrides that prompt, and its override has no section the edit names. */
   dropped: Withheld[];

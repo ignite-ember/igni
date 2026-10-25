@@ -32,7 +32,6 @@ from ember_code.extensions.contributions import (
     ExtensionConditionReceiver,
     ExtensionContributions,
 )
-from ember_code.extensions.impact import Resolution
 from ember_code.extensions.installer import ExtensionInstaller
 from ember_code.extensions.manifest import ExtensionManifest
 from ember_code.extensions.origin import ExtensionOrigins
@@ -64,13 +63,13 @@ class Wired:
         # tests cannot leak into each other or into anything else.
         self.fragments = PromptFragments()
         self.prompts = PromptContributions()
-        self.resolutions: list[Resolution] = []
+        self.priority: list[str] = []
         self.contributions = ExtensionContributions(
             registry=self.registry,
             rpc=self.rpc,
             fragments=self.fragments,
             prompts=self.prompts,
-            resolutions=lambda: self.resolutions,
+            priority=lambda: self.priority,
         )
         self.contributions.attach()
         self.installer = ExtensionInstaller(
@@ -219,37 +218,32 @@ def _other(**contributes: object) -> ExtensionManifest:
     )
 
 
-async def test_two_extensions_wanting_one_anchor_get_it_only_when_somebody_decides(wired, tmp_path):
-    """Neither keeps it by having started first: an undecided collision
-    is off for both, and a super admin's decision gives it to one."""
+async def test_two_extensions_wanting_one_anchor_give_it_to_the_higher_priority(wired, tmp_path):
+    """Neither keeps it by having started first: the super admin's
+    priority order says who has it, and a new order moves it."""
     await wired.install(bundle_at(tmp_path))
     assert wired.fragments.owner_of("ACME_POLICY_SUMMARY") == "acme.scanner"
 
+    wired.priority = ["acme.scanner", "other.ext"]
     wired.registry.install(
         _other(
             promptFragments=[{"anchor": "ACME_POLICY_SUMMARY", "source": "file", "from": "x.md"}]
         ),
         state=ExtensionState.PREPARING,
     )
-    assert wired.fragments.owner_of("ACME_POLICY_SUMMARY") is None
-    [off] = wired.registry.get("acme.scanner").switched_off
-    assert off.claim == "anchor:ACME_POLICY_SUMMARY"
-    assert "no super admin has decided" in off.reason
-
-    wired.resolutions.append(
-        Resolution(
-            claim="anchor:ACME_POLICY_SUMMARY",
-            extensions=["acme.scanner", "other.ext"],
-            winner="acme.scanner",
-            decided_by="admin@acme.test",
-        )
-    )
-    wired.contributions.resolutions_changed()
     await wired.contributions.apply(wired.registry.get("acme.scanner").manifest)
     assert wired.fragments.owner_of("ACME_POLICY_SUMMARY") == "acme.scanner"
     assert wired.registry.get("acme.scanner").switched_off == []
     [lost] = wired.registry.get("other.ext").switched_off
-    assert "decided by admin@acme.test" in lost.reason
+    assert lost.claim == "anchor:ACME_POLICY_SUMMARY"
+    assert lost.reason.startswith("lower priority than acme.scanner")
+
+    wired.priority = ["other.ext", "acme.scanner"]
+    wired.contributions.priority_changed()
+    assert wired.fragments.owner_of("ACME_POLICY_SUMMARY") is None
+    [off] = wired.registry.get("acme.scanner").switched_off
+    assert off.reason.startswith("lower priority than other.ext")
+    assert wired.registry.get("other.ext").switched_off == []
 
 
 # ── The prompt ─────────────────────────────────────────────────────

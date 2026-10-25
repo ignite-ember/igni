@@ -16,18 +16,17 @@ the extension system, and knows no extension by name.
 ## Composing
 
 An override is the new starting point. Every other extension's edits
-apply on top of it, in the order a super admin set (:meth:`set_order`):
+apply on top of it, in the super admin's priority order (:meth:`set_priority`):
 an append always lands; an insert or a replace lands when the override
 has the section it names, and is skipped when it does not. An
 ``exclusive`` override takes no edits from anybody else.
 
 **Who may do what is not decided here.** Two extensions replacing one
 section, two overriding one prompt, an exclusive override against
-someone's edits — those are collisions a super admin resolves on igni
-server's Services page, and :mod:`ember_code.extensions.impact` applies
-the decision before anything reaches this table. Should two claims
-arrive anyway, the one earlier in the order keeps it and the other is
-logged — never a merge.
+someone's edits — those are collisions the priority order settles, and
+:mod:`ember_code.extensions.impact` applies it before anything reaches
+this table. Should two claims arrive anyway, the one higher in the
+order keeps it and the other is logged — never a merge.
 
 **Conditions are reported, not polled.** An extension's process says
 ``notifications/igni/conditions`` when one changes; the table records
@@ -137,7 +136,7 @@ class PromptContributions:
 
     def __init__(self) -> None:
         self._owners: dict[str, _Owner] = {}
-        self._order: list[str] = []
+        self._priority: list[str] = []
         self._watchers: list[Callable[[], None]] = []
 
     # ── Registering ────────────────────────────────────────────────
@@ -166,10 +165,10 @@ class PromptContributions:
         if self._owners.pop(owner, None) is not None:
             self._changed()
 
-    def set_order(self, order: list[str]) -> None:
-        """The order edits from several extensions apply in, as a super admin set it."""
-        if order != self._order:
-            self._order = list(order)
+    def set_priority(self, priority: list[str]) -> None:
+        """The super admin's priority order of extensions, highest first: edits apply in it."""
+        if priority != self._priority:
+            self._priority = list(priority)
             self._changed()
 
     def hold(self, owner: str, conditions: dict[str, bool]) -> bool:
@@ -203,7 +202,7 @@ class PromptContributions:
     # ── Reading ────────────────────────────────────────────────────
 
     def _ordered(self) -> list[str]:
-        rank = {owner: index for index, owner in enumerate(self._order)}
+        rank = {owner: index for index, owner in enumerate(self._priority)}
         return sorted(self._owners, key=lambda owner: (rank.get(owner, len(rank)), owner))
 
     def override(self, target: str) -> tuple[str, PromptOverride] | None:

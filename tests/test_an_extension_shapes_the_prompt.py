@@ -173,7 +173,7 @@ class TestTheTable:
         rendered = _composed(contributions, "main", "x")
         assert rendered.index("from a") < rendered.index("from b")
 
-        contributions.set_order(["b.ext", "a.ext"])
+        contributions.set_priority(["b.ext", "a.ext"])
         rendered = _composed(contributions, "main", "x")
         assert rendered.index("from b") < rendered.index("from a")
 
@@ -242,7 +242,7 @@ class TestTheTable:
         contributions.watch(lambda: seen.append(1))
         contributions.set_owner("a.ext", "Ay")
         contributions.hold("a.ext", {"x": True})
-        contributions.set_order(["a.ext"])
+        contributions.set_priority(["a.ext"])
         contributions.remove_owner("a.ext")
         assert len(seen) == 4
 

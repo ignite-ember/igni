@@ -59,12 +59,12 @@ def test_an_extension_s_igni_command_is_switched_off_and_says_why():
     igni = IgniCommands.load(LISTED)
     assert igni.clashes(impact) == ["/clear"]
 
-    outcome = ImpactResolver([impact], reserved=igni.claims()).enforce()
+    outcome = ImpactResolver([impact], reserved=igni.claims()).resolve()
     assert not outcome.allows("acme.tidy", "command:/clear")
     assert outcome.allows("acme.tidy", "command:/tidy")
     (off,) = outcome.off["acme.tidy"]
     assert "igni's own" in off.reason
-    # Nothing between extensions, so nothing for a super admin to decide.
+    # Nothing between extensions, so no collision: igni simply keeps it.
     assert outcome.collisions == []
 
 

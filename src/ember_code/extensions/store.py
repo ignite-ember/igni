@@ -43,7 +43,6 @@ from pydantic import BaseModel, Field, ValidationError
 
 from ember_code.core.paths import home_config_dir
 from ember_code.extensions.assets import AssetCache, ReadOnlyTree
-from ember_code.extensions.impact import Resolution
 from ember_code.extensions.manifest import ExtensionManifest
 
 logger = logging.getLogger(__name__)
@@ -71,9 +70,9 @@ ASSETS_DIR = ".assets"
 #: Beside a bundle: where it came from, when igni distributed it.
 DISTRIBUTION_SUFFIX = ".distribution.json"
 
-#: The super admin's decisions on collisions between extensions, as
-#: the last distribution listing carried them.
-RESOLUTIONS_FILE = ".resolutions.json"
+#: The super admin's priority order of extensions, as the last
+#: distribution listing carried it.
+PRIORITY_FILE = ".priority.json"
 
 
 class StoreError(Exception):
@@ -97,11 +96,10 @@ class DistributionRecord(BaseModel):
     published_at: datetime | None = None
 
 
-class StoredResolutions(BaseModel):
-    resolutions: list[Resolution] = Field(default_factory=list)
-    #: The order edits from several extensions apply in, as a super
-    #: admin set it: extension ids, first applied first.
-    edit_order: list[str] = Field(default_factory=list)
+class StoredPriority(BaseModel):
+    #: The super admin's order of extensions, highest first. It settles
+    #: every collision, and is the order edits apply and interceptors run in.
+    priority: list[str] = Field(default_factory=list)
 
 
 class ExtensionStore:
@@ -282,45 +280,39 @@ class ExtensionStore:
                 records.append(record)
         return records
 
-    # ── Collisions ─────────────────────────────────────────────────
+    # ── Priority ───────────────────────────────────────────────────
 
     @property
-    def resolutions_path(self) -> Path:
-        return self._root / RESOLUTIONS_FILE
+    def priority_path(self) -> Path:
+        return self._root / PRIORITY_FILE
 
-    def record_resolutions(
-        self, resolutions: list[Resolution], edit_order: list[str] | None = None
-    ) -> bool:
-        """Keep the decisions the listing carried. ``True`` if they changed.
+    def record_priority(self, priority: list[str]) -> bool:
+        """Keep the priority order the listing carried. ``True`` if it changed.
 
-        Kept so the next start applies them before igni server has
-        been asked anything: a machine that cannot reach igni still
-        runs what was decided for it.
+        Kept so the next start applies it before igni server has been
+        asked anything: a machine that cannot reach igni still settles
+        collisions the way the super admin ordered.
         """
-        stored = StoredResolutions(resolutions=resolutions, edit_order=edit_order or [])
+        stored = StoredPriority(priority=priority)
         if self._stored() == stored:
             return False
         self._root.mkdir(parents=True, exist_ok=True)
-        self.resolutions_path.write_text(stored.model_dump_json(indent=2) + "\n", encoding="utf-8")
+        self.priority_path.write_text(stored.model_dump_json(indent=2) + "\n", encoding="utf-8")
         return True
 
-    def resolutions(self) -> list[Resolution]:
-        """The decisions last received. None, if nothing was."""
-        return self._stored().resolutions
+    def priority(self) -> list[str]:
+        """The priority order as last received, highest first. Empty, if nothing was."""
+        return self._stored().priority
 
-    def edit_order(self) -> list[str]:
-        """The order edits apply in, as last received. Empty, if nothing was."""
-        return self._stored().edit_order
-
-    def _stored(self) -> StoredResolutions:
-        path = self.resolutions_path
+    def _stored(self) -> StoredPriority:
+        path = self.priority_path
         if not path.is_file():
-            return StoredResolutions()
+            return StoredPriority()
         try:
-            return StoredResolutions.model_validate_json(path.read_text(encoding="utf-8"))
+            return StoredPriority.model_validate_json(path.read_text(encoding="utf-8"))
         except (OSError, ValidationError) as exc:
             logger.warning("ignoring %s: %s", path, exc)
-            return StoredResolutions()
+            return StoredPriority()
 
     def drop_environments(self, extension_id: str) -> None:
         """Remove every private environment built for this extension."""

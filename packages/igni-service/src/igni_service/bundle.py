@@ -55,7 +55,14 @@ import tomllib
 from collections.abc import Iterable, Sequence
 from pathlib import Path
 
-from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    ValidationError,
+    field_validator,
+    model_validator,
+)
 
 from igni_service.assets import (
     AssetFetcher,
@@ -145,10 +152,19 @@ class AgentTool(BaseModel):
     annotations: ToolAnnotations
 
 
+class Intercept(BaseModel):
+    """An event in `permissions.intercepts`: one its process is asked about first."""
+
+    model_config = ConfigDict(extra="allow")
+
+    event: str
+
+
 class BundlePermissions(BaseModel):
     model_config = ConfigDict(extra="allow")
 
     tools: list[AgentTool] = Field(default_factory=list)
+    intercepts: list[Intercept] = Field(default_factory=list)
 
 
 class BundleManifest(BaseModel):
@@ -165,6 +181,18 @@ class BundleManifest(BaseModel):
     @classmethod
     def _assets_cover_every_platform(cls, assets: list[BundleAsset]) -> list[BundleAsset]:
         return BundleAssets(assets=assets).assets
+
+    @model_validator(mode="after")
+    def _intercepts_need_a_process(self) -> BundleManifest:
+        """Only a process igni starts is asked about an event; an `endpoint` never is."""
+        extra = self.model_extra or {}
+        if self.permissions.intercepts and extra.get("endpoint") is not None:
+            events = ", ".join(i.event for i in self.permissions.intercepts)
+            raise ValueError(
+                f"permissions.intercepts ({events}) needs a process igni starts, and an "
+                "`endpoint` never is one: its silence would block every fail-closed event"
+            )
+        return self
 
 
 class BundleReport(BaseModel):

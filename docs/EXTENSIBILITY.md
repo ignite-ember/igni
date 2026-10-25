@@ -59,7 +59,7 @@ UI is a contribution some extensions have, not what makes something an extension
 
 Agents, skills and hooks are **not** here: plugins and group packs already carry those. Don't build a second path.
 
-Everything is namespaced by extension id. A collision with a base name is a validation error at install, not a surprise at runtime. What cannot be namespaced — a whole prompt, a prompt section, a slash command, an anchor — is a *claim*, and two extensions claiming one thing is a collision a super admin decides (below).
+Everything is namespaced by extension id. A collision with a base name is a validation error at install, not a surprise at runtime. What cannot be namespaced — a whole prompt, a prompt section, a slash command, an anchor — is a *claim*, and two extensions claiming one thing is a collision the super admin's priority order settles (below).
 
 ### The agent's prompt
 
@@ -81,38 +81,49 @@ An enterprise that wants its agent to work its own way gets exactly that. Per pr
 ```
 
 - **Prompts are made of named sections.** igni's markdown says them — `<!-- section:workflow -->…<!-- /section:workflow -->` — flat, never one inside another, and every `##` of igni's prompts is inside one. An agent's prompt is its whole `.md` file, and its YAML header is the section `frontmatter`, so changing what an agent is described as, or which tools it has, is replacing a section like any other. Every prompt igni ships, with its sections, is in `docs/prompt-targets.json`, generated from the markdown and held to it by `tests/test_prompt_targets_are_listed.py`. There are no slots and nothing domain-named: igni's text is igni's, and what an extension adds says what it is about.
-- **An override** is the extension's whole prompt for that target. It is made of named sections too, and the manifest lists them (`sections`; an agent's `frontmatter` is implied): igni refuses an override whose text does not have exactly those sections, because other extensions' edits — and a super admin's view of which of them land — go by the list. For an agent, the override *is* the agent while it holds, at `EXTENSION_OVERRIDE` priority above anything a person or organisation wrote, and it may define an agent igni does not have. `exclusive: true` takes no other extension's edits.
+- **An override** is the extension's whole prompt for that target. It is made of named sections too, and the manifest lists them (`sections`; an agent's `frontmatter` is implied): igni refuses an override whose text does not have exactly those sections, because other extensions' edits — and a super admin's view of which of them land — go by the list. For an agent, the override *is* the agent while it holds, at `EXTENSION_OVERRIDE` priority above anything a person or organisation wrote, and it may define an agent igni does not have. `exclusive: true` takes no other extension's edits — as long as its extension is above every one of them in priority (below).
 - **An edit** is exactly one of `replace` (a section's text), `insert` (a new section, `before` or `after` a named one) or `append` (a new section at the end). It lands on whichever definition of the prompt won — igni's, the project's, a plugin's — or on another extension's override (below). A section an extension adds is marked `<!-- added:<name> -->`: edits anchor only to the sections of the prompt they were written against, never to another extension's additions, so no two extensions need to agree on names. Several inserts after one section land in the order they were made in.
 - **One extension, one way per target:** it overrides a prompt or edits it, never both.
-- **Several extensions' edits stack**, in an order a super admin sets on the Services page (unset, the order their services were approved in). Two `replace`s of one section collide (below); inserts and appends never do.
-- **Another extension's override is the new starting point.** Appends always land on it. Inserts and replacements land where it has the section they name; where it does not, they are **dropped** — nothing to decide, but never silent: the Services page lists the drop on both extensions, and the extensions panel on the machine says which edit and why.
+- **Several extensions' edits stack**, in the super admin's priority order of extensions, highest first (set on the Services page; unset, the order their services were approved in). Two `replace`s of one section collide (below); inserts and appends never do.
+- **Another extension's override is the new starting point.** Appends always land on it. Inserts and replacements land where it has the section they name; where it does not, they are **dropped** — not a collision, but never silent: the Services page lists the drop on both extensions, and the extensions panel on the machine says which edit and why.
 - **Text an extension writes** — override or edit — may use `{{PERSISTING}}`, `{{AGENT_CATALOG}}`, its own `{{ANCHOR}}`s and the host's conditionals (`<!-- user-memory:only -->`), which work as they do in igni's text. `{{PERSISTING}}` is pulled in before edits land, so its sections are the main prompt's. An agent's header an extension wrote gets the plugin security envelope.
 - **`when`** names a condition only the extension can judge. Its process says so on its own MCP connection — `notifications/igni/conditions` `{"conditions": {"index-covers-head": true}}`, `await ext.prompt.hold("index-covers-head", True)` in igni-extension — and igni rebuilds every session's agents, once, on the next turn of the loop (`backend/agent_refresh.py`). Nothing polls. The connection names the sender, so an extension speaks only for its own conditions; none survive a restart.
 
 All of it follows `READY`, like fragments: an extension that goes down takes its text with it. Implemented in `core/prompts/document.py` (the markup and the four operations), `core/prompts/contributions.py` (the live table, and composing one prompt from it, which the prompt builder, plan mode and the agent pool read) and `extensions/contributions.py` (registering into it).
 
-### Collisions, and a super admin deciding them
+### Collisions, and the priority order
 
-`extensions/impact.py` reads an extension's **impact** off its manifest — the prompts it overrides and the edits it makes, anchors, commands, and for review its tools, pages, menu, indicators, settings, host and RPC grants, egress, secrets and workspace access. igni server shows it on the Services page.
+`extensions/impact.py` reads an extension's **impact** off its manifest — the prompts it overrides and the edits it makes, anchors, commands, and for review its tools, pages, menu, indicators, settings, host grants, intercepts, RPC grants, egress, secrets and workspace access. igni server shows it on the Services page.
 
 **What collides.** A claim is spelled `<kind>:<name>`:
 
 | Claim | Collides with |
 |---|---|
-| `prompt:main` (an override) | another override of `main`; and, when either is `exclusive`, **every** extension that edits `main` at all |
+| `prompt:main` (an override) | another override of `main`; and, when it is `exclusive`, **every** extension that edits `main` at all |
 | `prompt:main#workflow` (replacing a section) | another extension replacing the same section — never a *different* section, and never an override of `main` that is not exclusive |
-| `command:/review` | the same command — and never one of igni's own (below) |
+| `command:/review` | another extension's `/review` — and never one of igni's own (below) |
 | `anchor:GRAPH_SCHEMA` | the same anchor |
 
 An insert or an append is named `prompt:main+our_review` where it has to be — switched off, dropped — and is never a claim. Agents are prompts like any other: `prompt:agent:explorer`, `prompt:agent:architect#frontmatter`.
 
-**Never a collision:** inserts and appends (they stack); an edit aimed at a section an override lacks (it is dropped and listed); pages, indicators and settings (namespaced by the extension id); tools (registered under the extension's server name); a plugin's own agents (under the extension's namespace); grants, egress, secrets (they only add). A `when` does not avoid a collision: two extensions replacing one section under different conditions still both claim it. Interceptors never collide either, whether they reject or change an event: they are asked in the super admin's priority order of extensions — the order edits apply in — each handed what the one before left, and the first reject ends it.
+**Who wins: the higher priority, every time.** A super admin keeps one order of extensions on igni server's Services page (service-identity §8.1), highest first; unset, it is the order their services were approved in, and a newly approved service goes to the bottom. Every collision goes to the extension higher in that order, automatically — nobody decides collision by collision, and nothing is ever held back from distribution because of one. The loser loses that claim only; the rest of it still works. The same order is the one edits stack in and interceptors are asked in.
 
-**igni's own commands are nobody's.** `/clear`, `/plan` and the rest of `docs/igni-commands.json` are answered by igni before any extension, so an extension declaring one would never run, and there is nothing to decide. igni server refuses such a bundle at upload; a machine running a newer igni, with a command the bundle did not know about, switches the claim off and says why (`IgniCommands`, the resolver's `reserved`). A test holds the list to the dispatcher, and igni server's copy to it.
+**An exclusive override** starts a battle with every extension editing its prompt, and the same rule settles each: it holds only if its extension is above all of them, and then their edits of that prompt are off, section replacements included. If any editor is higher, the exclusive override is off and the edits stand; the next override of that prompt down the order, if there is one, has it. This is the simplest rule that is consistent with the rest — "the higher wins" — rather than a special case: an exclusive override is a claim on the whole prompt against everyone touching it, and it wins that claim exactly when it would win each part of it.
 
-**Deciding.** A super admin picks the winner of each collision on igni server (service-identity §8.1). A decision names the claim, the extensions and the winner, with who and when. It covers any collision among the extensions it names — all of them or some, as on a machine that has two of three — and a collision with an extension it did not name is new. The losers lose their part in it only. Whole prompts are settled first: when an exclusive override wins, every other extension's edits of that prompt are off, sections included; when the edits win over an exclusive override, every override in that collision is off. When a decision's winner is not among the extensions present, all of them lost.
+| Example (highest first) | Outcome |
+|---|---|
+| A overrides `main` exclusively; B, C edit `main` — order A, B, C | A's prompt; B's and C's edits of `main` are off |
+| same — order B, A, C | A's override is off; B's and C's edits land on igni's prompt |
+| A overrides exclusively, C overrides; B edits — order B, A, C | A is off; C's override has `main`, B's edits land on it |
+| A, B replace `main#workflow` — order B, A | B's replacement; A's is off |
 
-**On igni server** a version with an undecided collision against what is distributed is held, and the previous version keeps being distributed, until it is decided. **On a machine** the decisions and the edit order arrive with the distribution listing, are kept in the store (`.resolutions.json`, so a machine that cannot reach igni still applies them), and `ImpactResolver.enforce()` runs over everything installed whenever that changes — an undecided collision (a development install colliding with a distributed extension, say) is switched off for every extension in it. What an extension does not get, and which of its edits land nowhere, is in the extensions panel (`switched_off` and `dropped` on `list_extensions`, and on the host model's `ExtensionInfo`) and nowhere is it silent.
+Every loss says why, and the reason begins `lower priority than <extension>` — in the extensions panel (`switched_off` on `list_extensions`, and on the host model's `ExtensionInfo`), on the Services page beside each collision's winner and losers, and in the log.
+
+**Never a collision:** inserts and appends (they stack); an edit aimed at a section an override lacks (it is dropped and listed); pages, indicators and settings (namespaced by the extension id); tools (registered under the extension's server name); a plugin's own agents (under the extension's namespace); grants, egress, secrets (they only add). A `when` does not avoid a collision: two extensions replacing one section under different conditions still both claim it. Interceptors never collide either, whether they reject or change an event: they are asked in priority order, each handed what the one before left, and the first reject ends it.
+
+**igni's own commands are nobody's.** `/clear`, `/plan` and the rest of `docs/igni-commands.json` are answered by igni before any extension, so an extension declaring one would never run — that is not a collision between extensions, and priority does not enter into it. igni server refuses such a bundle at upload; a machine running a newer igni, with a command the bundle did not know about, switches the claim off and says why (`IgniCommands`, the resolver's `reserved`). A test holds the list to the dispatcher, and igni server's copy to it.
+
+**On a machine** the priority order arrives with the distribution listing, is kept in the store (`.priority.json`, so a machine that cannot reach igni still settles collisions the same way), and `ImpactResolver.resolve()` runs over everything installed whenever that changes. A development install the order does not name ranks below every extension it does.
 
 One rule, two implementations: igni server's `app/services/identity/impact.py` and this one both run `tests/fixtures/extension_impact_cases.json`, which both repositories carry and each checks against its sibling checkout.
 
@@ -810,7 +821,7 @@ This replaces a line that read "the React component tree, CSS class names, any t
 | Phones-home test | **shipped** |
 | Capability services as separate images | **shipped in the service repos** (`igni__code-index`, `igni__artifacts`) — and **not extracted here**: both still live in `core/` and are imported unconditionally by the agent and tool builders, so neither is separable. See `docs/EXTRACTING_A_CAPABILITY.md`. |
 | Prompt fragments, prompt overrides and edits as contributions | **shipped** (`extensions/contributions.py`, tied to `READY` rather than to being installed) |
-| Impact and collisions, decided by a super admin | **shipped** (`extensions/impact.py`; igni server's Services page) |
+| Impact, and collisions settled by priority | **shipped** (`extensions/impact.py`; igni server's Services page) |
 | Manifest + validation | **shipped** (`docs/extension-manifest.schema.json` for the author's editor, `extensions/manifest.py` for the installer, held to each other by `tests/test_the_manifest_model_and_its_schema_agree.py`) |
 | Distribution from services (signed bundle, JWS verified against the approved service's key, sync at start-up and sign-in) | **shipped** (`extensions/distribution.py`, `extensions/bundle_signature.py`) — the manifest `signature` field and the Ed25519 trust store are removed |
 | `python` packaging, offline from the bundle's wheelhouse | **shipped** (`extensions/python_env.py`) |

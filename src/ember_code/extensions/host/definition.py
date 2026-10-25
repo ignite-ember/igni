@@ -678,9 +678,9 @@ TYPES = (
         field(
             "switched_off",
             "list[Withheld]",
-            "What it does not get: a collision with another extension decided "
-            "against it or not decided yet, or an override whose text lacks the "
-            "sections its manifest declares.",
+            "What it does not get: a collision with an extension higher in the super "
+            "admin's priority order (the reason begins `lower priority than <extension>`), "
+            "or an override whose text lacks the sections its manifest declares.",
         ),
         field(
             "dropped",

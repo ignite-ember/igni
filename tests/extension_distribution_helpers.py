@@ -256,7 +256,7 @@ class FakeIgni:
     def __init__(self) -> None:
         self.listed: dict[str, Listed] = {}
         #: The super admin's decisions on collisions, as the listing carries them.
-        self.resolutions: list[dict[str, Any]] = []
+        self.priority: list[str] = []
         self.requests: list[httpx.Request] = []
         self.listing_status = 200
         self.token_status = 200
@@ -294,7 +294,7 @@ class FakeIgni:
                 200,
                 json={
                     "extensions": [entry.row() for entry in self.listed.values()],
-                    "resolutions": self.resolutions,
+                    "priority": self.priority,
                 },
             )
         if path.startswith("/v1/extensions/") and "/assets/" in path:

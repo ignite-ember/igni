@@ -65,7 +65,6 @@ from ember_code.extensions.assets import (
     ExtensionAssets,
 )
 from ember_code.extensions.bundle_signature import BundleSignatureError, PublisherKeys
-from ember_code.extensions.impact import Resolution
 from ember_code.extensions.manifest import ExtensionManifest
 from ember_code.extensions.service_token import IgniSession
 from ember_code.extensions.store import DistributionRecord, ExtensionStore, StoreError
@@ -112,12 +111,10 @@ class DistributionListing(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
     extensions: list[DistributedExtension] = Field(default_factory=list)
-    #: A super admin's decisions on collisions between the extensions
-    #: listed — :mod:`ember_code.extensions.impact`.
-    resolutions: list[Resolution] = Field(default_factory=list)
-    #: The order edits from several extensions apply in, as a super
-    #: admin set it — extension ids, first applied first.
-    edit_order: list[str] = Field(default_factory=list)
+    #: The super admin's priority order of extensions, highest first:
+    #: it settles every collision (:mod:`ember_code.extensions.impact`)
+    #: and is the order edits apply and interceptors run in.
+    priority: list[str] = Field(default_factory=list)
 
 
 class DownloadedBundle(BaseModel):
@@ -136,8 +133,8 @@ class SyncReport(BaseModel):
     unchanged: list[str] = Field(default_factory=list)
     #: Development installs a listed extension did not replace.
     development: list[str] = Field(default_factory=list)
-    #: Whether the decisions on collisions, or the order edits apply in, changed.
-    resolutions_changed: bool = False
+    #: Whether the priority order changed.
+    priority_changed: bool = False
     failed: dict[str, str] = Field(default_factory=dict)
 
 
@@ -312,18 +309,18 @@ class ExtensionDistribution:
         session: Callable[[], IgniSession | None],
         lifecycle: ExtensionLifecycle | None = None,
         transport: httpx.AsyncBaseTransport | None = None,
-        on_resolutions: Callable[[], None] | None = None,
+        on_priority: Callable[[], None] | None = None,
     ) -> None:
         """
         Args:
-            on_resolutions: Told when the decisions on collisions
-                changed, after they are stored.
+            on_priority: Told when the priority order changed, after
+                it is stored.
         """
         self._store = store
         self._api_url = api_url
         self._session = session
         self._lifecycle = lifecycle
-        self._on_resolutions = on_resolutions
+        self._on_priority = on_priority
         self._transport = transport
         self._lock = asyncio.Lock()
         self._tasks: set[asyncio.Task[SyncReport | None]] = set()
@@ -387,12 +384,12 @@ class ExtensionDistribution:
                 return SyncReport(skipped=str(exc))
 
             report = SyncReport()
-            # Decisions first: an extension installed below starts
-            # with them already applied.
-            if self._store.record_resolutions(listing.resolutions, listing.edit_order):
-                report.resolutions_changed = True
-                if self._on_resolutions is not None:
-                    self._on_resolutions()
+            # The priority first: an extension installed below starts
+            # with its collisions already settled.
+            if self._store.record_priority(listing.priority):
+                report.priority_changed = True
+                if self._on_priority is not None:
+                    self._on_priority()
             for entry in listing.extensions:
                 await self._bring_up_to_date(client, entry, report)
             await self._remove_unlisted(

@@ -997,6 +997,25 @@
         },
         "description": "A dev command is an arbitrary executable named in a text file, so it is a development build by definition — and igni never runs one that arrived from a service."
       }
+    },
+    {
+      "if": {
+        "required": [
+          "endpoint"
+        ]
+      },
+      "then": {
+        "properties": {
+          "permissions": {
+            "properties": {
+              "intercepts": {
+                "maxItems": 0
+              }
+            }
+          }
+        },
+        "description": "Only a process igni starts is asked about an event, over the host channel igni hands it. An endpoint never connects to that channel, so its intercepts could never answer — and silence blocks a fail-closed event (a tool call, a message) every time."
+      }
     }
   ]
 }
