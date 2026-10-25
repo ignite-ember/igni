@@ -137,7 +137,6 @@ trap cleanup EXIT
 UV_VERSION="0.5.7"
 case "$(uname -s)-$(uname -m)" in
     Darwin-arm64)   TRIPLE="aarch64-apple-darwin";       EXT="tar.gz" ;;
-    Darwin-x86_64)  TRIPLE="x86_64-apple-darwin";        EXT="tar.gz" ;;
     Linux-x86_64)   TRIPLE="x86_64-unknown-linux-gnu";   EXT="tar.gz" ;;
     Linux-aarch64)  TRIPLE="aarch64-unknown-linux-gnu";  EXT="tar.gz" ;;
     *)

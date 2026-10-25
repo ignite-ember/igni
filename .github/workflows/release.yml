@@ -275,7 +275,7 @@ jobs:
           VSIX=$(ls *.vsix | head -1)
           npx --yes @vscode/vsce publish --packagePath "$VSIX" --pat "$VSCE_PAT"
 
-  # Tauri desktop installers — mac (arm + intel), windows, linux.
+  # Tauri desktop installers — mac (Apple Silicon only), windows, linux.
   # Tauri Action handles the per-platform bundle (.dmg/.msi/.AppImage),
   # generates the updater signatures, and uploads everything to the
   # GitHub Release. ``tagName`` matches the tag we're already on so
@@ -295,7 +295,7 @@ jobs:
   # (we trigger by pushing a ``v*`` tag, not by clicking "Create
   # release") there's no existing release, and the action's
   # find-or-create-by-tag path errors with "Release not found or
-  # created" — possibly because the four matrix legs race to
+  # created" — possibly because the three matrix legs race to
   # create the same release. Pre-creating it as a draft serialises
   # the creation; the matrix uploads in parallel; the final
   # ``github-release`` job downgrades draft → published and adds
@@ -334,8 +334,6 @@ jobs:
         include:
           - platform: macos-26
             args: --target aarch64-apple-darwin
-          - platform: macos-26
-            args: --target x86_64-apple-darwin
           - platform: windows-latest
             args: ""
           - platform: ubuntu-22.04
@@ -353,7 +351,7 @@ jobs:
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
         with:
-          targets: ${{ matrix.platform == 'macos-26' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
+          targets: ${{ matrix.platform == 'macos-26' && 'aarch64-apple-darwin' || '' }}
 
       - name: Cache Cargo
         uses: Swatinem/rust-cache@v2
@@ -545,7 +543,7 @@ jobs:
           # the stapled version. tauri-bundler emits the tarball
           # locally as ``<productName>.app.tar.gz`` (no arch suffix),
           # but tauri-action RENAMES it to
-          # ``<productName>_<arch>.app.tar.gz`` (``_aarch64`` / ``_x64``)
+          # ``<productName>_<arch>.app.tar.gz`` (``_aarch64`` — the only Mac build)
           # when uploading to the release — and ``latest.json`` URLs
           # point at the arch-suffixed names. So if we upload the
           # bare basename we publish a new ``igni.app.tar.gz`` asset
@@ -563,11 +561,7 @@ jobs:
           # updater broke. Same variable means same file means no
           # divergence path.
           if [ -n "$OLD_TARBALL" ]; then
-            if [[ "${{ matrix.args }}" == *aarch64* ]]; then
-              REMOTE_NAME="igni_aarch64.app.tar.gz"
-            else
-              REMOTE_NAME="igni_x64.app.tar.gz"
-            fi
+            REMOTE_NAME="igni_aarch64.app.tar.gz"
             # ``gh release upload "file#displayName"`` only sets the
             # label in the UI — the asset's actual filename / URL
             # uses the local basename. So we have to RENAME the file
@@ -652,7 +646,7 @@ jobs:
         if: matrix.platform == 'macos-26'
         uses: actions/upload-artifact@v4
         with:
-          name: updater-sig-${{ contains(matrix.args, 'aarch64') && 'aarch64' || 'x86_64' }}
+          name: updater-sig-aarch64
           path: /tmp/updater-sig/updater.sig
           if-no-files-found: error
           retention-days: 1
@@ -703,22 +697,20 @@ jobs:
           PUB_DATE="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
           BASE_URL="https://github.com/${GITHUB_REPOSITORY}/releases/download/${TAG}"
 
-          # Each macOS matrix leg copied its ``.app.tar.gz.sig`` to
+          # The macOS matrix leg copied its ``.app.tar.gz.sig`` to
           # ``/tmp/updater-sig/updater.sig`` before uploading the
           # artifact, so the filename inside each download dir is
           # the stable ``updater.sig`` (no space-in-filename glob
           # surprises like the v0.6.2 attempt hit).
           AARCH64_SIG="$(cat /tmp/sigs/updater-sig-aarch64/updater.sig)"
-          X64_SIG="$(cat /tmp/sigs/updater-sig-x86_64/updater.sig)"
 
           # ``jq -Rs .`` reads the file content as a raw string and
           # JSON-quotes it (escapes newlines / quotes correctly).
           AARCH64_JSON="$(printf '%s' "$AARCH64_SIG" | jq -Rs .)"
-          X64_JSON="$(printf '%s' "$X64_SIG" | jq -Rs .)"
 
           # tauri-bundler emits ``<productName>_<arch>.app.tar.gz`` —
-          # productName is ``igni`` per tauri.conf.json, so the assets
-          # are ``igni_aarch64.app.tar.gz`` and ``igni_x64.app.tar.gz``.
+          # productName is ``igni`` per tauri.conf.json, so the asset
+          # is ``igni_aarch64.app.tar.gz`` (Apple Silicon only; no Intel build).
           # (Pre-rename builds at v0.6.x used ``Ember.Code_<arch>...``;
           # spaces in the old productName became dots in the
           # filename. Bumping ``productName`` in tauri.conf.json
@@ -732,10 +724,6 @@ jobs:
               "darwin-aarch64": {
                 "signature": ${AARCH64_JSON},
                 "url": "${BASE_URL}/igni_aarch64.app.tar.gz"
-              },
-              "darwin-x86_64": {
-                "signature": ${X64_JSON},
-                "url": "${BASE_URL}/igni_x64.app.tar.gz"
               }
             }
           }

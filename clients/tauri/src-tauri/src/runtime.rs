@@ -383,7 +383,6 @@ fn venv_python_rel_path() -> &'static str {
 fn uv_target() -> Result<&'static str, String> {
     let triple = match (std::env::consts::OS, std::env::consts::ARCH) {
         ("macos", "aarch64") => "aarch64-apple-darwin",
-        ("macos", "x86_64") => "x86_64-apple-darwin",
         ("linux", "aarch64") => "aarch64-unknown-linux-gnu",
         ("linux", "x86_64") => "x86_64-unknown-linux-gnu",
         ("windows", "x86_64") => "x86_64-pc-windows-msvc",
@@ -540,7 +539,6 @@ mod tests {
         let triple = uv_target().expect("host platform must be mapped");
         let known = [
             "aarch64-apple-darwin",
-            "x86_64-apple-darwin",
             "aarch64-unknown-linux-gnu",
             "x86_64-unknown-linux-gnu",
             "x86_64-pc-windows-msvc",
