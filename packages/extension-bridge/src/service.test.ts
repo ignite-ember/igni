@@ -87,9 +87,13 @@ describe("the token", () => {
 
 describe("fetch", () => {
   it("goes to a path on the service with the token", async () => {
-    const seen: { url: string; auth: string | null }[] = [];
+    const seen: { url: string; auth: string | null; credentials?: RequestCredentials }[] = [];
     const fetcher = vi.fn(async (url: RequestInfo | URL, init?: RequestInit) => {
-      seen.push({ url: String(url), auth: new Headers(init?.headers).get("Authorization") });
+      seen.push({
+        url: String(url),
+        auth: new Headers(init?.headers).get("Authorization"),
+        credentials: init?.credentials,
+      });
       return new Response("{}", { status: 200 });
     });
     const link = new ServiceLink(SERVICE, issuing("t1"), { fetch: fetcher as typeof fetch });
@@ -97,8 +101,25 @@ describe("fetch", () => {
     await link.fetch("/v1/notes?x=1");
 
     expect(seen).toEqual([
-      { url: "https://notes.example.com/api/v1/notes?x=1", auth: "Bearer t1" },
+      {
+        url: "https://notes.example.com/api/v1/notes?x=1",
+        auth: "Bearer t1",
+        credentials: "omit",
+      },
     ]);
+  });
+
+  it("never sends cookies, even when asked to", async () => {
+    let credentials: RequestCredentials | undefined;
+    const fetcher = vi.fn(async (_url: RequestInfo | URL, init?: RequestInit) => {
+      credentials = init?.credentials;
+      return new Response("{}", { status: 200 });
+    });
+    const link = new ServiceLink(SERVICE, issuing("t1"), { fetch: fetcher as typeof fetch });
+
+    await link.fetch("/v1/notes", { credentials: "include" });
+
+    expect(credentials).toBe("omit");
   });
 
   it("fetches a new token once after a 401", async () => {

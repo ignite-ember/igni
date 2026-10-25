@@ -18,6 +18,11 @@
  * cannot hand it to an egress host by accident. The frame's CSP admits
  * the service's origin (`https`/`wss`) and the hosts the manifest
  * declared in `permissions.egress`, and nothing else.
+ *
+ * `fetch` is a cross-origin call from igni's window. It sends the token
+ * and never credentials (`credentials: "omit"`); the service answers it
+ * because its route takes a person's token (igni-service's `BearerCors`,
+ * which every service gets from `igni.install`).
  */
 
 /** Why `bridge.service` could not do what was asked. */
@@ -114,7 +119,9 @@ export class ServiceLink implements ServiceBridge {
       const headers = new Headers(init.headers);
       headers.set("Authorization", `Bearer ${token}`);
       const doFetch = this.env.fetch ?? globalThis.fetch.bind(globalThis);
-      return doFetch(target, { ...init, headers });
+      // The token and nothing else: no cookies, whatever the caller
+      // asked, so the service's own website sessions never ride along.
+      return doFetch(target, { ...init, headers, credentials: "omit" });
     };
     const first = await send(await this.fresh(false));
     if (first.status !== 401) return first;

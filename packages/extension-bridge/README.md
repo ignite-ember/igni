@@ -60,8 +60,9 @@ a `401`. Both refuse a path on any other origin with a `ServiceError`
 (`other_origin`): the token goes to the service only. No
 `permissions.host` grant is needed. The frame's CSP admits the
 service's origin over `https`/`wss` and the hosts declared in
-`permissions.egress`, nothing else; a cross-origin `fetch` also needs
-the service to allow the page's loopback origin in CORS.
+`permissions.egress`, nothing else. `fetch` sends the token and never
+cookies (`credentials: "omit"`); a service on igni-service answers it
+cross-origin with nothing to configure (`igni.install(app)`).
 
 ## Installing
 

@@ -14,8 +14,7 @@ from igni_service import (
 
 igni = IgniService.from_settings(IgniSettings())
 app = FastAPI(lifespan=igni.lifespan)
-app.include_router(igni.router)        # igni's calls about one person: erasure, export
-app.include_router(igni.web.router)    # sign-in to this service's own pages
+igni.install(app)  # igni's calls, sign-in to this service's pages, calls from the extension's page
 
 
 @igni.on_erase
@@ -118,6 +117,10 @@ is unreachable, so the service starts and serves either way:
 - `Depends(igni.optional_person)` — the same, or `None` when no token was
   sent: for routes that serve everybody and do more for somebody signed in.
   A token that was sent and is refused is still a 401.
+- `Depends(igni.token)` / `Depends(igni.optional_token)` — the bearer token
+  itself, unchecked (401 / `None` when none was sent), for a route that
+  checks it later with `person_of` — one that turns an unusable token into
+  an anonymous reader, say.
 - `await igni.person_of(token)` — the same check for a token held outside a
   request header, such as a WebSocket greeting. Raises `TokenRefused` or
   `IgniUnavailable`, so you answer in your own protocol.
@@ -136,6 +139,33 @@ is unreachable, so the service starts and serves either way:
 - `Depends(igni.web.signed_in)` — the person, or `None`: for a page
   anybody may read that says more to somebody signed in. Never sends
   anybody to sign in; a session igni cannot renew counts as nobody.
+
+## Calls from the extension's page
+
+`igni.install(app)` puts igni's routes on the app — `igni.router` (erasure,
+export, a deleted organisation) and `igni.web.router` (sign-in) — and
+`BearerCors`, which lets the extension's page call the service from igni's
+window with `bridge.service.fetch`. Nothing to configure:
+
+- A route that depends on `igni.person`, `igni.optional_person`,
+  `igni.org_admin`, `igni.token` or `igni.optional_token` — directly,
+  through a router's `dependencies`, or through the service's own
+  dependency built on them — answers a call that
+  carries `Authorization: Bearer` to any origin (`Access-Control-Allow-Origin: *`).
+  The token is the whole of the authority; a refused token's 401 is
+  readable too, so the page fetches a new one.
+- Credentials are never allowed. A browser sends no cookies on such a call
+  and shows a page nothing from one that sent them, so the service's
+  website sessions (`igni.web.*`) are out of reach cross-origin.
+- A route on `igni.web.*`, igni's own calls, and a route that takes no
+  token give no cross-origin yes; a preflight for the sign-in routes or
+  igni's calls is not answered with one either.
+- A preflight is answered with `GET, HEAD, POST, PUT, PATCH, DELETE` and the
+  headers `Authorization` and `Content-Type`, and only when the call will
+  carry `Authorization`.
+
+WebSockets are not CORS: a page's socket proves itself with its token in
+the first frame (`igni.person_of`).
 
 ## igni, for one organisation
 

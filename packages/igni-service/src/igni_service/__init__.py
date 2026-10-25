@@ -2,11 +2,12 @@
 
     igni = IgniService.from_settings(IgniSettings())
     app = FastAPI(lifespan=igni.lifespan)
-    app.include_router(igni.router)
+    igni.install(app)
 
 See the package README for the whole surface.
 """
 
+from igni_service.cors import BearerCors
 from igni_service.directory import Directory, Member, Organisation
 from igni_service.errors import (
     BundleError,
@@ -34,6 +35,7 @@ from igni_service.web_sessions import (
 )
 
 __all__ = [
+    "BearerCors",
     "BundleError",
     "ConfigurationError",
     "Delivered",

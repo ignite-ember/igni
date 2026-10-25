@@ -2,7 +2,7 @@
 
 igni = IgniService.from_settings(IgniSettings())
 app = FastAPI(lifespan=igni.lifespan)
-app.include_router(igni.router)
+igni.install(app)
 
 @igni.on_erase
 async def erase(subject: Subject) -> None: ...
@@ -25,11 +25,12 @@ from collections.abc import AsyncIterator
 from typing import Annotated, Any
 
 import httpx
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, FastAPI, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 
 from igni_service.clock import Clock
+from igni_service.cors import BearerCors
 from igni_service.directory import DirectoryClient
 from igni_service.errors import ConfigurationError, IgniUnavailable
 from igni_service.host import Host
@@ -194,6 +195,17 @@ class IgniService:
             await self._owned_engine.dispose()
             self._owned_engine = None
 
+    def install(self, app: FastAPI) -> None:
+        """Put igni's part of the service on `app`: igni's calls
+        (`router`), sign-in to the service's own pages (`web.router`), and
+        cross-origin calls from the extension's page to every route that
+        takes a person's token (`BearerCors`) — any origin, the token and
+        nothing else, never cookies.
+        """
+        app.include_router(self.router)
+        app.include_router(self.web.router)
+        app.add_middleware(BearerCors, igni=self)
+
     @property
     def router(self) -> APIRouter:
         """The routes igni calls: erasure and export of one person, and a
@@ -255,6 +267,27 @@ class IgniService:
         if credentials is None:
             return None
         return await self.person(credentials)
+
+    async def token(
+        self, credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(_BEARER)]
+    ) -> str:
+        """FastAPI dependency: the bearer token itself, not yet checked; 401
+        when none was sent.
+
+        For a route that checks it later with `person_of` — one that turns
+        an unusable token into an anonymous reader instead of a 401, say.
+        It is a person's token route all the same: the extension's page may
+        call it (`BearerCors`).
+        """
+        return self._bare(credentials)
+
+    async def optional_token(
+        self, credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(_BEARER)]
+    ) -> str | None:
+        """FastAPI dependency: the bearer token, not yet checked, or `None`."""
+        if credentials is None or credentials.scheme.lower() != "bearer":
+            return None
+        return credentials.credentials
 
     async def person_of(self, token: str) -> Person:
         """The person a bare token names, outside an HTTP request.

@@ -40,7 +40,7 @@ def igni(fake: FakeIgni) -> IgniService:
 @pytest.fixture
 def app(igni: IgniService) -> FastAPI:
     app = FastAPI(lifespan=igni.lifespan)
-    app.include_router(igni.router)
+    igni.install(app)
 
     @app.get("/me")
     async def me(person: Person = Depends(igni.person)) -> Person:
