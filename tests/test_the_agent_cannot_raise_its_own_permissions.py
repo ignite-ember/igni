@@ -128,8 +128,8 @@ class TestTheBlockListStillMatchesTheRegistry:
         registry = BuiltinCommandRegistry()
         mode_builtins = {
             entry.slash
-            for entry in registry._entries
-            if entry.handler.__module__ == "ember_code.backend.cmd_modes"
+            for entry in registry.entries()
+            if entry.module == "ember_code.backend.cmd_modes"
         }
 
         assert mode_builtins == set(MODE_COMMANDS), mode_builtins

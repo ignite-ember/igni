@@ -49,6 +49,7 @@ from ember_code.cli.invocation import (
     CliInvocation,
     load_settings_from_options,
 )
+from ember_code.cli.migrate import migrate
 from ember_code.cli.options import CliOptions
 from ember_code.core import session as _session_module
 from ember_code.core.paths import DEFAULT_DATA_DIR
@@ -282,3 +283,4 @@ if __name__ == "__main__":
 
 # Registered after the callback so the module reads top to bottom.
 cli.add_command(ext)
+cli.add_command(migrate)

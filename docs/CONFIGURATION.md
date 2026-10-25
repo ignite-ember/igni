@@ -426,6 +426,8 @@ Authentication is handled by `/login` — no API key environment variables neede
 
 Run the shared service with `python -m ember_code.decisions_server --host 0.0.0.0 --port 8730` (installed with the `decisions` extra). A backend image needs neither the extra nor torch.
 
+**The project database.** A backend migrates a project's `state.db` itself when it is new or behind, so on a desktop there is nothing to do. Where a backend's volume is prepared ahead of time (the cloud), run `igni migrate` in the project directory (or with `--project-dir`, `--data-dir`) at provisioning: the backend then starts with a current database and never imports alembic.
+
 ## CLI Flags
 
 ```bash

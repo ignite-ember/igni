@@ -14,9 +14,9 @@ Skills lose to markdown-file names on collision because the user
 explicitly imported the skill, whereas markdown files are best-effort
 drop-ins.
 
-Several symbols below are re-exported so ``mock.patch`` targets used
-by the test suite (dotted paths under
-``ember_code.backend.command_handler.*``) keep resolving.
+``discover_markdown_commands`` is imported here, not in the markdown
+dispatcher, so tests can patch it at
+``ember_code.backend.command_handler.discover_markdown_commands``.
 """
 
 from __future__ import annotations
@@ -34,31 +34,7 @@ from ember_code.backend.markdown_command_dispatcher import (
     MarkdownCommandDispatcher,
 )
 from ember_code.backend.skill_command_dispatcher import SkillCommandDispatcher
-from ember_code.core.auth.credentials import (  # noqa: F401 — mock.patch target
-    CredentialsStore,
-)
 from ember_code.core.contributed_commands import contributed_commands
-from ember_code.core.plugins.installer import (  # noqa: F401 — deprecated re-export
-    PluginError,
-    PluginInstaller,
-)
-from ember_code.core.plugins.marketplaces import (  # noqa: F401 — deprecated re-export
-    add_marketplace,
-    load_registry,
-    refresh_marketplace,
-    remove_marketplace,
-    resolve_install_ref,
-)
-
-# The re-exports above existed as mock.patch targets for
-# tests/test_plugins_slash_commands.py. That file has been migrated
-# to patch at the source modules
-# (``ember_code.core.plugins.installer.PluginInstaller``,
-# ``ember_code.core.plugins.marketplaces.add_marketplace`` etc.) —
-# matching test_plugins_backend.py. The re-exports here stay for
-# ONE release cycle to unblock any external code still reaching for
-# ``command_handler.PluginInstaller``. Delete after the deprecation
-# window closes.
 from ember_code.core.utils.markdown_commands import (  # noqa: F401 — mock.patch target
     discover_markdown_commands,
 )

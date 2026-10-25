@@ -23,7 +23,7 @@ ember-code/
 │   │   ├── agents/         # agent `.md` discovery, frontmatter parsing, AgentPool, agent build
 │   │   ├── auth/           # browser login, local callback server, credential storage
 │   │   ├── config/         # Settings, model registry, permission evaluation, policy tiers
-│   │   ├── db/             # SQLAlchemy engine + sessionmaker cache, migration entry point
+│   │   ├── db/             # SQLAlchemy engine + sessionmaker cache; `schema.py` migrates only a file that is new or behind
 │   │   ├── decisions/      # the client for igni's decisions service: the Bypass guard and `host.decide`
 │   │   ├── evals/          # YAML eval loading, assertions, runner, reporter
 │   │   ├── guardrails/     # one rule per file (PII, injection, moderation) behind one runner
@@ -255,6 +255,19 @@ Built-in commands available in interactive mode:
 | `/whoami` | Show the active your igni server login |
 | `/logout` | Clear cached your igni server credentials |
 | `/<skill-name> [args]` | Invoke a skill (e.g., `/commit`) |
+
+A built-in is one entry in `backend/builtin_command_registry.py`: its
+name, its description and where its handler lives, as `"module:attr"`.
+The module is imported the first time the command runs, so nothing a
+command needs is loaded by an idle backend. Listing and `/help` read
+only the entries. `tests/test_commands_load_on_first_use.py` checks
+every entry resolves and that an idle backend has not loaded them.
+
+**Adding a database migration.** Add the alembic revision under
+`ember_code/migrations/versions/`, then set `HEAD_REVISION` in
+`core/db/schema.py` to it. A backend compares a database's revision with
+that constant to decide whether to migrate at all;
+`tests/test_migrations_stay_off_the_start_path.py` fails until they agree.
 
 ## Architecture Decisions
 

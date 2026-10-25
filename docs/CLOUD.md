@@ -104,14 +104,29 @@ one run) unless marked.
 | Before `4cdb3b1` | ≈ 430 MB RSS (backend 247 + 3 × 61) |
 | Backend after `4cdb3b1` (macOS) | 170 MB after one message (was 246); never loads torch |
 | Extensions remote (section 5) | the extension processes leave the microVM entirely |
+| Commands on first use, migrations at provisioning (built, macOS) | backend 153 MB ready, 159 MB after one message (was 163 / 169) |
 | With the remaining cuts (proposed) | backend ≈ 110–130 MB after a run |
 | Restored from the shared base snapshot (estimated, not measured) | ≈ 110–140 MB per microVM including guest kernel |
 | Fork from a pre-imported process with `gc.freeze()` (measured, for comparison) | ≈ 49 MB private per backend |
 
+Built:
+
+- slash commands load on first use: the registry
+  (`ember_code/backend/builtin_command_registry.py`) holds each built-in
+  as `"module:attr"` and imports it when it first runs, so an idle
+  backend carries none of `/evals`, `/loop`, `/schedule`, `/plugin`;
+- migrations run at provisioning: a backend reads its database's
+  revision with `sqlite3` and imports alembic only when the file is new
+  or behind (`ember_code/core/db/schema.py`). A producer's volume is
+  prepared with `igni migrate`, so its backend starts current and never
+  imports alembic.
+
+sqlalchemy, dateparser and dnspython still load at start: the agent's
+schedule tool, the session's loop store and sign-in discovery use them,
+not only commands.
+
 Remaining cuts, all proposed:
 
-- register slash commands lazily at one seam (≈ 30–45 MB);
-- run migrations at provisioning, not at every start (≈ 11 MB);
 - give the wire protocol its own schemas instead of importing agno
   (≈ 10–15 MB, and defers openai and mcp to the first run);
 - make the extension SDK's stdio transport skip starlette and uvicorn
