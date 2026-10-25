@@ -13,7 +13,14 @@ from collections.abc import AsyncIterator
 import pytest
 
 from igni_extension import HostError, IgniExtension, LocalNotification, NotConfigured, Target
-from igni_extension.host_model import ChatMessage, Run, SessionChange, Status
+from igni_extension.host_model import (
+    ChatMessage,
+    Decision,
+    DecisionQuestion,
+    Run,
+    SessionChange,
+    Status,
+)
 from igni_extension.testing import FakeHost, HostHarness
 
 
@@ -210,4 +217,49 @@ async def test_a_signal_payload_the_sdk_cannot_read_is_dropped_not_raised(host: 
             break
         await asyncio.sleep(0.01)
     assert [m.from_extension for m in got] == ["acme.other"]
+    await ext.aclose()
+
+
+async def test_decide_sends_typed_questions_and_reads_a_typed_decision(host: FakeHost) -> None:
+    ext = IgniExtension("acme.example", environ=host.environment())
+    host.answers["decide"] = {
+        "model": "english",
+        "answers": {
+            "kind": {
+                "kind": "choice",
+                "answer": "bug",
+                "confidence": 0.9,
+                "probabilities": {"bug": 0.9, "feature": 0.1},
+            }
+        },
+    }
+
+    decision = await ext.host.decide(
+        {"text": "It crashes on start"},
+        [
+            DecisionQuestion(
+                id="kind",
+                kind="choice",
+                question="What kind of message is `text`?",
+                options={"bug": "", "feature": ""},
+            )
+        ],
+    )
+
+    assert isinstance(decision, Decision)
+    assert decision.answers["kind"].answer == "bug"
+    [call] = host.calls
+    assert call.path == "decide"
+    assert call.params == {
+        "context": {"text": "It crashes on start"},
+        "questions": [
+            {
+                "id": "kind",
+                "kind": "choice",
+                "question": "What kind of message is `text`?",
+                "options": {"bug": "", "feature": ""},
+                "levels": None,
+            }
+        ],
+    }
     await ext.aclose()

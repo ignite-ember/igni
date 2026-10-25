@@ -70,6 +70,9 @@ class ErrorCode(StrEnum):
     #: The person could not have done this either, and neither can the
     #: extension — the host's own check said no.
     REFUSED = "refused"
+    #: What answers it is not running on this machine and could not be
+    #: started (igni's decision model). Nothing was done; try later.
+    UNAVAILABLE = "unavailable"
     #: It was allowed and it went wrong.
     FAILED = "failed"
 

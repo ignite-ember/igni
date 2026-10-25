@@ -24,6 +24,7 @@ export type HostErrorCode =
   | "read_only"
   | "stage_2"
   | "refused"
+  | "unavailable"
   | "failed";
 
 /** The host said no, or it went wrong there. `code` is for code; the message, for people. */

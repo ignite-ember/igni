@@ -1,11 +1,11 @@
-// GENERATED from the igni host schema 1.2.0 by ember_code.extensions.host.codegen — do not edit. Run `make host-sdks` after changing the schema.
+// GENERATED from the igni host schema 1.3.0 by ember_code.extensions.host.codegen — do not edit. Run `make host-sdks` after changing the schema.
 //
 // `bridge.host` as an extension's page sees it. Read
 // `docs/HOST_OBJECT_MODEL.md` in igni for what each object is.
 
 import { HostObject, Property, Signal, type HostLink, type JsonValue } from "./hostModel";
 
-export const SCHEMA_VERSION = "1.2.0";
+export const SCHEMA_VERSION = "1.3.0";
 
 /** One change anywhere in the model, as `host.changed` reports it. */
 export interface Change {
@@ -641,6 +641,41 @@ export interface LocalNotification {
 /** An extension's settings, as now configured. */
 export interface SettingsChange {
   values: Record<string, JsonValue>;
+}
+
+/** One typed question about a context. It quotes the context's fields by name in backticks, as in: Is `diff` only a refactor? */
+export interface DecisionQuestion {
+  /** Its name in the answers: a lowercase name. */
+  id: string;
+  /** `choice` (one of `options`), `score` (one of `levels`, lowest first) or `noul` (yes or no — Laya's name for it). */
+  kind: string;
+  /** The question, up to 500 characters. */
+  question: string;
+  /** `choice` only: 2–20 labels, each to what it means (empty when the label says it). */
+  options?: Record<string, string> | null;
+  /** `score` only: 2–10 level labels, lowest first. */
+  levels?: string[] | null;
+}
+
+/** One question's answer, with the probabilities it came from. */
+export interface DecisionAnswer {
+  kind: string;
+  /** The option chosen, the level reached, or `yes` / `no`. */
+  answer: string;
+  /** The probability of that answer. */
+  confidence: number;
+  /** Every option's, level's, or `yes` and `no`'s probability. */
+  probabilities: Record<string, number>;
+  /** `score` only: the expected level, 0 the lowest. */
+  score?: number | null;
+}
+
+/** Every question's answer about one context. */
+export interface Decision {
+  /** By question id. */
+  answers: Record<string, DecisionAnswer>;
+  /** The Laya checkpoint that answered: `english` or `multilingual`. */
+  model: string;
 }
 
 /** Key–value state of the extension's own, kept by the host across restarts. An extension sees only its own keys. */
@@ -1751,6 +1786,16 @@ export class Host extends HostObject {
     this.notifications = new HostNotifications(link, window);
     this.self = new HostSelf(link, window);
     this.changed = new Signal("changed");
+  }
+
+  /** Ask igni's local decision model (Laya) typed questions about a context, in one pass on this machine. `context` is named text fields — at most 8, 6,000 characters in all — that the questions quote in backticks; `questions` are 1–16 `DecisionQuestion`s. A context the model would have to cut is refused (`invalid`), never answered from part of it; a model that cannot be loaded answers `unavailable`. Zero-shot accuracy is modest: measure it on your own data before acting on an answer, and use the probabilities, not just the answer. */
+  decide(context: Record<string, string>, questions: DecisionQuestion[]): Promise<Decision> {
+    return this.call<Decision>("decide", { context, questions });
+  }
+
+  /** `decide` for up to 16 contexts at once, sharing forward passes. One decision per context, in order. */
+  decide_batch(contexts: (Record<string, string>)[], questions: DecisionQuestion[]): Promise<Decision[]> {
+    return this.call<Decision[]>("decide_batch", { contexts, questions });
   }
 }
 

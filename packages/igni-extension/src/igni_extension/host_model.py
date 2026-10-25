@@ -1,4 +1,4 @@
-"""GENERATED from the igni host schema 1.2.0 by ember_code.extensions.host.codegen — do not edit. Run `make host-sdks` after changing the schema.
+"""GENERATED from the igni host schema 1.3.0 by ember_code.extensions.host.codegen — do not edit. Run `make host-sdks` after changing the schema.
 
 `ext.host` as an extension's process sees it. Read
 `docs/HOST_OBJECT_MODEL.md` in igni for what each object is.
@@ -22,7 +22,7 @@ from igni_extension.members import (
 )
 from igni_extension.notifications import LocalNotification, Target
 
-SCHEMA_VERSION = "1.2.0"
+SCHEMA_VERSION = "1.3.0"
 
 NotificationTarget = Target
 
@@ -871,6 +871,50 @@ class SettingsChange(BaseModel):
     values: dict[str, JsonValue]
 
 
+class DecisionQuestion(BaseModel):
+    """One typed question about a context. It quotes the context's fields by name in backticks, as in: Is `diff` only a refactor?"""
+
+    model_config = ConfigDict(extra="allow")
+
+    id: str
+    """Its name in the answers: a lowercase name."""
+    kind: str
+    """`choice` (one of `options`), `score` (one of `levels`, lowest first) or `noul` (yes or no — Laya's name for it)."""
+    question: str
+    """The question, up to 500 characters."""
+    options: dict[str, str] | None = None
+    """`choice` only: 2–20 labels, each to what it means (empty when the label says it)."""
+    levels: list[str] | None = None
+    """`score` only: 2–10 level labels, lowest first."""
+
+
+class DecisionAnswer(BaseModel):
+    """One question's answer, with the probabilities it came from."""
+
+    model_config = ConfigDict(extra="allow")
+
+    kind: str
+    answer: str
+    """The option chosen, the level reached, or `yes` / `no`."""
+    confidence: float
+    """The probability of that answer."""
+    probabilities: dict[str, float]
+    """Every option's, level's, or `yes` and `no`'s probability."""
+    score: float | None = None
+    """`score` only: the expected level, 0 the lowest."""
+
+
+class Decision(BaseModel):
+    """Every question's answer about one context."""
+
+    model_config = ConfigDict(extra="allow")
+
+    answers: dict[str, DecisionAnswer]
+    """By question id."""
+    model: str
+    """The Laya checkpoint that answered: `english` or `multilingual`."""
+
+
 class HostAppState(HostObject):
     """Key–value state of the extension's own, kept by the host across restarts. An extension sees only its own keys."""
 
@@ -1714,6 +1758,14 @@ class Host(HostObject):
         self.changed: Signal[Change] = Signal("changed", Change)
         """Anything changed. Carries the member's path and its new value."""
 
+    async def decide(self, context: dict[str, str], questions: list[DecisionQuestion]) -> Decision:
+        """Ask igni's local decision model (Laya) typed questions about a context, in one pass on this machine. `context` is named text fields — at most 8, 6,000 characters in all — that the questions quote in backticks; `questions` are 1–16 `DecisionQuestion`s. A context the model would have to cut is refused (`invalid`), never answered from part of it; a model that cannot be loaded answers `unavailable`. Zero-shot accuracy is modest: measure it on your own data before acting on an answer, and use the probabilities, not just the answer."""
+        return cast(Decision, await self._call("decide", {"context": context, "questions": questions}, Decision))
+
+    async def decide_batch(self, contexts: list[dict[str, str]], questions: list[DecisionQuestion]) -> list[Decision]:
+        """`decide` for up to 16 contexts at once, sharing forward passes. One decision per context, in order."""
+        return cast(list[Decision], await self._call("decide_batch", {"contexts": contexts, "questions": questions}, list[Decision]))
+
 __all__ = [
     "Account",
     "AgentEvent",
@@ -1730,6 +1782,9 @@ __all__ = [
     "Connection",
     "ContentDelta",
     "ContextUsage",
+    "Decision",
+    "DecisionAnswer",
+    "DecisionQuestion",
     "Dialog",
     "DialogChange",
     "Display",

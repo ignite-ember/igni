@@ -90,6 +90,40 @@ describe("bridge.host", () => {
     await expect(posting).resolves.toBeNull();
   });
 
+  it("asks igni's decision model at the root, and an unloadable model is unavailable", async () => {
+    const page = framedPage();
+    const bridge = await page.connected();
+    const questions = [{ id: "urgent", kind: "noul", question: "Is `text` urgent?" }];
+
+    const deciding = bridge.host.decide({ text: "It is down" }, questions);
+    const [request] = page.posted;
+    expect(request).toMatchObject({
+      op: "call",
+      path: "decide",
+      params: { context: { text: "It is down" }, questions },
+    });
+    const decision = {
+      model: "english",
+      answers: {
+        urgent: {
+          kind: "noul",
+          answer: "yes",
+          confidence: 0.8,
+          probabilities: { yes: 0.8, no: 0.2 },
+        },
+      },
+    };
+    page.reply(request.id, { ok: true, result: decision });
+    await expect(deciding).resolves.toEqual(decision);
+
+    const again = bridge.host.decide({ text: "x" }, questions);
+    page.reply(page.posted[1].id, {
+      ok: false,
+      error: { code: "unavailable", message: "igni's decision model could not be loaded" },
+    });
+    await expect(again).rejects.toMatchObject({ code: "unavailable" });
+  });
+
   it("writes a writable property and addresses another window by id", async () => {
     const page = framedPage();
     const bridge = await page.connected();

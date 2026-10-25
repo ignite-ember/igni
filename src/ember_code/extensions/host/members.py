@@ -24,6 +24,7 @@ from urllib.parse import urlsplit
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 
 from ember_code import __version__
+from ember_code.core.decisions import DecisionRequest, DecisionsUnavailable, DecisionTooLong
 from ember_code.extensions.host.errors import HostModelError
 from ember_code.extensions.host.grants import HostGrants
 from ember_code.extensions.host.spec import ErrorCode
@@ -1357,6 +1358,39 @@ class NotificationMembers(Members):
         return self.model.counts_for(c.grants, counts)
 
 
+# ── host.decide ───────────────────────────────────────────────────
+
+
+class DecisionMembers(Members):
+    """Typed questions to igni's local decision model, behind the Bypass guard."""
+
+    @call("decide")
+    async def decide(self, c: Call) -> Any:
+        decisions = await self._decide([c.params["context"]], c.params["questions"])
+        return decisions[0]
+
+    @call("decide_batch")
+    async def decide_batch(self, c: Call) -> Any:
+        return await self._decide(c.params["contexts"], c.params["questions"])
+
+    async def _decide(self, contexts: list[Any], questions: list[Any]) -> list[dict[str, Any]]:
+        try:
+            request = DecisionRequest(contexts=contexts, questions=questions)
+        except ValidationError as exc:
+            first = exc.errors()[0]
+            where = ".".join(str(part) for part in first["loc"])
+            raise HostModelError(
+                ErrorCode.INVALID, f"{where}: {first['msg']}" if where else first["msg"]
+            ) from None
+        try:
+            decided = await self.model.decisions.decide(request)
+        except DecisionTooLong as exc:
+            raise HostModelError(ErrorCode.INVALID, str(exc)) from None
+        except DecisionsUnavailable as exc:
+            raise HostModelError(ErrorCode.UNAVAILABLE, str(exc)) from None
+        return [decision.model_dump(mode="json") for decision in decided]
+
+
 ALL_MEMBERS: tuple[type[Members], ...] = (
     AppMembers,
     AppStateMembers,
@@ -1385,6 +1419,7 @@ ALL_MEMBERS: tuple[type[Members], ...] = (
     PolicyMembers,
     AccountMembers,
     NotificationMembers,
+    DecisionMembers,
 )
 
 __all__ = ["ALL_MEMBERS", "Call", "Members"]

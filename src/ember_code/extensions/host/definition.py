@@ -34,12 +34,17 @@ from ember_code.extensions.host.spec import (
 )
 
 #: The model's version. Semver; see the module docstring.
-SCHEMA_VERSION = "1.2.0"
+SCHEMA_VERSION = "1.3.0"
 
 # ── Permissions ───────────────────────────────────────────────────
 
 PERMISSIONS = (
     PermissionSpec(name="app", doc="igni's display settings, version and connection."),
+    PermissionSpec(
+        name="decide",
+        doc="Ask igni's local decision model (Laya) typed questions about text it sends. "
+        "Runs on this machine; nothing leaves it.",
+    ),
     PermissionSpec(
         name="links",
         doc="Open https links in the person's browser, from the window it is asked about.",
@@ -730,6 +735,55 @@ TYPES = (
         "An extension's settings, as now configured.",
         field("values", "dict[str, json]"),
     ),
+    typedef(
+        "DecisionQuestion",
+        "One typed question about a context. It quotes the context's fields by name in "
+        "backticks, as in: Is `diff` only a refactor?",
+        field("id", "str", "Its name in the answers: a lowercase name."),
+        field(
+            "kind",
+            "str",
+            "`choice` (one of `options`), `score` (one of `levels`, lowest first) or `noul` "
+            "(yes or no — Laya's name for it).",
+        ),
+        field("question", "str", "The question, up to 500 characters."),
+        field(
+            "options",
+            "dict[str, str] | None",
+            "`choice` only: 2–20 labels, each to what it means (empty when the label says it).",
+            optional=True,
+        ),
+        field(
+            "levels",
+            "list[str] | None",
+            "`score` only: 2–10 level labels, lowest first.",
+            optional=True,
+        ),
+    ),
+    typedef(
+        "DecisionAnswer",
+        "One question's answer, with the probabilities it came from.",
+        field("kind", "str"),
+        field("answer", "str", "The option chosen, the level reached, or `yes` / `no`."),
+        field("confidence", "float", "The probability of that answer."),
+        field(
+            "probabilities",
+            "dict[str, float]",
+            "Every option's, level's, or `yes` and `no`'s probability.",
+        ),
+        field(
+            "score",
+            "float | None",
+            "`score` only: the expected level, 0 the lowest.",
+            optional=True,
+        ),
+    ),
+    typedef(
+        "Decision",
+        "Every question's answer about one context.",
+        field("answers", "dict[str, DecisionAnswer]", "By question id."),
+        field("model", "str", "The Laya checkpoint that answered: `english` or `multilingual`."),
+    ),
 )
 
 # ── Objects ───────────────────────────────────────────────────────
@@ -748,6 +802,32 @@ OBJECTS = (
                 "changed",
                 "Change",
                 "Anything changed. Carries the member's path and its new value.",
+            ),
+        ),
+        methods=(
+            method(
+                "decide",
+                "Ask igni's local decision model (Laya) typed questions about a context, in one "
+                "pass on this machine. `context` is named text fields — at most 8, 6,000 "
+                "characters in all — that the questions quote in backticks; `questions` are 1–16 "
+                "`DecisionQuestion`s. A context the model would have to cut is refused "
+                "(`invalid`), never answered from part of it; a model that cannot be loaded "
+                "answers `unavailable`. Zero-shot accuracy is modest: measure it on your own "
+                "data before acting on an answer, and use the probabilities, not just the "
+                "answer.",
+                param("context", "dict[str, str]", "Named text fields."),
+                param("questions", "list[DecisionQuestion]"),
+                result="Decision",
+                permission="decide",
+            ),
+            method(
+                "decide_batch",
+                "`decide` for up to 16 contexts at once, sharing forward passes. One decision "
+                "per context, in order.",
+                param("contexts", "list[dict[str, str]]"),
+                param("questions", "list[DecisionQuestion]"),
+                result="list[Decision]",
+                permission="decide",
             ),
         ),
     ),

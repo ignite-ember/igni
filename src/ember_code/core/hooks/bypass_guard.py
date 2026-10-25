@@ -38,12 +38,8 @@ explicitly allowed, so this would add latency and no protection.
 
 from __future__ import annotations
 
-import asyncio
-import contextlib
-import io
 import json
 import logging
-import os
 import threading
 from collections.abc import Awaitable, Callable
 from pathlib import Path
@@ -52,12 +48,15 @@ from typing import Any
 from pydantic import BaseModel
 
 from ember_code.core.config.schemas.safety import BypassGuardConfig
+from ember_code.core.decisions import Laya, Priority
 from ember_code.core.hooks.bypass_explainer import CallExplainer
 from ember_code.core.hooks.bypass_rules import flag_shell, flag_url, flag_write
 
 logger = logging.getLogger(__name__)
 
-#: The fine-tuned decision checkpoint; ``laya`` pins its revision.
+#: The checkpoint the questions below were measured on; ``laya`` pins its
+#: revision. Extensions get Laya's general checkpoints instead
+#: (:mod:`ember_code.core.decisions.laya`).
 LAYA_MODEL = "typed-decisions"
 
 #: Asked about every checked call, in one forward pass. Wording is the
@@ -163,15 +162,14 @@ while the person reads the question; a string it returns replaces
 
 
 class HarmJudge:
-    """Laya, loaded once per process on first use, run off the event loop."""
+    """The measured questions, asked of the process's shared Laya ahead of anything else."""
 
     _shared: HarmJudge | None = None
     _shared_lock = threading.Lock()
 
-    def __init__(self, model: str = LAYA_MODEL) -> None:
+    def __init__(self, model: str = LAYA_MODEL, laya: Laya | None = None) -> None:
         self._model = model
-        self._router: Any = None
-        self._lock = threading.Lock()
+        self._laya = laya if laya is not None else Laya.shared()
 
     @classmethod
     def shared(cls) -> HarmJudge:
@@ -182,10 +180,10 @@ class HarmJudge:
 
     async def score(self, text: str) -> tuple[float, str]:
         """``(highest violation probability, which question)`` for ``text``."""
-        return await asyncio.to_thread(self._score_sync, text)
-
-    def _score_sync(self, text: str) -> tuple[float, str]:
-        answers = self._load().predict({"tool_call": text}, QUESTIONS)["answers"]
+        result = await self._laya.predict(
+            {"tool_call": text}, QUESTIONS, model=self._model, priority=Priority.APPROVAL
+        )
+        answers = result["answers"]
         probabilities = {
             name: float(answers[name]["noul"])
             for name in ("destructive", "exfiltration", "outside_scope")
@@ -196,58 +194,6 @@ class HarmJudge:
             probabilities["harm_severity"] = float(values[2]) + float(values[3])
         worst = max(probabilities, key=probabilities.__getitem__)
         return probabilities[worst], worst
-
-    def _load(self) -> Any:
-        if self._router is not None:
-            return self._router
-        with self._lock:
-            if self._router is None:
-                self._router = self._build()
-        return self._router
-
-    def _build(self) -> Any:
-        """The router, with download chatter kept off stdout.
-
-        Same reason as :class:`~ember_code.core.embeddings.Embedder`:
-        stdout is the backend's handshake pipe, and a progress bar on it
-        corrupts the READY line. Tried offline first when the bundle is
-        cached, so a warm load does not wait on a network probe; a cached
-        bundle need not hold this checkpoint's subfolder, so a failed
-        offline load falls back to fetching it.
-        """
-        from laya import Router  # noqa: PLC0415 — torch-heavy, load on first use
-        from laya.router import BUNDLE_REPO  # noqa: PLC0415
-
-        from ember_code.core.embeddings import Embedder  # noqa: PLC0415
-
-        if os.environ.get("HF_HUB_OFFLINE") is None and Embedder.is_model_cached(BUNDLE_REPO):
-            os.environ["HF_HUB_OFFLINE"] = "1"
-            try:
-                return self._quietly(lambda: Router(preload=True, default=self._model))
-            except Exception as exc:  # noqa: BLE001 — retried online below
-                logger.debug("laya offline load failed (%s); fetching", type(exc).__name__)
-            finally:
-                del os.environ["HF_HUB_OFFLINE"]
-        return self._quietly(lambda: Router(preload=True, default=self._model))
-
-    @staticmethod
-    def _quietly(build: Callable[[], Any]) -> Any:
-        devnull = os.open(os.devnull, os.O_WRONLY)
-        saved = os.dup(1)
-        bars = os.environ.get("HF_HUB_DISABLE_PROGRESS_BARS")
-        os.environ["HF_HUB_DISABLE_PROGRESS_BARS"] = "1"
-        try:
-            os.dup2(devnull, 1)
-            with contextlib.redirect_stdout(io.StringIO()):
-                return build()
-        finally:
-            os.dup2(saved, 1)
-            os.close(saved)
-            os.close(devnull)
-            if bars is None:
-                del os.environ["HF_HUB_DISABLE_PROGRESS_BARS"]
-            else:
-                os.environ["HF_HUB_DISABLE_PROGRESS_BARS"] = bars
 
 
 class BypassGuard:

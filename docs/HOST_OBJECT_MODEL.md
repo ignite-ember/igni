@@ -180,7 +180,9 @@ window, another extension, or this one.
   SDK maintainers.
 
 Errors carry a code both SDKs raise (`HostError.code`): `not_granted`,
-`not_found`, `invalid`, `read_only`, `stage_2`, `refused`, `failed`.
+`not_found`, `invalid`, `read_only`, `stage_2`, `refused`, `unavailable`
+(what answers it — igni's decision model — could not be started),
+`failed`.
 
 ## The model
 
@@ -244,6 +246,64 @@ opens anything. It needs the `links` permission, shown with the others
 before a super admin approves. Opening a link is not a change to the
 model, so it has no signal; it reaches the window as the `open_external`
 push, which is the model's plumbing like `window_model_changed`.
+
+## Typed decisions on this machine
+
+`host.decide(context, questions)` asks igni's local decision model,
+[Laya](https://huggingface.co/convaiinnovations/laya) (Apache-2.0), typed
+questions about some text, in one forward pass on the person's machine —
+nothing leaves it. The context is named text fields; a question quotes
+them in backticks. Each question is one of Laya's three kinds:
+
+| `kind` | Asks for | Written with |
+|---|---|---|
+| `choice` | one of 2–20 labelled options | `options`: label → what it means (empty when the label says it) |
+| `score` | one level of an ordered scale | `levels`: 2–10 labels, lowest first |
+| `noul` | yes or no (Laya's name) | nothing more |
+
+```python
+decision = await ext.host.decide(
+    {"diff": diff_text},
+    [
+        DecisionQuestion(id="kind", kind="choice", question="What does `diff` do?",
+                         options={"fix": "", "feature": "", "refactor": "no behaviour change"}),
+        DecisionQuestion(id="risky", kind="noul", question="Could `diff` break callers?"),
+    ],
+)
+if decision.answers["risky"].probabilities["yes"] > 0.8:
+    ...
+```
+
+Every answer carries the probabilities it came from (per option, per
+level, or `yes`/`no`) and, for a `score`, the expected level; `model`
+says which checkpoint answered. `host.decide_batch(contexts, questions)`
+asks the same questions of up to 16 contexts, sharing forward passes.
+
+**What it is good for.** Fast, cheap, private triage of short text —
+routing, labelling, a yes/no gate — where a wrong answer is cheap.
+Zero-shot accuracy is modest, and confidence is not always calibrated:
+measure it on your own data before you act on an answer, and act on the
+probabilities, not on `answer` alone. It is not a chat model and cannot
+answer open questions. Extensions get Laya's general checkpoints —
+`english` for English text, `multilingual` for the rest, as Laya routes
+them. The Bypass guard's `typed-decisions` checkpoint is tuned on four
+synthetic workflows and is not offered; an extension that needs a
+fine-tuned model ships and runs its own.
+
+**Limits**, enforced by the host before the model is asked (`invalid`):
+a context has 1–8 fields and at most 6,000 characters; a call has 1–16
+questions, each up to 500 characters with distinct ids; labels are up to
+64 characters and descriptions up to 200. A context the model would have
+to cut is refused (`invalid`) — Laya reads 512 tokens (English) or 1,024,
+questions included — never answered from part of it. A model that cannot
+be loaded is `unavailable`; nothing is guessed.
+
+**Sharing the model.** One Laya serves the whole of igni and answers one
+request at a time. The Bypass guard, which stands between the person and
+an approval, always goes first; extensions wait their turn in order.
+The first call on a machine loads the model, which takes seconds. It
+needs the `decide` permission, shown with the others before a super
+admin approves.
 
 ## An extension's own service is not the host
 

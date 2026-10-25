@@ -82,7 +82,7 @@ person does, so it has no limit.
 ```
 
 `code` is one of `not_granted`, `not_found`, `invalid`, `read_only`,
-`stage_2`, `refused`, `failed` (`ErrorCode` in
+`stage_2`, `refused`, `unavailable`, `failed` (`ErrorCode` in
 `ember_code.extensions.host.spec`). An SDK raises one error type carrying
 `code` and the message; the message is a sentence for the extension's
 author and is not meant to be parsed.

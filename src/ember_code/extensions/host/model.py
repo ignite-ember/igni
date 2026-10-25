@@ -25,6 +25,7 @@ from typing import Any
 from pydantic import BaseModel, ValidationError
 
 from ember_code.backend.workspace_watch import GitWorkspace, Head
+from ember_code.core.decisions import Laya
 from ember_code.extensions.events import HostTopic
 from ember_code.extensions.host.backend import HostBackend
 from ember_code.extensions.host.broadcasts import BroadcastSignals
@@ -96,6 +97,7 @@ class HostModel:
         store: ExtensionStore | None = None,
         notifications: Any = None,
         notices: Any = None,
+        decisions: Laya | None = None,
         schema: HostSchema = HOST_SCHEMA,
         strict: bool = False,
     ) -> None:
@@ -108,6 +110,8 @@ class HostModel:
                 :class:`~ember_code.notifications.extension_notices.ExtensionNoticeReceiver`
                 for ``host.notifications.notify`` — the same check a notice
                 arriving over MCP passes.
+            decisions: Laya, for ``host.decide``; the process's shared
+                one unless a test brings its own.
             strict: Check every answer against the schema and fail loudly
                 when it does not fit. For tests: in production an answer
                 is sent as the backend gave it.
@@ -119,6 +123,7 @@ class HostModel:
         self.web_home = ExtensionWebHome(self.store)
         self.notifications = notifications
         self.notices = notices
+        self.decisions = decisions if decisions is not None else Laya.shared()
         self.strict = strict
         self.types = SchemaTypes(schema)
         self.state = HostState()
