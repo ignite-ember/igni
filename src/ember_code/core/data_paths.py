@@ -34,6 +34,18 @@ logger = logging.getLogger(__name__)
 _GIT_TIMEOUT_SECONDS = 5.0
 
 
+def canonical_project_dir(project_dir: str | Path) -> Path:
+    """The one spelling of ``project_dir`` every per-project path is built from.
+
+    ``~`` expanded, symlinks resolved, made absolute — so ``/var/x`` and
+    ``/private/var/x`` on macOS, a relative path and a trailing slash all
+    name the same project, and the backend, ``igni migrate`` and every
+    store open the same ``state.db``. ``strict=False``: a project that
+    does not exist yet still has a name.
+    """
+    return Path(str(project_dir)).expanduser().resolve(strict=False)
+
+
 def resolve_project_id(project_dir: str | Path) -> str:
     """A stable id for ``project_dir``, for naming its data directory.
 
@@ -43,13 +55,14 @@ def resolve_project_id(project_dir: str | Path) -> str:
     truncated — long enough that a collision across one user's
     projects is not worth reasoning about.
     """
-    project_id = str(Path(project_dir))
+    project = canonical_project_dir(project_dir)
+    project_id = str(project)
     try:
         result = subprocess.run(
             ["git", "remote", "get-url", "origin"],
             capture_output=True,
             text=True,
-            cwd=str(project_dir),
+            cwd=str(project),
             timeout=_GIT_TIMEOUT_SECONDS,
         )
         if result.returncode == 0 and result.stdout.strip():
@@ -86,6 +99,7 @@ def state_db_path(project: str | Path, *, data_dir: str | Path = DEFAULT_DATA_DI
 
 
 __all__ = [
+    "canonical_project_dir",
     "data_root",
     "global_db_path",
     "project_data_dir",

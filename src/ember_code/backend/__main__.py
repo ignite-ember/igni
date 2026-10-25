@@ -48,6 +48,7 @@ from ember_code.backend.schemas_rpc import (
     SkillDefinition,
     UpdateAvailable,
 )
+from ember_code.core.data_paths import canonical_project_dir
 
 __all__ = [
     "AttachSessionResult",
@@ -144,13 +145,9 @@ def main(
     warn_if_unsupported_python()
 
     extra_dirs = [Path(d) for d in additional_dirs] if additional_dirs else None
-    # Canonicalise the project dir so two clients pointing at the
-    # "same" folder via slightly different paths (``/tmp`` vs
-    # ``/private/tmp`` on macOS, symlink resolution, trailing slash)
-    # both land on the same ``.ember/state.db`` and see identical
-    # session lists. ``strict=False`` lets us keep going if the
-    # directory doesn't yet exist — startup will create it.
-    resolved_project = Path(project_dir).resolve(strict=False)
+    # One spelling of the project dir, shared with ``igni migrate`` and
+    # every store, so all of them open the same ``state.db``.
+    resolved_project = canonical_project_dir(project_dir)
     app = BackendApp(
         socket_path=socket_path,
         ws_port=ws_port,

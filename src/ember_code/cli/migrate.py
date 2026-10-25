@@ -15,7 +15,7 @@ from pathlib import Path
 import click
 
 from ember_code.core.config.settings import Settings
-from ember_code.core.data_paths import state_db_path
+from ember_code.core.data_paths import canonical_project_dir, state_db_path
 from ember_code.core.db.schema import HEAD_REVISION, SchemaRevision, keeper
 
 
@@ -34,7 +34,7 @@ from ember_code.core.db.schema import HEAD_REVISION, SchemaRevision, keeper
 )
 def migrate(project_dir: Path | None, data_dir: Path | None) -> None:
     """Migrate a project's database to the current schema."""
-    project = project_dir if project_dir is not None else Path.cwd()
+    project = canonical_project_dir(project_dir if project_dir is not None else Path.cwd())
     data = data_dir if data_dir is not None else Path(Settings().storage.data_dir)
     path = state_db_path(project, data_dir=data)
     before = SchemaRevision.of(path)
