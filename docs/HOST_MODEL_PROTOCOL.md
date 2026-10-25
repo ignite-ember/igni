@@ -139,6 +139,24 @@ signals reach the windows as the `host_signal` push
 (`{extension_id, signal, value}`), and each window posts them into that
 extension's frames, where the bridge calls the handlers it has.
 
+### The service token
+
+`bridge.service` asks the window for a token for the extension's own
+service — not a host-model request, and no `permissions.host` grant:
+
+```ts
+{igni: 1, kind: "service-token", nonce, id: "s1"}
+{igni: 1, kind: "service-token-reply", id: "s1", ok: true, token: "…", expiresIn: 600}
+```
+
+The message names no audience. The window forwards it as the
+`extension_service_token` RPC with the frame's extension as `caller`,
+and the backend answers for the service recorded on that extension's
+origin (`PageServiceTokens`) from the same exchange and cache as the
+process's token endpoint. `hello` carries that service as `serviceUrl`
+(`null` when there is none). The bridge keeps the token until a minute
+before it expires.
+
 ## Versions
 
 `protocol` (in `hello`) is this page's version: bumped only for a change

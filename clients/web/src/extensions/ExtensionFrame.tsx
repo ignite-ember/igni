@@ -119,6 +119,28 @@ export interface ExtensionFrameProps {
     error?: { code: string; message: string };
   }>;
   /**
+   * Fetches a token for this extension's own service
+   * (`bridge.service`).
+   *
+   * The caller asks the backend as this extension — the
+   * `extension_service_token` RPC with the frame's extension as
+   * `caller` — and the backend answers for the service recorded on
+   * that extension's origin. Nothing the frame sends names an
+   * audience. Absent, every request is refused here.
+   */
+  onServiceToken?: () => Promise<{
+    ok: boolean;
+    token?: string;
+    expiresIn?: number;
+    error?: string;
+  }>;
+  /**
+   * The extension's own service, sent in `hello` as
+   * `bridge.service.url`. The frame's CSP admits its origin and
+   * nothing beyond its declared egress.
+   */
+  serviceUrl?: string | null;
+  /**
    * Host-model signals for this extension, oldest first, each with a
    * monotonic `n`.
    *
@@ -178,6 +200,8 @@ export function ExtensionFrame({
   onClose,
   onLocation,
   onHost,
+  onServiceToken,
+  serviceUrl,
   signals,
   params,
   settings,
@@ -193,8 +217,24 @@ export function ExtensionFrame({
   // Read through refs so the message listener does not have to be torn
   // down and rebuilt whenever a caller passes a new closure — a
   // re-registered listener drops messages in flight.
-  const handlers = useRef({ onCall, onNavigate, onClose, onLocation, onHost, allow });
-  handlers.current = { onCall, onNavigate, onClose, onLocation, onHost, allow };
+  const handlers = useRef({
+    onCall,
+    onNavigate,
+    onClose,
+    onLocation,
+    onHost,
+    onServiceToken,
+    allow,
+  });
+  handlers.current = {
+    onCall,
+    onNavigate,
+    onClose,
+    onLocation,
+    onHost,
+    onServiceToken,
+    allow,
+  };
 
   const post = useCallback(
     (message: unknown) => {
@@ -222,8 +262,40 @@ export function ExtensionFrame({
         onClose: close,
         onLocation: located,
         onHost: ask,
+        onServiceToken: tokenFor,
         allow: granted,
       } = handlers.current;
+
+      if (message.kind === "service-token") {
+        const { id } = message;
+        const refuse = (text: string) =>
+          post({
+            igni: BRIDGE_VERSION,
+            kind: "service-token-reply",
+            id,
+            ok: false,
+            error: text,
+          });
+        if (tokenFor === undefined) {
+          refuse("this window does not fetch service tokens");
+          return;
+        }
+        void tokenFor().then(
+          (reply) =>
+            post({
+              igni: BRIDGE_VERSION,
+              kind: "service-token-reply",
+              id,
+              ok: reply.ok,
+              token: reply.token,
+              expiresIn: reply.expiresIn,
+              error: reply.error,
+            }),
+          (error: unknown) =>
+            refuse(error instanceof Error ? error.message : String(error)),
+        );
+        return;
+      }
 
       if (message.kind === "host") {
         const { id, op, path, window: target, params: args, value, signals: wires } =
@@ -350,13 +422,14 @@ export function ExtensionFrame({
       extensionId,
       params: sent,
       settings: settings ?? {},
+      serviceUrl: serviceUrl ?? null,
       theme,
       // Read at send time, not at render time: a token defined in a
       // media query resolves to what the user is actually looking at
       // only once the document has settled.
       tokens: readThemeTokens(),
     });
-  }, [extensionId, nonce, params, post, settings, theme]);
+  }, [extensionId, nonce, params, post, serviceUrl, settings, theme]);
 
   // Parameters that change under a mounted frame.
   //

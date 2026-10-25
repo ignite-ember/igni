@@ -463,3 +463,70 @@ describe("the host object model, from a frame", () => {
     ]);
   });
 });
+
+describe("the extension's own service, from a frame", () => {
+  it("names the service in hello", () => {
+    const { frame } = mount({ serviceUrl: "https://notes.example.com" });
+    handshake(frame);
+    const hello = repliesTo(frame).find(
+      (m) => (m as { kind?: string }).kind === "hello",
+    ) as { serviceUrl?: string | null };
+    expect(hello.serviceUrl).toBe("https://notes.example.com");
+  });
+
+  it("says there is none when it has none", () => {
+    const { frame } = mount();
+    handshake(frame);
+    const hello = repliesTo(frame).find(
+      (m) => (m as { kind?: string }).kind === "hello",
+    ) as { serviceUrl?: string | null };
+    expect(hello.serviceUrl).toBeNull();
+  });
+
+  it("fetches the token as this extension and posts it back", async () => {
+    const onServiceToken = vi.fn(async () => ({
+      ok: true,
+      token: "t1",
+      expiresIn: 600,
+    }));
+    const { frame } = mount({ onServiceToken });
+    const nonce = handshake(frame);
+
+    // Anything else the frame puts in the message is not read: the
+    // audience is the backend's to decide.
+    send(frame, { kind: "service-token", nonce, id: "s1", audience: "https://elsewhere" });
+
+    await waitFor(() =>
+      expect(repliesTo(frame)).toContainEqual({
+        igni: BRIDGE_VERSION,
+        kind: "service-token-reply",
+        id: "s1",
+        ok: true,
+        token: "t1",
+        expiresIn: 600,
+        error: undefined,
+      }),
+    );
+    expect(onServiceToken).toHaveBeenCalledWith();
+  });
+
+  it("refuses when this window fetches no tokens", async () => {
+    const { frame } = mount();
+    const nonce = handshake(frame);
+    send(frame, { kind: "service-token", nonce, id: "s2" });
+    await waitFor(() =>
+      expect(repliesTo(frame)).toContainEqual(
+        expect.objectContaining({ kind: "service-token-reply", id: "s2", ok: false }),
+      ),
+    );
+  });
+
+  it("asks nothing for a request without the issued nonce", async () => {
+    const onServiceToken = vi.fn(async () => ({ ok: true, token: "t" }));
+    const { frame } = mount({ onServiceToken });
+    handshake(frame);
+    send(frame, { kind: "service-token", nonce: "forged", id: "s3" });
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    expect(onServiceToken).not.toHaveBeenCalled();
+  });
+});

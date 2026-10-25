@@ -50,6 +50,7 @@ class ExtensionsRpcHandler(RpcHandler):
                     origins.url_for(extension_id) if origins is not None else None,
                     store.settings(entry.manifest),
                     web_home.url_for(entry.manifest),
+                    origins.service_url_for(extension_id) if origins is not None else None,
                 )
                 for extension_id in registry.ids()
                 if (entry := registry.get(extension_id)) is not None

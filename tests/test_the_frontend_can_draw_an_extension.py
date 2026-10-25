@@ -138,6 +138,10 @@ async def test_the_manifest_itself_does_not_go_to_the_browser(wired, tmp_path):
         # Its home on the web, the service's `client_uri`, for "Open
         # on the web". Public by nature: it is the service's address.
         "web_url",
+        # Its own service, as its page reaches it (`bridge.service.url`)
+        # — the origin its CSP already admits. Also the service's
+        # address, and no credential: the token is fetched separately.
+        "service_url",
     }
 
 

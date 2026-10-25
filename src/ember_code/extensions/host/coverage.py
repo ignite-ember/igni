@@ -63,6 +63,14 @@ NOT_REACHABLE: tuple[Unreachable, ...] = (
         "`host_signal` and `window_model_changed` pushes",
         why="They are how the model reaches a page and a window, not things igni does.",
     ),
+    Unreachable(
+        key="service",
+        what="A page's token for its own service (`extension_service_token`)",
+        why="Not igni's to model: it is how a page reaches its own service "
+        "(`bridge.service`), the page's half of what `ext.service` is for the process. "
+        "No `permissions.host` grant — having a service is the grant — and the audience "
+        "is that extension's own service, never one it names.",
+    ),
 )
 
 _ROWS = {row.key for row in NOT_REACHABLE}
@@ -173,6 +181,7 @@ RPC_UNREACHABLE: dict[RpcMethod, str] = {
     RpcMethod.SHUTDOWN: "shutdown",
     RpcMethod.HOST_MODEL: "channel",
     RpcMethod.WINDOW_MODEL: "channel",
+    RpcMethod.EXTENSION_SERVICE_TOKEN: "service",
 }
 
 #: Prefixes whose every method is unreachable, by row.

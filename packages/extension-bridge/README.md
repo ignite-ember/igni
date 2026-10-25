@@ -38,6 +38,31 @@ window it is framed in. The types (`Run`, `SessionChange`, …) are
 exported from the package; `hostModel.generated.ts` is generated from
 igni's host schema and `SCHEMA_VERSION` says which version.
 
+## Its own service: `bridge.service`
+
+The page talks to the service that shipped the extension directly, as
+the signed-in person. igni fetches a ten-minute token for it — the same
+exchange as the process's `ext.service`, audience that service and no
+other — keeps it and renews it before it expires.
+
+```ts
+bridge.service.url;                                    // null when it has none
+const res = await bridge.service.fetch("/v1/notes");   // Authorization: Bearer …
+const socket = await bridge.service.websocket("/v1/rooms/a");
+socket.addEventListener("message", (e) => render(JSON.parse(e.data)));
+```
+
+`websocket` resolves once the socket is open and has sent
+`{"type": "auth", "token": …}` as its first frame (a browser socket
+cannot set a header); pass `{ authFrame: (token) => … }` for a service
+that reads something else. `fetch` retries once with a new token after
+a `401`. Both refuse a path on any other origin with a `ServiceError`
+(`other_origin`): the token goes to the service only. No
+`permissions.host` grant is needed. The frame's CSP admits the
+service's origin over `https`/`wss` and the hosts declared in
+`permissions.egress`, nothing else; a cross-origin `fetch` also needs
+the service to allow the page's loopback origin in CORS.
+
 ## Installing
 
 From igni's npm registry, not npmjs — the `@igni` scope is mapped to it,

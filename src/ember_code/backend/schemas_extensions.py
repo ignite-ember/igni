@@ -95,6 +95,10 @@ class ExtensionSummary(BaseModel):
     #: ``client_uri`` — when one is known. See
     #: :mod:`ember_code.extensions.web_home`.
     web_url: str | None = None
+    #: Its own service, as its page reaches it (``bridge.service.url``),
+    #: when it has one a page may reach — the origin its frame's CSP
+    #: admits. The host passes it to the frame in ``hello``.
+    service_url: str | None = None
 
     @classmethod
     def of(
@@ -103,6 +107,7 @@ class ExtensionSummary(BaseModel):
         origin: str | None,
         values: dict[str, Any] | None = None,
         web_url: str | None = None,
+        service_url: str | None = None,
     ) -> ExtensionSummary:
         manifest = entry.manifest
         return cls(
@@ -120,6 +125,7 @@ class ExtensionSummary(BaseModel):
             values=dict(values or {}),
             host=list(manifest.permissions.host),
             web_url=web_url,
+            service_url=service_url,
         )
 
 
@@ -129,6 +135,21 @@ def _page(page: PageContribution) -> ExtensionPage:
 
 def _menu(entry: MenuContribution) -> ExtensionMenuEntry:
     return ExtensionMenuEntry(label=entry.label, command=entry.command, desc=entry.desc)
+
+
+class PageTokenReply(BaseModel):
+    """``extension_service_token``'s answer: a page's token for its service.
+
+    ``ok: false`` with a sentence when there is none to give — nobody
+    signed in, no service — because a page shows that as a state.
+    """
+
+    ok: bool
+    access_token: str = ""
+    #: Seconds it has left. The bridge renews a little before.
+    expires_in: int = 0
+    service_url: str = ""
+    error: str = ""
 
 
 class ExtensionListResult(BaseModel):

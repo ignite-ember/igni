@@ -61,7 +61,8 @@ def test_declared_hosts_reach_the_csp():
         manifest_of(permissions={"egress": ["ledger.internal", "vault.internal:8200"]})
     )
     assert permissions.egress.csp_connect_src() == (
-        "'self' https://ledger.internal https://vault.internal:8200"
+        "'self' https://ledger.internal wss://ledger.internal "
+        "https://vault.internal:8200 wss://vault.internal:8200"
     )
 
 

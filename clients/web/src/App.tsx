@@ -3685,6 +3685,25 @@ export default function App() {
                         request.path === "ui.show_dialog" ? 24 * 3_600_000 : undefined,
                       )
                   }
+                  // `bridge.service`: a token for this extension's own
+                  // service. Asked as this extension, so the backend
+                  // decides the audience — never the frame.
+                  onServiceToken={() =>
+                    client
+                      .asExtension(extension.id)
+                      .rpc<{
+                        ok: boolean;
+                        access_token?: string;
+                        expires_in?: number;
+                        error?: string;
+                      }>("extension_service_token", {})
+                      .then((reply) => ({
+                        ok: reply.ok,
+                        token: reply.access_token,
+                        expiresIn: reply.expires_in,
+                        error: reply.error,
+                      }))
+                  }
                   onClose={goChat}
                   // Every call carries its caller, which is what lets
                   // the backend enforce this extension's

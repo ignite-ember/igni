@@ -7,3 +7,4 @@
 export * from "./bridge";
 export * from "./hostModel";
 export * from "./hostModel.generated";
+export * from "./service";

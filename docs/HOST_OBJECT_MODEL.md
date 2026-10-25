@@ -224,6 +224,42 @@ RFC 7591's "home page of the client" — or, for a development install,
 its `serviceUrl` setting. igni shows it as **Open on the web** on the
 extension's row and above its page.
 
+## An extension's own service is not the host
+
+The host is for host things. An extension's page and process talk to
+**their own service** directly — the service that shipped the extension
+(the distribution record's `service_url`, or a development install's
+`serviceUrl` setting): the process as `ext.service`, the page as
+`bridge.service`:
+
+```ts
+const notes = await bridge.service.fetch("/v1/notes");          // the token attached
+const room = await bridge.service.websocket("/v1/rooms/a");     // opened, then {"type":"auth","token"} sent
+bridge.service.url;                                             // null when it has none
+await bridge.service.token();                                   // kept, renewed before it expires
+```
+
+What igni contributes is the one thing neither can do for itself: trade
+the person's igni session for a ten-minute token whose audience is that
+service (RFC 8693). The process asks the loopback token endpoint with
+its secret; the page asks its window over the bridge, the window asks
+the backend as the frame's extension (`extension_service_token`), and
+both are answered from one exchange and one cache. Neither names an
+audience: igni looks it up from which extension is asking, so a page
+cannot get another extension's token, nor one for an egress host.
+
+**No `permissions.host` grant.** Having a service is the grant. The
+service is the one the super admin approved and that signed the bundle,
+the process has always been given this token without one, and a page is
+the same extension's code from the same signed bundle — a grant would
+be a second approval of the same decision, and an extension without it
+would simply route the same calls through its process. What a grant
+would guard — the audience — is already fixed by igni.
+
+The frame's CSP admits the service's origin (`https` and `wss`) and
+the extension's declared `permissions.egress`, and nothing else; the
+rules are EXTENSIBILITY §6, *A page and its own service*.
+
 ## Not reachable
 
 | What | Why |
@@ -233,6 +269,7 @@ extension's row and above its page.
 | `shutdown` | Quitting igni is the person's decision. |
 | `codeindex_*` | These are not the floor. They belong to the CodeIndex extension, and they leave the host as it takes them over. |
 | The model's own plumbing: the `host_model` and `window_model` RPCs, and the `host_signal` and `window_model_changed` pushes | They are how the model reaches a page and a window, not things igni does. |
+| A page's token for its own service (`extension_service_token`) | Not igni's to model: it is how a page reaches its own service (`bridge.service`), the page's half of what `ext.service` is for the process. No `permissions.host` grant — having a service is the grant — and the audience is that extension's own service, never one it names. |
 
 Anything else missing from this table is a bug in it.
 

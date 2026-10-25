@@ -48,6 +48,7 @@ from ember_code.extensions.registry import ExtensionRegistry
 from ember_code.extensions.rpc import ExtensionRpc
 from ember_code.extensions.service_token import (
     CredentialsSession,
+    PageServiceTokens,
     ServiceTokenEndpoint,
     ServiceTokenExchange,
 )
@@ -495,9 +496,14 @@ class BackendApp:
         settings = self._backend.settings
         store = ExtensionStore()
         session = CredentialsSession(settings.auth.credentials_file)
-        self._service_tokens = ServiceTokenEndpoint(
-            ServiceTokenExchange(api_url=self._igni_api_url, session=session)
-        )
+        # One exchange, one cache: an extension's process and its page
+        # ask for the same token and igni is asked once.
+        exchange = ServiceTokenExchange(api_url=self._igni_api_url, session=session)
+        self._service_tokens = ServiceTokenEndpoint(exchange)
+        if self._orchestrator is not None and self._origins is not None:
+            self._orchestrator.attach_page_tokens(
+                PageServiceTokens(origins=self._origins, exchange=exchange)
+            )
         installer = ExtensionInstaller(
             registry=self._extensions.registry,
             rpc=self._extensions,

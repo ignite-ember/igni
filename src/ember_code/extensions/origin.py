@@ -192,6 +192,7 @@ class ExtensionOrigin:
         *,
         frame_ancestors: Iterable[str] = (),
         connect_src: str = "'self'",
+        service_url: str | None = None,
         host: str = LOOPBACK,
     ) -> None:
         """
@@ -207,10 +208,19 @@ class ExtensionOrigin:
                 the bridge is a separate piece of work, and until it
                 exists an extension that could be framed by anything
                 would be a surface with no one minding it.
+            connect_src: The CSP's ``connect-src``, from
+                :meth:`~ember_code.extensions.permissions.Egress.csp_connect_src`.
+            service_url: The extension's own service, whose origin
+                ``connect_src`` already admits — the page's
+                ``bridge.service.url``, and the one audience a token is
+                fetched for on this page's behalf (the same URL its
+                process's token is for). ``None`` when it has no service
+                a page may reach.
             host: Override only in tests that need a second loopback
                 address. It is never correct to bind this off-host.
         """
         self._extension_id = extension_id
+        self._service_url = service_url
         self._root = root.resolve()
         self._frame_ancestors = tuple(frame_ancestors)
         self._connect_src = connect_src
@@ -232,6 +242,11 @@ class ExtensionOrigin:
         """The ``connect-src`` this origin serves, for comparison on
         re-serve."""
         return self._connect_src
+
+    @property
+    def service_url(self) -> str | None:
+        """The extension's own service, as its page reaches it."""
+        return self._service_url
 
     @property
     def port(self) -> int:
@@ -504,11 +519,10 @@ class ExtensionOrigin:
     def _csp(self) -> str:
         """What the extension's page may do.
 
-        Itself, and whatever ``permissions.egress`` declared. The
-        default is itself and nothing else: an extension talks to the
-        backend through the bridge, so a page that can open its own
-        connections is a page that can leave with whatever it was
-        shown.
+        Itself, its own service, and whatever ``permissions.egress``
+        declared. With neither, it is itself and nothing else: a page
+        that can open connections nobody reviewed is a page that can
+        leave with whatever it was shown.
 
         That default used to be the only option — this said declared
         egress "widens ``connect-src`` here" while taking no egress
@@ -567,7 +581,12 @@ class ExtensionOrigins:
         return len(self._origins)
 
     async def serve(
-        self, extension_id: str, root: Path, *, connect_src: str = "'self'"
+        self,
+        extension_id: str,
+        root: Path,
+        *,
+        connect_src: str = "'self'",
+        service_url: str | None = None,
     ) -> ExtensionOrigin:
         """Start an origin for one extension, or return the running one.
 
@@ -579,7 +598,11 @@ class ExtensionOrigins:
         async with self._lock:
             existing = self._origins.get(extension_id)
             if existing is not None:
-                if existing.root == root.resolve() and existing.connect_src == connect_src:
+                if (
+                    existing.root == root.resolve()
+                    and existing.connect_src == connect_src
+                    and existing.service_url == service_url
+                ):
                     return existing
                 # A changed root *or* a changed policy. Reusing a
                 # listener whose CSP came from the previous manifest
@@ -592,6 +615,7 @@ class ExtensionOrigins:
                 root,
                 frame_ancestors=self._frame_ancestors,
                 connect_src=connect_src,
+                service_url=service_url,
             )
             await origin.start()
             self._origins[extension_id] = origin
@@ -601,6 +625,11 @@ class ExtensionOrigins:
         """Where this extension's UI is, or ``None`` if it has none."""
         origin = self._origins.get(extension_id)
         return origin.url if origin is not None else None
+
+    def service_url_for(self, extension_id: str) -> str | None:
+        """The service this extension's page may reach, or ``None``."""
+        origin = self._origins.get(extension_id)
+        return origin.service_url if origin is not None else None
 
     def urls(self) -> dict[str, str]:
         """Every running origin, for the frontend to load frames from."""

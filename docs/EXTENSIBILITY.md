@@ -544,17 +544,17 @@ Optional, and packaging-independent *within a single-user backend*: the client i
 
 - **Served on a loopback port of its own**, one listener per extension, by the backend the client is talking to. Not `/ext/<id>/` under one port, which is what this said first: a path prefix is a naming convention the browser has never heard of, so every extension would share `localStorage`, `IndexedDB` and the right to reach into the next one's frame. A port is part of an origin; a path is not. Entitlement and the contract check are enforced before the listener starts rather than before each byte.
 - **Framed** with `sandbox="allow-scripts allow-forms allow-same-origin"`. The frame gets a real origin — its own port — and `allow-same-origin` is safe here precisely because that origin is not the host's: the frame cannot reach the embedder's document, storage or cookies, and the familiar "allow-scripts plus allow-same-origin lets a frame drop its own sandbox" applies to a frame that is same-origin *with its embedder*, which this never is.
-- **Per-extension CSP**: `default-src 'self'`, and `connect-src` widened only by declared egress. The bundle cannot open an undeclared socket, which is what makes egress auditable. The bridge is `postMessage` and is not governed by CSP at all, so "no `connect-src` beyond the bridge" — the earlier wording — meant `'none'` and would have blocked the extension from loading its own data files.
+- **Per-extension CSP**: `default-src 'self'`, and `connect-src` is `'self'`, the extension's **own service** and its **declared egress** — each as `https://` and `wss://` origins, nothing wider (§6, *A page and its own service*). The bundle cannot open an undeclared socket, which is what makes egress auditable. The bridge is `postMessage` and is not governed by CSP at all, so "no `connect-src` beyond the bridge" — the earlier wording — meant `'none'` and would have blocked the extension from loading its own data files.
 
 > **Why `allow-same-origin` is present**, measured in Chromium against two real origins rather than argued from the spec. Without it the frame has an opaque origin and **its own `panel.js` does not load** — for a module script the blocker is CORS rather than CSP, since from an opaque origin fetching its own file is a cross-origin request, and `'self'` would refuse the rest. The frame renders and nothing in it runs.
 >
 > The second reason is the one that decides the bridge. A `postMessage` from an opaque origin arrives at the host as `origin: "null"`, so the host cannot tell one extension from another, and the origin check every inbound message depends on has nothing to check. With a port each, `e.origin` is that extension's own `http://127.0.0.1:<port>`.
 >
 > These two bullets used to specify an opaque origin *and* `default-src 'self'`. They were coherent only while every extension shared one port, where an opaque origin was the only isolation on offer.
-- **Bridge API, as built**: `rpc`, `navigate`, `close`, `params`/`onParams`, `settings`, `host`/`on` (the host object model and its signals), `setLocation`, `theme`/`onTheme`, `tokens`. Origin, source window and per-session nonce checked on every inbound message.
+- **Bridge API, as built**: `rpc`, `navigate`, `close`, `params`/`onParams`, `settings`, `host`/`on` (the host object model and its signals), `service` (the extension's own service: `url`, `token()`, `fetch(path, init)`, `websocket(path)`), `setLocation`, `theme`/`onTheme`, `tokens`. Origin, source window and per-session nonce checked on every inbound message.
 
   `settings` is what `contributes.settings` is configured to, as an administrator left it. It is fixed for the life of the frame — a change applies at the next mount — so there is no `onSettings`. It is a separate namespace from `params` on purpose: `params` is *where you are*, replayed from `setLocation`, and this is *how you are set up*. One namespace would make a setting named `doc` and a link carrying `?doc=` the same key.
-- **Bridge API, not built**: `identity`, `setTitle`, `setStatus`, `storage`, and per-call budgets or cancellation. This list used to be written in the present tense alongside the one above, which told an author that live push was solved. `HostMessage` is `hello | theme | params | result | host-reply | signal`: a page subscribes to host-model signals at runtime with `bridge.on(signal, fn)`, granted by `permissions.host`, so following what happens in igni does not mean polling.
+- **Bridge API, not built**: `identity`, `setTitle`, `setStatus`, `storage`, and per-call budgets or cancellation. This list used to be written in the present tense alongside the one above, which told an author that live push was solved. `HostMessage` is `hello | theme | params | result | host-reply | signal | service-token-reply`: a page subscribes to host-model signals at runtime with `bridge.on(signal, fn)`, granted by `permissions.host`, so following what happens in igni does not mean polling.
 
   `notify` means a message in *igni's* chrome. An extension's own toasts, inside its own frame, are published as `ToastHost`/`useToast` — the two are not interchangeable, and only something the user must see after navigating away belongs to the host.
 
@@ -562,7 +562,7 @@ Optional, and packaging-independent *within a single-user backend*: the client i
 
   `storage` stays missing, but it is no longer the only way to keep a place. Each extension gets an ephemeral port, a port is part of an origin, so `localStorage` is wiped whenever the backend restarts. `setLocation` is the supported way to be restorable: the guest says where it is, the host folds that into its own URL and replays it in the next `hello`. Strings only, and small — it ends up in an address bar.
 
-**A capability UI never holds a credential and never opens a socket.** Every privileged call goes through the backend, where credentials already live.
+**A capability UI never holds the person's igni session.** What it may hold is a ten-minute token for its own service, which igni fetches for it (`bridge.service`), and it opens connections only to that service and to its declared egress. Everything igni does on its behalf goes through the host model.
 
 **The dividing rule:** the iframe owns pages; json-render owns anything inline in the chat stream. Per-message iframes wreck scrolling, selection and performance.
 
@@ -598,7 +598,7 @@ Declared, admin-granted, base-enforced, deny by default: `workspace` (none/read/
 | `rpc` | `ExtensionRegistry.authorise`, on every call | Complete. |
 | `host` | `HostModel.handle`, on every request from the process's socket and the page's bridge; and at dispatch, for every signal | Complete for what igni does on the extension's behalf: an ungranted object answers `not_granted` and its signals are never sent; signal contents are filtered by `workspace` and `workspacePaths`. |
 | `tools` | tool registration, which is igni's | Complete. A service may expose what it likes; what reaches the model is this list. |
-| `egress` | the page's `connect-src`, written from the manifest; and the endpoint host igni itself dials | **The UI, completely. Not the service's own process** — confining that needs an OS sandbox igni does not apply. A sidecar can still open its own sockets. |
+| `egress` | the page's `connect-src`, written from the manifest and the extension's own service, `https`/`wss` only; and the endpoint host igni itself dials, `https` only | **The UI, completely. Not the service's own process** — confining that needs an OS sandbox igni does not apply. A sidecar can still open its own sockets. |
 | `workspace` | what igni *tells* a service, as `IGNI_WORKSPACE*` | An extension that was never granted the workspace is not told where it is. A service that goes looking anyway is not stopped — same OS-sandbox gap. |
 | `secrets` | resolution: an undeclared name is never looked up, and the resolver is the deployment's | The value arrives in the service's environment as `IGNI_SECRET_<NAME>`. **Not a handle** — see below. |
 | provenance | the distribution sync, before a bundle is stored, and the installer, which trusts only a recorded distribution | Complete. The JWS covers the archive's SHA-256, so changing any byte — a permission, a file — breaks it. |
@@ -608,6 +608,23 @@ Declared, admin-granted, base-enforced, deny by default: `workspace` (none/read/
 **The two gaps worth naming to a customer** are the same one twice: `egress` and `workspace` are enforced where igni decides, not where the extension acts. Closing them means running a sidecar under an OS sandbox — a network namespace and a mount namespace — which is the same work as container supervision and is not started.
 
 A capability that asks for more on upgrade **does not get it silently**; it stays at its old grants until an admin accepts. Permission drift is how extension ecosystems rot.
+
+### A page and its own service
+
+An extension's page and process talk to **their own service** directly; the host is for host things. An extension is not stopped from calling anywhere else either — provided it says where, and the person approving it can read that. The rules:
+
+- **`connect-src` is the page itself, its own service, and its declared egress. Nothing else.** The service is the one that shipped the extension — the distribution record's `service_url`, or a development install's `serviceUrl` setting — and needs no declaration: it is the extension's. Every other host is in `permissions.egress`, shown to the super admin on the Services page before approval, and enforced by the CSP (`Egress.csp_connect_src`). No service known, none in the CSP.
+- **`https` and `wss` only.** Each origin is written with its scheme — `https://host` and `wss://host` — never scheme-less, which in a CSP matches any scheme. Plain `http`/`ws` only to this machine (`localhost`, `127.0.0.1`, `::1`) and only with `IGNI_DEV_EXTENSIONS` set; a plain-http service anywhere else is not given to the page at all (`ServiceOrigin.parse`). The same rule holds where igni dials an endpoint itself (`Egress.check_endpoint`).
+- **Exact origins.** The manifest schema allows `host` or `host:port` — no scheme, path or wildcard — and the service contributes its origin, not its URL. There is nothing to widen.
+- **The token goes to the extension's own service only.** igni fetches it with the same exchange as the process's (audience: the service's URL) and the page asks without naming an audience — the backend looks it up from the caller (`PageServiceTokens`). `bridge.service.fetch` and `.websocket` refuse a path that resolves to another origin, so the token is never attached to an egress host. An egress host is reachable, not trusted.
+- **No `permissions.host` grant for it.** Having a service is the grant: the process has always been given this token, and the page is the same extension from the same signed bundle (see `docs/HOST_OBJECT_MODEL.md`, *An extension's own service is not the host*).
+- **The rest of the frame's CSP is unchanged** — `default-src 'self'`, `script-src 'self'`, `object-src 'none'`, `base-uri 'none'`, `form-action 'none'`, `frame-ancestors` the host only. Only `connect-src` names the service.
+
+**A browser socket says who it is in its first frame.** A browser's `WebSocket` cannot set an `Authorization` header, and a token in the URL is written to access logs, so `bridge.service.websocket(path)` opens the socket and sends `{"type": "auth", "token": …}` first — what igni's services read (the Artifacts document room). A service reading something else passes `authFrame`.
+
+**HTTP from a page is cross-origin**, so a service answering `bridge.service.fetch` has to allow the page's origin in CORS. The page's origin is an ephemeral loopback port (`http://127.0.0.1:<port>`), so that means allowing loopback origins; a service that lists exact origins only answers its page over the socket, which CORS does not govern — Artifacts' page does exactly that.
+
+Tested in `tests/test_a_page_reaches_its_own_service.py` and the bridge's `service.test.ts`.
 
 ### The agent is an attack surface
 
@@ -622,7 +639,7 @@ Tool descriptions, prompt fragments and tool results all land in a model's conte
 
 ### Egress
 
-The air-gap claim is defended by a test (`tests/test_nothing_phones_home.py`). The contract extends it: every host declared, empty by default, UI egress structurally zero, and each capability service carries its own equivalent of that test. Undeclared egress is a contract violation, not a bug — it is the one failure that costs a customer their accreditation.
+The air-gap claim is defended by a test (`tests/test_nothing_phones_home.py`). The contract extends it: every host declared, empty by default, UI egress no wider than its own service and its declared hosts, and each capability service carries its own equivalent of that test. Undeclared egress is a contract violation, not a bug — it is the one failure that costs a customer their accreditation.
 
 ### Audit
 

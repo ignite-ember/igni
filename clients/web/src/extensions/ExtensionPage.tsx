@@ -50,6 +50,11 @@ export interface ExtensionSummary {
    * `client_uri` — when one is known. Shown as "Open on the web".
    */
   web_url?: string | null;
+  /**
+   * Its own service, as its page reaches it (`bridge.service.url`),
+   * when it has one a page may reach.
+   */
+  service_url?: string | null;
 }
 
 export interface ExtensionPageProps {
@@ -72,6 +77,8 @@ export interface ExtensionPageProps {
   signals?: { signal: string; value: unknown; n: number }[];
   /** Forwards a host-model request (`bridge.host…`) as this extension. */
   onHost?: ExtensionFrameProps["onHost"];
+  /** Fetches this extension's service token (`bridge.service`), as it. */
+  onServiceToken?: ExtensionFrameProps["onServiceToken"];
   /** Launch parameters — the host's URL state for this extension. */
   params?: Record<string, unknown>;
   onLocation?: (state: Record<string, string>) => void;
@@ -94,6 +101,7 @@ export function ExtensionPage({
   onNavigate,
   signals,
   onHost,
+  onServiceToken,
   params,
   onLocation,
 }: ExtensionPageProps) {
@@ -162,6 +170,8 @@ export function ExtensionPage({
       onLocation={onLocation}
       signals={signals}
       onHost={onHost}
+      onServiceToken={onServiceToken}
+      serviceUrl={extension.service_url ?? null}
       params={params}
       // What an administrator set it to, from `list_extensions`.
       // The backend has already filled defaults in and dropped keys

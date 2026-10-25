@@ -310,6 +310,13 @@ class RpcMethod(StrEnum):
     # extension's ``host.ui`` writes. Pool-level: a window spans
     # sessions. See ``clients/web/src/clientState.ts``.
     WINDOW_MODEL = "window_model"
+    # An extension's *page* asking for a token for its own service
+    # (``bridge.service``), with the frame's extension as ``caller``.
+    # The audience is the service recorded on that extension's UI
+    # origin, never an argument — see
+    # :class:`~ember_code.extensions.service_token.PageServiceTokens`.
+    # Pool-level: a token is the person's, not a session's.
+    EXTENSION_SERVICE_TOKEN = "extension_service_token"
 
 
 def validate_rpc_table(registered_keys: Iterable[str]) -> None:

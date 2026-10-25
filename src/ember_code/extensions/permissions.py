@@ -20,8 +20,10 @@ holds the person's igni session.
 Each of these is enforced at the point igni controls, and that point
 differs:
 
-* **egress** — the UI's CSP is written from the manifest, so a page
-  cannot open a connection to a host nobody declared. The *service*
+* **egress** — the UI's CSP is written from the manifest and the
+  extension's own service, so a page cannot open a connection to a
+  host nobody declared, and reaches each one over https/wss only
+  (plain http/ws to this machine, in development). The *service*
   is a separate process and confining its network needs an OS
   sandbox this does not have; what is enforced there is narrower and
   stated as such on :meth:`Egress.check_endpoint`.
@@ -58,34 +60,132 @@ class PermissionDenied(Exception):
     """Something the manifest did not ask for, refused."""
 
 
-class Egress:
-    """Which hosts this extension may reach."""
+#: Hosts that are this machine. Plain ``http``/``ws`` to one of them is
+#: allowed in development — a service on a laptop has no certificate —
+#: and nowhere else.
+LOCAL_HOSTS = frozenset({"localhost", "127.0.0.1", "::1"})
 
-    def __init__(self, manifest: ExtensionManifest) -> None:
+
+class ServiceOrigin:
+    """An extension's own service, as an origin a page may reach.
+
+    The service is the one that shipped the extension (the
+    distribution record's ``service_url``, or a development install's
+    ``serviceUrl`` setting) — the same one its process holds a token
+    for. A page reaches it over ``https`` and ``wss``; plain ``http``
+    and ``ws`` only to this machine in development. Anything else is
+    not an origin a page is given: :meth:`parse` answers ``None`` and
+    the page has no service.
+
+    The origin, not the URL: a CSP source with a path matches that
+    path only, and a service's API is not under its home page.
+    """
+
+    def __init__(self, scheme: str, host: str, port: int | None) -> None:
+        self.scheme = scheme
+        self.host = host
+        self.port = port
+
+    @classmethod
+    def parse(cls, url: str | None, *, development: bool = False) -> ServiceOrigin | None:
+        """The origin of ``url``, or ``None`` when a page may not reach it."""
+        text = (url or "").strip()
+        if not text:
+            return None
+        parsed = urlparse(text)
+        try:
+            port = parsed.port
+        except ValueError:
+            return None
+        host = (parsed.hostname or "").lower()
+        if not host or parsed.scheme not in ("https", "http"):
+            return None
+        if parsed.scheme == "http" and not (development and host in LOCAL_HOSTS):
+            logger.warning(
+                "service %s is plain http and not this machine in development; "
+                "a page is not given a connection to it",
+                text,
+            )
+            return None
+        return cls(parsed.scheme, host, port)
+
+    @property
+    def secure(self) -> bool:
+        return self.scheme == "https"
+
+    @property
+    def authority(self) -> str:
+        host = f"[{self.host}]" if ":" in self.host else self.host
+        return f"{host}:{self.port}" if self.port is not None else host
+
+    @property
+    def url(self) -> str:
+        """``https://host[:port]``: what ``bridge.service.url`` is."""
+        return f"{self.scheme}://{self.authority}"
+
+    def csp_sources(self) -> list[str]:
+        """Its HTTP origin and its WebSocket origin, nothing wider."""
+        socket = "wss" if self.secure else "ws"
+        return [self.url, f"{socket}://{self.authority}"]
+
+
+class Egress:
+    """Which hosts this extension may reach.
+
+    Two lists, one rule. The extension's **own service** is reachable
+    because it is the extension's; it needs no declaration. Every
+    **other** host is declared in ``permissions.egress``, shown to the
+    administrator who approves the service, and enforced here. Both
+    over ``https``/``wss`` only — plain ``http``/``ws`` only to this
+    machine, in development. Exact origins: the manifest schema allows
+    a host and a port and nothing else, so there is no wildcard to
+    widen.
+
+    The service token is never part of this. It goes to the
+    extension's own service only (``bridge.service``, ``ext.service``);
+    an egress host is reachable, not trusted.
+    """
+
+    def __init__(self, manifest: ExtensionManifest, *, development: bool = False) -> None:
         self._id = manifest.id
         self._hosts = tuple(manifest.permissions.egress)
+        self._development = development
 
     @property
     def hosts(self) -> tuple[str, ...]:
         return self._hosts
 
-    def csp_connect_src(self) -> str:
+    def csp_connect_src(self, service: ServiceOrigin | None = None) -> str:
         """The ``connect-src`` for this extension's pages.
 
         ``'self'`` always, because a page has to reach its own origin
-        for its own assets. Everything else is what the manifest
-        declared, scheme-less so it is written as ``https://host`` —
-        a bare host in a CSP matches any scheme including ``ws:``,
-        and an allowlist that quietly permits a websocket to a host
-        declared for an API call is wider than it reads.
+        for its own assets. Then the extension's own service, when it
+        has one, and every declared host — each as ``https://`` and
+        ``wss://`` and never scheme-less: a bare host in a CSP matches
+        any scheme including ``ws:``, and an allowlist should be as
+        wide as it reads. A localhost egress host in development also
+        gets ``http://`` and ``ws://``.
         """
-        if not self._hosts:
-            return "'self'"
-        sources = " ".join(f"https://{host}" for host in self._hosts)
-        return f"'self' {sources}"
+        sources = ["'self'"]
+        if service is not None:
+            sources.extend(service.csp_sources())
+        for host in self._hosts:
+            sources.extend(self._host_sources(host))
+        # A declared host that is also the service is listed once.
+        return " ".join(dict.fromkeys(sources))
+
+    def _host_sources(self, host: str) -> list[str]:
+        sources = [f"https://{host}", f"wss://{host}"]
+        if self._development and self._is_local(host):
+            sources += [f"http://{host}", f"ws://{host}"]
+        return sources
+
+    @staticmethod
+    def _is_local(host: str) -> bool:
+        return host.rsplit(":", 1)[0] in LOCAL_HOSTS
 
     def check_endpoint(self, url: str) -> None:
-        """Refuse an endpoint whose host was not declared.
+        """Refuse an endpoint whose host was not declared, or is not https.
 
         Narrow and real: igni makes this connection itself, so igni
         can refuse it. It is not network confinement of the
@@ -93,15 +193,21 @@ class Egress:
         opening its own sockets, and claiming otherwise would be the
         kind of overstatement this module exists to remove.
         """
-        host = urlparse(url).hostname
+        parsed = urlparse(url)
+        host = parsed.hostname
         if host is None:
             raise PermissionDenied(f"{self._id}: endpoint {url!r} has no host")
-        if host not in self._hosts:
+        if host not in self._hosts and parsed.netloc not in self._hosts:
             raise PermissionDenied(
                 f"{self._id}: its endpoint is at {host!r}, which is not in "
                 f"permissions.egress ({list(self._hosts) or 'empty'}). Declare it "
                 "and reinstall — an undeclared destination is the one failure "
                 "that costs a customer their accreditation."
+            )
+        if parsed.scheme != "https" and not (self._development and host in LOCAL_HOSTS):
+            raise PermissionDenied(
+                f"{self._id}: its endpoint {url!r} is not https. Plain http is "
+                "allowed only to this machine, in development."
             )
 
 
@@ -287,9 +393,15 @@ class Permissions:
         manifest: ExtensionManifest,
         *,
         secret_resolver: Callable[[str], str | None] | None = None,
+        development: bool = False,
     ) -> None:
+        """
+        Args:
+            development: ``IGNI_DEV_EXTENSIONS`` is set, which is what
+                lets plain ``http``/``ws`` reach this machine.
+        """
         self.manifest = manifest
-        self.egress = Egress(manifest)
+        self.egress = Egress(manifest, development=development)
         self.tools = Tools(manifest)
         self.workspace = WorkspaceAccess(manifest)
         self.secrets = Secrets(manifest, secret_resolver)

@@ -26,8 +26,15 @@ import {
   type LocationMessage,
   type NavigateMessage,
   type ResultMessage,
+  type ServiceTokenMessage,
   isHostMessage,
 } from "./protocol";
+import {
+  type IssuedToken,
+  type ServiceBridge,
+  ServiceError,
+  ServiceLink,
+} from "./service";
 
 /** How long a call waits before giving up. The host has its own. */
 const DEFAULT_TIMEOUT_MS = 30_000;
@@ -123,6 +130,21 @@ export interface Bridge {
    * unsubscribe.
    */
   on<T>(signal: Signal<T>, fn: (value: T) => void): () => void;
+
+  /**
+   * The extension's own service, reached directly, as the signed-in
+   * person:
+   *
+   *   const res = await bridge.service.fetch("/v1/notes");
+   *   const socket = await bridge.service.websocket("/v1/rooms/a");
+   *
+   * The host fetches a token whose audience is this extension's service
+   * and nothing else; it is kept and renewed before it expires. No
+   * `permissions.host` grant: having a service is the grant — see
+   * `docs/HOST_OBJECT_MODEL.md` in igni. `url` is `null` when the
+   * extension has none.
+   */
+  readonly service: ServiceBridge;
 }
 
 interface Pending {
@@ -183,6 +205,7 @@ function build(
     extensionId: string;
     params: Record<string, unknown>;
     settings?: Record<string, unknown>;
+    serviceUrl?: string | null;
     theme: string;
     tokens: ThemeTokens;
   },
@@ -196,6 +219,7 @@ function build(
   let counter = 0;
   const hostPending = new Map<string, Pending>();
   const signalHandlers = new Map<string, Set<(value: unknown) => void>>();
+  const tokenPending = new Map<string, Pending>();
 
   // Applied before the page renders anything, so an extension never
   // paints once in the fallback palette and again in the real one.
@@ -239,6 +263,23 @@ function build(
         );
       return;
     }
+    if (event.data.kind === "service-token-reply") {
+      const reply = event.data;
+      const waiter = tokenPending.get(reply.id);
+      if (waiter === undefined) return;
+      tokenPending.delete(reply.id);
+      clearTimeout(waiter.timer);
+      if (reply.ok && typeof reply.token === "string")
+        waiter.resolve({ token: reply.token, expiresIn: reply.expiresIn ?? 0 });
+      else
+        waiter.reject(
+          new ServiceError(
+            "refused",
+            reply.error || "igni gave no token for this extension's service",
+          ),
+        );
+      return;
+    }
     if (event.data.kind !== "result") return;
 
     const reply = event.data as ResultMessage;
@@ -263,7 +304,8 @@ function build(
       | NavigateMessage
       | LocationMessage
       | CloseMessage
-      | HostRequestMessage,
+      | HostRequestMessage
+      | ServiceTokenMessage,
   ) {
     // Targeted at "*" deliberately: the guest does not know the host's
     // origin, and guessing one would mean a message silently going
@@ -309,9 +351,33 @@ function build(
   };
   const hostModel = new Host(link);
 
+  /** One token request to the host, which asks igni as this extension. */
+  function askForToken(): Promise<IssuedToken> {
+    const id = `s${++counter}`;
+    return new Promise<IssuedToken>((resolve, reject) => {
+      const timer = setTimeout(() => {
+        tokenPending.delete(id);
+        reject(
+          new ServiceError(
+            "failed",
+            `igni bridge: no service token within ${DEFAULT_TIMEOUT_MS}ms`,
+          ),
+        );
+      }, DEFAULT_TIMEOUT_MS);
+      tokenPending.set(id, {
+        resolve: resolve as (value: unknown) => void,
+        reject,
+        timer,
+      });
+      post({ igni: BRIDGE_VERSION, kind: "service-token", nonce, id });
+    });
+  }
+  const service = new ServiceLink(hello.serviceUrl ?? null, askForToken);
+
   return {
     extensionId: hello.extensionId,
     host: hostModel,
+    service,
     on<T>(signal: Signal<T>, fn: (value: T) => void) {
       const wire = signal.name;
       let handlers = signalHandlers.get(wire);

@@ -58,7 +58,7 @@ from ember_code.extensions.host.definition import HOST_SCHEMA
 from ember_code.extensions.host.grants import HostGrants
 from ember_code.extensions.manifest import ExtensionManifest, Workspace
 from ember_code.extensions.origin import ExtensionOrigins
-from ember_code.extensions.permissions import PermissionDenied, Permissions
+from ember_code.extensions.permissions import PermissionDenied, Permissions, ServiceOrigin
 from ember_code.extensions.profile import DEV_FLAG, DeploymentProfile
 from ember_code.extensions.python_env import PythonEnvironmentError, PythonEnvironments
 from ember_code.extensions.registry import (
@@ -219,12 +219,19 @@ class ExtensionInstaller:
             reason="starting its service",
         )
 
-        permissions = Permissions(manifest, secret_resolver=self._secret_resolver)
+        permissions = Permissions(
+            manifest,
+            secret_resolver=self._secret_resolver,
+            development=self._allow_development,
+        )
+        # Its own service: where its process's token is for, and the one
+        # origin beyond declared egress its page may reach.
+        service_url = self._service_url(manifest, distribution)
 
         try:
             resolved = await self._resolve_requirements(manifest)
             entry_point = await self._python_entry(manifest, bundle, distribution)
-            token_env = await self._process_grants(manifest, distribution)
+            token_env = await self._process_grants(manifest, service_url)
             config = self._service_config(
                 manifest, bundle, permissions, resolved, entry_point, token_env
             )
@@ -254,7 +261,7 @@ class ExtensionInstaller:
             McpExtensionService(manager=self._mcp, server_name=config.name),
         )
 
-        ui_reason = await self._serve_ui(manifest, bundle)
+        ui_reason = await self._serve_ui(manifest, bundle, permissions, service_url)
         if ui_reason is not None:
             # The service works and the UI cannot be shown. FAILED
             # rather than READY: a page in the sidebar that opens on
@@ -270,8 +277,20 @@ class ExtensionInstaller:
         logger.info("extension %s is READY", manifest.id)
         return entry
 
-    async def _serve_ui(self, manifest: ExtensionManifest, bundle: Path) -> str | None:
+    async def _serve_ui(
+        self,
+        manifest: ExtensionManifest,
+        bundle: Path,
+        permissions: Permissions,
+        service_url: str | None,
+    ) -> str | None:
         """Put this extension's pages on their own origin.
+
+        Its CSP's ``connect-src`` is the page itself, its own service
+        and its declared egress — nothing else
+        (:meth:`~ember_code.extensions.permissions.Egress.csp_connect_src`).
+        The service is recorded on the origin too, as the one audience
+        the page's ``bridge.service`` token is fetched for.
 
         Returns a reason on failure, or ``None`` when there was
         nothing to serve or it was served.
@@ -290,8 +309,14 @@ class ExtensionInstaller:
                 f"directory at {root}, so there is nothing to serve."
             )
         try:
+            service = ServiceOrigin.parse(service_url, development=self._allow_development)
             await self._origins.serve(
-                manifest.id, root, connect_src=self._egress_connect_src(manifest)
+                manifest.id,
+                root,
+                connect_src=permissions.egress.csp_connect_src(service),
+                # The URL as it is, not the derived origin: it is the
+                # token's audience, and must be the process's exactly.
+                service_url=service_url if service is not None else None,
             )
         except Exception as exc:
             logger.error("serving %s UI failed", manifest.id, exc_info=True)
@@ -540,7 +565,7 @@ class ExtensionInstaller:
         return text or None
 
     async def _process_grants(
-        self, manifest: ExtensionManifest, distribution: DistributionRecord | None
+        self, manifest: ExtensionManifest, service_url: str | None
     ) -> dict[str, str]:
         """How this extension's process reaches igni: its host and its service.
 
@@ -555,12 +580,8 @@ class ExtensionInstaller:
             return {}
         secret = secrets.token_urlsafe(32)
         env: dict[str, str] = {}
-        if self._service_tokens is not None:
-            service_url = self._service_url(manifest, distribution)
-            if service_url is not None:
-                env.update(
-                    await self._service_tokens.grant(manifest.id, service_url, secret=secret)
-                )
+        if self._service_tokens is not None and service_url is not None:
+            env.update(await self._service_tokens.grant(manifest.id, service_url, secret=secret))
         if self._host_channel is not None:
             env.update(await self._host_channel.grant(manifest.id, secret))
         return env
@@ -651,10 +672,6 @@ class ExtensionInstaller:
             "to ship a package, 'endpoint' to register a service you run, or "
             "'dev' to run a command locally."
         )
-
-    @staticmethod
-    def _egress_connect_src(manifest: ExtensionManifest) -> str:
-        return Permissions(manifest).egress.csp_connect_src()
 
     def _restrict_tools(
         self, manifest: ExtensionManifest, server: str, permissions: Permissions

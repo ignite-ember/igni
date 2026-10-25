@@ -33,6 +33,14 @@ all. Loopback only, a Host check against DNS rebinding, ``GET`` only,
 one request per connection — the same discipline as the origin, and
 its reply type.
 
+**The page asks through the host, not here.** An extension's page
+(``bridge.service``) has no secret and must not reach this listener. It
+asks igni's window over the bridge, the window asks the backend with
+the frame's extension as ``caller`` (``extension_service_token``), and
+:class:`PageServiceTokens` answers from the same exchange and cache —
+for the service recorded on that extension's own UI origin, the one its
+CSP admits. The audience is again not a parameter.
+
 **Cached, renewed shortly before expiry.** A token lives ten minutes;
 the host keeps it and fetches a new one in the last minute, so an
 extension asking on every request costs igni one exchange per ten
@@ -56,7 +64,13 @@ from pydantic import BaseModel, ValidationError
 
 from ember_code.core.auth.credentials import CloudCredentials
 from ember_code.core.config.endpoint import is_configured
-from ember_code.extensions.origin import HEAD_TIMEOUT, LOOPBACK, MAX_HEAD_BYTES, HttpReply
+from ember_code.extensions.origin import (
+    HEAD_TIMEOUT,
+    LOOPBACK,
+    MAX_HEAD_BYTES,
+    ExtensionOrigins,
+    HttpReply,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -244,6 +258,47 @@ class TokenReply(BaseModel):
 
 class ErrorReply(BaseModel):
     error: str
+
+
+class NoService(Exception):
+    """This extension has no service its page may reach."""
+
+
+class PageServiceTokens:
+    """An extension page's token for its own service (``bridge.service``).
+
+    The audience is the service recorded on the extension's UI origin —
+    the one :class:`~ember_code.extensions.origin.ExtensionOrigin` wrote
+    into the page's ``connect-src`` — and is looked up by the caller's
+    id, which igni's window sets from the frame it hosts and the frame
+    cannot choose. So a page gets a token for its own service and for
+    nothing else: not another extension's, and not an egress host's.
+
+    One exchange and one cache with the process's tokens: the page and
+    the process of one extension cost igni one exchange per ten minutes.
+    """
+
+    def __init__(self, *, origins: ExtensionOrigins, exchange: ServiceTokenExchange) -> None:
+        self._origins = origins
+        self._exchange = exchange
+
+    async def for_page(self, extension_id: str) -> TokenReply:
+        """A token for ``extension_id``'s own service.
+
+        Raises:
+            NoService: it has no UI origin, or no service a page may reach.
+            NotSignedIn: no igni session.
+            TokenExchangeFailed: igni refused, or could not be reached.
+        """
+        service_url = self._origins.service_url_for(extension_id)
+        if not service_url:
+            raise NoService(f"{extension_id} has no service its page may reach")
+        token = await self._exchange.token_for(service_url)
+        return TokenReply(
+            access_token=token.access_token,
+            expires_in=self._exchange.remaining(token),
+            service_url=service_url,
+        )
 
 
 class ServiceTokenEndpoint:

@@ -26,6 +26,7 @@ POOL_LEVEL_RPCS: frozenset[RpcMethod] = frozenset(
         RpcMethod.ATTACH_SESSION,
         RpcMethod.HOST_MODEL,
         RpcMethod.WINDOW_MODEL,
+        RpcMethod.EXTENSION_SERVICE_TOKEN,
     }
 )
 
@@ -41,6 +42,6 @@ class PoolGuardRpcHandler(RpcHandler):
     def _pool_level_guard(self, args: dict) -> None:
         raise RuntimeError(
             "pool-level RPC dispatched through per-runtime table — "
-            "SessionOrchestrator must intercept ATTACH_SESSION, HOST_MODEL "
-            "and WINDOW_MODEL before this point"
+            "SessionOrchestrator must intercept ATTACH_SESSION, HOST_MODEL, "
+            "WINDOW_MODEL and EXTENSION_SERVICE_TOKEN before this point"
         )

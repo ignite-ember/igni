@@ -33,6 +33,7 @@ from ember_code.backend.login_coordinator import LoginCoordinator
 from ember_code.backend.message_dispatcher import MessageDispatcher
 from ember_code.backend.push_bridge import PushNotificationBridge
 from ember_code.backend.rpc_router import POOL_LEVEL_RPCS, RpcRouter
+from ember_code.backend.schemas_extensions import PageTokenReply
 from ember_code.backend.schemas_rpc import (
     AttachSessionResult,
     SessionPoolConfig,
@@ -44,6 +45,12 @@ from ember_code.core.session.session_directories import SessionDirectoryStore
 from ember_code.extensions.host.windows import WindowModelError, WindowRequest
 from ember_code.extensions.registry import ExtensionRegistry
 from ember_code.extensions.rpc import ExtensionRpc
+from ember_code.extensions.service_token import (
+    NoService,
+    NotSignedIn,
+    PageServiceTokens,
+    TokenExchangeFailed,
+)
 from ember_code.protocol import messages as msg
 from ember_code.protocol.rpc import RpcMethod
 
@@ -157,6 +164,7 @@ class SessionOrchestrator:
         # The host object model, once :class:`BackendApp` builds it,
         # and whoever wants to see what windows send.
         self._host_model: Any = None
+        self._page_tokens: PageServiceTokens | None = None
         self._inbound_watchers: list[Any] = []
 
     @property
@@ -504,6 +512,47 @@ class SessionOrchestrator:
         reply = await self._host_model.handle_page(caller, dict(message.args or {}))
         await self._transport.send(msg.RPCResponse(id=message.id or "", result=reply))
 
+    async def _handle_service_token(self, message: Any) -> None:
+        """``extension_service_token``: a page's token for its own service.
+
+        ``bridge.service`` asks; igni's window forwards it with the
+        frame's extension as ``caller``. Answered with ``{ok,
+        access_token, expires_in, service_url}`` or ``{ok: false,
+        error}`` as the result — a page treats "nobody is signed in"
+        as a state, not a broken call. The audience is that
+        extension's own service and nothing it asked for.
+        """
+        caller = getattr(message, "caller", None)
+        tokens = self._page_tokens
+        if tokens is None or not caller:
+            await self._transport.send(
+                msg.RPCResponse(
+                    id=message.id or "",
+                    error="extension_service_token: only an extension's page asks for one",
+                )
+            )
+            return
+        try:
+            reply = await tokens.for_page(caller)
+        except (NoService, NotSignedIn, TokenExchangeFailed) as exc:
+            await self._transport.send(
+                msg.RPCResponse(
+                    id=message.id or "",
+                    result=PageTokenReply(ok=False, error=str(exc)).model_dump(),
+                )
+            )
+            return
+        await self._transport.send(
+            msg.RPCResponse(
+                id=message.id or "",
+                result=PageTokenReply(ok=True, **reply.model_dump()).model_dump(),
+            )
+        )
+
+    def attach_page_tokens(self, tokens: PageServiceTokens | None) -> None:
+        """Where an extension page's ``bridge.service`` token comes from."""
+        self._page_tokens = tokens
+
     # ── Serving the host object model ────────────────────────────
 
     def attach_host_model(self, host_model: Any) -> None:
@@ -579,6 +628,8 @@ class SessionOrchestrator:
                     await self._handle_attach_session(message)
                 elif message.method == RpcMethod.HOST_MODEL:
                     await self._handle_host_model(message)
+                elif message.method == RpcMethod.EXTENSION_SERVICE_TOKEN:
+                    await self._handle_service_token(message)
                 else:
                     await self._handle_window_model(message)
                 return
