@@ -1,11 +1,11 @@
-// GENERATED from the igni host schema 1.4.0 by ember_code.extensions.host.codegen — do not edit. Run `make host-sdks` after changing the schema.
+// GENERATED from the igni host schema 1.5.0 by ember_code.extensions.host.codegen — do not edit. Run `make host-sdks` after changing the schema.
 //
 // `bridge.host` as an extension's page sees it. Read
 // `docs/HOST_OBJECT_MODEL.md` in igni for what each object is.
 
 import { HostObject, Property, Signal, type HostLink, type JsonValue } from "./hostModel";
 
-export const SCHEMA_VERSION = "1.4.0";
+export const SCHEMA_VERSION = "1.5.0";
 
 /** One change anywhere in the model, as `host.changed` reports it. */
 export interface Change {
@@ -687,6 +687,53 @@ export interface Decision {
   answers: Record<string, DecisionAnswer>;
   /** The Laya checkpoint that answered: `english` or `multilingual`. */
   model: string;
+}
+
+/** A message about to start a run: the person's, or one an extension posted. */
+export interface ChatSubmitting {
+  session_id: string;
+  /** What the agent will be sent. An interceptor may change it. */
+  text: string;
+  /** The extension that posted it; empty for the person's own. */
+  from_extension?: string | null;
+  /** Whether files or images go with it. */
+  has_media: boolean;
+}
+
+/** A tool the agent is about to run, before igni's own permission checks. */
+export interface ToolCalling {
+  session_id: string;
+  /** Its name, as the agent called it. */
+  tool: string;
+  /** Its arguments. An interceptor may change them; igni's checks then run on what it changed them to. */
+  args: Record<string, JsonValue>;
+}
+
+/** A plan the agent is about to put to the person (`exit_plan_mode`). */
+export interface PlanSubmitting {
+  session_id: string;
+  /** The plan, in markdown. An interceptor may change it. */
+  plan: string;
+  /** The tasks the agent listed with it. */
+  tasks: JsonValue[];
+  /** How many submissions were rejected since the agent entered plan mode: 0 for the first. */
+  attempt: number;
+}
+
+/** A write to the model about to be made. */
+export interface ModelWrite {
+  /** The member written: `ui.navigate`, `sessions.current`. */
+  path: string;
+  /** A property's new value. */
+  value?: JsonValue;
+  /** A method's parameters. */
+  params?: Record<string, JsonValue>;
+  /** The window, for a per-window member. */
+  window?: string | null;
+  /** The session it is made in. */
+  session_id?: string | null;
+  /** `person`, or the id of the extension making it. */
+  writer: string;
 }
 
 /** Key–value state of the extension's own, kept by the host across restarts. An extension sees only its own keys. */

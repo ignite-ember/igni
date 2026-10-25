@@ -30,6 +30,8 @@ class Op(StrEnum):
     CALL = "call"
     SUBSCRIBE = "subscribe"
     UNSUBSCRIBE = "unsubscribe"
+    #: The process's answer to an ``intercept``. Not a page's to send.
+    ANSWER = "answer"
 
 
 class Request(BaseModel):
@@ -78,6 +80,42 @@ class SignalMessage(BaseModel):
     value: Any = None
 
 
+class InterceptMessage(BaseModel):
+    """Host → SDK: an event about to happen, waiting for the process's answer."""
+
+    op: Literal["intercept"] = "intercept"
+    #: Echoed on the answer.
+    id: str
+    #: The intercept's name: ``tools.calling``, ``ui.navigate``.
+    event: str
+    value: Any = None
+
+
+class Outcome(StrEnum):
+    ALLOW = "allow"
+    REJECT = "reject"
+    MODIFY = "modify"
+    #: The interceptor could not decide — it raised. The host treats it
+    #: as a silence: the event's ``fails`` decides.
+    FAILED = "failed"
+
+
+class InterceptAnswer(BaseModel):
+    """SDK → host, as the ``params`` of an ``answer`` request."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    #: The ``id`` of the ``intercept`` it answers.
+    intercept: str
+    outcome: Outcome
+    #: Why, for a reject: shown to the agent or the person. What went
+    #: wrong, for ``failed``.
+    reason: str = ""
+    #: The changed value, for a modify: the whole value, as it was handed
+    #: over, with only the fields the intercept lets it change changed.
+    value: Any = None
+
+
 class Hello(BaseModel):
     """Host → SDK, first, on the process's socket."""
 
@@ -94,7 +132,10 @@ __all__ = [
     "PROTOCOL_VERSION",
     "ErrorBody",
     "Hello",
+    "InterceptAnswer",
+    "InterceptMessage",
     "Op",
+    "Outcome",
     "Reply",
     "Request",
     "SignalMessage",

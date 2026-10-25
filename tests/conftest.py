@@ -6,7 +6,9 @@ import pytest
 from dotenv import load_dotenv
 
 from ember_code.core.config.settings import load_settings
+from ember_code.core.gates import EventGate
 from ember_code.core.paths import CONFIG_DIR
+from ember_code.extensions.host.intercepts import Interceptors
 
 # Load environment variables from .env at the repo root before any test
 # runs. This lets developers keep credentials for live tests
@@ -39,6 +41,19 @@ def _isolate_user_settings(tmp_path_factory, monkeypatch):
     monkeypatch.setattr("pathlib.Path.home", lambda: fake_home)
     monkeypatch.setattr("pathlib.Path.cwd", lambda: fake_cwd)
     monkeypatch.setenv("HOME", str(fake_home))
+
+
+@pytest.fixture(autouse=True)
+def _no_interceptors_left_behind():
+    """Each test starts with nobody intercepting anything.
+
+    The interceptors and the core's gate are one per process, as in the
+    app; a test that installs an intercepting extension must not leave
+    every later test's tool calls waiting on a process that is not there.
+    """
+    yield
+    EventGate.install(None)
+    Interceptors.reset_shared()
 
 
 @pytest.fixture

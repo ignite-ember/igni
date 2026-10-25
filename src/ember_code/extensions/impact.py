@@ -62,6 +62,9 @@ with a command the bundle did not know about, switches the claim off
 for igni server, and a test holds it to the dispatcher.
 
 **Not collisions**, because they cannot be: inserts and appends stack;
+interceptors (``permissions.intercepts``) chain in the super admin's
+priority order — the first reject ends the chain, and each change is what
+the next one is handed — whether they reject or change;
 tools are registered under the extension's server name; pages and
 indicators are named in the extension's own namespace; settings are
 stored per extension; a plugin's own agents load under the extension's
@@ -228,6 +231,15 @@ class ImpactTool(BaseModel):
         return cls(name=name, **hints.as_annotations())
 
 
+class ImpactIntercept(BaseModel):
+    """An event it is asked about before it happens, and whether it may change it."""
+
+    model_config = ConfigDict(frozen=True)
+
+    event: str
+    modify: bool = False
+
+
 class ExtensionImpact(BaseModel):
     """What one extension changes, as a super admin reviews it."""
 
@@ -252,6 +264,9 @@ class ExtensionImpact(BaseModel):
     indicators: list[str] = Field(default_factory=list)
     settings: list[str] = Field(default_factory=list)
     host: list[str] = Field(default_factory=list)
+    #: Events it intercepts, and whether it may change each. Never a
+    #: claim: interceptors chain in priority order.
+    intercepts: list[ImpactIntercept] = Field(default_factory=list)
     rpc: list[str] = Field(default_factory=list)
     egress: list[str] = Field(default_factory=list)
     secrets: list[str] = Field(default_factory=list)
@@ -285,6 +300,10 @@ class ExtensionImpact(BaseModel):
             indicators=sorted(i.id for i in contributes.indicators),
             settings=sorted(s.key for s in contributes.settings),
             host=sorted(permissions.host),
+            intercepts=sorted(
+                (ImpactIntercept(event=g.event, modify=g.modify) for g in permissions.intercepts),
+                key=lambda i: i.event,
+            ),
             rpc=sorted(permissions.rpc),
             egress=sorted(permissions.egress),
             secrets=sorted(permissions.secrets),
@@ -608,6 +627,7 @@ __all__ = [
     "ExtensionImpact",
     "IgniCommands",
     "ImpactEdit",
+    "ImpactIntercept",
     "ImpactOverride",
     "ImpactResolver",
     "ImpactTool",

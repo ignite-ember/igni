@@ -38,6 +38,11 @@ window it is framed in. The types (`Run`, `SessionChange`, …) are
 exported from the package; `hostModel.generated.ts` is generated from
 igni's host schema and `SCHEMA_VERSION` says which version.
 
+A page observes; it cannot intercept. Being asked before something
+happens (`@ext.intercept` in `igni-extension`) is the extension's
+process's, because igni would otherwise wait on whatever tab happens to
+be open.
+
 ## Its own service: `bridge.service`
 
 The page talks to the service that shipped the extension directly, as

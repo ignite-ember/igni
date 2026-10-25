@@ -197,6 +197,50 @@ the MCP notification igni has always understood.
 `igni_extension.host_model` is generated from igni's host schema; its
 `SCHEMA_VERSION` is the model version it was generated for.
 
+## Before it happens: `@ext.intercept`
+
+A signal says what happened; an intercept is asked first, and its answer
+counts:
+
+```python
+from igni_extension import Modify, Reject
+from igni_extension.host_model import Intercepts, PlanSubmitting, ToolCalling
+
+@ext.intercept(Intercepts.PLAN_SUBMITTING)
+async def grounded(plan: PlanSubmitting) -> Reject | None:
+    if plan.attempt < 2 and plan.plan.count("src/") < 2:
+        return Reject("Cite the files the plan changes.")   # back to the agent
+    return None                                             # allowed
+
+@ext.intercept(Intercepts.TOOLS_CALLING)
+async def quieter(call: ToolCalling) -> Modify | None:
+    if call.tool == "run_shell_command":
+        command = call.args.get("command", "") + " --quiet"
+        return Modify(call.model_copy(update={"args": {**call.args, "command": command}}))
+    return None
+```
+
+A handler answers `Allow()` (or `None`), `Reject(reason)` — the reason
+reaches the agent or the person, so write it for them — or
+`Modify(value)`: the whole value, with only the fields the event lets it
+change changed. `Intercepts` lists every event: `CHAT_SUBMITTING`,
+`TOOLS_CALLING`, `PLAN_SUBMITTING`, and every write to the model by its
+member (`UI_NAVIGATE`, `SESSIONS_CURRENT`, …), which can be rejected but
+not changed.
+
+igni asks only about the events in the manifest's
+`permissions.intercepts` — `{"event": "tools.calling", "modify": true}`
+to change one, not just reject it — and only while the extension holds
+the grant the event needs in `permissions.host`. igni sets the deadline
+(two seconds) and decides what a silence means: a handler that raises,
+or is too slow, has not answered, and a tool call or a message then does
+not go ahead, while a plan or a write does. Several extensions
+intercepting one event are asked in the super admin's priority order,
+each handed what the one before left. One handler per event; an
+extension is never asked about its own writes. `FakeHost.intercept(event,
+value)` asks a test's extension as igni would. The rules are
+`docs/HOST_OBJECT_MODEL.md`, *Intercepting*, in igni.
+
 ## The agent's prompt: `ext.prompt`
 
 A manifest's `contributes.prompt` overrides a prompt — the main prompt,

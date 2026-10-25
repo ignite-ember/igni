@@ -108,7 +108,7 @@ class PlanTool(Toolkit):
         result = await self._coordinator.enter(reason=reason, task=task)
         return result.reply_text
 
-    def exit_plan_mode(self, plan: str, tasks: list | None = None) -> str:
+    async def exit_plan_mode(self, plan: str, tasks: list | None = None) -> str:
         """Submit a plan for the user's review.
 
         Call this at the END of a plan-mode turn after you've
@@ -158,12 +158,15 @@ class PlanTool(Toolkit):
           plan mode is that the user reviews before execution.
           Wait for their next message.
 
+        Something checking submissions may reject the plan, with a
+        reason: do what it asks, then submit again.
+
         Returns a confirmation. The plan + tasks are stored on
         the session for the UI to render and the user can
         ``/plan`` (or click Approve) to exit plan mode and let
         you execute.
         """
-        result = self._coordinator.submit(plan=plan, tasks=tasks)
+        result = await self._coordinator.submit(plan=plan, tasks=tasks)
         return result.reply_text
 
 

@@ -71,6 +71,10 @@ SETTING_KEY = re.compile(r"^[a-z][a-zA-Z0-9_]*$")
 #: (``chat.read``), or a ``*``-suffixed prefix (``chat.*``).
 HOST_GRANT = re.compile(r"^[a-z][a-z0-9_.]*\*?$")
 
+#: An event an extension intercepts: a decision point (``tools.calling``)
+#: or a member whose write it intercepts (``ui.navigate``).
+INTERCEPT_EVENT = re.compile(r"^[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)+$")
+
 #: An RPC grant: an exact method, or a ``*``-suffixed prefix. No other
 #: pattern, because this list is read by whoever approves the install
 #: and ``ext.*.scanner.list`` is not something a person can reason
@@ -183,6 +187,21 @@ class DevCommand(Strict):
     env: dict[str, str] = Field(default_factory=dict)
 
 
+class InterceptGrant(Strict):
+    """One event the extension's process is asked about before it happens.
+
+    ``modify`` is the right to change the event, where it can be changed
+    (``docs/HOST_OBJECT_MODEL.md``, *Intercepting*); rejecting needs only
+    the entry. Approving the service covers what it intercepts. Several
+    extensions intercepting one event never collide: they are asked in
+    the super admin's priority order, each handed what the one before
+    left.
+    """
+
+    event: Annotated[str, Field(pattern=INTERCEPT_EVENT.pattern)]
+    modify: bool = False
+
+
 class Workspace(StrEnum):
     NONE = "none"
     READ = "read"
@@ -242,6 +261,10 @@ class Permissions(Strict):
     #: ``host.workspace``. Its own state, settings and notifications
     #: need no grant. See :mod:`ember_code.extensions.host.grants`.
     host: list[Annotated[str, Field(pattern=HOST_GRANT.pattern)]] = Field(default_factory=list)
+    #: Events the extension's process is asked about before they happen,
+    #: and may stop — or change, with ``modify`` — with the grant the
+    #: event needs held in ``host`` as well. See :class:`InterceptGrant`.
+    intercepts: list[InterceptGrant] = Field(default_factory=list)
 
     @model_validator(mode="after")
     def _each_tool_once(self) -> Permissions:
@@ -249,6 +272,10 @@ class Permissions(Strict):
         repeated = sorted({name for name in names if names.count(name) > 1})
         if repeated:
             raise ValueError(f"permissions.tools names {', '.join(repeated)} more than once")
+        events = [grant.event for grant in self.intercepts]
+        twice = sorted({event for event in events if events.count(event) > 1})
+        if twice:
+            raise ValueError(f"permissions.intercepts names {', '.join(twice)} more than once")
         return self
 
     def tool_names(self) -> list[str]:

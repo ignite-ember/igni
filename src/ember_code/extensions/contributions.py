@@ -81,6 +81,7 @@ from ember_code.core.prompts.contributions import (
 from ember_code.core.prompts.document import FRONTMATTER, PromptDocument, PromptTarget
 from ember_code.core.prompts.fragments import PromptFragments
 from ember_code.core.prompts.fragments import fragments as default_fragments
+from ember_code.extensions.host.intercepts import Interceptors
 from ember_code.extensions.impact import (
     Claim,
     ExtensionImpact,
@@ -122,6 +123,7 @@ class ExtensionContributions:
         fragments: PromptFragments | None = None,
         prompts: PromptContributions | None = None,
         commands: ContributedCommands | None = None,
+        interceptors: Interceptors | None = None,
     ) -> None:
         """
         Args:
@@ -150,6 +152,7 @@ class ExtensionContributions:
         self._fragments = fragments if fragments is not None else default_fragments
         self._prompts = prompts if prompts is not None else prompt_contributions
         self._commands = commands if commands is not None else default_commands
+        self._interceptors = interceptors if interceptors is not None else Interceptors.shared()
         self._resolved = ResolvedImpact()
         #: ``{extension_id: [what it declared and igni would not take]}``
         #: — an override whose text does not have the sections it says.
@@ -187,6 +190,8 @@ class ExtensionContributions:
             impacts, self._resolutions(), reserved=self._igni_commands.claims()
         ).enforce()
         self._prompts.set_order(self._order())
+        # Interceptors run in the order edits apply in.
+        self._interceptors.set_order(self._order())
         self._publish()
         for collision in self._resolved.undecided:
             logger.warning(

@@ -22,6 +22,7 @@ import httpx
 from anyio.streams.memory import MemoryObjectReceiveStream, MemoryObjectSendStream
 from mcp.server.fastmcp import FastMCP
 from mcp.shared.message import SessionMessage
+from pydantic import BaseModel
 
 from igni_extension.channel import HostConnection
 from igni_extension.clock import Clock
@@ -29,6 +30,7 @@ from igni_extension.environment import ExtensionEnvironment
 from igni_extension.errors import NotConfigured
 from igni_extension.hints import ToolHints, ToolHintsMissing
 from igni_extension.host import Host
+from igni_extension.intercepts import Intercept, InterceptHandler, InterceptHandlers
 from igni_extension.members import Signal
 from igni_extension.prompt import PromptConditions
 from igni_extension.service import ServiceClient
@@ -61,8 +63,11 @@ class IgniExtension:
         self.mcp = FastMCP(extension_id, instructions=instructions)
         self._session = HostSession(self.mcp._mcp_server)
         self._signals = SignalHandlers()
+        self._intercepts = InterceptHandlers()
         #: The socket to the igni host that `ext.host` travels on.
-        self.connection = HostConnection(self.environment.host, self._signals, self._session)
+        self.connection = HostConnection(
+            self.environment.host, self._signals, self._session, self._intercepts
+        )
         #: igni, as this extension sees it: `ext.host.chat`, `ext.host.ui`, …
         self.host = Host(self.connection)
         #: Which of the conditions its prompt contributions wait on hold.
@@ -94,6 +99,17 @@ class IgniExtension:
     ) -> Callable[[Callable[[T], Awaitable[None]]], Callable[[T], Awaitable[None]]]:
         """Handle a host signal: `@ext.on(ext.host.<object>.<signal>)`."""
         return self._signals.on(signal)
+
+    def intercept[T: BaseModel](
+        self, intercept: Intercept[T]
+    ) -> Callable[[InterceptHandler[T]], InterceptHandler[T]]:
+        """Answer igni before an event happens: `@ext.intercept(Intercepts.PLAN_SUBMITTING)`.
+
+        The handler returns `Allow()`, `Reject(reason)` or `Modify(value)`
+        (`igni_extension.intercepts`). igni asks only about the events the
+        manifest lists in `permissions.intercepts`; one handler per event.
+        """
+        return self._intercepts.on(intercept)
 
     def on_start(
         self, fn: Callable[[], Coroutine[Any, Any, None]]

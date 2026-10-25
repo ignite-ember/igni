@@ -106,7 +106,7 @@ All of it follows `READY`, like fragments: an extension that goes down takes its
 
 An insert or an append is named `prompt:main+our_review` where it has to be — switched off, dropped — and is never a claim. Agents are prompts like any other: `prompt:agent:explorer`, `prompt:agent:architect#frontmatter`.
 
-**Never a collision:** inserts and appends (they stack); an edit aimed at a section an override lacks (it is dropped and listed); pages, indicators and settings (namespaced by the extension id); tools (registered under the extension's server name); a plugin's own agents (under the extension's namespace); grants, egress, secrets (they only add). A `when` does not avoid a collision: two extensions replacing one section under different conditions still both claim it. Host-model signals are observed, never intercepted — there is no veto or rewrite hook to collide over; one added later is a claim.
+**Never a collision:** inserts and appends (they stack); an edit aimed at a section an override lacks (it is dropped and listed); pages, indicators and settings (namespaced by the extension id); tools (registered under the extension's server name); a plugin's own agents (under the extension's namespace); grants, egress, secrets (they only add). A `when` does not avoid a collision: two extensions replacing one section under different conditions still both claim it. Interceptors never collide either, whether they reject or change an event: they are asked in the super admin's priority order of extensions — the order edits apply in — each handed what the one before left, and the first reject ends it.
 
 **igni's own commands are nobody's.** `/clear`, `/plan` and the rest of `docs/igni-commands.json` are answered by igni before any extension, so an extension declaring one would never run, and there is nothing to decide. igni server refuses such a bundle at upload; a machine running a newer igni, with a command the bundle did not know about, switches the claim off and says why (`IgniCommands`, the resolver's `reserved`). A test holds the list to the dispatcher, and igni server's copy to it.
 
@@ -117,6 +117,14 @@ An insert or an append is named `prompt:main+our_review` where it has to be — 
 One rule, two implementations: igni server's `app/services/identity/impact.py` and this one both run `tests/fixtures/extension_impact_cases.json`, which both repositories carry and each checks against its sibling checkout.
 
 ### Events
+
+Being asked *before* something happens — and stopping it, or changing
+it — is the host object model's **intercepts** (`@ext.intercept(…)`,
+declared in `permissions.intercepts`): the agent's decision points
+(`chat.submitting`, `tools.calling`, `plan.submitting`) and every write
+to the model. What each can do, and what igni does when an interceptor
+is silent, is `docs/HOST_OBJECT_MODEL.md`, *Intercepting*. A process
+intercepts; a page cannot.
 
 Being told when something happens is the host object model's signals
 (below): an extension subscribes with `@ext.on(ext.host.<object>.<signal>)`
@@ -616,7 +624,7 @@ The manifest's `trust` (`first-party` / `partner` / `unsigned`) is the author's 
 
 ### Permissions
 
-Declared, admin-granted, base-enforced, deny by default: `workspace` (none/read/write, path-scoped), `egress` (the hosts its pages may connect to, empty by default), `secrets` (named grants the deployment resolves), `tools` (MCP tools it may register with the agent, each with its four hints), `rpc` (backend methods its UI may call over the bridge — exact names, or a `*`-suffixed prefix, because this list is read by whoever approves the install), `host` (objects of the host object model its process and page may reach, same grammar).
+Declared, admin-granted, base-enforced, deny by default: `workspace` (none/read/write, path-scoped), `egress` (the hosts its pages may connect to, empty by default), `secrets` (named grants the deployment resolves), `tools` (MCP tools it may register with the agent, each with its four hints), `rpc` (backend methods its UI may call over the bridge — exact names, or a `*`-suffixed prefix, because this list is read by whoever approves the install), `host` (objects of the host object model its process and page may reach, same grammar), `intercepts` (events its process is asked about before they happen, and may stop or, with `modify`, change).
 
 **Where each one is enforced, and how far.** This list was written before any of it was, and for a while the only enforced permission was `rpc` — which made the rest a list of restrictions that restricted nothing.
 
@@ -624,6 +632,7 @@ Declared, admin-granted, base-enforced, deny by default: `workspace` (none/read/
 |---|---|---|
 | `rpc` | `ExtensionRegistry.authorise`, on every call | Complete. |
 | `host` | `HostModel.handle`, on every request from the process's socket and the page's bridge; and at dispatch, for every signal | Complete for what igni does on the extension's behalf: an ungranted object answers `not_granted` and its signals are never sent; signal contents are filtered by `workspace` and `workspacePaths`. |
+| `intercepts` | `Interceptors`, which asks only the extensions that declared an event and hold the grant it needs in `host`, in priority order | Complete for what igni asks: an undeclared event is never put to the extension, and a change from one that did not declare `modify` is not taken. What a silence means is igni's, per event — a tool call or a message nobody could check does not go ahead. |
 | `tools` | tool registration, which is igni's; and every permission mode, through each tool's hints | Complete. A service may expose what it likes; what reaches the model is this list, and how each tool is treated is what the manifest says it is. |
 | `egress` | the page's `connect-src`, written from the manifest and the extension's own service, `https`/`wss` only; and the endpoint host igni itself dials, `https` only | **The page, completely. It does not confine the extension's process**, and is not meant to: see *The process is trusted* below. |
 | `workspace` | what igni *tells* a service, as `IGNI_WORKSPACE*` | An extension that was never granted the workspace is not told where it is. A service that goes looking anyway is not stopped — same OS-sandbox gap. |

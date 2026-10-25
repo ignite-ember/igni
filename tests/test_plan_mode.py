@@ -82,7 +82,7 @@ class TestPlanTool:
         session = MagicMock()
         session.plan_store = PlanStore()
         tool = PlanTool(session)
-        result = tool.exit_plan_mode("Run tests, then refactor.")
+        result = await tool.exit_plan_mode("Run tests, then refactor.")
         assert "Plan submitted" in result
         assert session.plan_store.latest == "Run tests, then refactor."
 
@@ -96,7 +96,7 @@ class TestPlanTool:
         session.plan_store = PlanStore()
         session.permission_evaluator = PermissionEvaluator.from_strings(mode="plan")
         tool = PlanTool(session)
-        tool.exit_plan_mode("plan body")
+        await tool.exit_plan_mode("plan body")
         assert session.permission_evaluator.mode is PermissionMode.PLAN
 
     @pytest.mark.asyncio
@@ -104,7 +104,7 @@ class TestPlanTool:
         session = MagicMock()
         session.plan_store = PlanStore()
         tool = PlanTool(session)
-        result = tool.exit_plan_mode("   ")
+        result = await tool.exit_plan_mode("   ")
         assert "Error" in result
         assert "empty" in result.lower()
         assert session.plan_store.latest == ""
@@ -117,7 +117,7 @@ class TestPlanTool:
         session = MagicMock()
         session.plan_store = PlanStore()
         tool = PlanTool(session)
-        result = tool.exit_plan_mode("plan body")
+        result = await tool.exit_plan_mode("plan body")
         assert "stop" in result.lower() or "do not continue" in result.lower()
 
     @pytest.mark.asyncio
@@ -129,7 +129,7 @@ class TestPlanTool:
         session.plan_store = PlanStore()
         session.todo_store = TodoStore()
         tool = PlanTool(session)
-        result = tool.exit_plan_mode(
+        result = await tool.exit_plan_mode(
             "## Refactor\n\nSteps inside.",
             tasks=[
                 {"content": "Step 1", "activeForm": "Doing step 1"},
@@ -152,7 +152,7 @@ class TestPlanTool:
         session.todo_store = TodoStore()
         session.todo_store.set([TodoItem("Pre-existing", "in_progress", "")])
         tool = PlanTool(session)
-        tool.exit_plan_mode("just prose, no enumerable steps")
+        await tool.exit_plan_mode("just prose, no enumerable steps")
         # Original todos untouched.
         assert len(session.todo_store.items) == 1
         assert session.todo_store.items[0].content == "Pre-existing"
@@ -170,7 +170,7 @@ class TestPlanTool:
         captured: list[tuple[str, dict]] = []
         session.register_broadcast_callback(lambda ch, p: captured.append((ch, p)))
         tool = PlanTool(session)
-        tool.exit_plan_mode(
+        await tool.exit_plan_mode(
             "plan",
             tasks=[{"content": "A"}, {"content": "B"}],
         )
@@ -193,7 +193,7 @@ class TestPlanTool:
         session.plan_store = PlanStore()
         session.todo_store = TodoStore()
         tool = PlanTool(session)
-        result = tool.exit_plan_mode(
+        result = await tool.exit_plan_mode(
             "plan",
             tasks=[
                 {"content": "OK row"},
@@ -247,7 +247,7 @@ class TestTheFloorJudgesNoPlan:
     async def test_a_plan_citing_no_files_is_submitted(self):
         session = self._session()
         tool = PlanTool(session)
-        result = tool.exit_plan_mode("Refactor the auth thing. It will be great.")
+        result = await tool.exit_plan_mode("Refactor the auth thing. It will be great.")
         assert "Plan submitted" in result
         assert session.plan_store.latest == "Refactor the auth thing. It will be great."
 
@@ -454,7 +454,7 @@ class TestEnterPlanMode:
         session = self._session_with_real_set_mode()
         tool = PlanTool(session)
         await tool.enter_plan_mode("complex")
-        tool.exit_plan_mode("step 1, step 2")
+        await tool.exit_plan_mode("step 1, step 2")
         assert session.permission_evaluator.mode is PermissionMode.PLAN
 
 
@@ -872,7 +872,7 @@ class TestPlanModeLifecycle:
         assert session.permission_evaluator.mode is PermissionMode.PLAN
 
         tool = PlanTool(session)
-        tool.exit_plan_mode("1. Read spec\n2. Implement\n3. Test")
+        await tool.exit_plan_mode("1. Read spec\n2. Implement\n3. Test")
         # Plan stored, mode UNCHANGED (agent can't exit on its own).
         assert session.plan_store.latest == "1. Read spec\n2. Implement\n3. Test"
         assert session.permission_evaluator.mode is PermissionMode.PLAN

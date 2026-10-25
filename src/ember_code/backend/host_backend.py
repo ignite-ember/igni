@@ -29,6 +29,7 @@ from typing import Any
 from ember_code.backend.message_dispatcher import _serialize
 from ember_code.backend.rpc_router import POOL_LEVEL_RPCS
 from ember_code.backend.session_orchestrator import SessionOrchestrator
+from ember_code.core.gates import EventGate
 from ember_code.extensions.host.broadcasts import BroadcastSignals
 from ember_code.extensions.host.model import HostModel
 from ember_code.extensions.registry import ExtensionRegistry
@@ -270,6 +271,9 @@ class HostModelWiring:
             strict=strict,
         )
         orchestrator.attach_host_model(model)
+        # The core asks before a tool runs or a plan reaches the person;
+        # the extensions that intercept those answer.
+        EventGate.install(model.interceptors.ask)
         transport.observe(model.outbound)
         watch = RpcWatch(model.broadcasts.after_rpc)
         orchestrator.watch_inbound(watch.inbound)

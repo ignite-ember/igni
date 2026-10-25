@@ -29,9 +29,11 @@ from ember_code.core.decisions import Laya
 from ember_code.extensions.events import HostTopic
 from ember_code.extensions.host.backend import HostBackend
 from ember_code.extensions.host.broadcasts import BroadcastSignals
+from ember_code.extensions.host.coverage import FE_ACTIONS, RPC
 from ember_code.extensions.host.definition import HOST_SCHEMA
 from ember_code.extensions.host.errors import HostModelError
 from ember_code.extensions.host.grants import HostGrants
+from ember_code.extensions.host.intercepts import PERSON, Interceptors
 from ember_code.extensions.host.members import ALL_MEMBERS, Call, Impl
 from ember_code.extensions.host.signals import Content, SignalBus, Subscriber
 from ember_code.extensions.host.spec import (
@@ -86,6 +88,32 @@ class ExternalOpen(BaseModel):
     source: str
 
 
+class ModelWriteValue:
+    """The ``ModelWrite`` an interceptor of a write is handed."""
+
+    @staticmethod
+    def of(
+        path: str,
+        window: str | None,
+        session_id: str | None,
+        writer: str,
+        params: dict[str, Any],
+        value: Any,
+        op: Op,
+    ) -> dict[str, Any]:
+        out: dict[str, Any] = {
+            "path": path,
+            "window": window,
+            "session_id": session_id,
+            "writer": writer,
+        }
+        if op is Op.SET:
+            out["value"] = _plain(value)
+        else:
+            out["params"] = _plain(params)
+        return out
+
+
 class HostModel:
     """Every extension's view of igni, through one schema."""
 
@@ -98,6 +126,7 @@ class HostModel:
         notifications: Any = None,
         notices: Any = None,
         decisions: Laya | None = None,
+        interceptors: Interceptors | None = None,
         schema: HostSchema = HOST_SCHEMA,
         strict: bool = False,
     ) -> None:
@@ -112,6 +141,8 @@ class HostModel:
                 arriving over MCP passes.
             decisions: Laya, for ``host.decide``; the process's shared
                 one unless a test brings its own.
+            interceptors: Who is asked before a write is made; the
+                process's shared ones unless a test brings its own.
             strict: Check every answer against the schema and fail loudly
                 when it does not fit. For tests: in production an answer
                 is sent as the backend gave it.
@@ -124,6 +155,8 @@ class HostModel:
         self.notifications = notifications
         self.notices = notices
         self.decisions = decisions if decisions is not None else Laya.shared()
+        self.interceptors = interceptors if interceptors is not None else Interceptors.shared()
+        self.interceptors.attach(registry)
         self.strict = strict
         self.types = SchemaTypes(schema)
         self.state = HostState()
@@ -140,6 +173,7 @@ class HostModel:
                 self._impl[key] = impl
         self._tasks: set[asyncio.Task[Any]] = set()
         self._pages: dict[str, Subscriber] = {}
+        self._writes = frozenset(schema.write_paths())
 
     # ── Grants ────────────────────────────────────────────────────
 
@@ -232,6 +266,10 @@ class HostModel:
         grants = self.grants_for(extension_id)
         if grants is None:
             raise HostModelError(ErrorCode.NOT_FOUND, f"no extension {extension_id!r} is installed")
+        if request.op is Op.ANSWER:
+            raise HostModelError(
+                ErrorCode.INVALID, "only an extension's process answers an intercept; a page cannot"
+            )
         if request.op in (Op.SUBSCRIBE, Op.UNSUBSCRIBE):
             if subscriber is None:
                 raise HostModelError(ErrorCode.INVALID, "this channel does not take subscriptions")
@@ -271,6 +309,16 @@ class HostModel:
         impl = self._impl.get((request.op.value, path))
         if impl is None:  # pragma: no cover — the coverage test forbids it
             raise HostModelError(ErrorCode.FAILED, f"'{path}' has no implementation")
+        if request.op is not Op.GET and path in self._writes:
+            verdict = await self.interceptors.run(
+                path,
+                ModelWriteValue.of(
+                    path, window, session_id, extension_id, params, value, request.op
+                ),
+                writer=extension_id,
+            )
+            if not verdict.allowed:
+                raise HostModelError(ErrorCode.REFUSED, verdict.reason)
         call = Call(
             extension_id=extension_id,
             grants=grants,
@@ -564,6 +612,63 @@ class HostModel:
 
     def session_switched(self, session_id: str, window: str | None) -> None:
         self.emit(HostTopic.SESSION_SWITCHED, {"session_id": session_id, "window": window})
+
+    # ── The person's writes ───────────────────────────────────────
+
+    #: ``window_model`` ops that write, by the member an interceptor knows them as.
+    WINDOW_OPS: dict[str, str] = {
+        "toast": "ui.toast",
+        "dismiss_toast": "ui.dismiss_toast",
+        "open_dialog": "ui.show_dialog",
+    }
+
+    async def person_write_refused(self, message: msg.Message) -> str | None:
+        """Why a write the person made in a window is not made, or ``None`` to make it.
+
+        A window's RPCs and actions reach the model's members through
+        the coverage tables (:mod:`.coverage`); a write among them is
+        put to its interceptors before igni makes it. An extension's
+        own writes were asked about where it made them (:meth:`_handle`).
+        """
+        path: str | None
+        params: dict[str, Any]
+        if isinstance(message, msg.RPCRequest):
+            try:
+                path = RPC.get(RpcMethod(message.method))
+            except ValueError:
+                return None
+            params = dict(message.args or {})
+        else:
+            path = FE_ACTIONS.get(str(getattr(message, "type", "")))
+            params = message.model_dump(mode="json", exclude={"type", "id"})
+        if path is None or path not in self._writes:
+            return None
+        session_id = getattr(message, "session_id", None) or None
+        verdict = await self.interceptors.run(
+            path,
+            ModelWriteValue.of(path, None, session_id, PERSON, params, None, Op.CALL),
+            writer=PERSON,
+        )
+        return None if verdict.allowed else verdict.reason
+
+    async def window_write_refused(self, request: WindowRequest) -> str | None:
+        """Why a window's write to its own model is not made, or ``None`` to make it."""
+        if request.op == "write":
+            path = f"ui.{request.field}"
+            if path not in self._writes:
+                return None
+            write = ModelWriteValue.of(
+                path, request.window, None, PERSON, {}, request.value, Op.SET
+            )
+        elif request.op in self.WINDOW_OPS:
+            path = self.WINDOW_OPS[request.op]
+            write = ModelWriteValue.of(
+                path, request.window, None, PERSON, {"value": request.value}, None, Op.CALL
+            )
+        else:
+            return None
+        verdict = await self.interceptors.run(path, write, writer=PERSON)
+        return None if verdict.allowed else verdict.reason
 
     # ── Windows ───────────────────────────────────────────────────
 

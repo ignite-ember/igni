@@ -30,6 +30,7 @@ from pathlib import Path
 from typing import Any
 
 from ember_code.core.config.permission_eval import PermissionEvaluator
+from ember_code.core.gates import EventGate
 from ember_code.core.hooks.agno_coroutine_marker import AgnoCoroutineMarker
 from ember_code.core.hooks.executor import HookExecutor
 from ember_code.core.hooks.hook_firer import HookFirer
@@ -44,7 +45,10 @@ from ember_code.core.utils.rules_index import RulesIndex
 
 logger = logging.getLogger(__name__)
 
-__all__ = ["ToolEventHook", "_safe_args", "_preview"]
+#: The event the agent's tool calls are asked about (``docs/HOST_OBJECT_MODEL.md``).
+TOOL_CALLING = "tools.calling"
+
+__all__ = ["TOOL_CALLING", "ToolEventHook", "_safe_args", "_preview"]
 
 
 class ToolEventHook:
@@ -75,6 +79,7 @@ class ToolEventHook:
         # — mark this callable-instance so the async path is used.
         AgnoCoroutineMarker.mark(self)
 
+        self._session_id = session_id
         firer = HookFirer(executor, session_id)
         self._pipeline = PermissionPipeline(
             firer=firer,
@@ -110,6 +115,14 @@ class ToolEventHook:
             args=args or {},
             agent=agent,
         )
+        # Asked first, so igni's own checks run on whatever the answer
+        # leaves: a changed argument is checked like the agent's own.
+        verdict = await EventGate.ask(
+            TOOL_CALLING, {"session_id": self._session_id, "tool": name, "args": ctx.args}
+        )
+        if not verdict.allowed:
+            return f"Blocked: {verdict.reason}"
+        ctx = ctx.with_args(verdict.value.get("args", ctx.args))
         block_message = await self._pipeline.evaluate(ctx)
         if block_message is not None:
             return block_message

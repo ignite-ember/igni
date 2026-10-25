@@ -28,7 +28,8 @@ from igni_extension.errors import (
 from igni_extension.extension import IgniExtension
 from igni_extension.hints import ToolHints, ToolHintsMissing
 from igni_extension.host import Host, Notifications
-from igni_extension.host_model import SCHEMA_VERSION
+from igni_extension.host_model import SCHEMA_VERSION, Intercepts
+from igni_extension.intercepts import Allow, Intercept, Modify, Reject
 from igni_extension.members import Property, Signal
 from igni_extension.notifications import LocalNotification, Target
 from igni_extension.prompt import PromptConditions
@@ -36,6 +37,7 @@ from igni_extension.service import ServiceClient
 from igni_extension.tokens import SignedIn
 
 __all__ = [
+    "Allow",
     "Assets",
     "ExtensionEnvironment",
     "Host",
@@ -44,11 +46,15 @@ __all__ = [
     "HostUnavailable",
     "IgniExtension",
     "IgniExtensionError",
+    "Intercept",
+    "Intercepts",
     "LocalNotification",
+    "Modify",
     "NotConfigured",
     "NotSignedIn",
     "Notifications",
     "PromptConditions",
+    "Reject",
     "Property",
     "SCHEMA_VERSION",
     "Secrets",

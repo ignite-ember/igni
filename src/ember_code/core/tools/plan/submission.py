@@ -34,6 +34,7 @@ import logging
 from typing import TYPE_CHECKING, Any
 
 from ember_code.core.broadcast_schema import BroadcastEvent
+from ember_code.core.gates import EventGate
 from ember_code.core.tools.plan.researcher import PlanResearcherRunner
 from ember_code.core.tools.plan.schemas import (
     PermissionModeChangedPayload,
@@ -49,6 +50,9 @@ if TYPE_CHECKING:
     from ember_code.core.session.core import Session
 
 logger = logging.getLogger(__name__)
+
+#: The event a plan is asked about before the person sees it (``docs/HOST_OBJECT_MODEL.md``).
+PLAN_SUBMITTING = "plan.submitting"
 
 
 class PlanSessionShapeError(RuntimeError):
@@ -145,6 +149,11 @@ class PlanTransactionCoordinator:
                 reply_text=mode_status,
             )
 
+        store = getattr(self._session, "plan_store", None)
+        if store is not None:
+            # A fresh plan: whoever checks submissions sees attempt 0.
+            store.rejected = 0
+
         # Re-broadcast with the agent attribution + reason so
         # the FE can render a small info banner. The broadcast
         # bus is a construction invariant on Session, so no
@@ -215,7 +224,7 @@ class PlanTransactionCoordinator:
 
     # ── exit_plan_mode transaction ─────────────────────────────
 
-    def submit(self, plan: str, tasks: list | None) -> PlanExitResult:
+    async def submit(self, plan: str, tasks: list | None) -> PlanExitResult:
         """Run the submit-plan transaction and return a typed
         envelope. See :class:`PlanExitResult` for field semantics.
 
@@ -237,7 +246,10 @@ class PlanTransactionCoordinator:
             )
 
         try:
-            return self._submit_transaction(plan_text, tasks)
+            checked = await self._checked(plan_text, tasks)
+            if isinstance(checked, PlanExitResult):
+                return checked
+            return self._submit_transaction(checked, tasks)
         except PlanSessionShapeError as shape_err:
             return PlanExitResult(
                 ok=False,
@@ -245,6 +257,32 @@ class PlanTransactionCoordinator:
                 error=shape_err.reply_text,
                 reply_text=shape_err.reply_text,
             )
+
+    async def _checked(self, plan_text: str, raw_tasks: list | None) -> str | PlanExitResult:
+        """Ask before the plan reaches the person (``plan.submitting``).
+
+        The plan to submit — as it came, or as whoever checks
+        submissions changed it — or the rejection, which goes back to
+        the agent so it can do more work and submit again.
+        """
+        store = getattr(self._session, "plan_store", None)
+        if store is None:
+            msg = "Error: plan store not initialised on this session."
+            raise PlanSessionShapeError(missing="plan_store", reply_text=msg)
+        verdict = await EventGate.ask(
+            PLAN_SUBMITTING,
+            {
+                "session_id": str(getattr(self._session, "session_id", "") or ""),
+                "plan": plan_text,
+                "tasks": list(raw_tasks or []),
+                "attempt": int(store.rejected),
+            },
+        )
+        if verdict.allowed:
+            return str(verdict.value.get("plan", plan_text)).strip() or plan_text
+        store.rejected += 1
+        reply = f"Plan rejected: {verdict.reason}"
+        return PlanExitResult(ok=False, reason="rejected", error=reply, reply_text=reply)
 
     def _submit_transaction(self, plan_text: str, raw_tasks: list | None) -> PlanExitResult:
         """Body of the submit transaction — factored out so

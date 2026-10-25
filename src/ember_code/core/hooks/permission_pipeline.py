@@ -24,7 +24,7 @@ from __future__ import annotations
 
 import fnmatch
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
 
@@ -110,6 +110,12 @@ class ToolCallContext:
         constructs the full context with every field populated.
         """
         return cls(name=name, func=None, args=args, agent=None)
+
+    def with_args(self, args: dict[str, Any]) -> ToolCallContext:
+        """The same call with other arguments: what an interceptor changed them to."""
+        if args is self.args:
+            return self
+        return replace(self, args=dict(args))
 
 
 # ── PermissionStage ABC + concrete gates ───────────────────────────

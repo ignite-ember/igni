@@ -1,8 +1,8 @@
 # The host object model
 
-**An extension can do anything in igni that igni's own UI can do, and
-see everything that happens in it: every navigation, every data write,
-every UI change.** The
+**An extension can do anything in igni that igni's own UI can do, see
+everything that happens in it — every navigation, every data write,
+every UI change — and stop or change what is about to happen.** The
 host exposes everything to extensions as one model in the style of QML:
 **objects** with **properties**, **signals** and **methods**. An
 extension reacts to a signal and, while handling it, reads and writes the
@@ -140,7 +140,7 @@ window, another extension, or this one.
   the model's — fails the build, so the model cannot fall behind the
   app.
 - **One schema, two SDKs.** The model is described once —
-  `ember_code.extensions.host.definition`, version **1.2.0** — and
+  `ember_code.extensions.host.definition`, version **1.5.0** — and
   versioned under the compatibility floor (EXTENSIBILITY §8): a new
   member is a minor version, a changed or removed one a major. The Python
   SDK (`igni-extension`, `igni_extension.host_model`) and the TypeScript
@@ -304,6 +304,91 @@ an approval, always goes first; extensions wait their turn in order.
 The first call on a machine loads the model, which takes seconds. It
 needs the `decide` permission, shown with the others before a super
 admin approves.
+
+## Intercepting
+
+A signal says what happened. An **intercept** asks first: before the
+event happens, igni hands it to every extension that declared it, in
+the super admin's priority order of extensions, and waits for each
+answer —
+
+* `Allow()` — let it happen (returning nothing means the same);
+* `Reject(reason)` — it does not happen; `reason` reaches whoever caused
+  it, written for them;
+* `Modify(value)` — it happens, changed: the whole value, with only the
+  fields the event lets an interceptor change changed. Only where the
+  event can be changed, and only with `"modify": true` in the manifest.
+
+A reject ends the chain. A change is what the next interceptor is
+handed, and what igni goes ahead with.
+
+```python
+from igni_extension import Modify, Reject
+from igni_extension.host_model import Intercepts, PlanSubmitting, ToolCalling
+
+@ext.intercept(Intercepts.PLAN_SUBMITTING)
+async def grounded(plan: PlanSubmitting) -> Reject | None:
+    if plan.attempt < 2 and plan.plan.count("src/") < 2:
+        return Reject("Cite the files the plan changes.")
+    return None
+
+@ext.intercept(Intercepts.TOOLS_CALLING)
+async def no_prod(call: ToolCalling) -> Modify | None:
+    if call.tool == "run_shell_command" and "--prod" in call.args.get("command", ""):
+        return Modify(call.model_copy(update={"args": {**call.args, "command": "echo refused"}}))
+    return None
+```
+
+**The events.** The agent's decision points:
+
+| Event | When | Changeable | On reject | Silence |
+|---|---|---|---|---|
+| `chat.submitting` (`ChatSubmitting`) | A message is about to start a run — the person's, a queued one, or one an extension posted (`from_extension`). Asked before igni wraps it for the agent. | `text` | The run does not start; the window shows the reason as an error. | closed |
+| `tools.calling` (`ToolCalling`) | The agent is about to run a tool. Asked before igni's own permission checks, which then run on what the interceptors left — a changed argument is checked like the agent's own. | `args` | The tool does not run; the agent is told why, as for igni's own refusals. | closed |
+| `plan.submitting` (`PlanSubmitting`) | The agent is about to put a plan to the person (`exit_plan_mode`). `attempt` is how many submissions were rejected since it entered plan mode. | `plan` | The plan is not submitted; the agent is told why, and may do more work and submit again. | open |
+
+…and **every write to the model**, named by its member — `ui.navigate`,
+`ui.composer`, `sessions.current`, `chat.post`, `plugins.install`, every
+writable property and every method that does more than read
+(`HostSchema.write_intercepts`; `Intercepts.UI_NAVIGATE` in the SDK).
+The value is a `ModelWrite`: the member, a property's new `value` or a
+method's `params`, the window and session, and the `writer` — `person`,
+or the extension making it. A write can be rejected, not changed: a
+rejected write is not made, and the writer is told why (`refused` for an
+extension; a window drops its own copy and shows the model's). An
+extension is never asked about its own writes. Reads, and an extension's
+own things — its state, its settings, its notifications to the person —
+are nobody else's to intercept.
+
+**A silence is igni's to decide**, never the extension's. An interceptor
+that does not answer within two seconds (igni's limit, not
+configurable by an extension), whose process is not connected, whose
+handler raised, or whose change does not fit the event, has not
+answered. *Closed*: the event does not happen, and the reason names the
+extension that could not check it — a message nobody could check is not
+sent to a model, a tool call nobody could check does not run. *Open*: it
+goes ahead as if that interceptor had allowed it — a plan, and every
+write, so that one stuck extension cannot freeze a window. A process
+that is starting counts: igni waits for it to connect, within the same
+limit.
+
+**Declared and granted; ordered, never decided.** An extension
+intercepts only what its manifest lists in `permissions.intercepts`
+(`{"event": "tools.calling", "modify": true}`), shown to the super admin
+who approves its service — approving it covers them; nobody approves an
+extension's events one by one — and only while it holds the grant the
+event needs in `permissions.host`: `chat.read` for the decision points,
+the member's own for a write. An interceptor is handed what the event
+carries, and may see only what it could read anyway. Several extensions
+intercepting one event never collide: they are asked in the super
+admin's priority order of extensions (the Services page), each handed
+what the one before left — changes chain, and the first reject ends it.
+The impact report on the Services page shows what each extension
+intercepts, and where it stands in that order.
+
+**A page cannot intercept.** igni would then wait on whatever tab
+happens to be open. Intercepting is the process's, over its socket
+(`docs/HOST_MODEL_PROTOCOL.md`, *Intercepts*).
 
 ## An extension's own service is not the host
 

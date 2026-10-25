@@ -34,9 +34,18 @@ from websockets.datastructures import Headers
 from websockets.http11 import Request as HttpRequest
 from websockets.http11 import Response as HttpResponse
 
+from ember_code.extensions.host.intercepts import Interceptors
 from ember_code.extensions.host.model import HostModel
 from ember_code.extensions.host.spec import ErrorCode
-from ember_code.extensions.host.wire import ErrorBody, Hello, Reply, Request, SignalMessage
+from ember_code.extensions.host.wire import (
+    ErrorBody,
+    Hello,
+    InterceptAnswer,
+    Op,
+    Reply,
+    Request,
+    SignalMessage,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -64,12 +73,26 @@ class _SocketSink:
         except asyncio.QueueFull:
             logger.warning("host channel: a subscriber is not reading; dropped %s", message.signal)
 
+    def send(self, frame: str) -> None:
+        """An intercept, in order with everything else on the socket."""
+        try:
+            self.queue.put_nowait(frame)
+        except asyncio.QueueFull:
+            logger.warning("host channel: a process is not reading; an intercept is lost")
+
 
 class HostChannel:
     """The loopback listener extension processes reach the host model on."""
 
-    def __init__(self, model: HostModel, *, host: str = LOOPBACK) -> None:
+    def __init__(
+        self,
+        model: HostModel,
+        *,
+        host: str = LOOPBACK,
+        interceptors: Interceptors | None = None,
+    ) -> None:
         self._model = model
+        self._interceptors = interceptors if interceptors is not None else Interceptors.shared()
         self._host = host
         self._port = 0
         self._server: Server | None = None
@@ -175,6 +198,7 @@ class HostChannel:
         )
         writer = asyncio.create_task(self._write(connection, sink))
         pending: set[asyncio.Task[None]] = set()
+        self._interceptors.connect(extension_id, sink.send)
         try:
             await connection.send(hello.model_dump_json())
             async for raw in connection:
@@ -184,6 +208,7 @@ class HostChannel:
         except Exception as exc:  # noqa: BLE001 — a connection ends however it ends
             logger.debug("host channel: %s's connection ended: %s", extension_id, exc)
         finally:
+            self._interceptors.disconnect(extension_id, sink.send)
             self._model.bus.detach(subscriber)
             self._connections.get(extension_id, set()).discard(connection)
             for task in pending:
@@ -207,9 +232,34 @@ class HostChannel:
                 error=ErrorBody(code=ErrorCode.INVALID, message=f"not a host-model request: {exc}"),
             )
         else:
-            reply = await self._model.handle(extension_id, request, subscriber=subscriber)
+            if request.op is Op.ANSWER:
+                reply = self._answered(extension_id, request)
+            else:
+                reply = await self._model.handle(extension_id, request, subscriber=subscriber)
         with contextlib.suppress(asyncio.QueueFull):
             sink.queue.put_nowait(reply.model_dump_json())
+
+    def _answered(self, extension_id: str, request: Request) -> Reply:
+        """The process's answer to an intercept. Only a process answers; a page cannot."""
+        try:
+            answer = InterceptAnswer.model_validate(request.params)
+        except ValidationError as exc:
+            return Reply(
+                id=request.id,
+                ok=False,
+                error=ErrorBody(code=ErrorCode.INVALID, message=f"not an answer: {exc}"),
+            )
+        if not self._interceptors.answered(extension_id, answer):
+            return Reply(
+                id=request.id,
+                ok=False,
+                error=ErrorBody(
+                    code=ErrorCode.NOT_FOUND,
+                    message=f"nothing waits on {answer.intercept!r} from this extension; "
+                    "it was answered already, or ran out of time",
+                ),
+            )
+        return Reply(id=request.id, ok=True)
 
     @staticmethod
     async def _write(connection: ServerConnection, sink: _SocketSink) -> None:

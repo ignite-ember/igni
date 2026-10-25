@@ -35,7 +35,7 @@ from __future__ import annotations
 
 import re
 from enum import StrEnum
-from typing import Any
+from typing import Any, ClassVar
 
 from pydantic import BaseModel, ConfigDict, model_validator
 
@@ -162,6 +162,10 @@ class MethodSpec(Strict):
     permission: str | None = None
     inherit_permission: bool = True
     stage: int = 1
+    #: ``True`` for a method that only reads — searches, lists, asks.
+    #: Every other method writes, and a write can be intercepted
+    #: (:class:`InterceptSpec`).
+    reads: bool = False
 
 
 class ObjectSpec(Strict):
@@ -193,6 +197,37 @@ class ObjectSpec(Strict):
         return self.permission
 
 
+class FailMode(StrEnum):
+    """What the host does when an interceptor does not answer in time, or fails."""
+
+    #: The event does not happen: a tool call that nobody could check
+    #: does not run.
+    CLOSED = "closed"
+    #: The event happens as if the interceptor had allowed it.
+    OPEN = "open"
+
+
+class InterceptSpec(Strict):
+    """An event an extension can stop, or change, before it happens.
+
+    ``value`` names the type the interceptor is handed. ``modify`` names
+    the fields of it an interceptor may change; empty, it may only allow
+    or reject. ``fails`` is the host's, never the extension's: what
+    happens when the interceptor does not answer in time.
+    """
+
+    name: str
+    value: str
+    doc: str
+    #: What rejecting does, in a sentence.
+    on_reject: str
+    modify: tuple[str, ...] = ()
+    fails: FailMode = FailMode.CLOSED
+    #: The grant an interceptor must also hold: it is handed what the
+    #: event carries, and may see only what it could read anyway.
+    permission: str | None = None
+
+
 class PermissionSpec(Strict):
     name: str
     #: What the person approving the install is told it allows.
@@ -211,6 +246,10 @@ class HostSchema(Strict):
     permissions: tuple[PermissionSpec, ...]
     types: tuple[TypeSpec, ...]
     objects: tuple[ObjectSpec, ...]
+    #: The agent's decision points an extension can intercept. Every
+    #: write to the model can be intercepted too
+    #: (:meth:`write_intercepts`); those are not listed here.
+    intercepts: tuple[InterceptSpec, ...] = ()
 
     # ── Lookup ────────────────────────────────────────────────────
 
@@ -260,6 +299,60 @@ class HostSchema(Strict):
         if signal.wire is not None:
             return signal.wire
         return f"{spec.path}.{signal.name}" if spec.path else signal.name
+
+    # ── Interception ──────────────────────────────────────────────
+
+    #: The value an interceptor of a write is handed.
+    WRITE_VALUE: ClassVar[str] = "ModelWrite"
+
+    def _writes(self) -> list[tuple[str, str]]:
+        """``(member path, the grant it needs)`` for every write another extension may see.
+
+        Writable properties and methods that do not only read. An
+        extension's own things — its state, its settings, its
+        notifications to the person — need no grant, and are nobody
+        else's to intercept.
+        """
+        out: list[tuple[str, str]] = []
+        for spec in self.objects:
+            prefix = f"{spec.path}." if spec.path else ""
+            members: list[PropertySpec | MethodSpec] = [
+                p for p in spec.properties if p.writable and p.stage == 1
+            ]
+            members += [m for m in spec.methods if not m.reads and m.stage == 1]
+            for member in members:
+                permission = spec.permission_of(member)
+                if permission is not None:
+                    out.append((f"{prefix}{member.name}", permission))
+        return out
+
+    def write_paths(self) -> list[str]:
+        """Every member whose write can be intercepted."""
+        return [path for path, _ in self._writes()]
+
+    def write_intercepts(self) -> list[InterceptSpec]:
+        """One reject-only intercept per write, named by its member."""
+        return [
+            InterceptSpec(
+                name=path,
+                value=self.WRITE_VALUE,
+                doc=f"`{path}` is about to be written, by the person or an extension.",
+                on_reject="The write is not made; whoever made it is told why (`refused`).",
+                fails=FailMode.OPEN,
+                permission=permission,
+            )
+            for path, permission in self._writes()
+        ]
+
+    def intercept(self, name: str) -> InterceptSpec | None:
+        """The decision point, or the write, called ``name``."""
+        for spec in self.intercepts:
+            if spec.name == name:
+                return spec
+        return next((s for s in self.write_intercepts() if s.name == name), None)
+
+    def intercept_names(self) -> list[str]:
+        return [s.name for s in self.intercepts] + self.write_paths()
 
     def permission_names(self) -> set[str]:
         return {p.name for p in self.permissions}
@@ -348,6 +441,27 @@ class HostSchema(Strict):
                     if not NAME.match(param.name):
                         problems.append(f"{where}({param.name}): not a lowercase name")
                     check_type(f"{where}({param.name})", param.type)
+        members = set(self.member_paths())
+        for intercept in self.intercepts:
+            where = f"intercept {intercept.name}"
+            if not PATH.match(intercept.name):
+                problems.append(f"{where}: not a dotted lowercase name")
+            if intercept.name in members:
+                problems.append(
+                    f"{where}: is a member's name; a write is intercepted by it already"
+                )
+            value = self.type(intercept.value)
+            if value is None:
+                problems.append(f"{where}: unknown type {intercept.value!r}")
+                continue
+            if intercept.permission is not None and intercept.permission not in permissions:
+                problems.append(f"{where}: permission {intercept.permission!r} is not declared")
+            names = {f.name for f in value.fields}
+            for changed in intercept.modify:
+                if changed not in names:
+                    problems.append(f"{where}: {intercept.value} has no field {changed!r}")
+        if self.write_paths() and self.type(self.WRITE_VALUE) is None:
+            problems.append(f"writes are intercepted with {self.WRITE_VALUE}, which is not defined")
         if problems:
             raise ValueError("the host schema is inconsistent:\n  " + "\n  ".join(problems))
         return self
@@ -450,6 +564,7 @@ def method(
     permission: str | None = None,
     always: bool = False,
     stage: int = 1,
+    reads: bool = False,
 ) -> MethodSpec:
     return MethodSpec(
         name=name,
@@ -459,6 +574,28 @@ def method(
         permission=permission,
         inherit_permission=not always,
         stage=stage,
+        reads=reads,
+    )
+
+
+def intercept(
+    name: str,
+    value: str,
+    doc: str,
+    *,
+    on_reject: str,
+    modify: tuple[str, ...] = (),
+    fails: FailMode = FailMode.CLOSED,
+    permission: str | None = None,
+) -> InterceptSpec:
+    return InterceptSpec(
+        name=name,
+        value=value,
+        doc=doc,
+        on_reject=on_reject,
+        modify=modify,
+        fails=fails,
+        permission=permission,
     )
 
 
@@ -473,8 +610,10 @@ def schema_json(schema: HostSchema) -> dict[str, Any]:
 
 __all__ = [
     "ErrorCode",
+    "FailMode",
     "FieldSpec",
     "HostSchema",
+    "InterceptSpec",
     "MethodSpec",
     "ObjectSpec",
     "ParamSpec",
@@ -484,6 +623,7 @@ __all__ = [
     "TypeExpr",
     "TypeSpec",
     "field",
+    "intercept",
     "method",
     "param",
     "prop",

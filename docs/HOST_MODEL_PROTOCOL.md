@@ -115,6 +115,39 @@ fields this SDK's schema does not know yet (a newer igni); ignore them.
 Run a signal's handlers off the read loop: a handler that reads the
 model needs the loop free to receive the reply.
 
+## Intercepts
+
+Host → SDK, when an event the extension declared in
+`permissions.intercepts` is about to happen:
+
+```json
+{"op": "intercept", "id": "i-12", "event": "tools.calling",
+ "value": {"session_id": "…", "tool": "run_shell_command", "args": {"command": "ls"}}}
+```
+
+The process answers with an `answer` request, whose reply is an
+ordinary one:
+
+```json
+{"id": 31, "op": "answer", "params": {"intercept": "i-12", "outcome": "allow"}}
+{"id": 32, "op": "answer", "params": {"intercept": "i-13", "outcome": "reject", "reason": "No shell on Fridays."}}
+{"id": 33, "op": "answer", "params": {"intercept": "i-14", "outcome": "modify", "value": {…the whole value…}}}
+{"id": 34, "op": "answer", "params": {"intercept": "i-15", "outcome": "failed", "reason": "index unreachable"}}
+```
+
+* `intercept` — the `id` it answers. One answer each; an answer to
+  something already answered, or that ran out of time, is refused
+  (`not_found`).
+* `outcome` — `allow`, `reject` (with a `reason`, which reaches the
+  agent or the person — an empty one is not an answer), `modify` (with
+  the whole `value`, only the event's changeable fields changed), or
+  `failed` (the handler raised; igni treats it as a silence).
+
+igni gives each answer a deadline it sets (two seconds); what a silence
+means is the event's, in `docs/HOST_OBJECT_MODEL.md`. Answer intercepts
+off the read loop, as signals are handled, and keep handlers short. A
+page's channel takes no `answer`: a page cannot intercept.
+
 ## The page's channel: the bridge
 
 A page talks to the window it is framed in by `postMessage`

@@ -356,6 +356,9 @@ class SessionOrchestrator:
             return
         try:
             request = WindowRequest.model_validate(dict(message.args or {}))
+            refused = await self._host_model.window_write_refused(request)
+            if refused is not None:
+                raise WindowModelError(f"refused: {refused}")
             result = self._host_model.handle_window(request)
         except (ValidationError, WindowModelError) as exc:
             await self._transport.send(
@@ -438,8 +441,13 @@ class SessionOrchestrator:
         self._inbound_watchers.append(watcher)
 
     def spawn_dispatch(self, message: Any) -> asyncio.Task:
-        """Dispatch a message as a window's would be, in the background."""
-        task = asyncio.create_task(self.dispatch(message))
+        """Dispatch a message as a window's would be, in the background.
+
+        For the host model's members, on an extension's behalf: its
+        interceptors were asked where the extension made the write, so
+        it is not put to them again as the person's.
+        """
+        task = asyncio.create_task(self._route(message))
         self._in_flight.add(task)
         task.add_done_callback(self._in_flight.discard)
         return task
@@ -485,7 +493,37 @@ class SessionOrchestrator:
     # ── Message fan-out ──────────────────────────────────────────
 
     async def dispatch(self, message: Any) -> None:
-        """Route one message to the right runtime + handler.
+        """A window's message: put to the extensions that intercept it, then routed.
+
+        A write the person makes (an RPC or an action that reaches a
+        member of the host model) is asked about first; one an
+        extension rejects is not made, and the window is told why.
+        Then :meth:`_route`. Pool-level RPCs are the model's own
+        plumbing and are not writes of the person's; ``window_model``
+        writes are asked about in :meth:`_handle_window_model`.
+        """
+        if self._host_model is not None and not (
+            isinstance(message, msg.RPCRequest) and message.method in POOL_LEVEL_RPCS
+        ):
+            refused = await self._host_model.person_write_refused(message)
+            if refused is not None:
+                await self._refuse(message, refused)
+                return
+        await self._route(message)
+
+    async def _refuse(self, message: Any, reason: str) -> None:
+        """A write an extension stopped: the window that made it is told why."""
+        if isinstance(message, msg.RPCRequest):
+            await self._transport.send(
+                msg.RPCResponse(id=message.id or "", error=f"refused: {reason}")
+            )
+            return
+        await self._transport.send(
+            msg.Error(id=message.id or "", session_id=message.session_id or "", text=reason)
+        )
+
+    async def _route(self, message: Any) -> None:
+        """Route one message to the right runtime + handler, with nothing asked first.
 
         Pool-level RPCs (``attach_session``, ``host_model``, ``window_model``)
         bypass per-runtime routing; ``SessionList`` is forced onto

@@ -27,6 +27,7 @@ from websockets.exceptions import WebSocketException
 
 from igni_extension.environment import HostEndpoint
 from igni_extension.errors import HostError, HostUnavailable, NotConfigured
+from igni_extension.intercepts import InterceptHandlers
 from igni_extension.notifications import LocalNotification, NotifyNotification
 from igni_extension.session import HostSession
 from igni_extension.signals import SignalHandlers
@@ -54,9 +55,11 @@ class HostConnection:
         endpoint: HostEndpoint,
         signals: SignalHandlers,
         session: HostSession | None = None,
+        intercepts: InterceptHandlers | None = None,
     ) -> None:
         self._endpoint = endpoint
         self._signals = signals
+        self._intercepts = intercepts if intercepts is not None else InterceptHandlers()
         self._session = session
         self._socket: ClientConnection | None = None
         self._reader: asyncio.Task[None] | None = None
@@ -219,6 +222,16 @@ class HostConnection:
                     self._spawn(
                         self._signals.deliver(str(message.get("signal")), message.get("value"))
                     )
+                elif op == "intercept":
+                    # igni waits on this one, against a deadline: answer it
+                    # off the read loop, as a signal is handled.
+                    self._spawn(
+                        self._answer(
+                            str(message.get("id")),
+                            str(message.get("event")),
+                            message.get("value"),
+                        )
+                    )
         except WebSocketException:
             pass
         finally:
@@ -227,6 +240,15 @@ class HostConnection:
             for waiter in self._waiting.values():
                 if not waiter.done():
                     waiter.set_exception(HostUnavailable("the igni host went away"))
+
+    async def _answer(self, intercept_id: str, event: str, value: Any) -> None:
+        params = await self._intercepts.answer(intercept_id, event, value)
+        try:
+            await self._send({"op": "answer", "params": params})
+        except (HostError, HostUnavailable) as exc:
+            # Too late, or the host went away: the event went ahead or not
+            # without this answer, as igni decides for a silence.
+            logger.warning("igni: the answer to %s did not count: %s", event, exc)
 
     async def _drop(self) -> None:
         socket, self._socket = self._socket, None

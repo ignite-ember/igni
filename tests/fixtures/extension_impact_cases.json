@@ -1,5 +1,5 @@
 {
-  "about": "What an extension changes in igni, and where two extensions collide: cases igni (src/ember_code/extensions/impact.py) and igni server (app/services/identity/impact.py) both run, so the two implementations of one rule give the same answers. The copy in igni's tests/fixtures/ is the original; igni server's tests/fixtures/ holds the same file, and each repository's test fails when its sibling checkout's copy differs. A case's optional \"reserved\" is the claims igni keeps for itself (its own commands), passed to the resolver as such. A case's \"enforce\" lists, per extension, what is switched off (\"off\") and the edits that land nowhere because another extension's override has no section they name (\"dropped\").",
+  "about": "What an extension changes in igni, and where two extensions collide: cases igni (src/ember_code/extensions/impact.py) and igni server (app/services/identity/impact.py) both run, so the two implementations of one rule give the same answers. The copy in igni's tests/fixtures/ is the original; igni server's tests/fixtures/ holds the same file, and each repository's test fails when its sibling checkout's copy differs. A case's optional \"reserved\" is the claims igni keeps for itself (its own commands), passed to the resolver as such. A manifest's \"permissions.intercepts\" are never claims: interceptors chain in priority order. A case's \"enforce\" lists, per extension, what is switched off (\"off\") and the edits that land nowhere because another extension's override has no section they name (\"dropped\").",
   "impact": {
     "manifest": {
       "id": "acme.a",
@@ -127,6 +127,15 @@
         "host": [
           "chat.read",
           "ui"
+        ],
+        "intercepts": [
+          {
+            "event": "plan.submitting"
+          },
+          {
+            "event": "tools.calling",
+            "modify": true
+          }
         ]
       },
       "name": "Acme A"
@@ -210,6 +219,16 @@
       "host": [
         "chat.read",
         "ui"
+      ],
+      "intercepts": [
+        {
+          "event": "plan.submitting",
+          "modify": false
+        },
+        {
+          "event": "tools.calling",
+          "modify": true
+        }
       ],
       "rpc": [
         "ext.acme.a.*"
@@ -2118,6 +2137,91 @@
       "reserved": [
         "command:/clear"
       ]
+    },
+    {
+      "name": "extensions intercepting one event never collide, whether they reject it or change it",
+      "manifests": [
+        {
+          "id": "acme.a",
+          "version": "1.0.0",
+          "contract": ">=1.0 <2",
+          "trust": "unsigned",
+          "python": {
+            "package": "acme_a",
+            "entry": "acme-a",
+            "mcp": {
+              "transport": "stdio"
+            }
+          },
+          "permissions": {
+            "host": [
+              "chat.read"
+            ],
+            "intercepts": [
+              {
+                "event": "tools.calling",
+                "modify": true
+              }
+            ]
+          }
+        },
+        {
+          "id": "acme.b",
+          "version": "1.0.0",
+          "contract": ">=1.0 <2",
+          "trust": "unsigned",
+          "python": {
+            "package": "acme_b",
+            "entry": "acme-b",
+            "mcp": {
+              "transport": "stdio"
+            }
+          },
+          "permissions": {
+            "host": [
+              "chat.read"
+            ],
+            "intercepts": [
+              {
+                "event": "tools.calling",
+                "modify": true
+              }
+            ]
+          }
+        },
+        {
+          "id": "acme.c",
+          "version": "1.0.0",
+          "contract": ">=1.0 <2",
+          "trust": "unsigned",
+          "python": {
+            "package": "acme_c",
+            "entry": "acme-c",
+            "mcp": {
+              "transport": "stdio"
+            }
+          },
+          "permissions": {
+            "host": [
+              "chat.read"
+            ],
+            "intercepts": [
+              {
+                "event": "tools.calling"
+              }
+            ]
+          }
+        }
+      ],
+      "resolutions": [],
+      "survey": {
+        "collisions": [],
+        "undecided": []
+      },
+      "enforce": {
+        "off": {},
+        "dropped": {}
+      }
     }
   ]
 }
