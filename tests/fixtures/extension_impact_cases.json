@@ -1,5 +1,5 @@
 {
-  "about": "What an extension changes in igni, and where two extensions collide: cases igni (src/ember_code/extensions/impact.py) and igni server (app/services/identity/impact.py) both run, so the two implementations of one rule give the same answers. The copy in igni's tests/fixtures/ is the original; igni server's tests/fixtures/ holds the same file, and each repository's test fails when its sibling checkout's copy differs. A case's optional \"reserved\" is the claims igni keeps for itself (its own commands), passed to the resolver as such.",
+  "about": "What an extension changes in igni, and where two extensions collide: cases igni (src/ember_code/extensions/impact.py) and igni server (app/services/identity/impact.py) both run, so the two implementations of one rule give the same answers. The copy in igni's tests/fixtures/ is the original; igni server's tests/fixtures/ holds the same file, and each repository's test fails when its sibling checkout's copy differs. A case's optional \"reserved\" is the claims igni keeps for itself (its own commands), passed to the resolver as such. A case's \"enforce\" lists, per extension, what is switched off (\"off\") and the edits that land nowhere because another extension's override has no section they name (\"dropped\").",
   "impact": {
     "manifest": {
       "id": "acme.a",
@@ -57,31 +57,47 @@
           }
         ],
         "prompt": {
-          "replace": [
+          "overrides": [
             {
               "target": "main",
+              "sections": [
+                "identity",
+                "workflow"
+              ],
               "source": "file",
               "from": "prompts/main.md",
               "when": "indexed"
             },
             {
-              "target": "plan_mode.skip",
+              "target": "agent:explorer",
+              "sections": [
+                "intro"
+              ],
+              "source": "file",
+              "from": "prompts/agent_explorer.md",
+              "exclusive": true
+            }
+          ],
+          "edits": [
+            {
+              "target": "plan_mode",
+              "replace": "skip",
               "source": "file",
               "from": "prompts/plan_mode.skip.md"
-            }
-          ],
-          "slots": [
+            },
             {
-              "slot": "main.code_intelligence",
+              "target": "agent:architect",
+              "insert": "index",
+              "after": "intro",
               "source": "file",
-              "from": "prompts/main.code_intelligence.md"
-            }
-          ],
-          "agents": [
-            {
-              "agent": "explorer",
-              "from": "plugin/stand-ins/explorer.md",
+              "from": "prompts/agent_architect.index.intro.md",
               "when": "indexed"
+            },
+            {
+              "target": "agent:debugger",
+              "append": "tail",
+              "source": "file",
+              "from": "prompts/agent_debugger.tail.md"
             }
           ]
         }
@@ -119,15 +135,50 @@
       "extension_id": "acme.a",
       "name": "Acme A",
       "version": "1.0.0",
-      "prompt_replaces": [
-        "main",
-        "plan_mode.skip"
+      "prompt_overrides": [
+        {
+          "target": "agent:explorer",
+          "sections": [
+            "intro"
+          ],
+          "exclusive": true,
+          "when": null
+        },
+        {
+          "target": "main",
+          "sections": [
+            "identity",
+            "workflow"
+          ],
+          "exclusive": false,
+          "when": "indexed"
+        }
       ],
-      "prompt_slots": [
-        "main.code_intelligence"
-      ],
-      "agents": [
-        "explorer"
+      "prompt_edits": [
+        {
+          "target": "plan_mode",
+          "op": "replace",
+          "section": "skip",
+          "position": null,
+          "name": null,
+          "when": null
+        },
+        {
+          "target": "agent:architect",
+          "op": "insert",
+          "section": "intro",
+          "position": "after",
+          "name": "index",
+          "when": "indexed"
+        },
+        {
+          "target": "agent:debugger",
+          "op": "append",
+          "section": null,
+          "position": null,
+          "name": "tail",
+          "when": null
+        }
       ],
       "anchors": [
         "A_SCHEMA"
@@ -135,10 +186,6 @@
       "commands": [
         "/a"
       ],
-      "conditions": {
-        "prompt:main": "indexed",
-        "agent:explorer": "indexed"
-      },
       "tools": [
         {
           "name": "acme.a.search",
@@ -176,17 +223,26 @@
       "workspace": "read",
       "plugin": "plugin",
       "claims": [
-        "agent:explorer",
         "anchor:A_SCHEMA",
         "command:/a",
+        "prompt:agent:explorer",
         "prompt:main",
-        "prompt:plan_mode.skip"
+        "prompt:plan_mode#skip"
+      ],
+      "items": [
+        "anchor:A_SCHEMA",
+        "command:/a",
+        "prompt:agent:architect+index",
+        "prompt:agent:debugger+tail",
+        "prompt:agent:explorer",
+        "prompt:main",
+        "prompt:plan_mode#skip"
       ]
     }
   },
   "cases": [
     {
-      "name": "two extensions replacing different sections of one prompt do not collide",
+      "name": "two extensions editing different sections of one prompt do not collide",
       "manifests": [
         {
           "id": "acme.a",
@@ -202,9 +258,10 @@
           },
           "contributes": {
             "prompt": {
-              "replace": [
+              "edits": [
                 {
-                  "target": "main.workflow",
+                  "target": "main",
+                  "replace": "workflow",
                   "source": "file",
                   "from": "prompts/main.workflow.md"
                 }
@@ -226,9 +283,10 @@
           },
           "contributes": {
             "prompt": {
-              "replace": [
+              "edits": [
                 {
-                  "target": "main.safety",
+                  "target": "main",
+                  "replace": "safety",
                   "source": "file",
                   "from": "prompts/main.safety.md"
                 }
@@ -243,7 +301,8 @@
         "undecided": []
       },
       "enforce": {
-        "off": {}
+        "off": {},
+        "dropped": {}
       }
     },
     {
@@ -263,9 +322,10 @@
           },
           "contributes": {
             "prompt": {
-              "replace": [
+              "edits": [
                 {
-                  "target": "main.workflow",
+                  "target": "main",
+                  "replace": "workflow",
                   "source": "file",
                   "from": "prompts/main.workflow.md"
                 }
@@ -287,9 +347,10 @@
           },
           "contributes": {
             "prompt": {
-              "replace": [
+              "edits": [
                 {
-                  "target": "main.workflow",
+                  "target": "main",
+                  "replace": "workflow",
                   "source": "file",
                   "from": "prompts/main.workflow.md"
                 }
@@ -302,7 +363,7 @@
       "survey": {
         "collisions": [
           {
-            "claim": "prompt:main.workflow",
+            "claim": "prompt:main#workflow",
             "extensions": [
               "acme.a",
               "acme.b"
@@ -311,7 +372,7 @@
         ],
         "undecided": [
           {
-            "claim": "prompt:main.workflow",
+            "claim": "prompt:main#workflow",
             "extensions": [
               "acme.a",
               "acme.b"
@@ -322,16 +383,17 @@
       "enforce": {
         "off": {
           "acme.a": [
-            "prompt:main.workflow"
+            "prompt:main#workflow"
           ],
           "acme.b": [
-            "prompt:main.workflow"
+            "prompt:main#workflow"
           ]
-        }
+        },
+        "dropped": {}
       }
     },
     {
-      "name": "replacing a whole prompt collides with replacing any section of it",
+      "name": "inserts and appends from several extensions never collide",
       "manifests": [
         {
           "id": "acme.a",
@@ -347,9 +409,104 @@
           },
           "contributes": {
             "prompt": {
-              "replace": [
+              "edits": [
                 {
                   "target": "main",
+                  "insert": "notes",
+                  "after": "workflow",
+                  "source": "file",
+                  "from": "prompts/main.notes.workflow.md"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "id": "acme.b",
+          "version": "1.0.0",
+          "contract": ">=1.0 <2",
+          "trust": "unsigned",
+          "python": {
+            "package": "acme_b",
+            "entry": "acme-b",
+            "mcp": {
+              "transport": "stdio"
+            }
+          },
+          "contributes": {
+            "prompt": {
+              "edits": [
+                {
+                  "target": "main",
+                  "insert": "notes",
+                  "after": "workflow",
+                  "source": "file",
+                  "from": "prompts/main.notes.workflow.md"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "id": "acme.c",
+          "version": "1.0.0",
+          "contract": ">=1.0 <2",
+          "trust": "unsigned",
+          "python": {
+            "package": "acme_c",
+            "entry": "acme-c",
+            "mcp": {
+              "transport": "stdio"
+            }
+          },
+          "contributes": {
+            "prompt": {
+              "edits": [
+                {
+                  "target": "main",
+                  "append": "tail",
+                  "source": "file",
+                  "from": "prompts/main.tail.md"
+                }
+              ]
+            }
+          }
+        }
+      ],
+      "resolutions": [],
+      "survey": {
+        "collisions": [],
+        "undecided": []
+      },
+      "enforce": {
+        "off": {},
+        "dropped": {}
+      }
+    },
+    {
+      "name": "two overrides of one prompt collide",
+      "manifests": [
+        {
+          "id": "acme.a",
+          "version": "1.0.0",
+          "contract": ">=1.0 <2",
+          "trust": "unsigned",
+          "python": {
+            "package": "acme_a",
+            "entry": "acme-a",
+            "mcp": {
+              "transport": "stdio"
+            }
+          },
+          "contributes": {
+            "prompt": {
+              "overrides": [
+                {
+                  "target": "main",
+                  "sections": [
+                    "identity",
+                    "workflow"
+                  ],
                   "source": "file",
                   "from": "prompts/main.md"
                 }
@@ -371,11 +528,14 @@
           },
           "contributes": {
             "prompt": {
-              "replace": [
+              "overrides": [
                 {
-                  "target": "main.safety",
+                  "target": "main",
+                  "sections": [
+                    "identity"
+                  ],
                   "source": "file",
-                  "from": "prompts/main.safety.md"
+                  "from": "prompts/main.md"
                 }
               ]
             }
@@ -409,13 +569,14 @@
             "prompt:main"
           ],
           "acme.b": [
-            "prompt:main.safety"
+            "prompt:main"
           ]
-        }
+        },
+        "dropped": {}
       }
     },
     {
-      "name": "the whole prompt's winner takes every section of it",
+      "name": "an override does not collide with edits of the same prompt; what it has no section for is dropped",
       "manifests": [
         {
           "id": "acme.a",
@@ -431,9 +592,13 @@
           },
           "contributes": {
             "prompt": {
-              "replace": [
+              "overrides": [
                 {
                   "target": "main",
+                  "sections": [
+                    "identity",
+                    "workflow"
+                  ],
                   "source": "file",
                   "from": "prompts/main.md"
                 }
@@ -455,11 +620,97 @@
           },
           "contributes": {
             "prompt": {
-              "replace": [
+              "edits": [
                 {
-                  "target": "main.safety",
+                  "target": "main",
+                  "replace": "workflow",
                   "source": "file",
-                  "from": "prompts/main.safety.md"
+                  "from": "prompts/main.workflow.md"
+                },
+                {
+                  "target": "main",
+                  "insert": "notes",
+                  "after": "safety",
+                  "source": "file",
+                  "from": "prompts/main.notes.safety.md"
+                },
+                {
+                  "target": "main",
+                  "append": "tail",
+                  "source": "file",
+                  "from": "prompts/main.tail.md"
+                }
+              ]
+            }
+          }
+        }
+      ],
+      "resolutions": [],
+      "survey": {
+        "collisions": [],
+        "undecided": []
+      },
+      "enforce": {
+        "off": {},
+        "dropped": {
+          "acme.b": [
+            "prompt:main+notes"
+          ]
+        }
+      }
+    },
+    {
+      "name": "an exclusive override collides with everyone who edits that prompt",
+      "manifests": [
+        {
+          "id": "acme.a",
+          "version": "1.0.0",
+          "contract": ">=1.0 <2",
+          "trust": "unsigned",
+          "python": {
+            "package": "acme_a",
+            "entry": "acme-a",
+            "mcp": {
+              "transport": "stdio"
+            }
+          },
+          "contributes": {
+            "prompt": {
+              "overrides": [
+                {
+                  "target": "main",
+                  "sections": [
+                    "identity",
+                    "workflow"
+                  ],
+                  "source": "file",
+                  "from": "prompts/main.md",
+                  "exclusive": true
+                }
+              ]
+            }
+          }
+        },
+        {
+          "id": "acme.b",
+          "version": "1.0.0",
+          "contract": ">=1.0 <2",
+          "trust": "unsigned",
+          "python": {
+            "package": "acme_b",
+            "entry": "acme-b",
+            "mcp": {
+              "transport": "stdio"
+            }
+          },
+          "contributes": {
+            "prompt": {
+              "edits": [
+                {
+                  "target": "main",
+                  "append": "tail",
+                  "source": "file",
+                  "from": "prompts/main.tail.md"
                 }
               ]
             }
@@ -479,16 +730,139 @@
           },
           "contributes": {
             "prompt": {
-              "replace": [
+              "edits": [
                 {
-                  "target": "main.safety",
+                  "target": "main",
+                  "replace": "workflow",
                   "source": "file",
-                  "from": "prompts/main.safety.md"
+                  "from": "prompts/main.workflow.md"
+                }
+              ]
+            }
+          }
+        }
+      ],
+      "resolutions": [],
+      "survey": {
+        "collisions": [
+          {
+            "claim": "prompt:main",
+            "extensions": [
+              "acme.a",
+              "acme.b",
+              "acme.c"
+            ]
+          }
+        ],
+        "undecided": [
+          {
+            "claim": "prompt:main",
+            "extensions": [
+              "acme.a",
+              "acme.b",
+              "acme.c"
+            ]
+          }
+        ]
+      },
+      "enforce": {
+        "off": {
+          "acme.a": [
+            "prompt:main"
+          ],
+          "acme.b": [
+            "prompt:main+tail"
+          ],
+          "acme.c": [
+            "prompt:main#workflow"
+          ]
+        },
+        "dropped": {}
+      }
+    },
+    {
+      "name": "an exclusive override that wins switches every other extension's edits of that prompt off",
+      "manifests": [
+        {
+          "id": "acme.a",
+          "version": "1.0.0",
+          "contract": ">=1.0 <2",
+          "trust": "unsigned",
+          "python": {
+            "package": "acme_a",
+            "entry": "acme-a",
+            "mcp": {
+              "transport": "stdio"
+            }
+          },
+          "contributes": {
+            "prompt": {
+              "overrides": [
+                {
+                  "target": "main",
+                  "sections": [
+                    "identity",
+                    "workflow"
+                  ],
+                  "source": "file",
+                  "from": "prompts/main.md",
+                  "exclusive": true
+                }
+              ]
+            }
+          }
+        },
+        {
+          "id": "acme.b",
+          "version": "1.0.0",
+          "contract": ">=1.0 <2",
+          "trust": "unsigned",
+          "python": {
+            "package": "acme_b",
+            "entry": "acme-b",
+            "mcp": {
+              "transport": "stdio"
+            }
+          },
+          "contributes": {
+            "prompt": {
+              "edits": [
+                {
+                  "target": "main",
+                  "append": "tail",
+                  "source": "file",
+                  "from": "prompts/main.tail.md"
                 },
                 {
-                  "target": "plan_mode.skip",
+                  "target": "plan_mode",
+                  "append": "tail",
                   "source": "file",
-                  "from": "prompts/plan_mode.skip.md"
+                  "from": "prompts/plan_mode.tail.md"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "id": "acme.c",
+          "version": "1.0.0",
+          "contract": ">=1.0 <2",
+          "trust": "unsigned",
+          "python": {
+            "package": "acme_c",
+            "entry": "acme-c",
+            "mcp": {
+              "transport": "stdio"
+            }
+          },
+          "contributes": {
+            "prompt": {
+              "edits": [
+                {
+                  "target": "main",
+                  "replace": "workflow",
+                  "source": "file",
+                  "from": "prompts/main.workflow.md"
                 }
               ]
             }
@@ -524,16 +898,17 @@
       "enforce": {
         "off": {
           "acme.b": [
-            "prompt:main.safety"
+            "prompt:main+tail"
           ],
           "acme.c": [
-            "prompt:main.safety"
+            "prompt:main#workflow"
           ]
-        }
+        },
+        "dropped": {}
       }
     },
     {
-      "name": "a section's extension winning over a whole prompt leaves the sections to meet again",
+      "name": "edits that win over an exclusive override switch the override off",
       "manifests": [
         {
           "id": "acme.a",
@@ -549,11 +924,16 @@
           },
           "contributes": {
             "prompt": {
-              "replace": [
+              "overrides": [
                 {
                   "target": "main",
+                  "sections": [
+                    "identity",
+                    "workflow"
+                  ],
                   "source": "file",
-                  "from": "prompts/main.md"
+                  "from": "prompts/main.md",
+                  "exclusive": true
                 }
               ]
             }
@@ -573,35 +953,12 @@
           },
           "contributes": {
             "prompt": {
-              "replace": [
+              "edits": [
                 {
-                  "target": "main.safety",
+                  "target": "main",
+                  "append": "tail",
                   "source": "file",
-                  "from": "prompts/main.safety.md"
-                }
-              ]
-            }
-          }
-        },
-        {
-          "id": "acme.c",
-          "version": "1.0.0",
-          "contract": ">=1.0 <2",
-          "trust": "unsigned",
-          "python": {
-            "package": "acme_c",
-            "entry": "acme-c",
-            "mcp": {
-              "transport": "stdio"
-            }
-          },
-          "contributes": {
-            "prompt": {
-              "replace": [
-                {
-                  "target": "main.safety",
-                  "source": "file",
-                  "from": "prompts/main.safety.md"
+                  "from": "prompts/main.tail.md"
                 }
               ]
             }
@@ -613,8 +970,7 @@
           "claim": "prompt:main",
           "extensions": [
             "acme.a",
-            "acme.b",
-            "acme.c"
+            "acme.b"
           ],
           "winner": "acme.b",
           "decided_by": "admin@acme.test",
@@ -627,40 +983,19 @@
             "claim": "prompt:main",
             "extensions": [
               "acme.a",
-              "acme.b",
-              "acme.c"
-            ]
-          },
-          {
-            "claim": "prompt:main.safety",
-            "extensions": [
-              "acme.b",
-              "acme.c"
+              "acme.b"
             ]
           }
         ],
-        "undecided": [
-          {
-            "claim": "prompt:main.safety",
-            "extensions": [
-              "acme.b",
-              "acme.c"
-            ]
-          }
-        ]
+        "undecided": []
       },
       "enforce": {
         "off": {
           "acme.a": [
             "prompt:main"
-          ],
-          "acme.b": [
-            "prompt:main.safety"
-          ],
-          "acme.c": [
-            "prompt:main.safety"
           ]
-        }
+        },
+        "dropped": {}
       }
     },
     {
@@ -681,14 +1016,20 @@
           "contributes": {
             "commands": [
               {
-                "command": "/review",
-                "desc": "x"
-              },
-              {
                 "command": "/a",
                 "desc": "x"
               }
-            ]
+            ],
+            "prompt": {
+              "edits": [
+                {
+                  "target": "main",
+                  "replace": "workflow",
+                  "source": "file",
+                  "from": "prompts/main.workflow.md"
+                }
+              ]
+            }
           }
         },
         {
@@ -704,18 +1045,129 @@
             }
           },
           "contributes": {
-            "commands": [
-              {
-                "command": "/review",
-                "desc": "x"
-              }
-            ]
+            "prompt": {
+              "edits": [
+                {
+                  "target": "main",
+                  "replace": "workflow",
+                  "source": "file",
+                  "from": "prompts/main.workflow.md"
+                },
+                {
+                  "target": "main",
+                  "replace": "safety",
+                  "source": "file",
+                  "from": "prompts/main.safety.md"
+                }
+              ]
+            }
           }
         }
       ],
       "resolutions": [
         {
-          "claim": "command:/review",
+          "claim": "prompt:main#workflow",
+          "extensions": [
+            "acme.a",
+            "acme.b"
+          ],
+          "winner": "acme.a",
+          "decided_by": "admin@acme.test",
+          "decided_at": "2026-10-25T09:00:00Z"
+        }
+      ],
+      "survey": {
+        "collisions": [
+          {
+            "claim": "prompt:main#workflow",
+            "extensions": [
+              "acme.a",
+              "acme.b"
+            ]
+          }
+        ],
+        "undecided": []
+      },
+      "enforce": {
+        "off": {
+          "acme.b": [
+            "prompt:main#workflow"
+          ]
+        },
+        "dropped": {}
+      }
+    },
+    {
+      "name": "a decided collision and an undecided one side by side",
+      "manifests": [
+        {
+          "id": "acme.a",
+          "version": "1.0.0",
+          "contract": ">=1.0 <2",
+          "trust": "unsigned",
+          "python": {
+            "package": "acme_a",
+            "entry": "acme-a",
+            "mcp": {
+              "transport": "stdio"
+            }
+          },
+          "contributes": {
+            "promptFragments": [
+              {
+                "anchor": "SCHEMA",
+                "source": "tool",
+                "from": "schema"
+              }
+            ],
+            "prompt": {
+              "edits": [
+                {
+                  "target": "main",
+                  "replace": "workflow",
+                  "source": "file",
+                  "from": "prompts/main.workflow.md"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "id": "acme.b",
+          "version": "1.0.0",
+          "contract": ">=1.0 <2",
+          "trust": "unsigned",
+          "python": {
+            "package": "acme_b",
+            "entry": "acme-b",
+            "mcp": {
+              "transport": "stdio"
+            }
+          },
+          "contributes": {
+            "promptFragments": [
+              {
+                "anchor": "SCHEMA",
+                "source": "tool",
+                "from": "schema"
+              }
+            ],
+            "prompt": {
+              "edits": [
+                {
+                  "target": "main",
+                  "replace": "workflow",
+                  "source": "file",
+                  "from": "prompts/main.workflow.md"
+                }
+              ]
+            }
+          }
+        }
+      ],
+      "resolutions": [
+        {
+          "claim": "prompt:main#workflow",
           "extensions": [
             "acme.a",
             "acme.b"
@@ -728,21 +1180,41 @@
       "survey": {
         "collisions": [
           {
-            "claim": "command:/review",
+            "claim": "anchor:SCHEMA",
+            "extensions": [
+              "acme.a",
+              "acme.b"
+            ]
+          },
+          {
+            "claim": "prompt:main#workflow",
             "extensions": [
               "acme.a",
               "acme.b"
             ]
           }
         ],
-        "undecided": []
+        "undecided": [
+          {
+            "claim": "anchor:SCHEMA",
+            "extensions": [
+              "acme.a",
+              "acme.b"
+            ]
+          }
+        ]
       },
       "enforce": {
         "off": {
           "acme.a": [
-            "command:/review"
+            "anchor:SCHEMA",
+            "prompt:main#workflow"
+          ],
+          "acme.b": [
+            "anchor:SCHEMA"
           ]
-        }
+        },
+        "dropped": {}
       }
     },
     {
@@ -761,12 +1233,16 @@
             }
           },
           "contributes": {
-            "commands": [
-              {
-                "command": "/review",
-                "desc": "x"
-              }
-            ]
+            "prompt": {
+              "edits": [
+                {
+                  "target": "main",
+                  "replace": "workflow",
+                  "source": "file",
+                  "from": "prompts/main.workflow.md"
+                }
+              ]
+            }
           }
         },
         {
@@ -782,12 +1258,16 @@
             }
           },
           "contributes": {
-            "commands": [
-              {
-                "command": "/review",
-                "desc": "x"
-              }
-            ]
+            "prompt": {
+              "edits": [
+                {
+                  "target": "main",
+                  "replace": "workflow",
+                  "source": "file",
+                  "from": "prompts/main.workflow.md"
+                }
+              ]
+            }
           }
         },
         {
@@ -803,18 +1283,22 @@
             }
           },
           "contributes": {
-            "commands": [
-              {
-                "command": "/review",
-                "desc": "x"
-              }
-            ]
+            "prompt": {
+              "edits": [
+                {
+                  "target": "main",
+                  "replace": "workflow",
+                  "source": "file",
+                  "from": "prompts/main.workflow.md"
+                }
+              ]
+            }
           }
         }
       ],
       "resolutions": [
         {
-          "claim": "command:/review",
+          "claim": "prompt:main#workflow",
           "extensions": [
             "acme.a",
             "acme.b"
@@ -827,7 +1311,7 @@
       "survey": {
         "collisions": [
           {
-            "claim": "command:/review",
+            "claim": "prompt:main#workflow",
             "extensions": [
               "acme.a",
               "acme.b",
@@ -837,7 +1321,7 @@
         ],
         "undecided": [
           {
-            "claim": "command:/review",
+            "claim": "prompt:main#workflow",
             "extensions": [
               "acme.a",
               "acme.b",
@@ -849,15 +1333,16 @@
       "enforce": {
         "off": {
           "acme.a": [
-            "command:/review"
+            "prompt:main#workflow"
           ],
           "acme.b": [
-            "command:/review"
+            "prompt:main#workflow"
           ],
           "acme.c": [
-            "command:/review"
+            "prompt:main#workflow"
           ]
-        }
+        },
+        "dropped": {}
       }
     },
     {
@@ -876,12 +1361,16 @@
             }
           },
           "contributes": {
-            "commands": [
-              {
-                "command": "/review",
-                "desc": "x"
-              }
-            ]
+            "prompt": {
+              "edits": [
+                {
+                  "target": "main",
+                  "replace": "workflow",
+                  "source": "file",
+                  "from": "prompts/main.workflow.md"
+                }
+              ]
+            }
           }
         },
         {
@@ -897,24 +1386,28 @@
             }
           },
           "contributes": {
-            "commands": [
-              {
-                "command": "/review",
-                "desc": "x"
-              }
-            ]
+            "prompt": {
+              "edits": [
+                {
+                  "target": "main",
+                  "replace": "workflow",
+                  "source": "file",
+                  "from": "prompts/main.workflow.md"
+                }
+              ]
+            }
           }
         }
       ],
       "resolutions": [
         {
-          "claim": "command:/review",
+          "claim": "prompt:main#workflow",
           "extensions": [
             "acme.a",
             "acme.b",
             "acme.c"
           ],
-          "winner": "acme.a",
+          "winner": "acme.b",
           "decided_by": "admin@acme.test",
           "decided_at": "2026-10-25T09:00:00Z"
         }
@@ -922,7 +1415,7 @@
       "survey": {
         "collisions": [
           {
-            "claim": "command:/review",
+            "claim": "prompt:main#workflow",
             "extensions": [
               "acme.a",
               "acme.b"
@@ -933,10 +1426,11 @@
       },
       "enforce": {
         "off": {
-          "acme.b": [
-            "command:/review"
+          "acme.a": [
+            "prompt:main#workflow"
           ]
-        }
+        },
+        "dropped": {}
       }
     },
     {
@@ -955,12 +1449,16 @@
             }
           },
           "contributes": {
-            "commands": [
-              {
-                "command": "/review",
-                "desc": "x"
-              }
-            ]
+            "prompt": {
+              "edits": [
+                {
+                  "target": "main",
+                  "replace": "workflow",
+                  "source": "file",
+                  "from": "prompts/main.workflow.md"
+                }
+              ]
+            }
           }
         },
         {
@@ -976,18 +1474,22 @@
             }
           },
           "contributes": {
-            "commands": [
-              {
-                "command": "/review",
-                "desc": "x"
-              }
-            ]
+            "prompt": {
+              "edits": [
+                {
+                  "target": "main",
+                  "replace": "workflow",
+                  "source": "file",
+                  "from": "prompts/main.workflow.md"
+                }
+              ]
+            }
           }
         }
       ],
       "resolutions": [
         {
-          "claim": "command:/review",
+          "claim": "prompt:main#workflow",
           "extensions": [
             "acme.a",
             "acme.b",
@@ -1001,7 +1503,7 @@
       "survey": {
         "collisions": [
           {
-            "claim": "command:/review",
+            "claim": "prompt:main#workflow",
             "extensions": [
               "acme.a",
               "acme.b"
@@ -1013,16 +1515,17 @@
       "enforce": {
         "off": {
           "acme.a": [
-            "command:/review"
+            "prompt:main#workflow"
           ],
           "acme.b": [
-            "command:/review"
+            "prompt:main#workflow"
           ]
-        }
+        },
+        "dropped": {}
       }
     },
     {
-      "name": "standing in for one agent and filling one anchor are claims too",
+      "name": "an agent is a prompt like any other: its overrides and its frontmatter collide",
       "manifests": [
         {
           "id": "acme.a",
@@ -1037,22 +1540,26 @@
             }
           },
           "contributes": {
-            "plugin": "plugin",
             "prompt": {
-              "agents": [
+              "overrides": [
                 {
-                  "agent": "explorer",
-                  "from": "plugin/stand-ins/explorer.md"
+                  "target": "agent:explorer",
+                  "sections": [
+                    "intro"
+                  ],
+                  "source": "file",
+                  "from": "prompts/agent_explorer.md"
+                }
+              ],
+              "edits": [
+                {
+                  "target": "agent:architect",
+                  "replace": "frontmatter",
+                  "source": "file",
+                  "from": "prompts/agent_architect.frontmatter.md"
                 }
               ]
-            },
-            "promptFragments": [
-              {
-                "anchor": "GRAPH_SCHEMA",
-                "source": "tool",
-                "from": "schema"
-              }
-            ]
+            }
           }
         },
         {
@@ -1068,48 +1575,41 @@
             }
           },
           "contributes": {
-            "plugin": "plugin",
             "prompt": {
-              "agents": [
+              "overrides": [
                 {
-                  "agent": "explorer",
-                  "from": "plugin/stand-ins/explorer.md"
+                  "target": "agent:explorer",
+                  "sections": [
+                    "intro"
+                  ],
+                  "source": "file",
+                  "from": "prompts/agent_explorer.md"
+                }
+              ],
+              "edits": [
+                {
+                  "target": "agent:architect",
+                  "replace": "frontmatter",
+                  "source": "file",
+                  "from": "prompts/agent_architect.frontmatter.md"
                 }
               ]
-            },
-            "promptFragments": [
-              {
-                "anchor": "GRAPH_SCHEMA",
-                "source": "tool",
-                "from": "schema"
-              }
-            ]
+            }
           }
         }
       ],
-      "resolutions": [
-        {
-          "claim": "agent:explorer",
-          "extensions": [
-            "acme.a",
-            "acme.b"
-          ],
-          "winner": "acme.a",
-          "decided_by": "admin@acme.test",
-          "decided_at": "2026-10-25T09:00:00Z"
-        }
-      ],
+      "resolutions": [],
       "survey": {
         "collisions": [
           {
-            "claim": "agent:explorer",
+            "claim": "prompt:agent:explorer",
             "extensions": [
               "acme.a",
               "acme.b"
             ]
           },
           {
-            "claim": "anchor:GRAPH_SCHEMA",
+            "claim": "prompt:agent:architect#frontmatter",
             "extensions": [
               "acme.a",
               "acme.b"
@@ -1118,7 +1618,14 @@
         ],
         "undecided": [
           {
-            "claim": "anchor:GRAPH_SCHEMA",
+            "claim": "prompt:agent:explorer",
+            "extensions": [
+              "acme.a",
+              "acme.b"
+            ]
+          },
+          {
+            "claim": "prompt:agent:architect#frontmatter",
             "extensions": [
               "acme.a",
               "acme.b"
@@ -1129,78 +1636,19 @@
       "enforce": {
         "off": {
           "acme.a": [
-            "anchor:GRAPH_SCHEMA"
+            "prompt:agent:explorer",
+            "prompt:agent:architect#frontmatter"
           ],
           "acme.b": [
-            "agent:explorer",
-            "anchor:GRAPH_SCHEMA"
+            "prompt:agent:explorer",
+            "prompt:agent:architect#frontmatter"
           ]
-        }
-      }
-    },
-    {
-      "name": "slots never collide",
-      "manifests": [
-        {
-          "id": "acme.a",
-          "version": "1.0.0",
-          "contract": ">=1.0 <2",
-          "trust": "unsigned",
-          "python": {
-            "package": "acme_a",
-            "entry": "acme-a",
-            "mcp": {
-              "transport": "stdio"
-            }
-          },
-          "contributes": {
-            "prompt": {
-              "slots": [
-                {
-                  "slot": "main.code_intelligence",
-                  "source": "file",
-                  "from": "prompts/main.code_intelligence.md"
-                }
-              ]
-            }
-          }
         },
-        {
-          "id": "acme.b",
-          "version": "1.0.0",
-          "contract": ">=1.0 <2",
-          "trust": "unsigned",
-          "python": {
-            "package": "acme_b",
-            "entry": "acme-b",
-            "mcp": {
-              "transport": "stdio"
-            }
-          },
-          "contributes": {
-            "prompt": {
-              "slots": [
-                {
-                  "slot": "main.code_intelligence",
-                  "source": "file",
-                  "from": "prompts/main.code_intelligence.md"
-                }
-              ]
-            }
-          }
-        }
-      ],
-      "resolutions": [],
-      "survey": {
-        "collisions": [],
-        "undecided": []
-      },
-      "enforce": {
-        "off": {}
+        "dropped": {}
       }
     },
     {
-      "name": "a condition does not avoid a collision",
+      "name": "an override of an agent keeps its frontmatter: edits of it land, the rest drop while the override holds",
       "manifests": [
         {
           "id": "acme.a",
@@ -1216,11 +1664,15 @@
           },
           "contributes": {
             "prompt": {
-              "replace": [
+              "overrides": [
                 {
-                  "target": "main.workflow",
+                  "target": "agent:explorer",
+                  "sections": [
+                    "intro",
+                    "search"
+                  ],
                   "source": "file",
-                  "from": "prompts/main.workflow.md",
+                  "from": "prompts/agent_explorer.md",
                   "when": "indexed"
                 }
               ]
@@ -1241,12 +1693,25 @@
           },
           "contributes": {
             "prompt": {
-              "replace": [
+              "edits": [
                 {
-                  "target": "main.workflow",
+                  "target": "agent:explorer",
+                  "replace": "frontmatter",
                   "source": "file",
-                  "from": "prompts/main.workflow.md",
-                  "when": "reviewed"
+                  "from": "prompts/agent_explorer.frontmatter.md"
+                },
+                {
+                  "target": "agent:explorer",
+                  "insert": "notes",
+                  "after": "rules",
+                  "source": "file",
+                  "from": "prompts/agent_explorer.notes.rules.md"
+                },
+                {
+                  "target": "agent:explorer",
+                  "append": "tips",
+                  "source": "file",
+                  "from": "prompts/agent_explorer.tips.md"
                 }
               ]
             }
@@ -1255,9 +1720,71 @@
       ],
       "resolutions": [],
       "survey": {
+        "collisions": [],
+        "undecided": []
+      },
+      "enforce": {
+        "off": {},
+        "dropped": {
+          "acme.b": [
+            "prompt:agent:explorer+notes"
+          ]
+        }
+      }
+    },
+    {
+      "name": "filling one anchor is a claim too",
+      "manifests": [
+        {
+          "id": "acme.a",
+          "version": "1.0.0",
+          "contract": ">=1.0 <2",
+          "trust": "unsigned",
+          "python": {
+            "package": "acme_a",
+            "entry": "acme-a",
+            "mcp": {
+              "transport": "stdio"
+            }
+          },
+          "contributes": {
+            "promptFragments": [
+              {
+                "anchor": "SCHEMA",
+                "source": "tool",
+                "from": "schema"
+              }
+            ]
+          }
+        },
+        {
+          "id": "acme.b",
+          "version": "1.0.0",
+          "contract": ">=1.0 <2",
+          "trust": "unsigned",
+          "python": {
+            "package": "acme_b",
+            "entry": "acme-b",
+            "mcp": {
+              "transport": "stdio"
+            }
+          },
+          "contributes": {
+            "promptFragments": [
+              {
+                "anchor": "SCHEMA",
+                "source": "tool",
+                "from": "schema"
+              }
+            ]
+          }
+        }
+      ],
+      "resolutions": [],
+      "survey": {
         "collisions": [
           {
-            "claim": "prompt:main.workflow",
+            "claim": "anchor:SCHEMA",
             "extensions": [
               "acme.a",
               "acme.b"
@@ -1266,7 +1793,7 @@
         ],
         "undecided": [
           {
-            "claim": "prompt:main.workflow",
+            "claim": "anchor:SCHEMA",
             "extensions": [
               "acme.a",
               "acme.b"
@@ -1277,16 +1804,17 @@
       "enforce": {
         "off": {
           "acme.a": [
-            "prompt:main.workflow"
+            "anchor:SCHEMA"
           ],
           "acme.b": [
-            "prompt:main.workflow"
+            "anchor:SCHEMA"
           ]
-        }
+        },
+        "dropped": {}
       }
     },
     {
-      "name": "each prompt is its own: replacing the main prompt does not touch plan mode",
+      "name": "a condition does not avoid a collision",
       "manifests": [
         {
           "id": "acme.a",
@@ -1302,11 +1830,13 @@
           },
           "contributes": {
             "prompt": {
-              "replace": [
+              "edits": [
                 {
                   "target": "main",
+                  "replace": "workflow",
                   "source": "file",
-                  "from": "prompts/main.md"
+                  "from": "prompts/main.workflow.md",
+                  "when": "x"
                 }
               ]
             }
@@ -1326,11 +1856,103 @@
           },
           "contributes": {
             "prompt": {
-              "replace": [
+              "edits": [
                 {
-                  "target": "plan_mode.skip",
+                  "target": "main",
+                  "replace": "workflow",
                   "source": "file",
-                  "from": "prompts/plan_mode.skip.md"
+                  "from": "prompts/main.workflow.md",
+                  "when": "y"
+                }
+              ]
+            }
+          }
+        }
+      ],
+      "resolutions": [],
+      "survey": {
+        "collisions": [
+          {
+            "claim": "prompt:main#workflow",
+            "extensions": [
+              "acme.a",
+              "acme.b"
+            ]
+          }
+        ],
+        "undecided": [
+          {
+            "claim": "prompt:main#workflow",
+            "extensions": [
+              "acme.a",
+              "acme.b"
+            ]
+          }
+        ]
+      },
+      "enforce": {
+        "off": {
+          "acme.a": [
+            "prompt:main#workflow"
+          ],
+          "acme.b": [
+            "prompt:main#workflow"
+          ]
+        },
+        "dropped": {}
+      }
+    },
+    {
+      "name": "each prompt is its own: an exclusive override of the main prompt does not touch plan mode",
+      "manifests": [
+        {
+          "id": "acme.a",
+          "version": "1.0.0",
+          "contract": ">=1.0 <2",
+          "trust": "unsigned",
+          "python": {
+            "package": "acme_a",
+            "entry": "acme-a",
+            "mcp": {
+              "transport": "stdio"
+            }
+          },
+          "contributes": {
+            "prompt": {
+              "overrides": [
+                {
+                  "target": "main",
+                  "sections": [
+                    "identity"
+                  ],
+                  "source": "file",
+                  "from": "prompts/main.md",
+                  "exclusive": true
+                }
+              ]
+            }
+          }
+        },
+        {
+          "id": "acme.b",
+          "version": "1.0.0",
+          "contract": ">=1.0 <2",
+          "trust": "unsigned",
+          "python": {
+            "package": "acme_b",
+            "entry": "acme-b",
+            "mcp": {
+              "transport": "stdio"
+            }
+          },
+          "contributes": {
+            "prompt": {
+              "edits": [
+                {
+                  "target": "plan_mode",
+                  "append": "tail",
+                  "source": "file",
+                  "from": "prompts/plan_mode.tail.md"
                 }
               ]
             }
@@ -1343,7 +1965,8 @@
         "undecided": []
       },
       "enforce": {
-        "off": {}
+        "off": {},
+        "dropped": {}
       }
     },
     {
@@ -1426,7 +2049,8 @@
         "undecided": []
       },
       "enforce": {
-        "off": {}
+        "off": {},
+        "dropped": {}
       }
     },
     {
@@ -1448,11 +2072,7 @@
             "commands": [
               {
                 "command": "/clear",
-                "desc": "clears"
-              },
-              {
-                "command": "/tidy",
-                "desc": "tidies"
+                "desc": "x"
               }
             ]
           }
@@ -1473,52 +2093,31 @@
             "commands": [
               {
                 "command": "/clear",
-                "desc": "clears"
-              },
-              {
-                "command": "/tidy",
-                "desc": "tidies"
+                "desc": "x"
               }
             ]
           }
         }
       ],
-      "reserved": [
-        "command:/clear"
-      ],
       "resolutions": [],
       "survey": {
-        "collisions": [
-          {
-            "claim": "command:/tidy",
-            "extensions": [
-              "acme.a",
-              "acme.b"
-            ]
-          }
-        ],
-        "undecided": [
-          {
-            "claim": "command:/tidy",
-            "extensions": [
-              "acme.a",
-              "acme.b"
-            ]
-          }
-        ]
+        "collisions": [],
+        "undecided": []
       },
       "enforce": {
         "off": {
           "acme.a": [
-            "command:/clear",
-            "command:/tidy"
+            "command:/clear"
           ],
           "acme.b": [
-            "command:/clear",
-            "command:/tidy"
+            "command:/clear"
           ]
-        }
-      }
+        },
+        "dropped": {}
+      },
+      "reserved": [
+        "command:/clear"
+      ]
     }
   ]
 }

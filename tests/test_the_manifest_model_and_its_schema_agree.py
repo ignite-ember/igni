@@ -39,7 +39,6 @@ from pydantic import BaseModel, ValidationError
 from ember_code.core.mcp.hints import ToolHints
 from ember_code.extensions.assets import ExtensionAsset
 from ember_code.extensions.manifest import (
-    AgentReplacementContribution,
     CommandContribution,
     Contributes,
     DevCommand,
@@ -52,9 +51,9 @@ from ember_code.extensions.manifest import (
     PageContribution,
     Permissions,
     PromptContribution,
+    PromptEditContribution,
     PromptFragment,
-    PromptReplacement,
-    PromptSlotFill,
+    PromptOverrideContribution,
     PythonPackage,
     Setting,
     Sidecar,
@@ -92,9 +91,8 @@ PAIRS: list[tuple[str, type[BaseModel]]] = [
     ("contributes.indicators[]", IndicatorContribution),
     ("contributes.promptFragments[]", PromptFragment),
     ("contributes.prompt", PromptContribution),
-    ("contributes.prompt.replace[]", PromptReplacement),
-    ("contributes.prompt.slots[]", PromptSlotFill),
-    ("contributes.prompt.agents[]", AgentReplacementContribution),
+    ("contributes.prompt.overrides[]", PromptOverrideContribution),
+    ("contributes.prompt.edits[]", PromptEditContribution),
     ("contributes.settings[]", Setting),
 ]
 

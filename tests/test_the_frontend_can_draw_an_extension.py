@@ -145,6 +145,8 @@ async def test_the_manifest_itself_does_not_go_to_the_browser(wired, tmp_path):
         # What a collision with another extension switched off, and
         # why: a claim's name and a sentence, nothing of the manifest.
         "switched_off",
+        # Its prompt edits that land nowhere, and why: the same shape.
+        "dropped",
         # What is wrong with it that does not stop it working: a
         # sentence per tool whose server and manifest disagree.
         "problems",

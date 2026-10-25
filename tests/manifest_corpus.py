@@ -119,35 +119,62 @@ REFUSALS: list[tuple[str, dict[str, Any], str]] = [
         "a prompt target in a prompt igni does not have",
         with_(
             contributes={
-                "prompt": {"replace": [{"target": "system", "source": "file", "from": "p.md"}]}
-            }
-        ),
-        "contributes/prompt/replace/0/target",
-    ),
-    (
-        "a slot named without its prompt",
-        with_(
-            contributes={
                 "prompt": {
-                    "slots": [{"slot": "code_intelligence", "source": "file", "from": "p.md"}]
+                    "overrides": [
+                        {"target": "system", "sections": ["a"], "source": "file", "from": "p.md"}
+                    ]
                 }
             }
         ),
-        "contributes/prompt/slots/0/slot",
+        "contributes/prompt/overrides/0/target",
     ),
     (
-        "a replacement with nowhere to read it from",
-        with_(contributes={"prompt": {"replace": [{"target": "main", "source": "file"}]}}),
-        "contributes/prompt/replace/0",
+        "an edit that names a section the old way",
+        with_(
+            contributes={
+                "prompt": {
+                    "edits": [
+                        {"target": "main.workflow", "append": "x", "source": "file", "from": "p.md"}
+                    ]
+                }
+            }
+        ),
+        "contributes/prompt/edits/0/target",
+    ),
+    (
+        "an override that does not say its sections",
+        with_(
+            contributes={
+                "prompt": {"overrides": [{"target": "main", "source": "file", "from": "p.md"}]}
+            }
+        ),
+        "contributes/prompt/overrides/0",
+    ),
+    (
+        "an edit that is no change at all",
+        with_(
+            contributes={
+                "prompt": {"edits": [{"target": "main", "source": "file", "from": "p.md"}]}
+            }
+        ),
+        "contributes/prompt/edits/0",
+    ),
+    (
+        "an edit with nowhere to read it from",
+        with_(
+            contributes={"prompt": {"edits": [{"target": "main", "append": "x", "source": "file"}]}}
+        ),
+        "contributes/prompt/edits/0",
     ),
     (
         "a condition that is not a slug",
         with_(
             contributes={
                 "prompt": {
-                    "slots": [
+                    "edits": [
                         {
-                            "slot": "main.code_intelligence",
+                            "target": "main",
+                            "append": "x",
                             "source": "file",
                             "from": "p.md",
                             "when": "Index Ready",
@@ -156,7 +183,7 @@ REFUSALS: list[tuple[str, dict[str, Any], str]] = [
                 }
             }
         ),
-        "contributes/prompt/slots/0/when",
+        "contributes/prompt/edits/0/when",
     ),
     (
         "an rpc pattern that is not a prefix",

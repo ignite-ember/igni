@@ -7,9 +7,8 @@ lives in ``core/prompts/plan_mode.base.md``, matching how
 ``main_agent.md`` is stored, and :class:`PlanModeNudge` exposes
 ``.render()`` for the instructions builder.
 
-It is the ``plan_mode`` prompt document: an extension may replace it,
-replace a section of it, or add to its ``code_intelligence`` slot, as
-it may the main prompt (:mod:`ember_code.core.prompts.document`).
+It is the ``plan_mode`` prompt: an extension may override it, or edit
+it, as it may the main prompt (:mod:`ember_code.core.prompts.contributions`).
 """
 
 from __future__ import annotations
@@ -18,17 +17,13 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from ember_code.core.prompts import load_prompt
 from ember_code.core.prompts.contributions import PromptContributions, prompt_contributions
-from ember_code.core.prompts.document import PromptDocument, PromptDocumentName
+from ember_code.core.prompts.document import PromptKind
 from ember_code.core.prompts.fragments import fragments
 
 
 class PlanModeNudge(BaseModel):
     """Render the plan-mode instructions block appended to the main
-    agent's ``instructions`` list.
-
-    The prose as extensions have shaped it: whatever an extension says
-    about researching in plan mode arrives in a slot it fills.
-    """
+    agent's ``instructions`` list, as extensions have shaped it."""
 
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
@@ -36,17 +31,8 @@ class PlanModeNudge(BaseModel):
 
     def render(self) -> str:
         """Return the full plan-mode block as a single string."""
-        document = PromptDocumentName.PLAN_MODE
-        replaced = self.contributions.replacement(document)
-        text = (
-            fragments.expand(replaced) if replaced is not None else load_prompt(document.template)
+        composition = self.contributions.compose(
+            PromptKind.PLAN_MODE.value, load_prompt("plan_mode.base")
         )
-        sections = {
-            name: fragments.expand(body)
-            for name, body in self.contributions.section_replacements(document).items()
-        }
-        fills = {
-            name: fragments.expand(body)
-            for name, body in self.contributions.slot_fills(document).items()
-        }
-        return PromptDocument(text).replace_sections(sections).fill_slots(fills).strip()
+        assert composition is not None  # igni always has a plan-mode prompt
+        return fragments.expand(composition.document.render()).strip()

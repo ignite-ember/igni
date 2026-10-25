@@ -32,11 +32,7 @@ from pathlib import Path
 import pytest
 
 from ember_code.core.prompts import load_prompt
-from ember_code.core.prompts.contributions import (
-    PromptClaim,
-    PromptClaimKind,
-    PromptContributions,
-)
+from ember_code.core.prompts.contributions import EditOp, PromptContributions, PromptEdit
 from ember_code.core.session.agent_builder.prompt_builder import PromptBuilder
 from ember_code.extensions.manifest import ExtensionManifest
 
@@ -44,27 +40,28 @@ from ember_code.extensions.manifest import ExtensionManifest
 #: extension: igni's prompts name no extension, so neither does this.
 _DOCS = "acme.docs"
 
-#: The slots the core prompts leave for whatever keeps the project's
-#: documents, each with stand-in text that says where it came from.
-_SLOTS = {
-    "main.persisting": 'Hand project facts to `spawn_agent("docs-keeper")`.',
-    "main.when_to_persist": "- A root cause you found → the docs keeper.",
-    "main.reading": "Ask the docs keeper why; read the code for what.",
-    "main.project_documents": "## The Project's Documents\n\nDelegate to the docs keeper.",
+#: The sections of the main prompt whatever keeps the project's documents
+#: replaces, each with stand-in text that says where it came from.
+_SECTIONS = {
+    "project_knowledge": 'Hand project facts to `spawn_agent("docs-keeper")`.',
+    "durable_knowledge": "- A root cause you found → the docs keeper.",
+    "reading": "Ask the docs keeper why; read the code for what.",
+    "project_documents": "## The Project's Documents\n\nDelegate to the docs keeper.",
 }
 
 
-def _with_documents(live: bool, slots: dict[str, str] | None = None) -> PromptContributions:
+def _with_documents(live: bool, edits: list[PromptEdit] | None = None) -> PromptContributions:
     """Contributions in which an installed extension keeps the project's
-    documents — fills the slots — or nobody does."""
+    documents — replaces those sections — or nobody does."""
     contributions = PromptContributions()
     if live:
         contributions.set_owner(
             _DOCS,
             "Docs",
-            [
-                PromptClaim(kind=PromptClaimKind.SLOT, target=slot, text=text)
-                for slot, text in (slots or _SLOTS).items()
+            edits=edits
+            or [
+                PromptEdit(target="main", op=EditOp.REPLACE, section=section, text=text)
+                for section, text in _SECTIONS.items()
             ],
         )
     return contributions
@@ -109,7 +106,7 @@ class TestTheTwoConditionsAgree:
 
         # What is taught is the extension's text — and never a store
         # tool, which the main agent lacks.
-        for text in _SLOTS.values():
+        for text in _SECTIONS.values():
             assert text.split("\n")[-1] in prompt
         assert not [tool for tool in _ARTIFACT_TOOLS if tool in prompt]
 
@@ -185,18 +182,18 @@ class TestTheResolverFailsLoudly:
 
     def test_an_inline_span_is_cut_without_eating_its_sentence(self):
         """Some spans are mid-sentence: "without calling `update_user_memory`
-        or `knowledge_add`". Dropping the clause must leave the sentence."""
+        or delegating". Dropping the clause must leave the sentence."""
         text = (
-            "respond without calling `update_user_memory`"
-            "<!-- slot.reading:only --> or delegating to the docs keeper"
-            "<!-- /slot.reading:only -->."
+            "respond without delegating"
+            "<!-- user-memory:only --> or calling `update_user_memory`"
+            "<!-- /user-memory:only -->."
         )
 
-        assert self._builder(knowledge=False).resolve_conditionals(text) == (
-            "respond without calling `update_user_memory`."
+        assert self._builder(knowledge=True, user_memory=False).resolve_conditionals(text) == (
+            "respond without delegating."
         )
         assert self._builder(knowledge=True).resolve_conditionals(text) == (
-            "respond without calling `update_user_memory` or delegating to the docs keeper."
+            "respond without delegating or calling `update_user_memory`."
         )
 
 
@@ -314,24 +311,29 @@ _ARTIFACTS_EXTENSION = Path(__file__).resolve().parents[2] / "igni__artifacts" /
     not (_ARTIFACTS_EXTENSION / "manifest.json").is_file(),
     reason="no igni__artifacts checkout beside this one",
 )
-def test_the_document_extensions_text_fills_every_slot():
-    """The extension that does keep the project's documents fills every slot
-    the core prompts leave for it, and its text resolves cleanly inside them
-    — markers balanced, nothing left in braces, and its agent taught by
-    name."""
+def test_the_document_extensions_text_lands_where_igni_s_would_have_been():
+    """The extension that does keep the project's documents replaces each
+    section igni writes for a session without a store, and its text
+    resolves cleanly in their place — markers balanced, nothing left in
+    braces, and its agent taught by name."""
     manifest = json.loads((_ARTIFACTS_EXTENSION / "manifest.json").read_text())
-    ExtensionManifest.model_validate(manifest)
-    supplied = {
-        fill["slot"]: (_ARTIFACTS_EXTENSION / fill["from"]).read_text()
-        for fill in manifest["contributes"]["prompt"]["slots"]
-        if fill["source"] == "file"
-    }
-    assert set(_SLOTS) <= set(supplied)
+    parsed = ExtensionManifest.model_validate(manifest)
+    edits = [
+        PromptEdit(
+            target=edit.target,
+            op=EditOp.REPLACE,
+            section=edit.replace,
+            text=(_ARTIFACTS_EXTENSION / edit.from_).read_text(),
+        )
+        for edit in parsed.contributes.prompt.edits
+        if edit.target == "main" and edit.replace is not None and edit.source.value == "file"
+    ]
+    assert set(_SECTIONS) <= {edit.section for edit in edits}
 
     prompt = PromptBuilder(
         project_dir=Path("/nonexistent"),
         settings=_Settings,
-        contributions=_with_documents(True, supplied),
+        contributions=_with_documents(True, edits),
         user_memory_available=True,
         agent_catalog="",
         skill_descriptions="",
@@ -341,4 +343,5 @@ def test_the_document_extensions_text_fills_every_slot():
     assert 'spawn_agent("archivist"' in prompt
     assert "{{" not in prompt
     assert "<!--" not in prompt.replace("<!-- This file gives", "")
+    assert "nowhere to file" not in prompt
     assert not [tool for tool in _ARTIFACT_TOOLS if tool in prompt]

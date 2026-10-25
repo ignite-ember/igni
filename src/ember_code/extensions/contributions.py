@@ -6,11 +6,11 @@ needs all of it. Without it an extension was a web panel with a backend — it
 could not tell the agent what it knows, which is the difference
 between installing a capability and installing a page.
 
-An extension may replace the whole of the agent's prompt, or one of
-its sections; add to a slot igni leaves; stand in for one of igni's
-agents; fill a ``{{ANCHOR}}``; offer a slash command
-(``contributes.prompt``, ``promptFragments``, ``commands``). This
-registers all of it into ``core``'s tables, and takes it out again.
+An extension may override any of the agent's prompts — the main
+prompt, plan mode, any agent — or edit it; fill a ``{{ANCHOR}}``; offer
+a slash command (``contributes.prompt``, ``promptFragments``,
+``commands``). This registers all of it into ``core``'s tables, and
+takes it out again.
 
 ## Collisions are decided before anything is registered
 
@@ -21,7 +21,11 @@ runs :class:`~ember_code.extensions.impact.ImpactResolver` over all of
 it, and only what that allows is registered. A collision nobody has
 decided is switched off for everyone in it, and
 :meth:`ExtensionContributions.switched_off` says why, for the
-extensions panel.
+extensions panel — as :meth:`ExtensionContributions.dropped` does for
+an edit aimed at a section another extension's override does not have.
+
+The order edits from several extensions apply in is a super admin's
+too, and arrives the same way.
 
 ## Following the state, not the install
 
@@ -67,18 +71,21 @@ from ember_code.core.contributed_commands import ContributedCommands
 from ember_code.core.contributed_commands import (
     contributed_commands as default_commands,
 )
+from ember_code.core.prompts import load_prompt
 from ember_code.core.prompts.contributions import (
-    PromptClaim,
-    PromptClaimKind,
     PromptContributions,
+    PromptEdit,
+    PromptOverride,
     prompt_contributions,
 )
+from ember_code.core.prompts.document import FRONTMATTER, PromptDocument, PromptTarget
 from ember_code.core.prompts.fragments import PromptFragments
 from ember_code.core.prompts.fragments import fragments as default_fragments
 from ember_code.extensions.impact import (
     Claim,
     ExtensionImpact,
     IgniCommands,
+    ImpactEdit,
     ImpactResolver,
     Resolution,
     ResolvedImpact,
@@ -110,6 +117,7 @@ class ExtensionContributions:
         bundles: dict[str, Path] | None = None,
         plugins_dir: Path | None = None,
         resolutions: Callable[[], list[Resolution]] | None = None,
+        order: Callable[[], list[str]] | None = None,
         igni_commands: IgniCommands | None = None,
         fragments: PromptFragments | None = None,
         prompts: PromptContributions | None = None,
@@ -123,10 +131,12 @@ class ExtensionContributions:
                 ``source: file``. An extension missing from here can
                 still contribute tool-sourced text.
             plugins_dir: Where an extension's plugin is installed. An
-                agent an extension stands in for is read from there,
-                so it counts as one of the extension's own agents.
+                agent an extension overrides is read from there, so it
+                counts as one of the extension's own agents.
             resolutions: The decisions on collisions, as the store
                 holds them now.
+            order: The order edits from several extensions apply in,
+                as a super admin set it and the store holds it now.
             igni_commands: igni's own slash commands. An extension
                 declaring one has it switched off, and is told why.
         """
@@ -135,11 +145,15 @@ class ExtensionContributions:
         self._bundles = bundles if bundles is not None else {}
         self._plugins_dir = plugins_dir
         self._resolutions = resolutions or (lambda: [])
+        self._order = order or (lambda: [])
         self._igni_commands = igni_commands or IgniCommands()
         self._fragments = fragments if fragments is not None else default_fragments
         self._prompts = prompts if prompts is not None else prompt_contributions
         self._commands = commands if commands is not None else default_commands
         self._resolved = ResolvedImpact()
+        #: ``{extension_id: [what it declared and igni would not take]}``
+        #: — an override whose text does not have the sections it says.
+        self._refused: dict[str, list[SwitchedOff]] = {}
         self._pending: set[asyncio.Task] = set()
 
     def attach(self) -> None:
@@ -154,7 +168,13 @@ class ExtensionContributions:
 
     def switched_off(self, extension_id: str) -> list[SwitchedOff]:
         """What this extension does not get, and why."""
-        return list(self._resolved.off.get(extension_id, []))
+        return list(self._resolved.off.get(extension_id, [])) + list(
+            self._refused.get(extension_id, [])
+        )
+
+    def dropped(self, extension_id: str) -> list[SwitchedOff]:
+        """Its edits that land nowhere — another extension's override lacks the section."""
+        return list(self._resolved.dropped.get(extension_id, []))
 
     def resolve(self) -> ResolvedImpact:
         """Work out, over everything installed, who gets what."""
@@ -166,10 +186,8 @@ class ExtensionContributions:
         self._resolved = ImpactResolver(
             impacts, self._resolutions(), reserved=self._igni_commands.claims()
         ).enforce()
-        for extension_id in self._registry.ids():
-            entry = self._registry.get(extension_id)
-            if entry is not None:
-                entry.switched_off = self.switched_off(extension_id)
+        self._prompts.set_order(self._order())
+        self._publish()
         for collision in self._resolved.undecided:
             logger.warning(
                 "extensions %s collide over %s and nobody has decided which wins; "
@@ -178,6 +196,14 @@ class ExtensionContributions:
                 collision.claim,
             )
         return self._resolved
+
+    def _publish(self) -> None:
+        """What each extension does not get, onto its registry entry, for the panel."""
+        for extension_id in self._registry.ids():
+            entry = self._registry.get(extension_id)
+            if entry is not None:
+                entry.switched_off = self.switched_off(extension_id)
+                entry.dropped = self.dropped(extension_id)
 
     def resolutions_changed(self) -> None:
         """New decisions arrived: apply them to everything ready."""
@@ -228,6 +254,7 @@ class ExtensionContributions:
 
     def withdraw(self, extension_id: str) -> None:
         """Uninstalled. Forget it entirely."""
+        self._refused.pop(extension_id, None)
         self._withdraw_live(extension_id)
 
     def _withdraw_live(self, extension_id: str) -> None:
@@ -278,68 +305,104 @@ class ExtensionContributions:
 
     async def _apply_prompt(self, manifest: ExtensionManifest) -> None:
         prompt = manifest.contributes.prompt
-        claims: list[PromptClaim] = []
-        for replacement in prompt.replace:
-            if not self._allows(manifest.id, Claim.prompt(replacement.target)):
+        overrides: list[PromptOverride] = []
+        refused: list[SwitchedOff] = []
+        for override in prompt.overrides:
+            key = Claim.prompt(override.target)
+            if not self._allows(manifest.id, key):
                 continue
-            text = await self._fetch(
-                manifest, replacement.target, replacement.source, replacement.from_
+            text = await self._fetch(manifest, override.target, override.source, override.from_)
+            if text is None:
+                continue
+            mismatch = self._sections_mismatch(override.target, text, list(override.sections))
+            if mismatch is not None:
+                refused.append(SwitchedOff(claim=key, reason=mismatch))
+                continue
+            overrides.append(
+                PromptOverride(
+                    target=override.target,
+                    text=text,
+                    exclusive=override.exclusive,
+                    when=override.when,
+                    path=self._override_file(
+                        manifest, override.target, override.source, override.from_
+                    ),
+                )
             )
-            if text is not None:
-                claims.append(
-                    PromptClaim(
-                        kind=PromptClaimKind.REPLACE,
-                        target=replacement.target,
-                        text=text,
-                        when=replacement.when,
-                    )
-                )
-        for fill in prompt.slots:
-            text = await self._fetch(manifest, fill.slot, fill.source, fill.from_)
-            if text is not None:
-                claims.append(
-                    PromptClaim(
-                        kind=PromptClaimKind.SLOT, target=fill.slot, text=text, when=fill.when
-                    )
-                )
-        for agent in prompt.agents:
-            if not self._allows(manifest.id, Claim.agent(agent.agent)):
+        edits: list[PromptEdit] = []
+        for edit in prompt.edits:
+            impact = ImpactEdit.of(edit)
+            if not self._allows(manifest.id, impact.key):
                 continue
-            path = self._agent_file(manifest, agent.from_)
-            if path is not None:
-                claims.append(
-                    PromptClaim(
-                        kind=PromptClaimKind.AGENT,
-                        target=agent.agent,
-                        path=path,
-                        when=agent.when,
-                    )
+            text = await self._fetch(manifest, impact.key, edit.source, edit.from_)
+            if text is None:
+                continue
+            edits.append(
+                PromptEdit(
+                    target=impact.target,
+                    op=impact.op,
+                    section=impact.section,
+                    position=impact.position,
+                    name=impact.name,
+                    text=text,
+                    when=impact.when,
                 )
-        for refusal in self._prompts.set_owner(manifest.id, manifest.display_name, claims):
-            logger.warning("extension %s: %s", manifest.id, refusal)
+            )
+        if refused != self._refused.get(manifest.id, []):
+            self._refused[manifest.id] = refused
+            for entry in refused:
+                logger.warning(
+                    "extension %s: %s refused — %s", manifest.id, entry.claim, entry.reason
+                )
+            self._publish()
+        self._prompts.set_owner(
+            manifest.id, manifest.display_name, overrides=overrides, edits=edits
+        )
 
-    def _agent_file(self, manifest: ExtensionManifest, origin: str) -> Path | None:
-        """Where the file an agent stand-in is defined by lives.
+    @staticmethod
+    def _sections_mismatch(target: str, text: str, declared: list[str]) -> str | None:
+        """Why an override's text is not the sections it declares, or ``None`` when it is.
 
-        In the installed plugin when there is one — so the agent is
-        among the extension's own and gets its tools under
-        ``toolAudience: own-agents`` — and in the bundle otherwise.
+        Other extensions' edits — and a super admin's view of which
+        would land — go by the declaration, so the text has to keep it.
         """
+        agent = PromptTarget.parse(target).agent is not None
+        if target == "main":
+            text = text.replace("{{PERSISTING}}", load_prompt("persisting"))
+        try:
+            found = PromptDocument(text, agent=agent).sections()
+        except ValueError as exc:
+            return f"its text is not a prompt of named sections: {exc}"
+        if agent:
+            if FRONTMATTER not in found:
+                return "an agent's override is a whole agent file, and this one has no frontmatter"
+            found = [s for s in found if s != FRONTMATTER]
+        if found != declared:
+            return (
+                f"its text has the sections {', '.join(found) or 'none'}, and the manifest "
+                f"declares {', '.join(declared)}"
+            )
+        return None
+
+    def _override_file(
+        self, manifest: ExtensionManifest, target: str, source: FragmentSource, origin: str
+    ) -> Path | None:
+        """Where an agent override's file lives, so the agent counts as the extension's own.
+
+        In the installed plugin when there is one — so the agent gets its
+        tools under ``toolAudience: own-agents`` — and in the bundle
+        otherwise. Only an agent cares; a prompt has no "from".
+        """
+        if source is not FragmentSource.FILE or not target.startswith("agent:"):
+            return None
         plugin = (manifest.contributes.plugin or "").strip("/")
-        inside = origin.strip("/").removeprefix(f"{plugin}/")
-        if self._plugins_dir is not None:
+        if plugin and self._plugins_dir is not None:
+            inside = origin.strip("/").removeprefix(f"{plugin}/")
             installed = self._plugins_dir / manifest.id / inside
             if installed.is_file():
                 return installed
         bundle = self._bundles.get(manifest.id)
-        if bundle is None:
-            logger.warning(
-                "extension %s: its agent file %s cannot be found — the bundle is not known",
-                manifest.id,
-                origin,
-            )
-            return None
-        return self._contained(manifest, bundle, origin)
+        return self._contained(manifest, bundle, origin) if bundle is not None else None
 
     def _apply_commands(self, manifest: ExtensionManifest) -> None:
         """Offer this extension's slash commands.

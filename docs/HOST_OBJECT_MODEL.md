@@ -209,7 +209,7 @@ Errors carry a code both SDKs raise (`HostError.code`): `not_granted`,
 | `host.models` | `registry`, `current` (writable — switches) | `changed` | — | `models` |
 | `host.mcp` | `servers`, `status`, `details` | `changed` | `connect(name)`, `disconnect(name)`, `ensure()`, `set_tool_enabled(server, tool, on)` | `mcp` |
 | `host.plugins` | `installed`, `marketplaces` | `changed` | `contents(name)`, `preview(source, branch, subdir)`, `install`, `update`, `remove`, `set_enabled`, `add_marketplace`, `remove_marketplace`, `refresh_marketplaces` | `plugins` |
-| `host.extensions` | `installed` — every extension: id, name, version, state, reason, `web_url` | `state_changed` | `set_settings(values)` (its own) | `extensions` (read-only; `set_settings` always, own only) |
+| `host.extensions` | `installed` — every extension: id, name, version, state, reason, `web_url`, and what it does not get (`switched_off`) and which of its prompt edits land nowhere (`dropped`) — each a `Withheld`: a claim and a reason | `state_changed` | `set_settings(values)` (its own) | `extensions` (read-only; `set_settings` always, own only) |
 | `host.hooks` | `details` | `changed` | `reload()`, `fire_session_start()` | `hooks` |
 | `host.permissions` | `mode` | `mode_changed` | `check(tool_name, func_name, tool_args)`, `save_rule(rule, level)` | `permissions` |
 | `host.policy` | `pack` — the group policy in force | — (changes with `account.changed`) | — | `policy` |

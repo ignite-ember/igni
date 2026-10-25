@@ -80,9 +80,9 @@ CodeIndex is an extension, not part of igni. Its extension runs the local
 index — a Neo4j graph per commit, filled from the CodeIndex service — and
 serves one agent-facing tool over MCP, `codeindex_cypher`, a **read-only**
 Cypher query over that graph. Its manifest registers the tool with the
-agent (`permissions.tools`), its `data-architect` stands in for igni's while
-its index covers HEAD, and its prompt text fills igni's
-`main.code_intelligence` and `plan_mode.code_intelligence` slots.
+agent (`permissions.tools`), and while its index covers HEAD it overrides
+the main prompt and some of igni's agents, edits others and plan mode, and
+adds an agent of its own, `data-architect`.
 
 Without it — or before its index covers HEAD — igni's agents search with
 `Bash` (`rg` / `find` / `cat`). The tool's contract and the graph schema are
@@ -473,9 +473,9 @@ glob or list toolkit, because none exists. `visualizer` is the only one
 holding `Visualize`. (CodeIndex's `data-architect` reaches its tool through
 the extension's MCP server — `mcp_servers: [ext:igni.codeindex]`.)
 
-An extension may stand in for one of these agents (`contributes.prompt.agents`):
-CodeIndex replaces several with versions that use its index, while its
-index covers HEAD.
+An extension may override one of these agents, or edit it section by section
+(`contributes.prompt`): CodeIndex does both, with versions that use its
+index, while its index covers HEAD.
 
 Two toolkits are appended at build time and so appear on no agent's list:
 `Schedule` (added to every sub-agent that has any tools at all) and the

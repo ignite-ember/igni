@@ -461,6 +461,8 @@ class HostModel:
             "state": entry.state.value,
             "reason": entry.reason,
             "web_url": self.web_home.url_for(manifest),
+            "switched_off": [{"claim": o.claim, "reason": o.reason} for o in entry.switched_off],
+            "dropped": [{"claim": o.claim, "reason": o.reason} for o in entry.dropped],
         }
 
     def extensions_installed(self) -> list[dict[str, Any]]:

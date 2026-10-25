@@ -199,9 +199,14 @@ the MCP notification igni has always understood.
 
 ## The agent's prompt: `ext.prompt`
 
-A manifest's `contributes.prompt` can replace igni's whole prompt, one
-section of it, fill a slot or stand in for one of igni's agents — each,
-optionally, only while a condition holds (`"when": "index-covers-head"`).
+A manifest's `contributes.prompt` overrides a prompt — the main prompt,
+plan mode, any agent — with a whole one of its own, or edits it: appends a
+section, inserts one before or after a named section, replaces a named
+section (an agent's header is the section `frontmatter`). Each may hold
+only while a condition holds (`"when": "index-covers-head"`). The rules —
+what stacks, what collides, what an override leaves out — are in igni's
+`docs/EXTENSIBILITY.md`. Only the extension can judge the condition, so it
+says when it changes:
 Only the extension can judge the condition, so it says when it changes:
 
 ```python
@@ -216,8 +221,9 @@ holds until it is said, and nothing survives a restart: say it again when
 the process starts.
 
 Text a contribution takes from a tool (`"source": "tool"`) is fetched when
-the extension starts. When what it says changes — CodeIndex's project map,
-when HEAD moves to another indexed commit — have igni fetch it again:
+the extension starts, and so is a `promptFragments` anchor's. When what it
+says changes — CodeIndex's project map, when HEAD moves to another indexed
+commit — have igni fetch it again:
 
 ```python
 await ext.prompt.refresh()

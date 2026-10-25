@@ -99,6 +99,9 @@ class DistributionRecord(BaseModel):
 
 class StoredResolutions(BaseModel):
     resolutions: list[Resolution] = Field(default_factory=list)
+    #: The order edits from several extensions apply in, as a super
+    #: admin set it: extension ids, first applied first.
+    edit_order: list[str] = Field(default_factory=list)
 
 
 class ExtensionStore:
@@ -285,15 +288,17 @@ class ExtensionStore:
     def resolutions_path(self) -> Path:
         return self._root / RESOLUTIONS_FILE
 
-    def record_resolutions(self, resolutions: list[Resolution]) -> bool:
+    def record_resolutions(
+        self, resolutions: list[Resolution], edit_order: list[str] | None = None
+    ) -> bool:
         """Keep the decisions the listing carried. ``True`` if they changed.
 
         Kept so the next start applies them before igni server has
         been asked anything: a machine that cannot reach igni still
         runs what was decided for it.
         """
-        stored = StoredResolutions(resolutions=resolutions)
-        if self.resolutions() == resolutions:
+        stored = StoredResolutions(resolutions=resolutions, edit_order=edit_order or [])
+        if self._stored() == stored:
             return False
         self._root.mkdir(parents=True, exist_ok=True)
         self.resolutions_path.write_text(stored.model_dump_json(indent=2) + "\n", encoding="utf-8")
@@ -301,16 +306,21 @@ class ExtensionStore:
 
     def resolutions(self) -> list[Resolution]:
         """The decisions last received. None, if nothing was."""
+        return self._stored().resolutions
+
+    def edit_order(self) -> list[str]:
+        """The order edits apply in, as last received. Empty, if nothing was."""
+        return self._stored().edit_order
+
+    def _stored(self) -> StoredResolutions:
         path = self.resolutions_path
         if not path.is_file():
-            return []
+            return StoredResolutions()
         try:
-            return StoredResolutions.model_validate_json(
-                path.read_text(encoding="utf-8")
-            ).resolutions
+            return StoredResolutions.model_validate_json(path.read_text(encoding="utf-8"))
         except (OSError, ValidationError) as exc:
             logger.warning("ignoring %s: %s", path, exc)
-            return []
+            return StoredResolutions()
 
     def drop_environments(self, extension_id: str) -> None:
         """Remove every private environment built for this extension."""

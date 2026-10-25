@@ -1,4 +1,4 @@
-"""GENERATED from the igni host schema 1.3.0 by ember_code.extensions.host.codegen — do not edit. Run `make host-sdks` after changing the schema.
+"""GENERATED from the igni host schema 1.4.0 by ember_code.extensions.host.codegen — do not edit. Run `make host-sdks` after changing the schema.
 
 `ext.host` as an extension's process sees it. Read
 `docs/HOST_OBJECT_MODEL.md` in igni for what each object is.
@@ -22,7 +22,7 @@ from igni_extension.members import (
 )
 from igni_extension.notifications import LocalNotification, Target
 
-SCHEMA_VERSION = "1.3.0"
+SCHEMA_VERSION = "1.4.0"
 
 NotificationTarget = Target
 
@@ -802,6 +802,20 @@ class ExtensionInfo(BaseModel):
     """Why it is not READY, and what to do."""
     web_url: str | None = None
     """Its home on the web — its service's URL, which is the service's `client_uri` — when one is known."""
+    switched_off: list[Withheld]
+    """What it does not get: a collision with another extension decided against it or not decided yet, or an override whose text lacks the sections its manifest declares."""
+    dropped: list[Withheld]
+    """Its prompt edits that land nowhere: another extension overrides that prompt, and its override has no section the edit names."""
+
+
+class Withheld(BaseModel):
+    """One thing an extension declared and does not get, and why."""
+
+    model_config = ConfigDict(extra="allow")
+
+    claim: str
+    """`prompt:main`, `prompt:main#workflow`, `prompt:agent:explorer+notes`, `command:/review`, `anchor:NAME`."""
+    reason: str
 
 
 class ExtensionStateChange(BaseModel):
@@ -1876,5 +1890,6 @@ __all__ = [
     "View",
     "ViewAction",
     "WindowInfo",
+    "Withheld",
     "WorkflowRun",
 ]

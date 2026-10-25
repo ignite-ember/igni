@@ -60,6 +60,8 @@ export interface ExtensionSummary {
    * — decided against it on igni server, or not decided yet.
    */
   switched_off?: { claim: string; reason: string }[];
+  /** Its prompt edits that land nowhere: another extension's override lacks the section. */
+  dropped?: { claim: string; reason: string }[];
   /**
    * What is wrong with it that does not stop it working — a tool whose
    * server reports other hints than its manifest declares.

@@ -1,6 +1,6 @@
 """What extensions do to the prompts changed: rebuild every agent, once.
 
-One extension becoming ready announces several times as its claims land;
+One extension becoming ready announces several times as its edits land;
 a rebuild per announcement would rebuild every session's agents over and
 over. Coalesced onto the next turn of the loop, it is one.
 """
@@ -12,11 +12,7 @@ import asyncio
 import pytest
 
 from ember_code.backend.agent_refresh import AgentRefresh
-from ember_code.core.prompts.contributions import (
-    PromptClaim,
-    PromptClaimKind,
-    PromptContributions,
-)
+from ember_code.core.prompts.contributions import EditOp, PromptContributions, PromptEdit
 
 pytestmark = pytest.mark.asyncio
 
@@ -28,7 +24,7 @@ async def test_many_changes_are_one_rebuild():
     contributions.watch(refresh.request)
 
     contributions.set_owner(
-        "a.ext", "Ay", [PromptClaim(kind=PromptClaimKind.SLOT, target="main.s", text="x")]
+        "a.ext", "Ay", edits=[PromptEdit(target="main", op=EditOp.APPEND, name="s", text="x")]
     )
     contributions.hold("a.ext", {"ready": True})
     contributions.remove_owner("a.ext")

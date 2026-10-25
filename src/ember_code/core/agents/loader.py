@@ -1,14 +1,10 @@
 """Filesystem discovery + priority resolution for agent ``.md`` files.
 
-Owns three concerns:
+Owns two concerns:
 
 * Scanning the five standard roots (user/project × Claude/Ember +
   the project-local variant) and applying the priority table so
   the higher-priority definition wins on same-name collisions.
-* Loading the agents extensions stand in for: an extension's
-  ``contributes.prompt.agents`` names one of igni's agents and the file
-  that defines it instead, while the extension is running (and while
-  its condition holds, when it names one).
 * Applying the plugin security envelope when loading from a
   plugin-shipped ``agents/`` directory.
 
@@ -32,7 +28,6 @@ from ember_code.core.agents.schemas import (
     LoadReport,
 )
 from ember_code.core.paths import CONFIG_DIR
-from ember_code.core.prompts.contributions import PromptContributions, prompt_contributions
 
 if TYPE_CHECKING:
     from ember_code.core.config.settings import Settings
@@ -56,18 +51,11 @@ class AgentDefinitionLoader:
         project_dir: Path,
         restriction_policy: PluginRestrictionPolicy | None = None,
         group_dir: Path | None = None,
-        contributions: PromptContributions | None = None,
     ) -> None:
-        """
-        Args:
-            contributions: Where the agents extensions stand in for
-                are registered. The process-wide table by default.
-        """
         self._settings = settings
         self._project_dir = project_dir
         self._policy = restriction_policy
         self._group_dir = group_dir
-        self._contributions = contributions if contributions is not None else prompt_contributions
 
     def load(self) -> LoadReport:
         """Scan the five standard roots and return an aggregated
@@ -108,41 +96,6 @@ class AgentDefinitionLoader:
         for directory, priority in dirs:
             partial = self.load_directory(directory, priority)
             report.merge(partial)
-        report.merge(self.load_replacements())
-        return report
-
-    def load_replacements(self) -> LoadReport:
-        """The agents extensions stand in for, under igni's names.
-
-        At :attr:`AgentPriority.EXTENSION_OVERRIDE`, above every file a
-        person or an organisation wrote, so the agent behaves the way
-        the running extension needs it to — and the moment the
-        extension stops, or its condition stops holding, the
-        replacement is gone from the table and the agent is whatever
-        it was before. The file is the extension's, so it gets the
-        plugin security envelope a plugin's own agents get.
-        """
-        report = LoadReport()
-        policy = PluginRestrictionPolicy.strict()
-        for name, replacement in self._contributions.agent_replacements().items():
-            try:
-                md = AgentMarkdownFile(replacement.path)
-                definition = policy.apply(
-                    md.parse(), md.raw_frontmatter_keys(), plugin_name=replacement.owner
-                ).model_copy(update={"name": name})
-            except Exception as exc:
-                logger.warning(
-                    "%s stands in for agent %s with %s, which did not load: %s",
-                    replacement.owner,
-                    name,
-                    replacement.path,
-                    exc,
-                )
-                report.errors.append(LoadError(path=replacement.path, reason=str(exc)))
-                continue
-            report.entries[name] = AgentEntry(
-                definition=definition, priority=AgentPriority.EXTENSION_OVERRIDE
-            )
         return report
 
     def load_directory(
@@ -155,8 +108,8 @@ class AgentDefinitionLoader:
 
         ``namespace`` prefixes every loaded agent's ``name`` as
         ``<namespace>:<name>`` — used by the plugin loader, so a
-        plugin's agents never take an igni agent's name. Standing in
-        for one of igni's agents is :meth:`load_replacements`.
+        plugin's agents never take an igni agent's name. What an
+        extension does to an agent is :meth:`AgentPool.apply_prompt_contributions`.
         """
         report = LoadReport()
         if not path.exists():

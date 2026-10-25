@@ -34,7 +34,7 @@ from ember_code.extensions.host.spec import (
 )
 
 #: The model's version. Semver; see the module docstring.
-SCHEMA_VERSION = "1.3.0"
+SCHEMA_VERSION = "1.4.0"
 
 # ── Permissions ───────────────────────────────────────────────────
 
@@ -673,6 +673,30 @@ TYPES = (
             "`client_uri` — when one is known.",
             optional=True,
         ),
+        field(
+            "switched_off",
+            "list[Withheld]",
+            "What it does not get: a collision with another extension decided "
+            "against it or not decided yet, or an override whose text lacks the "
+            "sections its manifest declares.",
+        ),
+        field(
+            "dropped",
+            "list[Withheld]",
+            "Its prompt edits that land nowhere: another extension overrides that "
+            "prompt, and its override has no section the edit names.",
+        ),
+    ),
+    typedef(
+        "Withheld",
+        "One thing an extension declared and does not get, and why.",
+        field(
+            "claim",
+            "str",
+            "`prompt:main`, `prompt:main#workflow`, `prompt:agent:explorer+notes`, "
+            "`command:/review`, `anchor:NAME`.",
+        ),
+        field("reason", "str"),
     ),
     typedef(
         "ExtensionStateChange",

@@ -12,24 +12,17 @@ Everything here was measured from the tree, not remembered.
 > the extension's own page (`extension/page`, framed by igni and talking
 > to `ext.igni.artifacts.*` through `@igni/extension-bridge`), and the
 > prompt text about its documents and its archivist into the extension's
-> `prompt.slots`. igni has no `artifact_*` RPC, no Artifacts panel,
+> `prompt.edits` (four sections of the main prompt it replaces). igni has no `artifact_*` RPC, no Artifacts panel,
 > no `/artifacts` builtin and no prompt text naming either. What is
 > below is the record of how it was measured and planned.
 >
-> **Status (2026-10-25): CodeIndex's surface is out; its local index is
-> not.** The panel is the extension's page (`igni__code-index/extension/page`,
-> calling `ext.igni.codeindex.overview` / `breakdown`), `/codeindex` is the
-> extension's command, and the seven `codeindex_*` RPCs, the composer chip,
-> `/codeindex`'s builtin and the panel's controller are deleted from igni.
-> The "About CodeIndex" text in the main prompt is the extension's fill
-> of the `main.code_intelligence` slot, and its eight agents stand in for
-> igni's through `prompt.agents`. What stays in igni is the local index
-> (`core/code_index/`), its agent tool (`core/tools/codeindex/`) and the
-> two prompt files chosen by whether that index covers HEAD
-> (`main_agent.codeindex.md`, `plan_mode.codeindex.md`). An extension can
-> now supply both — `prompt.replace` of `main` under `when:
-> index-covers-head`, and the `plan_mode.code_intelligence` slot — so
-> they move with the local index. See §5b.
+> **Status (2026-10-25): CodeIndex is out.** The panel is the extension's
+> page (`igni__code-index/extension/page`), `/codeindex` is the extension's
+> command, the local index runs in the extension's own process, and what it
+> does to igni's prompts is `contributes.prompt`: it overrides the main
+> prompt and three agents (`explorer`, `plan_researcher`, its own
+> `data-architect`) and edits plan mode and five more agents, all while its
+> index covers HEAD. igni's prompts name no extension. See §5b.
 
 ---
 
@@ -58,7 +51,7 @@ reason it will not be quick.
 | `/codeindex`, `/artifacts` in the tools menu | `contributes.menu` | ✅ |
 | Slash commands | `contributes.commands` | ✅ |
 | `{{CODEINDEX_GRAPH_SCHEMA}}` | `contributes.promptFragments`, `source: tool` | ✅ — this is the case the fragment system was built for |
-| `.codeindex.md` agent variants | `contributes.prompt.agents` (stand-ins) | ✅ |
+| `.codeindex.md` agent variants | `contributes.prompt` — overrides and edits of igni's agents | ✅ |
 | The `codeindex` / `igni_artifacts` agent tools | MCP, gated by `permissions.tools` | ✅ |
 | Reading the project | `permissions.workspace` | ✅ |
 | Its own RPCs | `ext.<id>.*`, gated by `permissions.rpc` | ✅ mechanically — see §4 |

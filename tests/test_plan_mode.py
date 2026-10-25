@@ -25,7 +25,7 @@ from ember_code.backend.__main__ import _build_rpc_table
 from ember_code.backend.command_handler import CommandHandler
 from ember_code.backend.server import BackendServer
 from ember_code.core.config.permission_eval import PermissionEvaluator, PermissionMode
-from ember_code.core.prompts.contributions import PromptClaim, PromptClaimKind, prompt_contributions
+from ember_code.core.prompts.contributions import EditOp, PromptEdit, prompt_contributions
 from ember_code.core.session.broadcast import BroadcastBus as _BroadcastBus
 from ember_code.core.session.core import Session
 from ember_code.core.tools.orchestrate import OrchestrateTools
@@ -211,10 +211,11 @@ def plan_mode_text():
     prompt_contributions.set_owner(
         "acme.code",
         "Code",
-        [
-            PromptClaim(
-                kind=PromptClaimKind.SLOT,
-                target="plan_mode.code_intelligence",
+        edits=[
+            PromptEdit(
+                target="plan_mode",
+                op=EditOp.APPEND,
+                name="code_intelligence",
                 text="Research through the code index first.",
             )
         ],

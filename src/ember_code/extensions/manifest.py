@@ -55,16 +55,14 @@ EGRESS = re.compile(r"^[a-z0-9.-]+(:\d{1,5})?$")
 #: A lowercase, hyphenated name.
 SLUG = re.compile(r"^[a-z][a-z0-9-]*$")
 
-#: Part of the agent's prompt: ``main`` or ``plan_mode`` whole, or one
-#: section of it — ``main.workflow``. The names igni has are in
-#: ``docs/prompt-targets.json``.
-PROMPT_TARGET = re.compile(r"^(main|plan_mode)(\.[a-z][a-z0-9_]*)?$")
+#: A prompt an extension can reach: ``main``, ``plan_mode``, or an agent
+#: by the name igni knows it by — ``agent:explorer``, a plugin's
+#: ``agent:acme.notes:archivist``. Every one igni ships is in
+#: ``docs/prompt-targets.json``, with its sections.
+PROMPT_DOCUMENT = re.compile(r"^(main|plan_mode|agent:[a-z0-9][a-z0-9_.:-]*)$")
 
-#: A slot in a prompt: ``main.code_intelligence``.
-PROMPT_SLOT = re.compile(r"^(main|plan_mode)\.[a-z][a-z0-9_]*$")
-
-#: An agent, by the name igni knows it by: ``explorer``, ``data-architect``.
-AGENT_NAME = re.compile(r"^[a-z][a-z0-9_-]*$")
+#: A section of a prompt, by its own name.
+SECTION = re.compile(r"^[a-z][a-z0-9_]*$")
 
 #: A settings key, as code reads it.
 SETTING_KEY = re.compile(r"^[a-z][a-zA-Z0-9_]*$")
@@ -348,57 +346,101 @@ class PromptText(Strict):
     model_config = ConfigDict(extra="forbid", populate_by_name=True)
 
 
-class PromptReplacement(PromptText):
-    """The whole of a prompt, or one section of it, written by the extension."""
+class PromptOverrideContribution(PromptText):
+    """A whole prompt, written by the extension.
 
-    target: Annotated[str, Field(pattern=PROMPT_TARGET.pattern)]
-
-
-class PromptSlotFill(PromptText):
-    """Text added to a slot igni leaves, beside other extensions'."""
-
-    slot: Annotated[str, Field(pattern=PROMPT_SLOT.pattern)]
-
-
-class AgentReplacementContribution(Strict):
-    """One of igni's agents, defined by a file the extension's plugin carries.
-
-    The file is inside the plugin and outside its ``agents/``
-    directory: everything in ``agents/`` loads as the plugin's own
-    agent under the extension's namespace, and this is the other thing
-    — the agent igni already has, standing in under igni's name.
+    It is made of named sections, as igni's are, and says which: other
+    extensions' edits land on the sections it has, and a super admin
+    is shown which of theirs it would leave out.
     """
 
-    agent: Annotated[str, Field(pattern=AGENT_NAME.pattern)]
-    from_: str = Field(alias="from", min_length=1)
-    when: Annotated[str, Field(pattern=SLUG.pattern)] | None = None
+    target: Annotated[str, Field(pattern=PROMPT_DOCUMENT.pattern)]
+    #: Its sections, in order. An agent's ``frontmatter`` is implied.
+    sections: list[Annotated[str, Field(pattern=SECTION.pattern)]] = Field(min_length=1)
+    #: Takes no other extension's edits: one that edits this prompt
+    #: collides with it, and a super admin picks one or the other.
+    exclusive: bool = False
 
-    model_config = ConfigDict(extra="forbid", populate_by_name=True)
+    @model_validator(mode="after")
+    def _sections_once(self) -> PromptOverrideContribution:
+        repeated = sorted({s for s in self.sections if self.sections.count(s) > 1})
+        if repeated:
+            raise ValueError(f"override of {self.target} names {', '.join(repeated)} twice")
+        return self
+
+
+class PromptEditContribution(PromptText):
+    """One change to a prompt: exactly one of ``replace``, ``insert`` or ``append``."""
+
+    target: Annotated[str, Field(pattern=PROMPT_DOCUMENT.pattern)]
+    #: The section whose text this replaces.
+    replace: Annotated[str, Field(pattern=SECTION.pattern)] | None = None
+    #: A new section, named so, placed ``before`` or ``after`` another.
+    insert: Annotated[str, Field(pattern=SECTION.pattern)] | None = None
+    before: Annotated[str, Field(pattern=SECTION.pattern)] | None = None
+    after: Annotated[str, Field(pattern=SECTION.pattern)] | None = None
+    #: A new section, named so, at the end.
+    append: Annotated[str, Field(pattern=SECTION.pattern)] | None = None
+
+    @model_validator(mode="after")
+    def _one_change(self) -> PromptEditContribution:
+        chosen = [k for k in ("replace", "insert", "append") if getattr(self, k) is not None]
+        if len(chosen) != 1:
+            raise ValueError(
+                f"an edit of {self.target} is exactly one of 'replace', 'insert' and "
+                f"'append'; it says {', '.join(chosen) or 'none'}"
+            )
+        placed = [k for k in ("before", "after") if getattr(self, k) is not None]
+        if self.insert is not None and len(placed) != 1:
+            raise ValueError(f"inserting {self.insert} needs exactly one of 'before' and 'after'")
+        if self.insert is None and placed:
+            raise ValueError(f"'{placed[0]}' places an insert, and this edit is not one")
+        return self
+
+    @property
+    def anchor(self) -> str | None:
+        """The section of the prompt this needs: the one replaced, or the one inserted against."""
+        return self.replace or self.before or self.after
+
+    @property
+    def added(self) -> str | None:
+        """The new section's name, for an insert or an append."""
+        return self.insert or self.append
 
 
 class PromptContribution(Strict):
     """What an extension does to the agent's prompts.
 
-    Full control, on purpose: a deployment that wants its agent to work
-    its own way may replace the whole prompt. Two extensions that claim
-    the same thing collide, and a super admin decides which one wins —
-    :mod:`ember_code.extensions.impact`.
+    Full control, on purpose: per prompt — ``main``, ``plan_mode``, any
+    agent — an extension overrides it whole, or edits it. Edits from
+    several extensions stack; replacing one section, overriding one
+    prompt, or an exclusive override against anyone's edits, collides,
+    and a super admin decides — :mod:`ember_code.extensions.impact`.
     """
 
-    replace: list[PromptReplacement] = Field(default_factory=list)
-    slots: list[PromptSlotFill] = Field(default_factory=list)
-    agents: list[AgentReplacementContribution] = Field(default_factory=list)
+    overrides: list[PromptOverrideContribution] = Field(default_factory=list)
+    edits: list[PromptEditContribution] = Field(default_factory=list)
 
     @model_validator(mode="after")
-    def _each_once(self) -> PromptContribution:
-        for what, names in (
-            ("replaces", [r.target for r in self.replace]),
-            ("fills slot", [s.slot for s in self.slots]),
-            ("stands in for agent", [a.agent for a in self.agents]),
-        ):
-            repeated = sorted({n for n in names if names.count(n) > 1})
-            if repeated:
-                raise ValueError(f"the prompt contribution {what} {', '.join(repeated)} twice")
+    def _coherent(self) -> PromptContribution:
+        overridden = [o.target for o in self.overrides]
+        repeated = sorted({t for t in overridden if overridden.count(t) > 1})
+        if repeated:
+            raise ValueError(f"the prompt contribution overrides {', '.join(repeated)} twice")
+        both = sorted({e.target for e in self.edits} & set(overridden))
+        if both:
+            raise ValueError(
+                f"the prompt contribution both overrides and edits {', '.join(both)}; "
+                "an override is already all of it"
+            )
+        replaced = [(e.target, e.replace) for e in self.edits if e.replace is not None]
+        twice = sorted({f"{t}#{s}" for t, s in replaced if replaced.count((t, s)) > 1})
+        if twice:
+            raise ValueError(f"the prompt contribution replaces {', '.join(twice)} twice")
+        added = [(e.target, e.added) for e in self.edits if e.added is not None]
+        twice = sorted({f"{t}#{s}" for t, s in added if added.count((t, s)) > 1})
+        if twice:
+            raise ValueError(f"the prompt contribution adds {', '.join(twice)} twice")
         return self
 
 
@@ -421,11 +463,10 @@ class Contributes(Strict):
     menu: list[MenuContribution] = Field(default_factory=list)
     indicators: list[IndicatorContribution] = Field(default_factory=list)
     commands: list[CommandContribution] = Field(default_factory=list)
-    #: Text at a ``{{ANCHOR}}`` in an agent's prompt — the extension's
-    #: own agents, or one it stands in for.
+    #: Text at a ``{{ANCHOR}}`` in a prompt the extension wrote — its own
+    #: agents, an override, an edit.
     promptFragments: list[PromptFragment] = Field(default_factory=list)
-    #: The main prompt and plan mode: replaced whole, a section
-    #: replaced, a slot added to; and igni's agents stood in for.
+    #: The main prompt, plan mode and any agent: overridden or edited.
     prompt: PromptContribution = Field(default_factory=PromptContribution)
     settings: list[Setting] = Field(default_factory=list)
     #: A directory inside the bundle holding a plugin, installed
@@ -438,8 +479,8 @@ class Contributes(Strict):
     #: those, and adding ``contributes.agents`` beside it would be
     #: the second path this contract says not to build.
     #:
-    #: So an extension *wraps* a plugin. (Standing in for an agent igni
-    #: already has is different, and is ``prompt.agents``.) The named directory is a
+    #: So an extension *wraps* a plugin. (Changing an agent igni already
+    #: has is different, and is ``prompt``.) The named directory is a
     #: Claude-Code-shaped plugin — ``.claude-plugin/plugin.json``
     #: plus ``agents/``, ``skills/``, ``hooks/`` — copied into the
     #: plugins directory at install and deleted at uninstall. The
@@ -522,29 +563,23 @@ class ExtensionManifest(Strict):
         return self
 
     @model_validator(mode="after")
-    def _agents_are_in_the_plugin(self) -> ExtensionManifest:
-        agents = self.contributes.prompt.agents
-        if not agents:
-            return self
+    def _overrides_are_not_plugin_agents(self) -> ExtensionManifest:
+        """An agent override's file is not in the plugin's ``agents/``.
+
+        Everything there loads as the plugin's own agent, under the
+        extension's name; an override is the other thing — an agent
+        igni has, under igni's name — and one file cannot be both.
+        """
         plugin = (self.contributes.plugin or "").strip("/")
         if not plugin:
-            raise ValueError(
-                f"{self.id}: prompt.agents stands in for igni's agents with files "
-                "its plugin carries, and it declares no 'plugin'"
-            )
-        for entry in agents:
-            path = entry.from_.strip("/")
-            if not path.startswith(f"{plugin}/") or ".." in path.split("/"):
+            return self
+        for override in self.contributes.prompt.overrides:
+            path = override.from_.strip("/")
+            if override.source is FragmentSource.FILE and path.startswith(f"{plugin}/agents/"):
                 raise ValueError(
-                    f"{self.id}: prompt.agents {entry.agent!r} reads {entry.from_!r}, "
-                    f"which is not inside the plugin directory {plugin!r}"
-                )
-            if path.startswith(f"{plugin}/agents/"):
-                raise ValueError(
-                    f"{self.id}: prompt.agents {entry.agent!r} reads {entry.from_!r}, "
-                    f"inside {plugin}/agents/ — everything there loads as the "
-                    "plugin's own agent; keep stand-ins beside it, e.g. "
-                    f"{plugin}/stand-ins/"
+                    f"{self.id}: the override of {override.target} reads {override.from_}, "
+                    f"inside {plugin}/agents/ — everything there loads as the plugin's own "
+                    f"agent; keep overrides beside it, e.g. {plugin}/overrides/"
                 )
         return self
 

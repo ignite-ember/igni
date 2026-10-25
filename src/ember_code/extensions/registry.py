@@ -107,6 +107,9 @@ class InstalledExtension:
     #: extension — decided against it, or not decided yet. Kept by
     #: :class:`~ember_code.extensions.contributions.ExtensionContributions`.
     switched_off: list[SwitchedOff] = field(default_factory=list)
+    #: Its prompt edits that land nowhere: aimed at a section another
+    #: extension's override does not have. Not a collision; listed.
+    dropped: list[SwitchedOff] = field(default_factory=list)
     #: What is wrong with it that does not stop it working — a tool
     #: whose server reports other hints than its manifest declares.
     problems: list[str] = field(default_factory=list)

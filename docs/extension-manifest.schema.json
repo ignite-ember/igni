@@ -583,7 +583,7 @@
         },
         "promptFragments": {
           "type": "array",
-          "description": "Text this extension supplies at a named `{{ANCHOR}}` in an agent's prompt — one of its plugin's agents, or an agent it stands in for through `prompt.agents`. Only one extension may fill an anchor: two that both do collide, and a super admin decides which wins.",
+          "description": "Text this extension supplies at a named `{{ANCHOR}}` in a prompt it wrote — one of its plugin's agents, an override or an edit. Only one extension may fill an anchor: two that both do collide, and a super admin decides which wins.",
           "items": {
             "type": "object",
             "required": [
@@ -614,11 +614,71 @@
         "prompt": {
           "type": "object",
           "additionalProperties": false,
-          "description": "What your extension does to the agent's prompts — and full control is allowed: a deployment that wants its agent to work its own way may replace the whole prompt. `main` is the main agent's system prompt and `plan_mode` what it is told about plan mode; their sections and slots are listed in igni's `docs/prompt-targets.json`. Replacing a whole prompt, a section, or standing in for an agent is something only one extension can do: two that claim the same thing collide — so do one replacing a whole prompt and one replacing any section of it — and a super admin picks the winner on igni server's Services page before the version is distributed. Slots never collide: several extensions' text stacks, each under its extension's name.",
+          "description": "What your extension does to the agent's prompts — and full control is allowed. Per prompt (`main`, `plan_mode`, any agent) you either **override** it, with a whole prompt of your own, or **edit** it: append a section, insert one before or after a named section, or replace a named section. An agent's YAML header is its `frontmatter` section. Edits from several extensions stack, in an order a super admin sets, and never collide. Two extensions replacing one section collide; so do two overriding one prompt, and an `exclusive` override with anyone's edit of the same prompt — a super admin picks the winner on igni server's Services page before the version is distributed. Another extension's override is the new starting point: your appends still land, and your inserts and replacements land where it has the section they name — where it does not, they are left out, and the Services page and the extensions panel say so.",
           "properties": {
-            "replace": {
+            "overrides": {
               "type": "array",
-              "description": "A whole prompt (`main`), or one section of it (`main.workflow`), written by you. Your text may carry igni's slot markers, `{{AGENT_CATALOG}}` and the host's conditionals, which work as they do in igni's own.",
+              "description": "A whole prompt, written by you. It is made of named sections (`<!-- section:<name> -->` … `<!-- /section:<name> -->`), and `sections` lists them, so other extensions' edits can land on it and a super admin can see which would not. Your text may carry `{{PERSISTING}}`, `{{AGENT_CATALOG}}` and the host's conditionals, which work as they do in igni's own.",
+              "items": {
+                "type": "object",
+                "required": [
+                  "target",
+                  "sections",
+                  "source",
+                  "from"
+                ],
+                "additionalProperties": false,
+                "properties": {
+                  "target": {
+                    "type": "string",
+                    "pattern": "^(main|plan_mode|agent:[a-z0-9][a-z0-9_.:-]*)$",
+                    "description": "`main` (the main agent's system prompt), `plan_mode` (what it is told about plan mode), or an agent by the name igni knows it by — `agent:explorer`, a plugin's `agent:acme.notes:archivist`. igni's own, with their sections, are listed in igni's `docs/prompt-targets.json`.",
+                    "examples": [
+                      "main",
+                      "plan_mode",
+                      "agent:explorer"
+                    ]
+                  },
+                  "sections": {
+                    "type": "array",
+                    "minItems": 1,
+                    "items": {
+                      "type": "string",
+                      "pattern": "^[a-z][a-z0-9_]*$"
+                    },
+                    "description": "Its sections, in order. An agent's `frontmatter` is implied."
+                  },
+                  "exclusive": {
+                    "type": "boolean",
+                    "default": false,
+                    "description": "Take no other extension's edits. Anyone who edits this prompt then collides with you, and a super admin picks your override or their edits."
+                  },
+                  "source": {
+                    "enum": [
+                      "tool",
+                      "file"
+                    ],
+                    "description": "Where the text comes from. `tool`: igni calls the named MCP tool when the extension becomes ready, and again when the extension asks (`ext.prompt.refresh()`). `file`: a file in the bundle."
+                  },
+                  "from": {
+                    "type": "string",
+                    "minLength": 1,
+                    "description": "The tool name, or the bundle-relative file path, depending on `source`."
+                  },
+                  "when": {
+                    "type": "string",
+                    "pattern": "^[a-z][a-z0-9-]*$",
+                    "description": "A condition your extension reports, with `notifications/igni/conditions` (`ext.prompt.hold(...)` in igni-extension): this holds only while the condition does. Without one it holds whenever the extension is ready.",
+                    "examples": [
+                      "index-covers-head"
+                    ]
+                  }
+                }
+              }
+            },
+            "edits": {
+              "type": "array",
+              "description": "One change to a prompt: exactly one of `replace` (a section's text), `insert` (a new section, `before` or `after` another) or `append` (a new section at the end).",
               "items": {
                 "type": "object",
                 "required": [
@@ -630,19 +690,45 @@
                 "properties": {
                   "target": {
                     "type": "string",
-                    "pattern": "^(main|plan_mode)(\\.[a-z][a-z0-9_]*)?$",
+                    "pattern": "^(main|plan_mode|agent:[a-z0-9][a-z0-9_.:-]*)$",
+                    "description": "`main` (the main agent's system prompt), `plan_mode` (what it is told about plan mode), or an agent by the name igni knows it by — `agent:explorer`, a plugin's `agent:acme.notes:archivist`. igni's own, with their sections, are listed in igni's `docs/prompt-targets.json`.",
                     "examples": [
                       "main",
-                      "main.workflow",
-                      "plan_mode"
+                      "plan_mode",
+                      "agent:explorer"
                     ]
+                  },
+                  "replace": {
+                    "type": "string",
+                    "pattern": "^[a-z][a-z0-9_]*$",
+                    "description": "The section whose text this replaces. Another extension replacing the same one collides with you."
+                  },
+                  "insert": {
+                    "type": "string",
+                    "pattern": "^[a-z][a-z0-9_]*$",
+                    "description": "The name of the new section this inserts, `before` or `after` a section of the prompt."
+                  },
+                  "before": {
+                    "type": "string",
+                    "pattern": "^[a-z][a-z0-9_]*$",
+                    "description": "Where an `insert` goes: right before this section."
+                  },
+                  "after": {
+                    "type": "string",
+                    "pattern": "^[a-z][a-z0-9_]*$",
+                    "description": "Where an `insert` goes: right after this section, and after anything already inserted there."
+                  },
+                  "append": {
+                    "type": "string",
+                    "pattern": "^[a-z][a-z0-9_]*$",
+                    "description": "The name of the new section this adds at the end."
                   },
                   "source": {
                     "enum": [
                       "tool",
                       "file"
                     ],
-                    "description": "Where the text comes from. `tool`: igni calls the named MCP tool when the extension becomes ready. `file`: a file in the bundle."
+                    "description": "Where the text comes from. `tool`: igni calls the named MCP tool when the extension becomes ready, and again when the extension asks (`ext.prompt.refresh()`). `file`: a file in the bundle."
                   },
                   "from": {
                     "type": "string",
@@ -657,82 +743,24 @@
                       "index-covers-head"
                     ]
                   }
-                }
-              }
-            },
-            "slots": {
-              "type": "array",
-              "description": "Text added to a slot igni leaves — `main.code_intelligence`, `main.when_to_persist`. What a slot says when nothing fills it is replaced by what extensions put there. At most 8,000 characters per slot fill.",
-              "items": {
-                "type": "object",
-                "required": [
-                  "slot",
-                  "source",
-                  "from"
-                ],
-                "additionalProperties": false,
-                "properties": {
-                  "slot": {
-                    "type": "string",
-                    "pattern": "^(main|plan_mode)\\.[a-z][a-z0-9_]*$",
-                    "examples": [
-                      "main.code_intelligence"
+                },
+                "oneOf": [
+                  {
+                    "required": [
+                      "replace"
                     ]
                   },
-                  "source": {
-                    "enum": [
-                      "tool",
-                      "file"
-                    ],
-                    "description": "Where the text comes from. `tool`: igni calls the named MCP tool when the extension becomes ready. `file`: a file in the bundle."
+                  {
+                    "required": [
+                      "insert"
+                    ]
                   },
-                  "from": {
-                    "type": "string",
-                    "minLength": 1,
-                    "description": "The tool name, or the bundle-relative file path, depending on `source`."
-                  },
-                  "when": {
-                    "type": "string",
-                    "pattern": "^[a-z][a-z0-9-]*$",
-                    "description": "A condition your extension reports, with `notifications/igni/conditions` (`ext.prompt.hold(...)` in igni-extension): this holds only while the condition does. Without one it holds whenever the extension is ready.",
-                    "examples": [
-                      "index-covers-head"
+                  {
+                    "required": [
+                      "append"
                     ]
                   }
-                }
-              }
-            },
-            "agents": {
-              "type": "array",
-              "description": "One of igni's agents — `explorer`, `data-architect` — defined by a file your plugin carries, under igni's name, while you are ready (and while `when` holds). The file is inside your plugin directory and outside its `agents/`, which holds your plugin's own agents.",
-              "items": {
-                "type": "object",
-                "required": [
-                  "agent",
-                  "from"
-                ],
-                "additionalProperties": false,
-                "properties": {
-                  "agent": {
-                    "type": "string",
-                    "pattern": "^[a-z][a-z0-9_-]*$"
-                  },
-                  "from": {
-                    "type": "string",
-                    "minLength": 1,
-                    "examples": [
-                      "plugin/stand-ins/explorer.md"
-                    ]
-                  },
-                  "when": {
-                    "type": "string",
-                    "pattern": "^[a-z][a-z0-9-]*$",
-                    "description": "A condition your extension reports, with `notifications/igni/conditions` (`ext.prompt.hold(...)` in igni-extension): this holds only while the condition does. Without one it holds whenever the extension is ready.",
-                    "examples": [
-                      "index-covers-head"
-                    ]
-                  }
-                }
+                ]
               }
             }
           }

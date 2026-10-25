@@ -46,9 +46,11 @@ def _resolver(case: dict[str, Any]) -> ImpactResolver:
 def test_an_extension_s_impact_is_read_off_its_manifest():
     expected = dict(CASES["impact"]["expected"])
     claims = expected.pop("claims")
+    items = expected.pop("items")
     impact = ExtensionImpact.of(ExtensionManifest.model_validate(CASES["impact"]["manifest"]))
     assert impact.model_dump(mode="json") == expected
     assert impact.claims() == claims
+    assert impact.items() == items
 
 
 @pytest.mark.parametrize("case", CASES["cases"], ids=[c["name"] for c in CASES["cases"]])
@@ -63,6 +65,8 @@ def test_the_host_switches_off_what_lost_and_what_nobody_decided(case):
     outcome = _resolver(case).enforce()
     off = {ext: [o.claim for o in entries] for ext, entries in outcome.off.items()}
     assert off == case["enforce"]["off"]
+    dropped = {ext: [o.claim for o in entries] for ext, entries in outcome.dropped.items()}
+    assert dropped == case["enforce"]["dropped"]
     for ext, claims in case["enforce"]["off"].items():
         for claim in claims:
             assert not outcome.allows(ext, claim)
@@ -81,7 +85,14 @@ def test_igni_servers_copy_of_the_cases_is_the_same():
     assert json.loads(SERVER_COPY.read_text()) == CASES
 
 
-class TestTheManifestSaysWhereAStandInLives:
+def test_a_drop_says_whose_override_and_when():
+    case = next(c for c in CASES["cases"] if "keeps its frontmatter" in c["name"])
+    (entry,) = _resolver(case).enforce().dropped["acme.b"]
+    assert "acme.a overrides agent:explorer while acme.a holds indexed" in entry.reason
+    assert "no section 'rules'" in entry.reason
+
+
+class TestTheManifestSaysWhatItDoesToAPrompt:
     BASE = {
         "id": "acme.a",
         "version": "1.0.0",
@@ -93,33 +104,49 @@ class TestTheManifestSaysWhereAStandInLives:
     def _with(self, **contributes):
         return {**self.BASE, "contributes": contributes}
 
-    def test_a_stand_in_needs_a_plugin(self):
-        with pytest.raises(ValueError, match="declares no 'plugin'"):
-            ExtensionManifest.model_validate(
-                self._with(prompt={"agents": [{"agent": "explorer", "from": "x/explorer.md"}]})
-            )
+    @staticmethod
+    def _edit(**op):
+        return {"target": "main", "source": "file", "from": "a.md", **op}
 
-    def test_a_stand_in_lives_inside_the_plugin(self):
-        with pytest.raises(ValueError, match="not inside the plugin"):
-            ExtensionManifest.model_validate(
-                self._with(
-                    plugin="plugin",
-                    prompt={"agents": [{"agent": "explorer", "from": "elsewhere/explorer.md"}]},
-                )
-            )
-
-    def test_a_stand_in_is_not_one_of_the_plugin_s_own_agents(self):
+    def test_an_agent_override_is_not_one_of_the_plugin_s_own_agents(self):
         """Everything in ``agents/`` loads as the plugin's own, under the
-        extension's namespace; a stand-in there would load twice."""
-        with pytest.raises(ValueError, match="stand-ins"):
+        extension's namespace; an override there would load twice."""
+        override = {
+            "target": "agent:explorer",
+            "sections": ["intro"],
+            "source": "file",
+            "from": "plugin/agents/explorer.md",
+        }
+        with pytest.raises(ValueError, match="overrides/"):
             ExtensionManifest.model_validate(
-                self._with(
-                    plugin="plugin",
-                    prompt={"agents": [{"agent": "explorer", "from": "plugin/agents/explorer.md"}]},
-                )
+                self._with(plugin="plugin", prompt={"overrides": [override]})
             )
 
-    def test_one_extension_claims_each_thing_once(self):
-        target = {"target": "main", "source": "file", "from": "a.md"}
+    def test_an_edit_is_exactly_one_change(self):
+        with pytest.raises(ValueError, match="exactly one of"):
+            ExtensionManifest.model_validate(
+                self._with(prompt={"edits": [self._edit(replace="workflow", append="tail")]})
+            )
+
+    def test_an_insert_says_where(self):
+        with pytest.raises(ValueError, match="'before' and 'after'"):
+            ExtensionManifest.model_validate(
+                self._with(prompt={"edits": [self._edit(insert="notes")]})
+            )
+
+    def test_an_override_says_its_sections(self):
+        override = {"target": "main", "sections": [], "source": "file", "from": "a.md"}
+        with pytest.raises(ValueError):
+            ExtensionManifest.model_validate(self._with(prompt={"overrides": [override]}))
+
+    def test_overriding_and_editing_one_prompt_is_refused(self):
+        override = {"target": "main", "sections": ["identity"], "source": "file", "from": "a.md"}
+        with pytest.raises(ValueError, match="both overrides and edits"):
+            ExtensionManifest.model_validate(
+                self._with(prompt={"overrides": [override], "edits": [self._edit(append="tail")]})
+            )
+
+    def test_one_extension_replaces_each_section_once(self):
+        edit = self._edit(replace="workflow")
         with pytest.raises(ValueError, match="twice"):
-            ExtensionManifest.model_validate(self._with(prompt={"replace": [target, target]}))
+            ExtensionManifest.model_validate(self._with(prompt={"edits": [edit, edit]}))

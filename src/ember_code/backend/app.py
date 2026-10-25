@@ -247,8 +247,8 @@ class BackendApp:
             mcp=self._backend.mcp_manager,
         )
         self._extensions.watch(self._extension_health.on_call_failed)
-        # What an extension adds to the *agent* — its prompt, its
-        # anchors, the agents it stands in for, its commands. Tied to
+        # What an extension adds to the *agent* — what it does to the
+        # prompts and the agents, its anchors, its commands. Tied to
         # READY rather than to being installed: an extension whose
         # service has died must stop telling the model about data it
         # can no longer fetch. Collisions between extensions are
@@ -259,6 +259,7 @@ class BackendApp:
             rpc=self._extensions,
             plugins_dir=PluginInstaller(data_dir=settings.storage.data_dir).plugins_dir,
             resolutions=extension_store.resolutions,
+            order=extension_store.edit_order,
             igni_commands=IgniCommands.of(CommandHandler.builtin_names()),
         )
         self._extension_contributions.attach()

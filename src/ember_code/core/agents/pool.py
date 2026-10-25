@@ -20,6 +20,7 @@ module for the follow-up-PR deletion target.
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Iterable
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -27,6 +28,7 @@ from typing import TYPE_CHECKING
 from ember_code.core.agents.builder import AgentBuilder
 from ember_code.core.agents.ephemeral import EphemeralAgentStore
 from ember_code.core.agents.loader import AgentDefinitionLoader
+from ember_code.core.agents.markdown import AgentMarkdownFile
 from ember_code.core.agents.plugin_policy import PluginRestrictionPolicy
 from ember_code.core.agents.pool_legacy import LegacyAgentPoolMixin
 from ember_code.core.agents.schemas import (
@@ -40,10 +42,13 @@ from ember_code.core.agents.schemas import (
     McpClient,
 )
 from ember_code.core.config.settings import Settings
+from ember_code.core.prompts.contributions import PromptContributions, prompt_contributions
 from ember_code.core.tools.orchestrate_budget import SpawnBudget
 
 if TYPE_CHECKING:
     from agno.agent import Agent
+
+logger = logging.getLogger(__name__)
 
 
 class AgentPool(LegacyAgentPoolMixin):
@@ -271,6 +276,57 @@ class AgentPool(LegacyAgentPoolMixin):
         report = loader.load_directory(path, priority, namespace=namespace)
         self._merge(report)
         return report
+
+    def apply_prompt_contributions(self, contributions: PromptContributions | None = None) -> None:
+        """Every agent as extensions have shaped it: overridden, edited, or both.
+
+        Run once everything is loaded — igni's agents, the group's, the
+        project's and the plugins' — because an edit applies to
+        whichever definition won. An override stands at
+        :attr:`AgentPriority.EXTENSION_OVERRIDE`, above every file a
+        person or an organisation wrote, and defines the agent even
+        where igni has none; the moment the extension stops, or its
+        condition stops holding, it is gone from the table and the
+        agent is whatever it was before.
+
+        Text an extension wrote for an agent's header gets the plugin
+        security envelope a plugin's own agents get.
+        """
+        table = contributions if contributions is not None else prompt_contributions
+        for name in table.agents():
+            entry = self._entries.get(name)
+            source = entry.definition.source_path if entry is not None else None
+            base = None
+            if source is not None:
+                try:
+                    base = source.read_text(encoding="utf-8")
+                except OSError as exc:
+                    logger.warning("agent %s: %s could not be read: %s", name, source, exc)
+            try:
+                composition = table.compose(f"agent:{name}", base)
+            except ValueError as exc:
+                logger.warning("agent %s: what extensions do to it does not fit: %s", name, exc)
+                continue
+            if composition is None:
+                logger.info("agent %s: edited by an extension, and nobody defines it", name)
+                continue
+            path = composition.override_path or source or Path(f"{name}.md")
+            md = AgentMarkdownFile(path, content=composition.document.render())
+            try:
+                definition = md.parse().model_copy(update={"name": name})
+            except ValueError as exc:
+                logger.warning("agent %s, as extensions shaped it, does not load: %s", name, exc)
+                continue
+            if composition.frontmatter_owner is not None:
+                definition = PluginRestrictionPolicy.strict().apply(
+                    definition, md.raw_frontmatter_keys(), plugin_name=composition.frontmatter_owner
+                )
+            priority = (
+                AgentPriority.EXTENSION_OVERRIDE
+                if composition.override_owner is not None or entry is None
+                else entry.priority
+            )
+            self._entries[name] = AgentEntry(definition=definition, priority=priority)
 
     # ── Phase 2: build ───────────────────────────────────────────
 

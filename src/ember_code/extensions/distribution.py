@@ -115,6 +115,9 @@ class DistributionListing(BaseModel):
     #: A super admin's decisions on collisions between the extensions
     #: listed — :mod:`ember_code.extensions.impact`.
     resolutions: list[Resolution] = Field(default_factory=list)
+    #: The order edits from several extensions apply in, as a super
+    #: admin set it — extension ids, first applied first.
+    edit_order: list[str] = Field(default_factory=list)
 
 
 class DownloadedBundle(BaseModel):
@@ -133,7 +136,7 @@ class SyncReport(BaseModel):
     unchanged: list[str] = Field(default_factory=list)
     #: Development installs a listed extension did not replace.
     development: list[str] = Field(default_factory=list)
-    #: Whether the decisions on collisions changed.
+    #: Whether the decisions on collisions, or the order edits apply in, changed.
     resolutions_changed: bool = False
     failed: dict[str, str] = Field(default_factory=dict)
 
@@ -386,7 +389,7 @@ class ExtensionDistribution:
             report = SyncReport()
             # Decisions first: an extension installed below starts
             # with them already applied.
-            if self._store.record_resolutions(listing.resolutions):
+            if self._store.record_resolutions(listing.resolutions, listing.edit_order):
                 report.resolutions_changed = True
                 if self._on_resolutions is not None:
                     self._on_resolutions()

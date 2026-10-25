@@ -1,11 +1,11 @@
-// GENERATED from the igni host schema 1.3.0 by ember_code.extensions.host.codegen — do not edit. Run `make host-sdks` after changing the schema.
+// GENERATED from the igni host schema 1.4.0 by ember_code.extensions.host.codegen — do not edit. Run `make host-sdks` after changing the schema.
 //
 // `bridge.host` as an extension's page sees it. Read
 // `docs/HOST_OBJECT_MODEL.md` in igni for what each object is.
 
 import { HostObject, Property, Signal, type HostLink, type JsonValue } from "./hostModel";
 
-export const SCHEMA_VERSION = "1.3.0";
+export const SCHEMA_VERSION = "1.4.0";
 
 /** One change anywhere in the model, as `host.changed` reports it. */
 export interface Change {
@@ -573,6 +573,17 @@ export interface ExtensionInfo {
   reason: string;
   /** Its home on the web — its service's URL, which is the service's `client_uri` — when one is known. */
   web_url?: string | null;
+  /** What it does not get: a collision with another extension decided against it or not decided yet, or an override whose text lacks the sections its manifest declares. */
+  switched_off: Withheld[];
+  /** Its prompt edits that land nowhere: another extension overrides that prompt, and its override has no section the edit names. */
+  dropped: Withheld[];
+}
+
+/** One thing an extension declared and does not get, and why. */
+export interface Withheld {
+  /** `prompt:main`, `prompt:main#workflow`, `prompt:agent:explorer+notes`, `command:/review`, `anchor:NAME`. */
+  claim: string;
+  reason: string;
 }
 
 /** An extension's health moved. */

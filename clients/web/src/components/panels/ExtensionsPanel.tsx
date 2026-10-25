@@ -189,13 +189,15 @@ function SettingsForm({
  */
 function SwitchedOff({
   entries,
+  title = "Switched off:",
 }: {
   entries: { claim: string; reason: string }[];
+  title?: string;
 }) {
   if (entries.length === 0) return null;
   return (
     <div className="ext-switched-off" role="note">
-      <div className="meta">Switched off by a collision with another extension:</div>
+      <div className="meta">{title}</div>
       <ul>
         {entries.map((entry) => (
           <li key={entry.claim}>
@@ -276,6 +278,10 @@ export function ExtensionsPanel({
           </div>
           {extension.reason && <div className="meta">{extension.reason}</div>}
           <SwitchedOff entries={extension.switched_off ?? []} />
+          <SwitchedOff
+            entries={extension.dropped ?? []}
+            title="Prompt edits that land nowhere — another extension's override has no such section:"
+          />
           <Problems entries={extension.problems ?? []} />
           <AgentTools tools={extension.tools ?? []} />
           <OpenOnWeb url={extension.web_url} name={extension.name} />

@@ -1,10 +1,10 @@
 """The prompt promises a document store only when there is one.
 
-A document store is an extension, and it switches off like CodeIndex
-does. While it is READY it fills the prompt's ``persisting``,
-``when_to_persist``, ``reading`` and ``project_documents`` slots — the
-text about the store and the agent that keeps it. When it is not, the
-slots say what they say when nothing fills them, and a prompt telling
+A document store is an extension, and it switches off like any other.
+While it is READY it replaces the prompt's ``project_knowledge``,
+``durable_knowledge``, ``reading`` and ``project_documents`` sections —
+the text about the store and the agent that keeps it. When it is not,
+those sections say what igni says without a store, and a prompt telling
 the orchestrator to hand project knowledge to that agent would describe
 a capability the session does not have.
 
@@ -35,40 +35,37 @@ import pytest
 
 import ember_code
 from ember_code.core.prompts import load_prompt
-from ember_code.core.prompts.contributions import (
-    PromptClaim,
-    PromptClaimKind,
-    PromptContributions,
-)
+from ember_code.core.prompts.contributions import EditOp, PromptContributions, PromptEdit
 from ember_code.core.session.agent_builder.prompt_builder import PromptBuilder
 
 #: A stand-in for the extension that keeps the documents. igni's prompts
 #: name none, so neither does this.
 _DOCS = "acme.docs"
 
-_SLOTS = {
-    "main.persisting": '- **`spawn_agent("docs-keeper", ...)`** — hand it to the docs keeper.',
-    "main.when_to_persist": "- A root cause → the docs keeper.",
-    "main.reading": "Ask the docs keeper why.",
-    "main.project_documents": "## The Project's Documents\n\nDelegate to the docs keeper.",
+_SECTIONS = {
+    "project_knowledge": '- **`spawn_agent("docs-keeper", ...)`** — hand it to the docs keeper.',
+    "durable_knowledge": "- A root cause → the docs keeper.",
+    "reading": "Ask the docs keeper why.",
+    "project_documents": "## The Project's Documents\n\nDelegate to the docs keeper.",
 }
 
 
 def _with_documents(live: bool, *, code_intelligence: bool = False) -> PromptContributions:
     """Contributions in which an installed extension keeps the project's
-    documents — fills the slots — or nobody does; and, independently, one
-    that gives the agent code intelligence (CodeIndex, while its index
-    covers HEAD) fills ``main.code_intelligence``."""
+    documents — replaces those sections — or nobody does; and,
+    independently, one that gives the agent code intelligence adds a
+    section of its own."""
     contributions = PromptContributions()
     if code_intelligence:
         contributions.set_owner(
             "acme.code",
             "Code",
-            [
-                PromptClaim(
-                    kind=PromptClaimKind.SLOT,
-                    target="main.code_intelligence",
-                    text="## Code intelligence\n\nDelegate graph questions to the data-architect.",
+            edits=[
+                PromptEdit(
+                    target="main",
+                    op=EditOp.APPEND,
+                    name="code_intelligence",
+                    text="## Code intelligence\n\nDelegate graph questions to the code expert.",
                 )
             ],
         )
@@ -76,9 +73,9 @@ def _with_documents(live: bool, *, code_intelligence: bool = False) -> PromptCon
         contributions.set_owner(
             _DOCS,
             "Docs",
-            [
-                PromptClaim(kind=PromptClaimKind.SLOT, target=slot, text=text)
-                for slot, text in _SLOTS.items()
+            edits=[
+                PromptEdit(target="main", op=EditOp.REPLACE, section=section, text=text)
+                for section, text in _SECTIONS.items()
             ],
         )
     return contributions
@@ -98,8 +95,7 @@ def _render(*, codeindex: bool, artifacts: bool) -> str:
         skill_descriptions="",
         prompt_loader=_loader,
     )
-    prompt = builder.replace_sections(builder.load_base())
-    return builder.resolve_conditionals(builder.fill_slots(builder.substitute_placeholders(prompt)))
+    return builder.render()
 
 
 COMBINATIONS = [
@@ -198,7 +194,7 @@ class TestNoDeadToolSurvivesInEitherBranch:
 class TestTheSwitchIsTheOneTheExtensionDeclares:
     def test_the_coordinator_does_not_decide_it(self):
         """Whether the store is there is the extension's to say, by
-        filling the slots while it runs. A host flag — a settings
+        editing the prompt while it runs. A host flag — a settings
         read, a check on a manager the session holds — could disagree
         with the extension, and would be igni naming one extension."""
         from pathlib import Path as _Path
@@ -256,8 +252,8 @@ class TestUnbalancedMarkersRaise:
             prompt_loader=_loader,
         )
         text = (
-            "a <!-- slot.reading:only -->b<!-- /slot.reading:only -->"
-            "<!-- slot.reading:absent -->c<!-- /slot.reading:absent --> d"
+            "a <!-- user-memory:only -->b<!-- /user-memory:only -->"
+            "<!-- user-memory:absent -->c<!-- /user-memory:absent --> d"
         )
 
         assert builder.resolve_conditionals(text) == "a b d"
@@ -270,10 +266,11 @@ class TestUnbalancedMarkersRaise:
             agent_catalog="x",
             skill_descriptions="",
             prompt_loader=_loader,
+            user_memory_available=False,
         )
         text = (
-            "a <!-- slot.reading:only -->b<!-- /slot.reading:only -->"
-            "<!-- slot.reading:absent -->c<!-- /slot.reading:absent --> d"
+            "a <!-- user-memory:only -->b<!-- /user-memory:only -->"
+            "<!-- user-memory:absent -->c<!-- /user-memory:absent --> d"
         )
 
         assert builder.resolve_conditionals(text) == "a c d"

@@ -139,14 +139,30 @@ describe("what is installed", () => {
       extension({
         switched_off: [
           {
-            claim: "prompt:main.workflow",
-            reason: "acme.review has prompt:main.workflow: decided by admin@acme.test",
+            claim: "prompt:main#workflow",
+            reason: "acme.review has prompt:main#workflow: decided by admin@acme.test",
           },
         ],
       }),
     ]);
-    expect(screen.getByText("prompt:main.workflow")).toBeTruthy();
+    expect(screen.getByText("prompt:main#workflow")).toBeTruthy();
     expect(screen.getByText(/decided by admin@acme.test/)).toBeTruthy();
+  });
+
+  it("says which of its prompt edits land nowhere, and why", () => {
+    panelWith([
+      extension({
+        dropped: [
+          {
+            claim: "prompt:main+our_review",
+            reason: "acme.lead overrides main, and its prompt has no section 'workflow'",
+          },
+        ],
+      }),
+    ]);
+    expect(screen.getByText("prompt:main+our_review")).toBeTruthy();
+    expect(screen.getByText(/land nowhere/)).toBeTruthy();
+    expect(screen.getByText(/has no section 'workflow'/)).toBeTruthy();
   });
 
   it("says nothing about collisions when there are none", () => {

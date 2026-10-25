@@ -607,6 +607,7 @@ class Session:
             group_dir=self.group_root("agents"),
         )
         self.plugin_loader.apply_to_agents(self.pool, disabled=self._disabled_plugins)
+        self.pool.apply_prompt_contributions()
         if settings.orchestration.generate_ephemeral:
             self.pool.init_ephemeral(
                 self.project_dir, settings.orchestration.max_ephemeral_per_session

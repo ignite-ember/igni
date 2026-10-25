@@ -1,4 +1,4 @@
-"""Prompt fragments, prompt sections and slots, and agent stand-ins, from a manifest.
+"""Prompt fragments, prompt overrides and edits, from a manifest.
 
 EXTENSIBILITY §1 calls these the whole justification for a contract —
 MCP carries tools and carries none of this. Both mechanisms existed
@@ -27,7 +27,6 @@ import pytest
 
 from ember_code.core.mcp.client import MCPClientManager
 from ember_code.core.prompts.contributions import PromptContributions
-from ember_code.core.prompts.document import PromptDocumentName
 from ember_code.core.prompts.fragments import PromptFragments
 from ember_code.extensions.contributions import (
     ExtensionConditionReceiver,
@@ -264,78 +263,113 @@ def prompt_bundle(tmp_path: Path, prompt: dict, files: dict[str, str]) -> Path:
     return bundle
 
 
-async def test_a_READY_extension_fills_its_slot_and_replaces_its_section(wired, tmp_path):
+OVERRIDE = "<!-- section:who -->\nThe whole prompt, ours.\n<!-- /section:who -->\n"
+
+
+def _main_override(when: str | None = None) -> dict[str, object]:
+    override: dict[str, object] = {
+        "target": "main",
+        "sections": ["who"],
+        "source": "file",
+        "from": "main.md",
+    }
+    if when is not None:
+        override["when"] = when
+    return override
+
+
+def _append() -> dict[str, str]:
+    return {"target": "main", "append": "index", "source": "file", "from": "ci.md"}
+
+
+def _main(prompts: PromptContributions) -> str:
+    composition = prompts.compose(
+        "main", "<!-- section:safety -->\nigni's\n<!-- /section:safety -->"
+    )
+    assert composition is not None
+    return composition.document.render()
+
+
+async def test_a_READY_extension_edits_the_prompt(wired, tmp_path):
     bundle = prompt_bundle(
         tmp_path,
         {
-            "replace": [{"target": "main.safety", "source": "file", "from": "safety.md"}],
-            "slots": [
-                {"slot": "main.code_intelligence", "source": "tool", "from": "policy_summary"}
-            ],
+            "edits": [
+                {"target": "main", "replace": "safety", "source": "file", "from": "safety.md"},
+                {"target": "main", "append": "policy", "source": "tool", "from": "policy_summary"},
+            ]
         },
         {"safety.md": "## Safety\n\nOur rules."},
     )
     await wired.install(bundle)
 
-    main = PromptDocumentName.MAIN
-    assert wired.prompts.section_replacements(main) == {"safety": "## Safety\n\nOur rules."}
-    assert "no plaintext secrets" in wired.prompts.slot_fills(main)["code_intelligence"]
+    main = _main(wired.prompts)
+    assert main.startswith("## Safety\n\nOur rules.")
+    assert "no plaintext secrets" in main
 
 
 async def test_a_condition_holds_only_once_the_extension_says_so(wired, tmp_path):
     """No polling: the extension's process says, on its own connection."""
     bundle = prompt_bundle(
         tmp_path,
-        {"replace": [{"target": "main", "source": "file", "from": "main.md", "when": "covered"}]},
-        {"main.md": "The whole prompt, ours."},
+        {"overrides": [_main_override(when="covered")]},
+        {"main.md": OVERRIDE},
     )
     await wired.install(bundle)
-    assert wired.prompts.replacement(PromptDocumentName.MAIN) is None
+    assert wired.prompts.override("main") is None
 
     receiver = ExtensionConditionReceiver(registry=wired.registry, prompts=wired.prompts)
     receiver("ext:acme.scanner", {"conditions": {"covered": True}})
-    assert wired.prompts.replacement(PromptDocumentName.MAIN) == "The whole prompt, ours."
+    assert "The whole prompt, ours." in _main(wired.prompts)
 
     receiver("ext:acme.scanner", {"conditions": {"covered": False}})
-    assert wired.prompts.replacement(PromptDocumentName.MAIN) is None
+    assert wired.prompts.override("main") is None
 
 
 async def test_a_condition_is_only_ever_its_own_extensions(wired, tmp_path):
     """The connection names the sender: nothing else can say it."""
     bundle = prompt_bundle(
-        tmp_path,
-        {"replace": [{"target": "main", "source": "file", "from": "main.md", "when": "covered"}]},
-        {"main.md": "ours"},
+        tmp_path, {"overrides": [_main_override(when="covered")]}, {"main.md": OVERRIDE}
     )
     await wired.install(bundle)
     receiver = ExtensionConditionReceiver(registry=wired.registry, prompts=wired.prompts)
 
     receiver("ext:other.ext", {"conditions": {"covered": True}})
     receiver("some-mcp-server", {"conditions": {"covered": True}})
-    assert wired.prompts.replacement(PromptDocumentName.MAIN) is None
+    assert wired.prompts.override("main") is None
 
 
-async def test_a_slot_fill_longer_than_a_slot_is_refused(wired, tmp_path):
+async def test_an_override_whose_text_is_not_its_sections_is_refused(wired, tmp_path):
+    """Other extensions' edits, and a super admin's view of which land,
+    go by what the manifest declares; the text has to keep to it."""
     bundle = prompt_bundle(
-        tmp_path,
-        {"slots": [{"slot": "main.code_intelligence", "source": "file", "from": "long.md"}]},
-        {"long.md": "x" * 8_001},
+        tmp_path, {"overrides": [_main_override()]}, {"main.md": "no sections at all"}
     )
     await wired.install(bundle)
-    assert wired.prompts.slot_fills(PromptDocumentName.MAIN) == {}
+    assert wired.prompts.override("main") is None
+    [refused] = wired.contributions.switched_off("acme.scanner")
+    assert refused.claim == "prompt:main"
+    assert "declares who" in refused.reason
 
 
-async def test_an_agent_stand_in_is_read_from_the_installed_plugin(tmp_path):
+async def test_an_agent_override_is_read_from_the_installed_plugin(tmp_path):
     """So it counts among the extension's own agents for its tools."""
     registry = ExtensionRegistry()
     prompts = PromptContributions()
     plugins = tmp_path / "plugins"
-    installed = plugins / "acme.scanner" / "stand-ins" / "explorer.md"
+    installed = plugins / "acme.scanner" / "overrides" / "explorer.md"
     installed.parent.mkdir(parents=True)
-    installed.write_text("---\nname: explorer\ndescription: x\n---\nbody")
+    installed.write_text(
+        "---\nname: explorer\ndescription: x\n---\n<!-- section:body -->\nbody\n"
+        "<!-- /section:body -->\n"
+    )
+    bundle = tmp_path / "bundle"
+    (bundle / "plugin" / "overrides").mkdir(parents=True)
+    shutil.copy(installed, bundle / "plugin" / "overrides" / "explorer.md")
     contributions = ExtensionContributions(
         registry=registry, rpc=None, prompts=prompts, plugins_dir=plugins
     )
+    contributions.note_bundle("acme.scanner", bundle)
     manifest = ExtensionManifest.model_validate(
         {
             "id": "acme.scanner",
@@ -346,38 +380,38 @@ async def test_an_agent_stand_in_is_read_from_the_installed_plugin(tmp_path):
             "contributes": {
                 "plugin": "plugin",
                 "prompt": {
-                    "agents": [{"agent": "explorer", "from": "plugin/stand-ins/explorer.md"}]
+                    "overrides": [
+                        {
+                            "target": "agent:explorer",
+                            "sections": ["body"],
+                            "source": "file",
+                            "from": "plugin/overrides/explorer.md",
+                        }
+                    ]
                 },
             },
         }
     )
     await contributions.apply(manifest)
-    assert prompts.agent_replacements()["explorer"].path == installed
+    held = prompts.override("agent:explorer")
+    assert held is not None and held[1].path == installed
 
 
 async def test_a_down_extension_takes_its_prompt_with_it(wired, tmp_path):
-    bundle = prompt_bundle(
-        tmp_path,
-        {"slots": [{"slot": "main.code_intelligence", "source": "file", "from": "ci.md"}]},
-        {"ci.md": "the index"},
-    )
+    bundle = prompt_bundle(tmp_path, {"edits": [_append()]}, {"ci.md": "the index"})
     await wired.install(bundle)
-    assert wired.prompts.slot_fills(PromptDocumentName.MAIN)
+    assert "the index" in _main(wired.prompts)
 
     wired.registry.set_state("acme.scanner", ExtensionState.FAILED, "down")
-    assert wired.prompts.slot_fills(PromptDocumentName.MAIN) == {}
+    assert "the index" not in _main(wired.prompts)
 
 
 async def test_uninstalling_forgets_everything_it_contributed(wired, tmp_path):
-    bundle = prompt_bundle(
-        tmp_path,
-        {"slots": [{"slot": "main.code_intelligence", "source": "file", "from": "ci.md"}]},
-        {"ci.md": "the index"},
-    )
+    bundle = prompt_bundle(tmp_path, {"edits": [_append()]}, {"ci.md": "the index"})
     await wired.install(bundle)
     wired.registry.remove("acme.scanner")
 
-    assert wired.prompts.slot_fills(PromptDocumentName.MAIN) == {}
+    assert "the index" not in _main(wired.prompts)
     assert "ACME_POLICY_SUMMARY" not in wired.fragments.anchors()
 
 

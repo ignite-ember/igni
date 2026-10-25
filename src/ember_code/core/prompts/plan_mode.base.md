@@ -29,6 +29,3 @@ Plan mode vs spawn_team(mode="tasks"): plan mode pauses for USER approval before
 <!-- section:skip -->
 Skip plan mode for simple one-shot requests (a small bug fix, one obvious tweak, a typo correction).
 <!-- /section:skip -->
-
-<!-- slot:code_intelligence -->
-<!-- /slot:code_intelligence -->

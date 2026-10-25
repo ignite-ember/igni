@@ -2,9 +2,9 @@
 
 A manifest's prompt contribution can hold only under a condition —
 
-    "prompt": {"replace": [{"target": "main", "source": "file",
-                            "from": "plugin/prompts/main.md",
-                            "when": "index-covers-head"}]}
+    "prompt": {"edits": [{"target": "main", "append": "index",
+                          "source": "file", "from": "plugin/prompts/index.md",
+                          "when": "index-covers-head"}]}
 
 — and only the extension can judge it. So the extension says, when it
 changes:

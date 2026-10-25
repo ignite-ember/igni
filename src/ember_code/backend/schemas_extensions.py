@@ -121,6 +121,9 @@ class ExtensionSummary(BaseModel):
     #: panel says what and why, because "my prompt section is not
     #: there" is otherwise a mystery.
     switched_off: list[ExtensionSwitchedOff] = Field(default_factory=list)
+    #: Its prompt edits that land nowhere — another extension overrides
+    #: the prompt, and its override has no section the edit names.
+    dropped: list[ExtensionSwitchedOff] = Field(default_factory=list)
     #: What is wrong with it that does not stop it working — a tool
     #: whose server reports other hints than its manifest declares.
     problems: list[str] = Field(default_factory=list)
@@ -157,6 +160,9 @@ class ExtensionSummary(BaseModel):
             switched_off=[
                 ExtensionSwitchedOff(claim=off.claim, reason=off.reason)
                 for off in entry.switched_off
+            ],
+            dropped=[
+                ExtensionSwitchedOff(claim=off.claim, reason=off.reason) for off in entry.dropped
             ],
             problems=list(entry.problems),
             tools=[
