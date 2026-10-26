@@ -23,18 +23,19 @@ before it.
 ## 1. PostgreSQL in igni (L) — needed whatever else changes
 
 The desktop keeps SQLite and its files; the backend chooses by
-configuration. One code path:
+configuration. One code path. What is built and what is not:
+`CLOUD.md` section 9.
 
-| Step | Size |
-|---|---|
-| Database URL in settings instead of a file path; engine registry, `Database`, migrations and `igni migrate` keyed by URL; the revision read through SQLAlchemy, not `sqlite3` | M |
-| The four raw `sqlite3` stores (pending messages, session preferences, session directories, client state) and local notifications moved onto SQLAlchemy and alembic, no SQLite-only syntax | M |
-| Agno storage chosen by URL: `AsyncSqliteDb` on the desktop, `AsyncPostgresDb` in the cloud | S |
-| Org, producer and project columns on every row in the cloud; every query filtered by them (row-level security if decided) | M |
-| A store interface for `MEMORY.md` memories and attachments: files on the desktop, PostgreSQL (large objects for attachments) in the cloud | M |
-| Approvals waiting on the user and messages typed during a run written as they happen | M |
-| Logs to standard output in the cloud; credentials and settings not read from `~/.igni` there | S |
-| CI runs the suite against SQLite and PostgreSQL | S |
+| Step | Size | Status |
+|---|---|---|
+| Database URL in settings instead of a file path; engine registry, `Database`, migrations and `igni migrate` keyed by URL; the revision read through SQLAlchemy, not `sqlite3` | M | built, `ccbca59` |
+| The four raw `sqlite3` stores (pending messages, session preferences, session directories, client state) and local notifications moved onto SQLAlchemy and alembic, no SQLite-only syntax | M | built, `ccbca59` |
+| Agno storage chosen by URL: `AsyncSqliteDb` on the desktop, `AsyncPostgresDb` in the cloud | S | built, `ccbca59` |
+| Org, producer and project columns on every row in the cloud; every query filtered by them (row-level security if decided) | M | built, `ccbca59`; row-level security not built (undecided); Agno's tables scoped by `user_id` only |
+| A store interface for `MEMORY.md` memories and attachments: files on the desktop, PostgreSQL (large objects for attachments) in the cloud | M | built, `ccbca59`; the agent still writes memory files to disk, and readers of attachments by path do not read `attachment:<id>` |
+| Approvals waiting on the user and messages typed during a run written as they happen | M | built, `9ef5eda` — on the desktop too |
+| Logs to standard output in the cloud; credentials and settings not read from `~/.igni` there | S | not built |
+| CI runs the suite against SQLite and PostgreSQL | S | built, `ccbca59`: the suite on SQLite, the storage tests also on PostgreSQL (`test-postgres` job) |
 
 ## 2. Guest image (M)
 
