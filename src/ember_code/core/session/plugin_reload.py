@@ -20,7 +20,7 @@ dicts on the boundary).
 from __future__ import annotations
 
 import logging
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from pathlib import Path
 
 from ember_code.core.activity import background
@@ -54,8 +54,8 @@ class PluginReloadOrchestrator:
         skill_pool_ref: Callable[[], object],
         agent_pool_ref: Callable[[], object],
         hooks_map_ref: Callable[[], dict],
-        disconnect_removed_mcps: Callable[[set[str]], object],
-        auto_connect_mcps: Callable[[set[str]], object],
+        disconnect_removed_mcps: Callable[[set[str]], Awaitable[None]],
+        auto_connect_mcps: Callable[[set[str]], Awaitable[None]],
     ) -> None:
         self._project_dir = project_dir
         self._mcp_manager = mcp_manager

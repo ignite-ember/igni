@@ -23,7 +23,7 @@ import asyncio
 import logging
 import threading
 from collections.abc import Awaitable, Callable, Coroutine
-from typing import Any, ClassVar, TypeVar
+from typing import Any, ClassVar, TypeVar, overload
 
 from ember_code.core.activity.registry import ActivityRegistry, BusyKind, Lease
 
@@ -52,6 +52,28 @@ class BackgroundTasks:
     def registry(self) -> ActivityRegistry:
         return self._registry if self._registry is not None else ActivityRegistry.shared()
 
+    @overload
+    def start(
+        self,
+        work: Coroutine[Any, Any, T],
+        *,
+        holder: str,
+        reason: str = ...,
+        kind: BusyKind = ...,
+        name: str | None = ...,
+        loop: asyncio.AbstractEventLoop | None = ...,
+    ) -> asyncio.Task[T]: ...
+    @overload
+    def start(
+        self,
+        work: Awaitable[T],
+        *,
+        holder: str,
+        reason: str = ...,
+        kind: BusyKind = ...,
+        name: str | None = ...,
+        loop: asyncio.AbstractEventLoop | None = ...,
+    ) -> asyncio.Future[T]: ...
     def start(
         self,
         work: Awaitable[T],
@@ -62,7 +84,12 @@ class BackgroundTasks:
         name: str | None = None,
         loop: asyncio.AbstractEventLoop | None = None,
     ) -> asyncio.Future[T]:
-        """Run ``work`` in the background, busy until it ends."""
+        """Run ``work`` in the background, busy until it ends.
+
+        A coroutine is wrapped in an :class:`asyncio.Task`; any other awaitable
+        comes back as an :class:`asyncio.Future` — the overloads above say which,
+        so callers that keep the handle to ``cancel()`` it get the precise type.
+        """
         lease = self.registry.hold(kind, holder, reason)
         try:
             future = self._schedule(work, name=name or holder, loop=loop)
@@ -72,6 +99,22 @@ class BackgroundTasks:
         future.add_done_callback(lambda _f: lease.release())
         return future
 
+    @overload
+    def daemon(
+        self,
+        work: Coroutine[Any, Any, T],
+        *,
+        name: str,
+        loop: asyncio.AbstractEventLoop | None = ...,
+    ) -> asyncio.Task[T]: ...
+    @overload
+    def daemon(
+        self,
+        work: Awaitable[T],
+        *,
+        name: str,
+        loop: asyncio.AbstractEventLoop | None = ...,
+    ) -> asyncio.Future[T]: ...
     def daemon(
         self,
         work: Awaitable[T],
@@ -89,7 +132,7 @@ class BackgroundTasks:
         holder: str,
         reason: str = "",
         kind: BusyKind = BusyKind.BACKGROUND,
-    ) -> asyncio.Future[T] | None:
+    ) -> asyncio.Task[T] | None:
         """:meth:`start` when a loop is running here; otherwise drop ``work``, closed."""
         try:
             asyncio.get_running_loop()

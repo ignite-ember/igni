@@ -104,7 +104,11 @@ def test_igni_migrate_prepares_the_named_database(database_url: DatabaseUrl, tmp
     reports = [line for line in result.output.splitlines() if HEAD_REVISION in line]
     assert len(reports) == 1, "one database, migrated once"
     password = make_url(database_url.url).password
-    assert not password or password not in result.output
+    # migrate prints the redacted URL (password masked to ***); assert the real
+    # secret never appears in its ``:password@`` credential position. A plain
+    # ``password not in output`` false-fails when the password equals a common
+    # substring — e.g. "postgres", which is also the scheme and default username.
+    assert not password or f":{password}@" not in result.output
 
 
 # ── Every store keeps its scope's rows ───────────────────────────
