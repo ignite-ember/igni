@@ -100,8 +100,28 @@ profile — there is never a choice between several. A profile holds:
 - **Overcommit is deliberate.** Ceilings may add up to more than the
   host's RAM. The node agent watches real usage and reclaims memory or
   stops placing new VMs on a host that is running short.
-- To measure: how fast freed memory returns to the host in Firecracker
-  1.17, and its effect on snapshot size and resume.
+
+Measured (`igni__cloudvm` `747dc16`, nested, Firecracker 1.17, 4 GiB
+ceiling):
+
+- Free page reporting (always on) returned 99% of a freed 1 GiB within
+  about 6 s; host-triggered free page hinting within about 0.1 s — used
+  before a suspend and under host pressure. Both are developer preview
+  in 1.17.
+- Overcommit: 10 VMs with 4 GiB ceilings, each growing to 2 GiB in turn,
+  peaked at 6.3 GB of host memory (24 GB with the balloon off).
+- No cost when idle, no change in request latency; about 14 points more
+  guest CPU under heavy churn. Restore with a balloon device worked in
+  all 80 cycles; the per-VM warm image is 3.7× smaller.
+- A 4 GiB ceiling suspends in 18–26 ms (10–16 ms at 256 MiB): ceilings
+  should fit the profile.
+- Gaps being worked on: fragmented free memory (pieces under 2 MiB, as
+  Chromium leaves it) is not returned — about 1 GB stayed on the host
+  after the browser closed; freed pages still land in the suspend diff (a
+  guest that grows and shrinks 1 GiB between suspends writes a 1.1 GB
+  diff, about 5 s), to be fixed by a Firecracker patch that leaves
+  reported pages out of the dirty log; the guest's page cache needs its
+  own trim.
 
 ## 3. The gateway (proposed)
 
