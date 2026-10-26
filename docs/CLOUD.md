@@ -9,9 +9,11 @@ its shared-backend sections are superseded by this document),
 
 ## 1. Scope
 
-- **The cloud is not for coding.** No repository checkouts, no
-  code-intelligence sandboxes. Cloud producers do document, data and
-  workflow work through igni's agent and its extensions.
+- **The agent works in the cloud as on the desktop:** the agent loop,
+  file tools, shell, background processes and monitors all run, against
+  the producer's own workspace. "Not for coding" means only that igni
+  itself has no git or code-host features: no provider sign-in, no pull
+  requests, no code-intelligence sandboxes in the floor.
 - **Two kinds of producer**, not connected to each other:
   - **people**, who belong to groups;
   - **apps**, which act only as themselves (no groups, never on behalf
@@ -28,33 +30,38 @@ apart.
 
 | Piece | Choice |
 |---|---|
-| Runtime | Firecracker (needs KVM) |
-| Hosts on AWS | `.metal` instances, or regular Intel instances with nested virtualization: GA Feb 2026 for C8i/M8i/R8i, extended Jun 2026 to the 7i families, I7i, X8i (Intel only). **Benchmark nested-virt overhead before committing.** |
-| Persistent data | one EBS volume per producer: sessions, history, the producer's files |
-| Instance NVMe | snapshot cache only — it is lost when an instance stops, so nothing lasting lives there |
-| On-prem without KVM | gVisor through the Kubernetes agent-sandbox project, with stop/start or gVisor checkpoint/restore |
+| Engine | Firecracker on KVM, one engine everywhere (measured, section 8) |
+| Hosts | bare metal with local NVMe. Nested virtualization works but makes the first request about 5× slower (section 8) |
+| Rights in the guest | igni is **root** inside the producer's microVM and installs packages or changes the system for them. The VM is the security boundary, not anything inside the guest |
+| Guest root filesystem | the shared read-only base image plus the producer's own writable layer on their volume, so what igni installs persists |
+| Durable structured state | PostgreSQL (section 9) |
+| Producer's files | one network volume per producer, created and attached automatically (section 10) |
+| Node local NVMe | memory snapshots and the suspend journal only — a cache. Losing it costs a cold start from the producer's volume, not data |
+| Git | runs inside the producer's microVM as an ordinary program. A person authorizes git inside their own VM; the credentials stay on their volume and are never shared with another VM |
 
 ### Lifecycle (Lambda-style)
 
 1. A request arrives for a producer whose microVM is not running.
-2. The gateway restores it from its snapshot (or boots it the first
+2. The node agent restores it from its snapshot (or boots it the first
    time from the warm base snapshot).
 3. It serves the request.
 4. As soon as the run is done **and** nothing is connected, after a
-   short grace period (seconds, not minutes), the microVM is
-   snapshotted to disk and stopped. Idle producers use no RAM.
+   short grace period (seconds, not minutes), the guest flushes its
+   volume and the microVM is suspended to the node's journal and
+   stopped. Idle producers use no RAM.
 
 Every producer is restored from **one shared warm base snapshot** taken
 after igni's imports. Its clean pages are shared copy-on-write through
 the host page cache, so a producer pays only for the memory it dirties.
 
-Restore caveats the backend must handle:
+Restore caveats the backend and node agent must handle:
 
 | Caveat | Handling |
 |---|---|
 | Open connections drop (network, vsock) | the gateway reconnects on the client's behalf; the backend reconnects to igni server and services |
 | Guest clock resumes at snapshot time | resync on restore; timers must tolerate a jump |
 | Restored copies share random state | reseed on restore (kernel VMGenID on Linux 5.18+, plus app-level reseed) |
+| Clones share IP, MAC and ARP state | one network namespace per VM, a fixed host tap MAC |
 | Snapshots need identical CPUs | pin each pool to one instance family |
 
 ## 3. The gateway (proposed)
@@ -120,6 +127,9 @@ Built:
   or behind (`ember_code/core/db/schema.py`). A producer's volume is
   prepared with `igni migrate`, so its backend starts current and never
   imports alembic.
+  With PostgreSQL (section 9) this moves from "per producer's volume" to
+  "once per org database, at deploy"; the backend still never imports
+  alembic.
 
 sqlalchemy, dateparser and dnspython still load at start: the agent's
 schedule tool, the session's loop store and sign-in discovery use them,
@@ -183,22 +193,152 @@ must run inside the producer's microVM holds it awake with a bounded,
 visible `ext.busy(...)` (proposed): an org-set maximum, renewable, shown
 in the extensions panel, counted against the producer's quota.
 
-## 7. Open decisions
+## 8. Suspend and resume: measured
 
-1. **Undelivered events:** how long they wait. Proposal: a time limit
+Proof of concept in the `igni__cloudvm` repository (`RESULTS.md`, raw
+data under `results/`). Guest: 256 MiB, a Python server holding 127 MB,
+dirtying 2 MB/s. Each cycle is real: suspend, kill the Firecracker
+process, restore a new one from durable state, first request. n=20 per
+row, 180 cycles per environment, state intact after every one.
+
+**Suspend** = pause, diff snapshot to tmpfs, one append to a pre-zeroed
+per-node journal, `fdatasync`. **Restore after merge** = the diff was
+folded into the producer's memory file in the background (20–50 ms,
+off both paths). "In memory" = the producer's files still in the host
+page cache; "on disk" = caches dropped.
+
+Bare metal (z3-highmem-192-highlssd-metal, local NVMe, XFS with reflink),
+p50 / p95 ms:
+
+| Variant | Suspend | Resume | First request | Second request |
+|---|---|---|---|---|
+| Restore after merge, in memory | 13.3 / 15.1 | **6.3** / 7.5 | **9.7** / 10.2 | 0.9 / 1.5 |
+| Restore after merge, on disk | 19.4 / 21.5 | 23.4 / 25.8 | 45.1 / 50.1 | 1.9 / 3.2 |
+| Journal applied during restore, in memory | 15.2 / 16.6 | 13.8 / 15.0 | 9.9 / 10.3 | 1.3 / 2.0 |
+| Journal applied during restore, on disk | 19.7 / 21.0 | 32.4 / 34.7 | 30.5 / 35.1 | 2.3 / 6.0 |
+| UFFD with working-set prefetch, in memory | 25.4 / 27.8 | 16.0 / 16.7 | 9.9 / 12.4 | 1.8 / 3.5 |
+| UFFD with working-set prefetch, on disk | 27.3 / 30.0 | 36.0 / 38.3 | 12.3 / 18.8 | 2.8 / 12.0 |
+
+Nested virtualization (n2-standard-8, local NVMe), same first row:
+suspend 10.8, resume 4.8, **first request 50.7**, second request 2.0.
+Bare metal makes the first request about 5× faster, because a guest page
+fault costs about 1–2 µs instead of 15–50 µs. Suspend and resume were a
+little slower on the z3 host than on n2; that compares two machine
+families, not bare metal with nested.
+
+Findings:
+
+- Resume ≤ 10 ms and first request ≤ 10 ms are met on bare metal when
+  the producer's files are in the page cache. From disk, prefetch keeps
+  the first request at 12 ms.
+- Suspend is 13–15 ms, not ≤ 10. Nobody waits on it (the reply has
+  already gone out); doing the journal write in the node agent instead
+  of a helper process already saved 5.5–8 ms.
+- A suspended producer holds no host memory. A running idle one costs
+  3–4 MB of private host memory on top of the shared base; about 45 MB
+  in the worst case. 400 VMs ran on one host.
+- Firecracker diff snapshots are a developer preview; the design merges
+  only after the VM is killed.
+- Prefetch-backed VMs write diffs twice as large (10 vs 5 MB), which
+  makes their suspend about 25 ms. Not yet explained.
+- Cloud Hypervisor was measured too: the fastest durable suspend
+  (8.4 ms, writing memory to disk continuously) but 15–30 ms resume and
+  no usable prefetch path. Firecracker is the choice.
+
+Not yet measured: the real igni backend as the guest, with a realistic
+agent run between suspends (larger diffs); per-producer volumes
+(section 10, in progress).
+
+## 9. Durable state: PostgreSQL
+
+All of igni's durable state in the cloud lives in PostgreSQL, written
+when it happens, never held in memory until suspend. The microVM's
+memory and the node's journal are then a cache: losing them costs a cold
+start, not data, and a producer can move to another node with nothing
+to copy.
+
+**Tenancy: the org is the tenant; the producer is a filter.** One
+database per org, shared by its people and apps. Every row carries its
+org, its producer and its project (the folder it belongs to), and the
+backend filters by them, the way changing directory shows only that
+directory's chats today. No database, schema or VM per producer for
+data. Proposed safety net: PostgreSQL row-level security keyed on the
+producer, set per connection, so a missing filter returns nothing
+instead of someone else's rows (open decision).
+
+What moves where (audit of `src/ember_code`, 2026-10-26):
+
+| State today | Today | Cloud |
+|---|---|---|
+| Sessions, transcripts, runs, `session_data` (event log, todos, plan decisions), memories, learning, sub-agent sessions | Agno `AsyncSqliteDb` in the project's `state.db` (`core/memory/manager.py`) | PostgreSQL through Agno's `AsyncPostgresDb` |
+| Schedules, `/loop` state, background processes | alembic tables in `state.db` | PostgreSQL, alembic |
+| Pending and interrupted messages, model per session | raw `sqlite3` tables in `state.db` | PostgreSQL, alembic |
+| Session → directory, window state and extensions' own state, local notifications | separate `sessions.db`, `client_state.db`, `notifications.db` | PostgreSQL, alembic |
+| `MEMORY.md` memory files | files under `~/.igni/projects/` | PostgreSQL |
+| Uploaded attachments | `<project>/.igni/attachments/` | PostgreSQL large objects |
+| Approvals waiting on the user, messages typed during a run | memory only | PostgreSQL, so a lost VM loses neither |
+| Credentials | `~/.igni/credentials.json` | not stored: the gateway hands the VM the producer's token |
+| Settings, group policy, priority, groups, MCP approvals, extension settings | JSON and YAML under `~/.igni` | delivered by igni server or the image; read-only in the VM (extension settings per producer go to PostgreSQL) |
+| Logs | files under `~/.igni` | standard output, collected by the node |
+| Workspace files, `.igni` in the workspace, worktrees, process logs, installed packages | files | the producer's volume (section 10) |
+
+SQLite-only code that changes: the hardcoded `sqlite://` URLs and the
+path-keyed engine, `Database` and migrations (`core/db/urls.py`,
+`engine_registry.py`, `schema.py`, `migrations.py`, `cli/migrate.py`);
+the four raw `sqlite3` stores (`core/session/_sqlite_utils.py`,
+`pending_messages.py`, `session_preferences.py`, `session_directories.py`,
+`client_state.py`, `notifications/local_store.py`) with their `PRAGMA`,
+`INSERT OR IGNORE`, `strftime` defaults and own DDL; the SQLite upsert in
+`core/tools/process_store.py`. No back-compat and no data migration.
+
+## 10. The producer's volume (proposed, being measured)
+
+- **Automatic.** The node agent creates a producer's volume the first
+  time the producer appears. Neither the guest, nor the org, nor an
+  admin sets anything up.
+- **The guest sees one disk and nothing else.** The volume is a
+  disk-image file on managed network storage (Filestore on GCP, EFS on
+  AWS) that only the **host** mounts; the VM gets it as `/dev/vdb`. The
+  storage network has no route from the guest, so even root in VM1
+  cannot learn that VM2's volume exists. A guest never mounts NFS
+  itself — with root, it could reach other producers' files.
+- **Encrypted per producer** on the host (dm-crypt, a raw key per
+  producer from the platform's key service).
+- **One VM at a time:** the gateway runs one VM per producer, and the
+  node agent holds a lease on the volume so two nodes can never open it.
+- **Moves freely:** a producer woken on another node opens the same
+  volume; nothing is copied. Opening a file on network storage takes
+  milliseconds and attaches nothing to the machine, so a node serves
+  hundreds of volumes; cloud block disks (seconds to attach, capped per
+  machine) are not used.
+- **Layout:** the guest's writable root layer (installed packages,
+  system changes) and the workspace, kept apart so an image upgrade can
+  reset the layer without touching the workspace.
+- **Node loss** is a power cut for the guest: it cold-boots from the base
+  image and its volume. igni flushes the volume when a run ends and
+  before every suspend to keep that loss small.
+- **Later**, if managed network storage is outgrown: a block-storage
+  cluster (Ceph) behind the same `/dev/vdb`.
+
+## 11. Open decisions
+
+1. **Row-level security** under the producer filter (section 9).
+2. **Extensions running inside the VM:** their data folder is scratch
+   on the producer's volume and anything durable belongs in their
+   service? (Remote extensions, the default, keep data in their
+   service already.)
+3. **Undelivered events:** how long they wait. Proposal: a time limit
    the service sets, at most 24 hours, then dropped and the service told.
-2. **Unattended runs:** may an event start an agent run with nobody
+4. **Unattended runs:** may an event start an agent run with nobody
    present, or only for apps (people get posts and notifications)?
-3. **Rollout order:** Firecracker first (fastest resume, best density,
-   needs KVM) or gVisor first (any Kubernetes, air-gap friendly, no KVM).
-4. **Startup network call:** the backend clones the default plugin
+5. **Startup network call:** the backend clones the default plugin
    marketplace (`DEFAULT_MARKETPLACES` in
    `src/ember_code/core/plugins/marketplace_store.py`) at every start,
    which breaks air-gapped installs. Remove the default?
-5. **Linux arm64:** `ripgrep~=15.1.0` has no wheel there, so installing
+6. **Linux arm64:** `ripgrep~=15.1.0` has no wheel there, so installing
    needs Rust. Fix before offering Graviton nodes?
-6. **Deploy manifests:** the gateway, the microVM pool, per-node
-   services and the shared base snapshot need Helm and compose
-   definitions. This belongs with the delivery overhaul (Helm charts per
-   server, an igni platform chart, compose, an offline bundle) that is
-   already on the later TODO.
+7. **Deploy manifests:** the gateway, the node agent, per-node services
+   and the shared base snapshot need Helm and compose definitions. This
+   belongs with the delivery overhaul (Helm charts per server, an igni
+   platform chart, compose, an offline bundle) that is already on the
+   later TODO.
