@@ -247,24 +247,54 @@ Consequences:
   audience-bound to the service as today, so the vendor sees exactly
   what its service already sees.
 
-## 6. Event delivery to a producer (proposed)
+## 6. Event delivery to a producer
 
-A new floor capability on igni server.
+A floor capability on igni server (its service-identity document, §15:
+built) and igni (`extensions/service_events.py`: built).
 
-1. A service asks igni server: deliver this event to extension E for
-   producer X. It signs as itself, as it already does for
-   `host.notify`.
-2. igni server refuses unless X has E enabled; it audits and
-   rate-limits per service.
-3. **Cloud:** the gateway wakes X's microVM and hands the event to the
-   extension (`@ext.on_service_event(...)`, proposed).
-   **Desktop:** delivered at once if X's igni is online, otherwise held.
-4. When the work is done, the microVM snapshots back to disk.
+1. A service posts an event for its own extension and a producer
+   (`POST /v1/service-events`), signed as itself. igni server refuses
+   unless the producer has the extension on; it audits, rate-limits per
+   service and keeps the event until delivered or expired (14 days).
+2. **Cloud:** the gateway wakes the producer's VM, pulls its events
+   (`/v1/platform/.../events/pull`, a 2-minute lease) and hands them to
+   igni with the `deliver_service_events` RPC (`{events: [...]}`); igni
+   answers which to acknowledge (`acknowledge`: delivered now or before)
+   and the gateway acks those (`/events/ack`). Delivery is at least once;
+   igni keeps every event id it delivered (`delivered_events`, scoped,
+   in the producer's database), so a repeat — after a lost ack, across
+   restarts — is acknowledged and dropped. One igni could not take
+   (`failed`) is left unacknowledged and comes back.
+   **Desktop:** not yet — igni server has no person-facing way to fetch
+   a person's events. It needs `POST /v1/me/events/pull` and
+   `POST /v1/me/events/ack` (the person's session token, same shapes and
+   lease as the platform's); igni would then pull while online.
+3. For each new event igni asks the extension it is for, over its host
+   socket (`@ext.on_service_event(type)` in the SDK; 30 s), what the
+   agent should see; without an answer it writes it itself from the
+   type and payload.
+4. **The event always starts or resumes the producer's agent run**,
+   unattended, for people and apps alike: it goes to the producer's
+   main session as the extension's message (labelled as the
+   extension's, never the person's). Nothing going on: it **starts a
+   run**. A run going — working, or **waiting on an approval**: it is
+   **queued for that run** (durably, as a message typed during a run):
+   the run takes it after its next step, and a run paused on an approval
+   takes it once the person has decided and the run goes on. Not a
+   second run beside it: two runs in one conversation would race over
+   its history, and an event must never answer, or go round, a decision
+   that is a person's. Approvals the run then meets wait as usual (and a
+   run waiting on one is not busy: the VM may sleep until the decision).
+   An event is recorded as delivered only once it has started its run or
+   been queued, so a crash before then gets it handed out again.
+5. When the work is done, the microVM snapshots back to disk.
 
-Long work belongs in the service (its own Celery workers). Work that
-must run inside the producer's microVM holds it awake with a bounded,
-visible `ext.busy(...)` (proposed): an org-set maximum, renewable, shown
-in the extensions panel, counted against the producer's quota.
+Long work belongs in the service (its own workers). Work that must run
+inside the producer's VM holds it awake with `ext.busy(reason, ttl)`
+(built, section 9): a lease that expires after at most 600 s unless
+renewed, shown in `app.activity` and `activity.json`. An org-set maximum
+from the VM profile, and showing it in the extensions panel, are still
+to come.
 
 ## 7. Packages and commands in a VM (proposed)
 

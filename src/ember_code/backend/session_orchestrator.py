@@ -48,6 +48,7 @@ from ember_code.core.session.session_directories import SessionDirectoryStore
 from ember_code.extensions.host.windows import WindowModelError, WindowRequest
 from ember_code.extensions.registry import ExtensionRegistry
 from ember_code.extensions.rpc import ExtensionRpc
+from ember_code.extensions.service_events import ServiceEvent, ServiceEventInbox
 from ember_code.extensions.service_token import (
     NoService,
     NotSignedIn,
@@ -129,6 +130,7 @@ class SessionOrchestrator:
         # and whoever wants to see what windows send.
         self._host_model: Any = None
         self._page_tokens: PageServiceTokens | None = None
+        self._event_inbox: ServiceEventInbox | None = None
         self._inbound_watchers: list[Any] = []
 
     @property
@@ -444,6 +446,35 @@ class SessionOrchestrator:
             )
         )
 
+    def attach_event_inbox(self, inbox: ServiceEventInbox | None) -> None:
+        """Where the platform's ``deliver_service_events`` go."""
+        self._event_inbox = inbox
+
+    async def _handle_service_events(self, message: Any) -> None:
+        """``deliver_service_events``: ``{events: [...]}`` → which to acknowledge."""
+        inbox = self._event_inbox
+        if inbox is None:
+            await self._transport.send(
+                msg.RPCResponse(id=message.id or "", error="this igni takes no events")
+            )
+            return
+        try:
+            events = [
+                ServiceEvent.model_validate(e) for e in (message.args or {}).get("events", [])
+            ]
+        except ValidationError as exc:
+            await self._transport.send(
+                msg.RPCResponse(id=message.id or "", error=f"not events: {exc}")
+            )
+            return
+        receipt = await inbox.deliver(events)
+        await self._transport.send(
+            msg.RPCResponse(
+                id=message.id or "",
+                result={**receipt.model_dump(mode="json"), "acknowledge": receipt.acknowledge},
+            )
+        )
+
     def attach_page_tokens(self, tokens: PageServiceTokens | None) -> None:
         """Where an extension page's ``bridge.service`` token comes from."""
         self._page_tokens = tokens
@@ -533,6 +564,8 @@ class SessionOrchestrator:
                     await self._handle_host_model(message)
                 elif message.method == RpcMethod.EXTENSION_SERVICE_TOKEN:
                     await self._handle_service_token(message)
+                elif message.method == RpcMethod.DELIVER_SERVICE_EVENTS:
+                    await self._handle_service_events(message)
                 else:
                     await self._handle_window_model(message)
                 return

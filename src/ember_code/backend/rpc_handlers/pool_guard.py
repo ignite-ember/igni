@@ -27,6 +27,7 @@ POOL_LEVEL_RPCS: frozenset[RpcMethod] = frozenset(
         RpcMethod.HOST_MODEL,
         RpcMethod.WINDOW_MODEL,
         RpcMethod.EXTENSION_SERVICE_TOKEN,
+        RpcMethod.DELIVER_SERVICE_EVENTS,
     }
 )
 

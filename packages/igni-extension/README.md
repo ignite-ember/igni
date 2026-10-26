@@ -277,6 +277,42 @@ its hooks until it answers again. One handler per event.
 `FakeHost.hook(event, value)` asks a test's extension as igni would, and
 `FakeHost.tell(event, value)` tells it one that decides nothing.
 
+## Your service's events: `@ext.on_service_event`
+
+Your service can post an event for a producer (igni server's
+`POST /v1/service-events`): "the index is ready", "the build failed".
+igni always starts or resumes that producer's agent run with it — a run
+already going takes it next — whether or not anybody is watching. First
+it asks this extension what the agent should see:
+
+```python
+from igni_extension import ServiceEvent
+
+@ext.on_service_event("index.ready")
+async def index_ready(event: ServiceEvent) -> str:
+    return f"The index for {event.payload['repo']} is ready; re-run the review."
+```
+
+Return `None` to let igni write it from the type and payload. Without a
+type the handler takes every type no other handler names. igni waits up
+to 30 s; delivery is at least once, and igni drops a repeat by
+`event_id`.
+
+## Staying awake: `ext.busy`
+
+In the cloud igni's VM sleeps when nothing is busy. Work your process
+does on its own — indexing, a sync — says so:
+
+```python
+async with ext.busy_while("indexing"):
+    await index_everything()
+```
+
+`ext.busy(reason, ttl)` takes a lease (at most 600 s) and renews it when
+called again; `ext.done(reason)` lets it go; `busy_while` does both and
+renews in between. A lease nobody renews expires, so a stuck process
+cannot keep the VM up.
+
 ## Plain functions run off the loop
 
 The process serves igni on one event loop. A plain `def` you hand the

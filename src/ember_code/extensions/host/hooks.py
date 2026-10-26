@@ -274,7 +274,32 @@ class ExtensionHooks:
             current = current_or_reason
         return ExtensionHookVerdict(allowed=True, value=current)
 
-    async def _ask(self, extension_id: str, event: HookEvent, value: dict[str, Any]) -> HookAnswer:
+    async def ask_one(
+        self,
+        extension_id: str,
+        event: str,
+        value: dict[str, Any],
+        *,
+        timeout: float,
+    ) -> HookAnswer:
+        """Ask one extension about something that is its own, not one of igni's hook events.
+
+        A service event (:mod:`ember_code.extensions.service_events`) is
+        for the extension whose service sent it, so it is asked whatever
+        its manifest hooks, with a deadline of the caller's — work it may
+        do before answering is the point. Raises :class:`HookFailure`
+        when it does not answer.
+        """
+        return await self._ask(extension_id, event, value, timeout=timeout)
+
+    async def _ask(
+        self,
+        extension_id: str,
+        event: HookEvent | str,
+        value: dict[str, Any],
+        *,
+        timeout: float | None = None,
+    ) -> HookAnswer:
         registry = self._registry
         entry = registry.get(extension_id) if registry is not None else None
         if (
@@ -285,11 +310,12 @@ class ExtensionHooks:
             detail = f": {entry.reason}" if entry.reason else ""
             raise HookFailure(f"it is not running{detail}", unanswered=True)
         loop = asyncio.get_running_loop()
-        deadline = loop.time() + self._timeout
+        allowed = self._timeout if timeout is None else timeout
+        deadline = loop.time() + allowed
         connected = self._connected.setdefault(extension_id, asyncio.Event())
         if extension_id not in self._senders:
             with contextlib.suppress(TimeoutError):
-                await asyncio.wait_for(connected.wait(), self._timeout)
+                await asyncio.wait_for(connected.wait(), allowed)
         send = self._senders.get(extension_id)
         if send is None:
             raise HookFailure("its process is not connected", unanswered=True)
@@ -299,7 +325,7 @@ class ExtensionHooks:
         try:
             frame = HookMessage(
                 id=hook_id,
-                event=event.value,
+                event=event if isinstance(event, str) else event.value,
                 value=to_jsonable_python(value, fallback=str),
                 principal=self._principal_wire(),
             )
@@ -307,7 +333,7 @@ class ExtensionHooks:
             remaining = max(0.0, deadline - loop.time())
             return await asyncio.wait_for(future, remaining)
         except TimeoutError as exc:
-            raise HookFailure(f"no answer within {self._timeout:g}s", unanswered=True) from exc
+            raise HookFailure(f"no answer within {allowed:g}s", unanswered=True) from exc
         finally:
             self._waiting.pop(hook_id, None)
 

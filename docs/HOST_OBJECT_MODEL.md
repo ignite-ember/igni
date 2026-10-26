@@ -403,6 +403,7 @@ rules are EXTENSIBILITY §6, *A page and its own service*.
 | Posting *as the person* (`UserMessage` from an extension) | Decided: an extension's messages are labelled as the extension's (`host.chat.post`). |
 | `shutdown` | Quitting igni is the person's decision. |
 | The model's own plumbing: the `host_model` and `window_model` RPCs, and the `host_signal`, `window_model_changed` and `open_external` pushes | They are how the model reaches a page and a window, not things igni does. |
+| Delivering a service's events (`deliver_service_events`) | The platform's: it hands the producer the events services sent their extensions. An extension hears its own as `@ext.on_service_event`, before they start or resume the run; it does not deliver them. |
 | A page's token for its own service (`extension_service_token`) | Not igni's to model: it is how a page reaches its own service (`bridge.service`), the page's half of what `ext.service` is for the process. No `permissions.host` grant — having a service is the grant — and the audience is that extension's own service, never one it names. |
 
 Anything else missing from this table is a bug in it.

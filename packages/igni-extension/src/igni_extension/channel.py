@@ -30,6 +30,7 @@ from igni_extension.environment import HostEndpoint
 from igni_extension.errors import HostError, HostUnavailable, NotConfigured
 from igni_extension.hooks import HookHandlers
 from igni_extension.notifications import LocalNotification, NotifyNotification
+from igni_extension.service_events import SERVICE_EVENT, ServiceEventHandlers
 from igni_extension.session import HostSession
 from igni_extension.signals import SignalHandlers
 
@@ -57,10 +58,14 @@ class HostConnection:
         signals: SignalHandlers,
         session: HostSession | None = None,
         hooks: HookHandlers | None = None,
+        service_events: ServiceEventHandlers | None = None,
     ) -> None:
         self._endpoint = endpoint
         self._signals = signals
         self._hooks = hooks if hooks is not None else HookHandlers()
+        self._service_events = (
+            service_events if service_events is not None else ServiceEventHandlers()
+        )
         self._session = session
         self._socket: ClientConnection | None = None
         self._reader: asyncio.Task[None] | None = None
@@ -256,7 +261,10 @@ class HostConnection:
                     waiter.set_exception(HostUnavailable("the igni host went away"))
 
     async def _answer(self, hook_id: str, event: str, value: Any, principal: Any = None) -> None:
-        params = await self._hooks.answer(hook_id, event, value, principal)
+        if event == SERVICE_EVENT:
+            params = await self._service_events.answer(hook_id, value, principal)
+        else:
+            params = await self._hooks.answer(hook_id, event, value, principal)
         try:
             await self._send({"op": "answer", "params": params})
         except (HostError, HostUnavailable) as exc:

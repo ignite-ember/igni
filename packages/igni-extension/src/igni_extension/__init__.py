@@ -35,6 +35,7 @@ from igni_extension.members import Property, Signal
 from igni_extension.notifications import LocalNotification, Target
 from igni_extension.prompt import PromptConditions
 from igni_extension.service import ServiceClient
+from igni_extension.service_events import ServiceEvent
 from igni_extension.tokens import SignedIn
 
 __all__ = [
@@ -63,6 +64,7 @@ __all__ = [
     "SCHEMA_VERSION",
     "Secrets",
     "ServiceClient",
+    "ServiceEvent",
     "Signal",
     "SignedIn",
     "Target",

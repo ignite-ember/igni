@@ -306,6 +306,12 @@ class RpcMethod(StrEnum):
     # :class:`~ember_code.extensions.service_token.PageServiceTokens`.
     # Pool-level: a token is the person's, not a session's.
     EXTENSION_SERVICE_TOKEN = "extension_service_token"
+    # Events a service sent its extension for this producer, handed in by
+    # the platform (the gateway, in the cloud): each starts or resumes the
+    # agent's run once (``extensions/service_events.py``). Answers which
+    # to acknowledge. Pool-level: an event is the producer's, not a
+    # session's.
+    DELIVER_SERVICE_EVENTS = "deliver_service_events"
 
 
 def validate_rpc_table(registered_keys: Iterable[str]) -> None:

@@ -97,6 +97,9 @@ A Rust service, one per host:
 - Places new producers on hosts with free memory; moves a producer when
   its node is gone (cold boot from its volume).
 - Hands the VM the producer's token.
+- Hands a producer's events to its igni: pulls them, calls
+  `deliver_service_events` with them, and acknowledges what igni answers
+  in `acknowledge` (`CLOUD.md` section 6).
 
 ## 5. igni server pieces (M)
 
@@ -105,6 +108,11 @@ A Rust service, one per host:
 - VM profiles on the portal: define, assign to a group or an app,
   platform caps, quota.
 - Event delivery to a producer that wakes its VM (`CLOUD.md` section 6).
+  igni's side built: `deliver_service_events` delivers each event once
+  (by id, across restarts), asks the extension (`@ext.on_service_event`)
+  and starts the producer's run, or queues it for the run going. Desktop
+  delivery waits on a person-facing pull on igni server
+  (`/v1/me/events/pull` and `/ack`).
 - One group per person (built: ember-server `c70d3fd`, igni `918e22d`).
 - Profile packages on the portal; commands in VMs: the producer in its
   own VM, org admins in their org, the super admin anywhere; jobs for

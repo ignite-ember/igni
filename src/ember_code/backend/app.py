@@ -34,6 +34,7 @@ from ember_code.backend.push_bridge import PushNotificationBridge
 from ember_code.backend.rpc_router import RpcRouter
 from ember_code.backend.schemas_rpc import BackendReadyLine
 from ember_code.backend.server import BackendServer
+from ember_code.backend.service_event_delivery import ExtensionEventHandler, MainSession
 from ember_code.backend.session_orchestrator import SessionOrchestrator
 from ember_code.backend.supervisor import BackendSupervisor
 from ember_code.backend.workspace_signals import WorkspaceSignals
@@ -61,6 +62,7 @@ from ember_code.extensions.profile import DeploymentProfile, DevelopmentFlag
 from ember_code.extensions.python_env import PythonEnvironments
 from ember_code.extensions.registry import ExtensionRegistry
 from ember_code.extensions.rpc import ExtensionRpc
+from ember_code.extensions.service_events import DeliveredEvents, ServiceEventInbox
 from ember_code.extensions.service_token import (
     CredentialsSession,
     PageServiceTokens,
@@ -368,6 +370,17 @@ class BackendApp:
         pool = self._orchestrator.setup_pool()
         self._supervisor.set_pool(pool)
         self._start_host_model()
+        # The platform's ``deliver_service_events``: each starts or resumes
+        # the agent's run in the main session, once (``extensions/service_events.py``).
+        self._orchestrator.attach_event_inbox(
+            ServiceEventInbox(
+                delivered=DeliveredEvents(
+                    StorageLocator.from_settings(settings).project_database(self._project_dir)
+                ),
+                session=MainSession(self._orchestrator),
+                ask_extension=ExtensionEventHandler(),
+            )
+        )
         # The push bridge subscribes to the process-wide shell bus and
         # narrates background-process completions into ITS session's
         # conversation. Once the pool holds more than the boot

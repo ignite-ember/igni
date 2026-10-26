@@ -58,6 +58,13 @@ NOT_REACHABLE: tuple[Unreachable, ...] = (
         why="They are how the model reaches a page and a window, not things igni does.",
     ),
     Unreachable(
+        key="events",
+        what="Delivering a service's events (`deliver_service_events`)",
+        why="The platform's: it hands the producer the events services sent their "
+        "extensions. An extension hears its own as `@ext.on_service_event`, before they "
+        "start or resume the run; it does not deliver them.",
+    ),
+    Unreachable(
         key="service",
         what="A page's token for its own service (`extension_service_token`)",
         why="Not igni's to model: it is how a page reaches its own service "
@@ -176,6 +183,7 @@ RPC_UNREACHABLE: dict[RpcMethod, str] = {
     RpcMethod.HOST_MODEL: "channel",
     RpcMethod.WINDOW_MODEL: "channel",
     RpcMethod.EXTENSION_SERVICE_TOKEN: "service",
+    RpcMethod.DELIVER_SERVICE_EVENTS: "events",
 }
 
 

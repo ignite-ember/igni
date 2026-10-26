@@ -36,6 +36,7 @@ from igni_extension.host_model import BusyLease
 from igni_extension.members import Signal
 from igni_extension.prompt import PromptConditions
 from igni_extension.service import ServiceClient
+from igni_extension.service_events import ServiceEventHandler, ServiceEventHandlers
 from igni_extension.session import HostSession
 from igni_extension.signals import SignalHandlers
 from igni_extension.threads import OffTheLoop
@@ -67,9 +68,10 @@ class IgniExtension:
         self._session = HostSession(self.mcp._mcp_server)
         self._signals = SignalHandlers()
         self._hooks = HookHandlers()
+        self._service_events = ServiceEventHandlers()
         #: The socket to the igni host that `ext.host` travels on.
         self.connection = HostConnection(
-            self.environment.host, self._signals, self._session, self._hooks
+            self.environment.host, self._signals, self._session, self._hooks, self._service_events
         )
         #: igni, as this extension sees it: `ext.host.chat`, `ext.host.ui`, …
         self.host = Host(self.connection)
@@ -138,6 +140,18 @@ class IgniExtension:
         manifest lists in `permissions.hooks`; one handler per event.
         """
         return self._hooks.on(event)
+
+    def on_service_event(
+        self, event_type: str | None = None
+    ) -> Callable[[ServiceEventHandler], ServiceEventHandler]:
+        """Handle the events this extension's service sends (`igni_extension.service_events`).
+
+        igni starts or resumes the agent's run with every event; the
+        handler may return the text the agent should see, or `None` for
+        igni's own. Without `event_type` it handles every type no other
+        handler names.
+        """
+        return self._service_events.on(event_type)
 
     def on_start[F: Callable[[], Any]](self, fn: F) -> F:
         """Run `fn` in the background for as long as the process serves igni.
