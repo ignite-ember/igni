@@ -58,7 +58,9 @@ class TestToolEventHookProtectedPaths:
         result = await self._hook()(
             name="read_file", func=lambda **kw: "contents", args={"file_path": ".env"}
         )
-        assert result == "contents"
+        # Read is allowed (not blocked) — the func ran and its output came back.
+        # It is wrapped as untrusted external content; the contents survive.
+        assert "contents" in result
 
     @pytest.mark.asyncio
     async def test_func_not_called_when_blocked(self):

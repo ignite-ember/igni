@@ -50,7 +50,7 @@ from pydantic import BaseModel
 from ember_code.core.config.schemas.safety import BypassGuardConfig
 from ember_code.core.decisions import Laya, Priority
 from ember_code.core.hooks.bypass_explainer import CallExplainer
-from ember_code.core.hooks.bypass_rules import flag_shell, flag_url, flag_write
+from ember_code.core.hooks.bypass_rules import flag_file_read, flag_shell, flag_url, flag_write
 
 logger = logging.getLogger(__name__)
 
@@ -137,6 +137,10 @@ READ_ONLY_TOOLS: frozenset[str] = frozenset(
 
 _SHELL_TOOLS = frozenset({"run_shell_command", "bash", "shell"})
 _WRITE_TOOLS = frozenset({"edit_file", "edit_file_replace_all", "create_file", "write_file"})
+#: Read-only file tools that take a path. They sit in READ_ONLY_TOOLS (waved
+#: through), but a read of a *secret* path is exactly the exfil first step that
+#: exemption should not cover, so check() consults flag_file_read for these.
+_READ_FILE_TOOLS = frozenset({"read_file", "search_files"})
 
 
 class Verdict(BaseModel):
@@ -222,9 +226,22 @@ class BypassGuard:
         self, tool_name: str, args: dict[str, Any], agent_path: list[str] | None = None
     ) -> str | None:
         """A block message when the call must not run, otherwise None."""
-        if not self._config.enabled or not self._in_bypass() or tool_name in READ_ONLY_TOOLS:
+        if not self._config.enabled or not self._in_bypass():
             return None
-        verdict = await self.verdict(tool_name, args)
+        # A read of a secret path is checked even though the tool is read-only:
+        # reading ~/.ssh/id_rsa is not the ordinary read that exemption is for.
+        secret = (
+            flag_file_read(str(args.get("file_path") or args.get("path") or ""))
+            if tool_name in _READ_FILE_TOOLS
+            else None
+        )
+        if secret is None and tool_name in READ_ONLY_TOOLS:
+            return None
+        verdict = (
+            Verdict(needs_approval=True, reason=secret)
+            if secret
+            else await self.verdict(tool_name, args)
+        )
         if not verdict.needs_approval:
             return None
 
@@ -315,6 +332,8 @@ def explain(tool_name: str, verdict: Verdict) -> str:
         subject = "This file write"
     elif tool_name in ("fetch_url", "fetch_json"):
         subject = "This request"
+    elif tool_name in _READ_FILE_TOOLS:
+        subject = "This file read"
     else:
         subject = "This call"
     if verdict.judged and verdict.score is not None:
@@ -352,4 +371,6 @@ def _describe(tool_name: str, args: dict[str, Any]) -> str:
         return f"Write: {args.get('path') or args.get('file_path') or ''}  content: {content!r}"
     if tool_name in ("fetch_url", "fetch_json"):
         return f"WebFetch: {args.get('url') or ''}"
+    if tool_name in _READ_FILE_TOOLS:
+        return f"Read: {args.get('file_path') or args.get('path') or ''}"
     return f"{tool_name}: {json.dumps(args, default=str)[:1500]}"

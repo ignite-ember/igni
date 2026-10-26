@@ -15,8 +15,21 @@ _DEFAULT_PROTECTED_PATHS: tuple[str, ...] = (
     ".env.*",
     "*.pem",
     "*.key",
+    "*.p12",
+    "*.pfx",
     "credentials.*",
+    "credentials.json",
     "secrets.*",
+    # Private keys and credential/auth stores: never written to by ordinary work.
+    "id_rsa",
+    "id_dsa",
+    "id_ecdsa",
+    "id_ed25519",
+    ".netrc",
+    ".npmrc",
+    ".pypirc",
+    ".git-credentials",
+    "service-account*.json",
 )
 
 _DEFAULT_BLOCKED_COMMANDS: tuple[str, ...] = (

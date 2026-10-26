@@ -21,7 +21,55 @@ from __future__ import annotations
 
 import re
 import shlex
+from fnmatch import fnmatch
 from pathlib import Path
+
+#: Files that are almost never a legitimate thing for an agent to read on its
+#: own — private keys, cloud and registry credentials, auth stores. Reading one
+#: is the shape of credential theft (the first half of an exfiltration, and the
+#: half a network rule misses when the send happens later or out of band), so
+#: Bypass stops to ask even though the call only reads. Deliberately NARROWER
+#: than ``safety.protected_paths``: that list gates *writes* and includes
+#: routine files like ``.env`` a developer reads constantly; these are the
+#: files whose *read* is itself suspicious.
+_SECRET_NAME_GLOBS: tuple[str, ...] = (
+    "id_rsa", "id_dsa", "id_ecdsa", "id_ed25519", "*.ppk",
+    "*.pem", "*.p12", "*.pfx",
+    ".netrc", ".npmrc", ".pypirc", ".git-credentials",
+    "credentials.json", "service-account*.json",
+)
+_SECRET_PATH_SUBSTR: tuple[str, ...] = (
+    "/.ssh/", "/.aws/credentials", "/.docker/config.json", "/.kube/config", "/.config/gcloud/",
+)
+#: Utilities whose job is to emit a file's bytes — enough to lift a secret.
+_READ_UTILS = r"cat|bat|less|more|head|tail|nl|tac|xxd|od|hexdump|strings|base64|cp|rsync|install|openssl|grep|egrep|rg|ag|ack"
+#: Secret/key targets as they appear inside a shell command.
+_SECRET_IN_SHELL = (
+    r"(~?/?\.ssh/|\bid_rsa\b|\bid_ed25519\b|\bid_ecdsa\b|\bid_dsa\b|\.aws/credentials|"
+    r"\.netrc\b|\.git-credentials\b|\.pypirc\b|\.npmrc\b|\.kube/config|\.docker/config\.json|"
+    r"\.pem\b|\.p12\b|\.pfx\b)"
+)
+
+
+def _is_secret_file(path: str) -> bool:
+    """True when ``path`` names a credential, private key or auth store."""
+    if not path:
+        return False
+    name = Path(path).name
+    if any(fnmatch(name, glob) for glob in _SECRET_NAME_GLOBS):
+        return True
+    normalized = "/" + path.replace("\\", "/").lstrip("/")
+    return any(sub in normalized for sub in _SECRET_PATH_SUBSTR)
+
+
+def flag_file_read(path: str) -> str | None:
+    """Why reading ``path`` needs a person's yes: it is a credential or key file.
+
+    Covers the read-only file tools (``read_file`` and friends) that Bypass
+    otherwise waves through — reading ``~/.ssh/id_rsa`` is not the ordinary
+    read those exemptions were written for."""
+    return "reads a credential or secret file" if _is_secret_file(path) else None
+
 
 #: (pattern, reason) for shell commands. Searched case-insensitively
 #: anywhere in the command, so a chained ``cd x && …`` is still seen.
@@ -83,6 +131,18 @@ _SHELL_RULES: tuple[tuple[re.Pattern[str], str], ...] = tuple(
         (
             r"\b(env|printenv|set)\s*\|\s*(curl|wget|nc|ncat)\b",
             "sends environment variables over the network",
+        ),
+        (
+            rf"\b({_READ_UTILS})\b[^|;&]*{_SECRET_IN_SHELL}",
+            "reads a credential or secret file",
+        ),
+        (
+            # An inline interpreter one-liner that both reaches the network AND
+            # touches env/secrets — the code-shaped exfil a `curl` rule misses.
+            r"\b(python[0-9.]*|node|ruby|perl|php)\b(?=[^;&|]*\s-[ce]\b)"
+            r"(?=[^&|]*(requests|urllib|urlopen|http\.client|httpx|net/http|axios|fetch\(|socket\.|Net::HTTP))"
+            r"(?=[^&|]*(environ|getenv|process\.env|\.ssh|credentials|\.env\b|ENV\[))",
+            "runs an inline script that sends secrets or environment out",
         ),
         (r"\bscp\b[^;&|]*\S+@\S+:", "copies files to another machine"),
         (
