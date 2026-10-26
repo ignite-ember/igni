@@ -135,6 +135,10 @@ class BaseStreamHandler(Generic[_TState]):
             run_id = getattr(self.state, "current_run_id", None)
             if run_id:
                 self._registry.discard(run_id)
+                # Whatever waited above this run has its answer now (or
+                # never will): nothing hangs from it any more.
+                if self._hitl_coordinator is not None:
+                    self._hitl_coordinator.forget_spawn(run_id)
 
         self._ensure_agent_completed_emitted()
         final = await self._fetch_final_content_with_fallback()

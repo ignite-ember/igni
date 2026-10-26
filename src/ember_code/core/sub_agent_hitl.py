@@ -115,6 +115,9 @@ class SubAgentHITLCoordinator:
         self._turns: dict[str, dict[str, str]] = {}
         #: Runs with a spawn waiting under them: their results are written.
         self._linked_runs: set[str] = set()
+        #: Spawn links a previous backend left with no approval waiting:
+        #: their run was being continued when it died.
+        self._interrupted: list[SpawnLink] = []
 
     # ── Durability ────────────────────────────────────────────────
 
@@ -128,7 +131,12 @@ class SubAgentHITLCoordinator:
         if self._journal is None:
             return 0
         restored = 0
-        for stored in self._journal.waiting(session_id):
+        waiting = self._journal.waiting(session_id)
+        asked = {s.run_id for s in waiting if s.origin is ApprovalOrigin.SUB_AGENT}
+        self._interrupted = [
+            link for link in self._journal.spawns(session_id) if link.run_id not in asked
+        ]
+        for stored in waiting:
             if stored.origin is not ApprovalOrigin.SUB_AGENT:
                 continue
             if stored.request is not None and stored.request.details:
@@ -169,6 +177,12 @@ class SubAgentHITLCoordinator:
             link = self._journal.spawn(run_id) if self._journal is not None else None
             ready.append(RestoredRun(run_id=run_id, requirements=requirements, link=link))
         return ready
+
+    def take_interrupted(self) -> list[SpawnLink]:
+        """Links whose answered run was still being continued when the
+        previous backend died — each returned once."""
+        interrupted, self._interrupted = self._interrupted, []
+        return interrupted
 
     def forget_spawn(self, run_id: str) -> None:
         if self._journal is not None:
@@ -401,7 +415,8 @@ class SubAgentHITLCoordinator:
 
     def cleanup(self, req_id: str) -> None:
         """Drop the entry once spawn_agent has resumed past it."""
-        entry = self._pending.pop(req_id, None)
+        self._pending.pop(req_id, None)
+        # The spawn link stays until the run's stream ends: a restart
+        # while the answered run is still being continued must find it
+        # (:meth:`take_interrupted`).
         self._forget(req_id)
-        if entry is not None and not any(e.run_id == entry.run_id for e in self._pending.values()):
-            self.forget_spawn(entry.run_id)

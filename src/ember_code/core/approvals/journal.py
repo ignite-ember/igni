@@ -336,6 +336,21 @@ class ApprovalJournal:
             logger.debug("approval journal: read spawn %s failed: %s", run_id, exc)
             return None
 
+    def spawns(self, session_id: str) -> list[SpawnLink]:
+        """Every paused sub-agent run of the session that something waits on."""
+        try:
+            with self._db.sync_session() as session:
+                run_ids = session.scalars(
+                    select(WaitingSpawnModel.run_id).where(
+                        self._db.scope.where(WaitingSpawnModel),
+                        WaitingSpawnModel.session_id == session_id,
+                    )
+                ).all()
+        except Exception as exc:
+            logger.debug("approval journal: read spawns of %s failed: %s", session_id, exc)
+            return []
+        return [link for run_id in run_ids if (link := self.spawn(run_id)) is not None]
+
     def forget_spawn(self, run_id: str) -> None:
         try:
             with self._db.sync_session() as session, session.begin():

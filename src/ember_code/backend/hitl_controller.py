@@ -421,6 +421,20 @@ class HitlController:
             *self._session.sub_agent_hitl.waiting_requests(),
         ]
 
+    async def resume_interrupted(self) -> AsyncIterator[msg.Message]:
+        """Finish what a previous backend was continuing when it died.
+
+        A sub-agent or team whose approval had been answered, and was
+        still being continued, left its spawn link behind. It is reported
+        failed to the call waiting on it, and that call's run goes on
+        (``ColdSpawnResume.interrupted``). Each is taken once.
+        """
+        for link in self._session.sub_agent_hitl.take_interrupted():
+            async for proto in ColdSpawnResume(self._session, self._stream_factory).interrupted(
+                link
+            ):
+                yield proto
+
     def sweep_run(self, run_id: str) -> None:
         """Drop pending + auto-resolved entries for a finished run.
 

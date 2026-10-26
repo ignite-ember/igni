@@ -156,6 +156,65 @@ def _publish_tool(side: Side) -> Any:
     return publish
 
 
+def _stuck_remove_tool(side: Side) -> Any:
+    @tool(requires_confirmation=True)
+    async def remove_build() -> str:
+        """Remove the build directory."""
+        side.calls.append("remove build started")
+        await asyncio.Event().wait()
+        return "never"
+
+    return remove_build
+
+
+def _write_notes_tool(side: Side) -> Any:
+    def write_notes() -> str:
+        """Write release notes."""
+        side.calls.append("write notes")
+        return "notes written"
+
+    return write_notes
+
+
+def _writer(messages: list[Message]) -> ModelResponse:
+    results = _tool_results(messages)
+    if not results:
+        return _call("call-notes", "write_notes")
+    return ModelResponse(content=f"writer says {results[-1]}")
+
+
+def _leader(messages: list[Message]) -> ModelResponse:
+    results = _tool_results(messages)
+    if not results:
+        return ModelResponse(
+            tool_calls=[
+                {
+                    "id": f"call-delegate-{member}",
+                    "type": "function",
+                    "function": {
+                        "name": "delegate_task_to_member",
+                        "arguments": json.dumps({"member_id": member, "task": f"{member}: go"}),
+                    },
+                }
+                for member in ("cleaner", "writer")
+            ]
+        )
+    return ModelResponse(content="team done: " + " / ".join(results))
+
+
+def _main_spawns_team(messages: list[Message]) -> ModelResponse:
+    results = _tool_results(messages)
+    if not results:
+        return _call(
+            "call-team",
+            "spawn_team",
+            task="tidy and write",
+            agent_names="cleaner,writer",
+            mode="coordinate",
+        )
+    return ModelResponse(content=f"Main finished after: {results[-1]}")
+
+
 def _main_deploys(messages: list[Message]) -> ModelResponse:
     results = _tool_results(messages)
     if not results:
@@ -257,6 +316,7 @@ class Backend:
         with_spawn: bool,
         spawn_timeout: int | None = None,
         thorough: bool = False,
+        stuck: bool = False,
         extra_tools: list[Any] | None = None,
     ) -> None:
         self.agno_db = store.agno()
@@ -271,7 +331,12 @@ class Backend:
         if spawn_timeout is not None:
             settings.orchestration.sub_team_timeout = spawn_timeout
         self.pool = FakePool(
-            self.agno_db, side, coordinator=self.coordinator, settings=settings, thorough=thorough
+            self.agno_db,
+            side,
+            coordinator=self.coordinator,
+            settings=settings,
+            thorough=thorough,
+            stuck=stuck,
         )
         tools: list[Any] = [_deploy_tool(side)]
         if with_spawn:
@@ -327,8 +392,10 @@ class FakePool:
         coordinator: SubAgentHITLCoordinator,
         settings: Settings,
         thorough: bool = False,
+        stuck: bool = False,
     ) -> None:
         self._db = db
+        self._stuck = stuck
         self._side = side
         self._coordinator = coordinator
         self._settings = settings
@@ -340,8 +407,15 @@ class FakePool:
         return self._db
 
     def get(self, name: str) -> Agent:
+        if name == "writer":
+            return Agent(
+                name="writer",
+                model=ScriptedModel(_writer),
+                tools=[_write_notes_tool(self._side)],
+                db=self._db,
+            )
         if name == "cleaner":
-            tools = [_remove_tool(self._side)]
+            tools = [_stuck_remove_tool(self._side) if self._stuck else _remove_tool(self._side)]
             if self._thorough:
                 tools.append(_remove_cache_tool(self._side))
             return Agent(
@@ -707,3 +781,118 @@ async def test_a_turn_shared_with_other_calls_continues_complete_after_a_restart
 
     running.cancel()
     del dead
+
+
+class LeaderRegistry:
+    """The model registry a spawned team's leader comes from, scripted."""
+
+    def __init__(self, settings: Any) -> None:
+        del settings
+
+    def get_model(self) -> Model:
+        return ScriptedModel(_leader)
+
+
+async def test_a_paused_team_is_continued_after_a_restart(
+    database_url: DatabaseUrl, tmp_path: Path, monkeypatch
+):
+    """``spawn_team`` with two members: the writer finishes, the cleaner
+    pauses on its tool. The backend dies. After the restart the decision
+    rebuilds the team and continues its stored run — the writer keeps its
+    stored result and is not run again, the cleaner is continued — and the
+    team's answer becomes the main agent's ``spawn_team`` result."""
+    monkeypatch.setattr("ember_code.core.tools.orchestrate.ModelRegistry", LeaderRegistry)
+    side = Side()
+    store = Store(database_url, tmp_path)
+    before = Backend(store, side, main_script=_main_spawns_team, with_spawn=True)
+
+    async def run_main() -> None:
+        async for _ in before.main.arun("tidy", stream=True, stream_events=True):
+            pass
+
+    running = asyncio.create_task(run_main())
+    [request] = await _until_waiting(before.coordinator)
+    assert request.tool_name == "remove_build"
+    assert side.calls == ["write notes"]
+    dead = before
+
+    after = Backend(store, side, main_script=_main_spawns_team, with_spawn=True)
+    replies = await after.answer(request.requirement_id)
+    assert not [r for r in replies if isinstance(r, msg.Error)], replies
+
+    assert side.calls == ["write notes", "remove build"], "each member's tool ran once"
+    final = after.collect.completed_content()
+    assert final.startswith("Main finished after: [Team: cleaner, writer] (mode: coordinate)")
+    assert "team done:" in final
+    assert "cleaner says build removed" in final
+    assert "writer says notes written" in final
+    assert after.hitl.waiting_messages() == []
+
+    running.cancel()
+    del dead
+
+
+async def test_a_continuation_cut_by_a_restart_is_reported_and_the_parent_goes_on(
+    database_url: DatabaseUrl, tmp_path: Path
+):
+    """The cleaner's approval is answered, and the backend dies while its
+    approved tool is still running. After the restart that work is not run
+    again: the waiting ``spawn_agent`` call gets an "interrupted" answer and
+    the main agent's run finishes with it."""
+    side = Side()
+    store = Store(database_url, tmp_path)
+    before = Backend(store, side, main_script=_main_spawns, with_spawn=True, stuck=True)
+
+    async def run_main() -> None:
+        async for _ in before.main.arun("tidy up", stream=True, stream_events=True):
+            pass
+
+    running = asyncio.create_task(run_main())
+    [request] = await _until_waiting(before.coordinator)
+    before.coordinator.resolve(request.requirement_id, "confirm")
+    for _ in range(200):
+        if "remove build started" in side.calls:
+            break
+        await asyncio.sleep(0.01)
+    dead = before  # dies with the approved tool still running
+
+    after = Backend(store, side, main_script=_main_spawns, with_spawn=True, stuck=True)
+    assert after.hitl.waiting_messages() == [], "nothing is waiting on a person"
+    replies = [m async for m in after.hitl.resume_interrupted()]
+    assert not [r for r in replies if isinstance(r, msg.Error)], replies
+    final = after.collect.completed_content()
+    assert final.startswith("Main finished after: [Agent: cleaner]")
+    assert ColdSpawnResume.INTERRUPTED_SPAWN in final
+    assert side.calls == ["remove build started"], "the cut-off tool is not run again"
+    assert [m async for m in after.hitl.resume_interrupted()] == [], "reported once"
+
+    running.cancel()
+    del dead
+
+
+async def test_a_team_members_approval_is_answered_without_a_restart(
+    database_url: DatabaseUrl, tmp_path: Path, monkeypatch
+):
+    """The live path the cold one mirrors: the team's own pause is what
+    is continued, so the approval reaches the member and the leader
+    finishes with both members' results."""
+    monkeypatch.setattr("ember_code.core.tools.orchestrate.ModelRegistry", LeaderRegistry)
+    side = Side()
+    backend = Backend(
+        Store(database_url, tmp_path), side, main_script=_main_spawns_team, with_spawn=True
+    )
+    outcome: list[str] = []
+
+    async def run_main() -> None:
+        async for event in backend.main.arun("tidy", stream=True, stream_events=True):
+            if isinstance(event, agent_events.RunCompletedEvent):
+                outcome.append(str(event.content))
+
+    running = asyncio.create_task(run_main())
+    [request] = await _until_waiting(backend.coordinator)
+    backend.coordinator.resolve(request.requirement_id, "confirm")
+    await asyncio.wait_for(running, timeout=10)
+
+    assert side.calls == ["write notes", "remove build"]
+    [final] = outcome
+    assert "team done:" in final and "cleaner says build removed" in final

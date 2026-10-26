@@ -356,6 +356,10 @@ class SessionOrchestrator:
         rt = await self._pool.get_or_create(session_id)
         for paused in rt.backend.hitl.waiting_messages():
             await rt.transport.send(paused)
+        # What the previous backend was continuing when it died goes on
+        # now, where a window can see it.
+        async for proto in rt.backend.hitl.resume_interrupted():
+            await rt.transport.send(proto)
 
     async def _handle_window_model(self, message: Any) -> None:
         """``window_model``: a window reading or writing its own model.

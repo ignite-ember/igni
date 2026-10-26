@@ -254,6 +254,8 @@ class HitlCoordinatorProtocol(Protocol):
 
     def cleanup(self, req_id: str) -> None: ...
 
+    def forget_spawn(self, run_id: str) -> None: ...
+
 
 @runtime_checkable
 class AgnoRunnable(Protocol):

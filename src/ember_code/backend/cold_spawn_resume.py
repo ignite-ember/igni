@@ -36,10 +36,13 @@ from agno.run.agent import RunOutput, RunStatus
 from agno.run.requirement import RunRequirement
 
 from ember_code.backend.schemas_hitl import StreamFactory
+from ember_code.core.approvals.journal import SpawnLink
 from ember_code.core.sub_agent_hitl import RestoredRun
 from ember_code.core.tools.orchestrate import OrchestrateTools
 from ember_code.core.tools.orchestrate_agent_stream import ResumedSubAgentStreamHandler
 from ember_code.core.tools.orchestrate_events import SubAgentRegistry
+from ember_code.core.tools.orchestrate_spawn import TeamSpawn
+from ember_code.core.tools.orchestrate_team_stream import ResumedTeamStreamHandler
 from ember_code.core.tools.spawn_context import ParentCall, SpawnCalls
 from ember_code.protocol import messages as msg
 
@@ -56,7 +59,17 @@ class ColdSpawnResume:
         self._session = session
         self._stream_factory = stream_factory
 
+    #: What a waiting call gets when the agent it waited on was being
+    #: continued — its approval answered — when the backend died.
+    INTERRUPTED_SPAWN = (
+        "Interrupted: igni restarted while this agent was continuing after its "
+        "approval was answered, and its work did not finish. Members or steps "
+        "that were still running were not run again; what they did before the "
+        "restart may or may not have taken effect."
+    )
+
     async def resume(self, ready: RestoredRun) -> AsyncIterator[msg.Message]:
+        """Continue a restored run whose approvals are all answered."""
         link = ready.link
         if link is None or not link.parents:
             yield msg.Info(
@@ -64,21 +77,44 @@ class ColdSpawnResume:
                 "with the previous backend and cannot be continued."
             )
             return
-        agent = self._pool_agent(link.agent_name)
-        if agent is None:
-            yield msg.Error(text=f"The agent {link.agent_name!r} is no longer available.")
-            return
-        result = await self._continue(
-            ResumedSubAgentStreamHandler,
-            agent,
-            chain=link.parents,
-            path=SpawnCalls.path_to(link.agent_name, link.parents),
-            run_id=ready.run_id,
-            session_id=link.agent_session_id,
-            requirements=ready.requirements,
-        )
+        if self.is_team(link.parents[0]):
+            result = await self._continue_team(ready, link)
+        else:
+            agent = self._pool_agent(link.agent_name)
+            if agent is None:
+                yield msg.Error(text=f"The agent {link.agent_name!r} is no longer available.")
+                return
+            result = await self._continue(
+                ResumedSubAgentStreamHandler,
+                agent,
+                chain=link.parents,
+                path=SpawnCalls.path_to(link.agent_name, link.parents),
+                run_id=ready.run_id,
+                session_id=link.agent_session_id,
+                requirements=ready.requirements,
+            )
         self._session.sub_agent_hitl.forget_spawn(ready.run_id)
-        answer = self.tool_result(link.agent_name, link.parents[0], result)
+        async for proto in self._answer_parents(link, result):
+            yield proto
+
+    async def interrupted(self, link: SpawnLink) -> AsyncIterator[msg.Message]:
+        """The agent ``link`` names was being continued when the previous
+        backend died: report it failed to the call waiting on it, and
+        continue that call's run.
+
+        Not run again — the approved tool or member may already have done
+        what it does, and running it twice is worse than saying so.
+        """
+        self._session.sub_agent_hitl.forget_spawn(link.run_id)
+        if not link.parents:
+            return
+        async for proto in self._answer_parents(link, self.INTERRUPTED_SPAWN):
+            yield proto
+
+    async def _answer_parents(self, link: SpawnLink, result: str) -> AsyncIterator[msg.Message]:
+        """Hand ``result`` to the call waiting on ``link``'s run, continue
+        that run, and so on up to the main agent's."""
+        answer = self.tool_result(link.parents[0], result)
         coordinator = self._session.sub_agent_hitl
         for depth, parent in enumerate(link.parents):
             run_output = self.paused_run(parent, answer, coordinator.turn_results(parent.run_id))
@@ -115,8 +151,49 @@ class ColdSpawnResume:
                 run_response=run_output,
             )
             # Its answer is the result of the call waiting on *it*.
-            waiting = rest[0] if rest else parent
-            answer = self.tool_result(parent.agent_name, waiting, result)
+            answer = self.tool_result(rest[0] if rest else parent, result)
+
+    async def _continue_team(self, ready: RestoredRun, link: SpawnLink) -> str:
+        """Rebuild the team a ``spawn_team`` call ran and continue its run.
+
+        Agno kept the team's run: members that had finished keep their
+        results in it (Agno pauses a team only once every member it
+        delegated to in that turn has returned or paused), and only the
+        paused members are continued with the decisions before the team
+        leader goes on.
+        """
+        call = link.parents[0]
+        tools = self._orchestrate_tools()
+        if tools is None:
+            return "The team could not be rebuilt: no spawn tools in this session."
+        built = TeamSpawn.build_team(
+            pool=self._session.pool,
+            settings=tools.settings,
+            names=self.team_names(call),
+            mode=str(call.tool_args.get("mode") or ""),
+            depth=tools.current_depth + 1,
+            deps=tools.spawn_deps(),
+        )
+        if built.team is None:
+            return f"The team could not be rebuilt: {built.error}"
+        return await self._continue(
+            ResumedTeamStreamHandler,
+            built.team,
+            chain=link.parents,
+            path=SpawnCalls.path_to(f"team({','.join(self.team_names(call))})", link.parents),
+            run_id=ready.run_id,
+            session_id=link.agent_session_id,
+            requirements=ready.requirements,
+        )
+
+    @staticmethod
+    def team_names(call: ParentCall) -> list[str]:
+        raw = str(call.tool_args.get("agent_names") or "")
+        return [n.strip() for n in raw.split(",") if n.strip()]
+
+    @classmethod
+    def is_team(cls, call: ParentCall) -> bool:
+        return call.tool_name == "spawn_team" and len(cls.team_names(call)) > 1
 
     async def _continue(
         self,
@@ -146,12 +223,19 @@ class ColdSpawnResume:
             result, _activity = await handler.run()
         return str(result)
 
-    @staticmethod
-    def tool_result(agent_name: str, parent: ParentCall, result: str) -> str:
-        """What the waiting call returns: the spawned agent's answer, headed
-        the way a live spawn heads it."""
-        task = str(parent.tool_args.get("task", ""))
-        return f"[Agent: {agent_name}]\n[Task: {task}]\n\nResponse:\n{result}"
+    @classmethod
+    def tool_result(cls, call: ParentCall, result: str) -> str:
+        """What the waiting call returns: the spawned agent's or team's
+        answer, headed the way a live spawn heads it."""
+        task = str(call.tool_args.get("task", ""))
+        if cls.is_team(call):
+            mode = str(call.tool_args.get("mode") or "coordinate")
+            head = f"[Team: {', '.join(cls.team_names(call))}] (mode: {mode})"
+        else:
+            head = (
+                f"[Agent: {call.tool_args.get('agent_name') or call.tool_args.get('agent_names')}]"
+            )
+        return f"{head}\n[Task: {task}]\n\nResponse:\n{result}"
 
     #: The result a call gets when the restart cut it off.
     INTERRUPTED = (

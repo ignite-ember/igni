@@ -695,31 +695,47 @@ class TeamSpawn(SpawnRunner):
         run — without it, broadcast_* / single_specialist_* cases
         hit "No runs found for run ID …".
         """
+        return self.build_team(
+            pool=self._pool,
+            settings=self._settings,
+            names=self._names,
+            mode=self._mode_raw,
+            depth=self._current_depth + 1,
+            deps=self._deps,
+        )
+
+    @staticmethod
+    def build_team(
+        *, pool: Any, settings: Any, names: list[str], mode: str, depth: int, deps: SpawnDeps
+    ) -> SubTeamBuildResult:
+        """The Agno team a ``spawn_team`` call runs — also how a team a
+        restart cut off is rebuilt to be continued
+        (``backend/cold_spawn_resume.py``)."""
         members = []
-        for name in self._names:
+        for name in names:
             try:
-                members.append(copy.copy(self._pool.get(name)))
+                members.append(copy.copy(pool.get(name)))
             except KeyError as e:
                 return SubTeamBuildResult(team=None, mode=None, error=str(e))
 
-        mode = TeamMode.coerce_or_default(self._mode_raw)
-        team_model = self._deps.model_registry_factory(self._settings).get_model()
+        team_mode = TeamMode.coerce_or_default(mode)
+        team_model = deps.model_registry_factory(settings).get_model()
         team_kwargs: dict[str, Any] = {
-            "name": f"sub-team-depth-{self._current_depth + 1}",
-            "mode": mode.value,
+            "name": f"sub-team-depth-{depth}",
+            "mode": team_mode.value,
             "model": team_model,
             "members": members,
             "markdown": True,
         }
         # Public accessor — replaces the ex ``getattr(pool, "_db")``.
-        pool_db = self._pool.db
+        pool_db = pool.db
         if pool_db is not None:
             team_kwargs["db"] = pool_db
-        if mode is TeamMode.TASKS:
-            team_kwargs["max_iterations"] = self._settings.orchestration.max_task_iterations
+        if team_mode is TeamMode.TASKS:
+            team_kwargs["max_iterations"] = settings.orchestration.max_task_iterations
 
         return SubTeamBuildResult(
-            team=self._deps.team_factory(**team_kwargs), mode=mode.value, error=None
+            team=deps.team_factory(**team_kwargs), mode=team_mode.value, error=None
         )
 
     async def _execute(self) -> tuple[str, list[str]]:
