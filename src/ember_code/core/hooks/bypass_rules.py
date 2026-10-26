@@ -33,13 +33,27 @@ from pathlib import Path
 #: routine files like ``.env`` a developer reads constantly; these are the
 #: files whose *read* is itself suspicious.
 _SECRET_NAME_GLOBS: tuple[str, ...] = (
-    "id_rsa", "id_dsa", "id_ecdsa", "id_ed25519", "*.ppk",
-    "*.pem", "*.p12", "*.pfx",
-    ".netrc", ".npmrc", ".pypirc", ".git-credentials",
-    "credentials.json", "service-account*.json",
+    "id_rsa",
+    "id_dsa",
+    "id_ecdsa",
+    "id_ed25519",
+    "*.ppk",
+    "*.pem",
+    "*.p12",
+    "*.pfx",
+    ".netrc",
+    ".npmrc",
+    ".pypirc",
+    ".git-credentials",
+    "credentials.json",
+    "service-account*.json",
 )
 _SECRET_PATH_SUBSTR: tuple[str, ...] = (
-    "/.ssh/", "/.aws/credentials", "/.docker/config.json", "/.kube/config", "/.config/gcloud/",
+    "/.ssh/",
+    "/.aws/credentials",
+    "/.docker/config.json",
+    "/.kube/config",
+    "/.config/gcloud/",
 )
 #: Utilities whose job is to emit a file's bytes — enough to lift a secret.
 _READ_UTILS = r"cat|bat|less|more|head|tail|nl|tac|xxd|od|hexdump|strings|base64|cp|rsync|install|openssl|grep|egrep|rg|ag|ack"

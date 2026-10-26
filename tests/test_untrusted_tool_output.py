@@ -28,13 +28,29 @@ def test_is_idempotent():
 
 
 def test_external_content_tools_are_wrapped():
-    for name in ("read_file", "run_shell_command", "fetch_url", "fetch_json",
-                 "spawn_agent", "spawn_team", "grep", "web_search"):
+    for name in (
+        "read_file",
+        "run_shell_command",
+        "fetch_url",
+        "fetch_json",
+        "spawn_agent",
+        "spawn_team",
+        "grep",
+        "web_search",
+    ):
         assert should_wrap(name), name
 
 
 def test_control_tools_are_not_wrapped():
     # these return guidance/confirmations the model should act on
-    for name in ("enter_plan_mode", "exit_plan_mode", "todo_write", "schedule_task",
-                 "create_file", "edit_file", "loop_start", "visualize"):
+    for name in (
+        "enter_plan_mode",
+        "exit_plan_mode",
+        "todo_write",
+        "schedule_task",
+        "create_file",
+        "edit_file",
+        "loop_start",
+        "visualize",
+    ):
         assert not should_wrap(name), name
