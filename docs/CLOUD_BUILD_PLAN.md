@@ -1,0 +1,102 @@
+# igni cloud — build plan
+
+Status: plan, nothing below is built unless it names a commit. Design:
+`docs/CLOUD.md`. Proof of concept: the `igni__cloudvm` repository
+(`RESULTS.md`).
+
+Sizes are rough: **S** about a day, **M** a few days, **L** one to two
+weeks, for one person with agents.
+
+## Order
+
+```
+1 PostgreSQL in igni ──┐
+2 Guest image ─────────┼──► 4 Gateway ──► 6 End-to-end on bare metal
+3 Node agent ──────────┘        ▲
+5 igni server pieces ───────────┘
+7 Deploy manifests (with the delivery overhaul)
+```
+
+1, 2, 3 and 5 can run in parallel; 4 needs 2 and 3; 6 needs everything
+before it.
+
+## 1. PostgreSQL in igni (L) — needed whatever else changes
+
+The desktop keeps SQLite and its files; the backend chooses by
+configuration. One code path:
+
+| Step | Size |
+|---|---|
+| Database URL in settings instead of a file path; engine registry, `Database`, migrations and `igni migrate` keyed by URL; the revision read through SQLAlchemy, not `sqlite3` | M |
+| The four raw `sqlite3` stores (pending messages, session preferences, session directories, client state) and local notifications moved onto SQLAlchemy and alembic, no SQLite-only syntax | M |
+| Agno storage chosen by URL: `AsyncSqliteDb` on the desktop, `AsyncPostgresDb` in the cloud | S |
+| Org, producer and project columns on every row in the cloud; every query filtered by them (row-level security if decided) | M |
+| A store interface for `MEMORY.md` memories and attachments: files on the desktop, PostgreSQL (large objects for attachments) in the cloud | M |
+| Approvals waiting on the user and messages typed during a run written as they happen | M |
+| Logs to standard output in the cloud; credentials and settings not read from `~/.igni` there | S |
+| CI runs the suite against SQLite and PostgreSQL | S |
+
+## 2. Guest image (M)
+
+- Minimal Linux with the guest kernel options the proof of concept used
+  (free page reporting, VMGenID), igni installed, igni running as root.
+- Read-only base root plus an overlay whose writable layer is on the
+  producer's volume; the workspace on the same volume, kept apart.
+- After restore: resync the clock, reseed randomness, reconnect to igni
+  server and services; flush the volume when a run ends and before
+  suspend; close heavy caches (the browser) when the profile says so.
+- Free page reporting through Firecracker's balloon; a timer that trims
+  the file cache.
+- The warm base snapshot built from it, one per image version.
+
+## 3. Node agent (L) — grows out of `cvm`
+
+A Rust service, one per host:
+
+- Starts, suspends and restores Firecracker VMs: journal append in
+  process, background merge, UFFD with working-set prefetch, pre-spawned
+  Firecracker processes.
+- One network namespace per VM, fixed host tap MAC.
+- Volumes: create on first use, map with the producer's key, lease so
+  only one node opens a volume, hand the VM a single disk.
+- Profiles: ceiling and CPUs at boot, `idle_before_suspend`, cold boot
+  when the ceiling changes.
+- Memory: watch real usage, reclaim, refuse placements when short.
+- An API the gateway calls: ensure running, suspend, status.
+
+## 4. Gateway (M)
+
+- Authenticates people (igni token) and apps (`private_key_jwt`).
+- Finds the producer's node and VM, wakes it, holds the client's
+  connection while it restores, routes the host object model over WSS.
+- Places new producers on hosts with free memory; moves a producer when
+  its node is gone (cold boot from its volume).
+- Hands the VM the producer's token.
+
+## 5. igni server pieces (M)
+
+- Apps as producers: registration on the portal, client credentials,
+  their enabled extensions.
+- VM profiles on the portal: define, assign to a group or an app,
+  platform caps, quota.
+- Event delivery to a producer that wakes its VM (`CLOUD.md` section 6).
+- One group per person (in progress).
+
+## 6. End to end on bare metal (M)
+
+The real igni backend as the guest, a realistic agent run between
+suspends, a few hundred producers on one host: suspend, resume, first
+request, memory per producer, node loss. This replaces the toy-server
+numbers in `CLOUD.md` section 8.
+
+## 7. Deploy manifests
+
+Gateway, node agent, per-node services, image and base snapshot as Helm
+and compose definitions. Belongs with the delivery overhaul already on
+the later TODO.
+
+## Measurements still running or queued
+
+- Per-producer volumes on network storage (running).
+- Freed memory returned to the host and its effect on snapshot and
+  resume (queued after the volumes).
