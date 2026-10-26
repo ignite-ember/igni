@@ -516,8 +516,18 @@ moves all three, default `/run/igni`):
   change seen in a check every second, and every 4 s while a run is
   going; removed when igni exits.
 
+**Randomness.** Every VM restored from one warm base starts with the
+same memory, pseudo-random generators included. The kernel's are
+reseeded by `post_restore` (so `os.urandom`, `secrets`, `uuid4`); igni
+reseeds Python's own — the `random` module, any module-level
+`random.Random`, `tempfile`'s name sequence — from the kernel when it
+binds and after every restore it notices (`ProcessEntropy`). The string
+hash salt (`PYTHONHASHSEED`) is fixed at interpreter start and stays
+shared; it only matters for hash flooding.
+
 **After a restore** igni notices the wall clock jump ahead of the
-monotonic one (the guest agent's `post_restore` steps it): the database
+monotonic one (the guest agent's `post_restore` steps it): it reseeds
+(above), the database
 pools are emptied, engines kept, so no query waits on a connection
 dropped while the VM slept, and the notification stream reconnects
 keeping its cursor. Every PostgreSQL connection also has TCP keepalives,

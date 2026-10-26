@@ -14,7 +14,11 @@ import asyncio
 import base64
 import json
 import os
+import random
+import sys
+import tempfile
 import time
+import types
 from pathlib import Path
 from typing import Any
 
@@ -28,6 +32,7 @@ from ember_code.backend.guest import (
     AtomicFile,
     CloudGuest,
     GuestPaths,
+    ProcessEntropy,
     ProducerBinding,
     ProducerEnv,
     ReadyFile,
@@ -513,6 +518,49 @@ async def test_a_failing_step_does_not_stop_the_others():
     assert ran == ["fine"]
 
 
+class Restored:
+    """Two VMs restored from one snapshot: the same generator state, twice."""
+
+    def __init__(self) -> None:
+        self.snapshot = random.getstate()
+
+    def draw(self, *, reseed: bool) -> float:
+        random.setstate(self.snapshot)
+        if reseed:
+            ProcessEntropy().reseed()
+        return random.random()
+
+
+def test_restored_vms_draw_alike_until_reseeded():
+    vms = Restored()
+    assert vms.draw(reseed=False) == vms.draw(reseed=False), "the problem: shared state"
+    assert vms.draw(reseed=True) != vms.draw(reseed=True)
+
+
+def test_module_level_generators_and_temp_names_are_reseeded(monkeypatch):
+    library = types.ModuleType("igni_test_library_with_rng")
+    library.rng = random.Random(42)  # type: ignore[attr-defined]
+    library.system = random.SystemRandom()  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, library.__name__, library)
+    tempfile._get_candidate_names()  # type: ignore[attr-defined]
+    expected = random.Random(42).random()
+    assert ProcessEntropy().reseed() >= 2
+    assert library.rng.random() != expected  # type: ignore[attr-defined]
+    assert tempfile._name_sequence is None  # type: ignore[attr-defined]
+
+
+async def test_binding_reseeds(cloud, tmp_path: Path, monkeypatch):
+    reseeded: list[str] = []
+    monkeypatch.setattr(ProcessEntropy, "reseed", lambda self: reseeded.append("now") or 1)
+    guest = CloudGuest(
+        GuestPaths.from_env({GuestPaths.RUN_DIR_ENV: str(tmp_path)}),
+        binding=ProducerBinding(tmp_path / "producer.env", poll_seconds=0.01),
+    )
+    _hand_over(tmp_path, "sqlite:///x.db")
+    await asyncio.wait_for(guest.bind(None), timeout=5)
+    assert reseeded == ["now"]
+
+
 async def test_pools_are_emptied_and_the_engines_kept(database_url: DatabaseUrl):
     registry = EngineRegistry()
     engine = registry.get_engine(database_url)
@@ -566,6 +614,11 @@ async def test_serving_keeps_the_file_and_reconnects_after_a_restore(run_dir: Pa
 
     monkeypatch.setattr(cache, "reset_pools", reset_pools)
 
+    async def reseeded(_self: ProcessEntropy, _away: float) -> None:
+        calls.append("entropy")
+
+    monkeypatch.setattr(ProcessEntropy, "after_restore", reseeded)
+
     class Notifications:
         async def resumed(self, _away: float) -> None:
             calls.append("notifications")
@@ -593,7 +646,7 @@ async def test_serving_keeps_the_file_and_reconnects_after_a_restore(run_dir: Pa
         assert model.listeners == [guest.activity.changed]  # type: ignore[union-attr]
         clocks.wall += 600
         assert await guest.resume.check()
-        assert calls == ["pools", "notifications"]
+        assert calls == ["entropy", "pools", "notifications"]
     finally:
         await guest.stop()
     assert not (run_dir / "activity.json").exists()

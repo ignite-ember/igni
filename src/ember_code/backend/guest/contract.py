@@ -12,9 +12,11 @@ Cloud profile only; the desktop never builds one. In boot order:
 3. :meth:`CloudGuest.bind` — when no producer is known yet, igni waits
    for ``producer.env``, refusing requests meanwhile
    (:class:`~ember_code.backend.guest.binding.ProducerBinding`); the
-   backend loads settings and opens the database only after it returns;
+   backend loads settings and opens the database only after it returns,
+   and the process's pseudo-random state is reseeded
+   (:class:`~ember_code.backend.guest.entropy.ProcessEntropy`);
 4. :meth:`CloudGuest.serving` — the activity file is kept true, a
-   restore is noticed and reconnected after, and a ``producer.env``
+   restore is noticed, reseeded and reconnected after, and a ``producer.env``
    that comes to name another producer shuts igni down;
 5. :meth:`CloudGuest.stop` — the files igni keeps are removed.
 """
@@ -28,6 +30,7 @@ from typing import Any
 from ember_code.backend.activity import Activity
 from ember_code.backend.guest.activity_file import ActivityFile
 from ember_code.backend.guest.binding import ProducerBinding, ProducerEnv
+from ember_code.backend.guest.entropy import ProcessEntropy
 from ember_code.backend.guest.files import ReadyFile
 from ember_code.backend.guest.paths import GuestPaths
 from ember_code.backend.guest.resume import ResumeWatch
@@ -54,6 +57,7 @@ class CloudGuest:
         self.binding = binding if binding is not None else ProducerBinding(paths.producer_env)
         self.resume = resume if resume is not None else ResumeWatch()
         self.warm = warm if warm is not None else WarmImports()
+        self.entropy = ProcessEntropy()
         self.activity: ActivityFile | None = None
         self._model: Any = None
         self._transport: Any = None
@@ -84,7 +88,11 @@ class CloudGuest:
         if not self.binding.needed():
             return None
         logger.info("no producer yet; waiting for %s", self.binding.path)
-        return await self.binding.bind(transport)
+        env = await self.binding.bind(transport)
+        # The first moment this VM is one producer's: it must not share
+        # the warm base's pseudo-random state with every other.
+        self.entropy.reseed()
+        return env
 
     def serving(
         self,
@@ -102,6 +110,7 @@ class CloudGuest:
         )
         model.broadcasts.on_activity(self.activity.changed)
         self.activity.start()
+        self.resume.on_resume(self.entropy.after_restore)
         self.resume.on_resume(self._reset_pools)
         if notifications is not None:
             self.resume.on_resume(notifications.resumed)

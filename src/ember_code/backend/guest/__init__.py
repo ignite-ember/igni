@@ -9,6 +9,7 @@ from ember_code.backend.guest.binding import (
     UnboundRefusal,
 )
 from ember_code.backend.guest.contract import CloudGuest
+from ember_code.backend.guest.entropy import ProcessEntropy
 from ember_code.backend.guest.files import AtomicFile, ReadyFile
 from ember_code.backend.guest.paths import GuestPaths
 from ember_code.backend.guest.resume import ResumeWatch
@@ -21,6 +22,7 @@ __all__ = [
     "CloudGuest",
     "GuestActivity",
     "GuestPaths",
+    "ProcessEntropy",
     "ProducerBinding",
     "ProducerEnv",
     "ReadyFile",
