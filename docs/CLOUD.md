@@ -475,6 +475,51 @@ credentials load, so a fresh token reaches a running VM without a restart
 or any call into it. `IGNI_ACCESS_TOKEN` (fixed for the process) remains
 for a short-lived VM.
 
+**Guest contract** (igni's side of the guest protocol in
+`igni__cloudvm`; `backend/guest/`, cloud profile only). Three
+files on the VM's tmpfs, each movable by a variable (`IGNI_RUN_DIR`
+moves all three, default `/run/igni`):
+
+- `ready` (`IGNI_READY_FILE`): written once igni listens, its imports
+  done, before any producer is known — so a warm base snapshot can be
+  taken there. Removed when igni starts and when it exits, so a file
+  left by an earlier igni never says a new one serves.
+- `producer.env` (`IGNI_PRODUCER_ENV_FILE`): **late binding.** A warm
+  base's igni starts with no producer. While the file is missing (or
+  names no `IGNI_DATABASE_URL`) igni opens nothing — no settings, no
+  database, nothing under the home directory — and answers every request
+  with a refusal (an RPC's `error`, else an `error` message). It looks for
+  the file every 100 ms (a `stat`; the protocol has no "look now" call
+  and the file arrives by rename). It binds when the file names a
+  database and the token in `IGNI_ACCESS_TOKEN_FILE` is a producer's
+  whose org and `person:<id>` are the file's `IGNI_ORG` and
+  `IGNI_PRODUCER`; only `IGNI_*` lines are taken into the environment.
+  The backend then changes into the project directory again (the volume
+  is mounted over it by then) and boots as it would have with the
+  variables set from the start. A file rewritten as it was is nothing; one
+  that comes to name another producer or database shuts igni down, for
+  the image's supervisor to start one that binds afresh. An igni started
+  with `IGNI_DATABASE_URL` set and no file binds at once, as before.
+- `activity.json` (`IGNI_ACTIVITY_FILE`): `app.activity` — `state`,
+  `suspendable`, `waiting_approvals`, `sessions` — plus `running` (runs
+  working), `clients` (windows connected) and `written_at_ms`. Written
+  whole (temporary file, rename) on every `app.activity_changed`, on any
+  change seen in a check every second, and every 4 s while a run is
+  going; removed when igni exits.
+
+**After a restore** igni notices the wall clock jump ahead of the
+monotonic one (the guest agent's `post_restore` steps it): the database
+pools are emptied, engines kept, so no query waits on a connection
+dropped while the VM slept, and the notification stream reconnects
+keeping its cursor. Every PostgreSQL connection also has TCP keepalives,
+a 30 s user timeout and a 10 s connect timeout, so a dead one the pool's
+pre-ping meets fails in seconds and is replaced. igni's timers (the
+asyncio loop, the session pool's idle sweep) are monotonic and do not
+fire in a burst; scheduled tasks are on the wall clock and run once each
+when due, a recurring one resuming at its next occurrence. The model's
+HTTP client is rebuilt after every run, and a run in progress keeps the
+VM awake (`suspendable: false`).
+
 **Agno's tables** keep Agno's schema; `ScopedAsyncPostgresDb` is a
 wrapper. A session is stored under `<org>/<producer>/<project>#<id>` and
 handed back with the plain id, so two producers' sessions with one id
@@ -505,7 +550,8 @@ a subscriber of each one with `chat.approvals.changed`):
 - a run waiting only on a person — the main agent paused, or
   `spawn_agent` calls whose sub-agents are all paused — counts as
   *waiting*, not running; the host object model's `app.activity`
-  (`suspendable`) is what the node agent reads before suspending. The
+  (`suspendable`), written to `activity.json` (above), is what the node
+  agent reads before suspending. The
   snapshot keeps the waiting run frozen, and the decision wakes it. A
   spawn's own timeout stops while it waits on a person;
 - after a cold boot, the main agent's run resumes by its id from Agno's

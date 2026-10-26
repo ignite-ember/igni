@@ -46,10 +46,16 @@ configuration. One code path. What is built and what is not:
 - After restore: resync the clock, reseed randomness, reconnect to igni
   server and services; flush the volume when a run ends and before
   suspend; close heavy caches (the browser) when the profile says so.
+  igni's side built, `dbffea2`: it notices the clock jump, empties its
+  database pools and reopens the notification stream (`CLOUD.md` section
+  9, guest contract).
 - Free page reporting through Firecracker's balloon at order 3 (sysfs,
   after boot); an idle-time cgroup v2 `memory.reclaim` trimmer; no
   `drop_caches`, no compaction; MGLRU in future kernels.
-- The warm base snapshot built from it, one per image version.
+- The warm base snapshot built from it, one per image version. igni's
+  side built, `dbffea2`: `/run/igni/ready` once it listens, and late
+  binding to the producer `/run/igni/producer.env` names, refusing
+  requests until then.
 - Profile layers: a profile's package list built into a signed read-only
   layer from the customer's mirror, with a warm snapshot per profile.
 - The guest agent (vsock): flush, reseed, cache trim, hinting, and
@@ -66,7 +72,9 @@ A Rust service, one per host:
 - Volumes: create on first use, map with the producer's key, lease so
   only one node opens a volume, hand the VM a single disk.
 - Profiles: ceiling and CPUs at boot, `idle_before_suspend`, cold boot
-  when the ceiling changes.
+  when the ceiling changes. igni writes `/run/igni/activity.json`
+  (`suspendable`, running runs, waiting approvals, connected clients),
+  `dbffea2`.
 - Memory: watch real usage, reclaim, refuse placements when short;
   under pressure hint and trim the largest VMs first. Patched
   Firecracker (discard-aware diffs, `.discard` sidecar journaled and
@@ -75,7 +83,8 @@ A Rust service, one per host:
 - An API the gateway calls: ensure running, suspend, status, run a
   command in a VM (through the guest agent), audited.
 - Per-producer PostgreSQL logins: create on first use, hand to the VM
-  with the token.
+  with the token (`/run/igni/producer.env`, which igni binds to,
+  `dbffea2`; `IGNI_PRODUCER` is `person:<id>`, as the token names it).
 
 ## 4. Gateway (M)
 
