@@ -14,6 +14,14 @@ from sqlalchemy import engine_from_config, pool
 from ember_code.core.db.base import Base
 from ember_code.core.loop import db_models as _loop_models  # noqa: F401
 from ember_code.core.scheduler import db_models as _scheduler_models  # noqa: F401
+from ember_code.core.session import client_state as _client_state  # noqa: F401
+from ember_code.core.session import pending_messages as _pending_messages  # noqa: F401
+from ember_code.core.session import session_directories as _session_directories  # noqa: F401
+from ember_code.core.session import session_preferences as _session_preferences  # noqa: F401
+from ember_code.core.tools import process_store as _process_store  # noqa: F401
+from ember_code.core.utils import attachment_store as _attachment_store  # noqa: F401
+from ember_code.core.utils import memory_files as _memory_files  # noqa: F401
+from ember_code.notifications import local_store as _local_notifications  # noqa: F401
 
 config = context.config
 

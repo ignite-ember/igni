@@ -40,6 +40,7 @@ from ember_code.backend.schemas_rpc import (
 )
 from ember_code.backend.session_pool import SessionPool, SessionRuntime
 from ember_code.backend.session_stamping_transport import SessionStampingTransport
+from ember_code.core.db.locator import StorageLocator
 from ember_code.core.session.client_state import ClientStateStore
 from ember_code.core.session.session_directories import SessionDirectoryStore
 from ember_code.extensions.host.windows import WindowModelError, WindowRequest
@@ -144,13 +145,14 @@ class SessionOrchestrator:
     def setup_pool(self) -> SessionPool:
         """Build the session pool + registries. Called once at boot
         after the default runtime's RPC table is ready."""
-        self._dir_registry = SessionDirectoryStore.from_data_dir(self._settings.storage.data_dir)
+        storage = StorageLocator.from_settings(self._settings)
+        self._dir_registry = SessionDirectoryStore.from_locator(storage)
         self._dir_registry.set_dir(self._backend.session_id, self._backend.project_dir)
 
         # Per-client UI state — survives reloads, shared across all
         # clients (web, JetBrains, VSCode) since each holds the same
         # opaque ``client_id`` and the BE is the source of truth.
-        self._client_state = ClientStateStore.from_data_dir(self._settings.storage.data_dir)
+        self._client_state = ClientStateStore.from_locator(storage)
 
         default_runtime = SessionRuntime(
             backend=self._backend,

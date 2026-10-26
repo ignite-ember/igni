@@ -56,6 +56,7 @@ from pathlib import Path
 
 from ember_code.core.paths import CONFIG_DIR
 from ember_code.core.utils.context_memory_prompt import MemoryWritebackPrompt
+from ember_code.core.utils.memory_files import DirectoryMemoryFiles, MemoryFiles
 
 logger = logging.getLogger(__name__)
 
@@ -120,13 +121,11 @@ def _read_memory_index(memory_dir: Path) -> str:
     """Read ``MEMORY.md`` from a memory dir, applying the 200-line /
     25-KB cap. Returns ``""`` when the file doesn't exist or can't
     be read."""
-    index_path = memory_dir / _MEMORY_INDEX_NAME
-    try:
-        if not index_path.is_file():
-            return ""
-        content = index_path.read_text()
-    except (OSError, UnicodeDecodeError):
-        return ""
+    return _cap_memory_index(DirectoryMemoryFiles(memory_dir).read(_MEMORY_INDEX_NAME) or "")
+
+
+def _cap_memory_index(content: str) -> str:
+    """The first 200 lines or 25 KB of an index, whichever is less."""
     lines = content.splitlines(keepends=True)
     if len(lines) > _MEMORY_INDEX_MAX_LINES:
         lines = lines[:_MEMORY_INDEX_MAX_LINES]
@@ -181,9 +180,18 @@ class ProjectMemoryBank:
         self,
         project_dir: Path,
         read_claude_fallback: bool = True,
+        files: MemoryFiles | None = None,
     ) -> None:
         self._project_dir = project_dir
         self._read_claude_fallback = read_claude_fallback
+        self._files = files
+
+    def files(self) -> MemoryFiles:
+        """Where this project's memory files are: :meth:`ember_dir` on the
+        desktop, the shared database in the cloud (:class:`MemoryFiles`)."""
+        if self._files is None:
+            self._files = MemoryFiles.for_project(self._project_dir, self.ember_dir())
+        return self._files
 
     # ── Path resolution ─────────────────────────────────────────
 
@@ -223,6 +231,8 @@ class ProjectMemoryBank:
         swallowed so a flaky disk doesn't break session boot.
         """
         target = self.ember_dir()
+        if not isinstance(self.files(), DirectoryMemoryFiles):
+            return target
         try:
             target.mkdir(parents=True, exist_ok=True)
         except OSError as exc:
@@ -240,7 +250,13 @@ class ProjectMemoryBank:
         hits first) load into context — the same prefix budget
         Claude Code applies — so a runaway memory file can never
         blow up the session prompt.
+
+        In the cloud the index is a row of the shared database, and
+        there is no Claude Code directory to fall back to.
         """
+        files = self.files()
+        if not isinstance(files, DirectoryMemoryFiles):
+            return _cap_memory_index(files.read(self.MEMORY_INDEX_NAME) or "")
         reader = sys.modules[__name__]._read_memory_index
         text = reader(self.ember_dir())
         if text:

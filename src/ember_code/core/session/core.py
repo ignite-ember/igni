@@ -76,6 +76,7 @@ from ember_code.core.lsp import LspServerManager, load_lsp_config
 from ember_code.core.mcp.client import MCPClientManager
 from ember_code.core.mcp.config import MCPConfigLoader
 from ember_code.core.memory.manager import StorageManager
+from ember_code.core.memory.scoped_postgres import ScopedAsyncPostgresDb
 from ember_code.core.monitors import MonitorManager, load_monitor_config
 from ember_code.core.output_styles import OutputStyle, discover_output_styles
 from ember_code.core.plugins import PluginLoader, load_state
@@ -263,7 +264,13 @@ class Session:
         self.identity = SessionIdentity(
             session_id=resume_session_id or str(uuid.uuid4())[:8],
             session_named=bool(resume_session_id),
-            user_id=getpass.getuser(),
+            # In the cloud, Agno's rows are told apart by ``user_id``,
+            # which the scoped db fixes to the session's scope.
+            user_id=(
+                self.db.scoped_user_id
+                if isinstance(self.db, ScopedAsyncPostgresDb)
+                else getpass.getuser()
+            ),
             main_team_ref=lambda: getattr(self, "main_team", None),
             persistence_ref=lambda: getattr(self, "persistence", None),
         )

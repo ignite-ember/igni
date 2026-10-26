@@ -29,16 +29,14 @@ import logging
 import time
 from pathlib import Path
 
-from pydantic import ValidationError
-from sqlalchemy import Integer, Text, delete, select, update
-from sqlalchemy.dialects.sqlite import insert
+from sqlalchemy import Integer, PrimaryKeyConstraint, Text, delete, select, update
 from sqlalchemy.orm import Mapped, mapped_column
 
-from ember_code.core.config.settings import Settings
-from ember_code.core.data_paths import state_db_path
 from ember_code.core.db.base import Base
 from ember_code.core.db.database import Database
-from ember_code.core.paths import DEFAULT_DATA_DIR
+from ember_code.core.db.locator import StorageLocator
+from ember_code.core.db.scope import ScopedColumns
+from ember_code.core.db.upsert import ConflictInsert
 from ember_code.core.tools.process_store_schemas import (
     BackgroundProcessRow,
     ListResult,
@@ -64,10 +62,15 @@ __all__ = [
 # ── ORM model ────────────────────────────────────────────────
 
 
-class BackgroundProcessModel(Base):
+class BackgroundProcessModel(ScopedColumns, Base):
     __tablename__ = "background_processes"
+    # A pid is unique on one machine, not across the producers sharing a
+    # database: each has its own VM and so its own pid space.
+    __table_args__ = (
+        PrimaryKeyConstraint("org", "producer", "project", "pid", name="pk_background_processes"),
+    )
 
-    pid: Mapped[int] = mapped_column(Integer, primary_key=True)
+    pid: Mapped[int] = mapped_column(Integer, nullable=False)
     cmd: Mapped[str] = mapped_column(Text, nullable=False)
     pgid: Mapped[int | None] = mapped_column(Integer, nullable=True)
     started_at: Mapped[int] = mapped_column(Integer, nullable=False)
@@ -80,26 +83,25 @@ class BackgroundProcessModel(Base):
 # ── Store ────────────────────────────────────────────────────
 
 
-def _resolve_db_path(
+def _resolve_database(
     db_path: str | Path | None,
     project_dir: str | Path | None,
-) -> Path:
-    """Module-level shim delegating to
-    :meth:`BackgroundProcessStore._resolve_db_path`.
+) -> Database:
+    """Module-level seam: the database a store built from
+    ``(db_path, project_dir)`` opens.
 
     Kept as a module-level function because the test suite
-    monkey-patches ``ps_mod._resolve_db_path`` for tmp-path
-    isolation (see :mod:`tests.test_process_orphan_rehydrate`).
-    The real logic lives on the class per the OOP audit;
-    :meth:`BackgroundProcessStore.__init__` calls the module-level
-    shim so the monkey-patch seam still fires.
+    monkey-patches ``ps_mod._resolve_database`` to point rehydration
+    at a temporary database (see :mod:`tests.test_process_orphan_rehydrate`);
+    :meth:`BackgroundProcessStore.__init__` calls it through the module
+    so the patch still fires.
     """
-    return BackgroundProcessStore._resolve_db_path(db_path, project_dir)
+    return StorageLocator.database_for(db_path, project_dir)
 
 
 class BackgroundProcessStore:
-    """Persists the backgrounded-process registry to per-project
-    ``state.db``. Methods are async; the shell tool's spawn path
+    """Persists the backgrounded-process registry to the project's
+    database. Methods are async; the shell tool's spawn path
     schedules them via ``asyncio.create_task`` from its sync
     registry callbacks so the hot path stays non-blocking.
 
@@ -120,45 +122,19 @@ class BackgroundProcessStore:
         if db is not None:
             self._db = db
             return
-        # Route through the module-level shim so tests that
-        # monkey-patch ``ps_mod._resolve_db_path`` still hit their
+        # Route through the module-level seam so tests that
+        # monkey-patch ``ps_mod._resolve_database`` still hit their
         # patched resolver.
-        self._db = Database(_resolve_db_path(db_path, project_dir))
-
-    @staticmethod
-    def _resolve_db_path(
-        db_path: str | Path | None,
-        project_dir: str | Path | None,
-    ) -> Path:
-        """Mirror of LoopStore's resolver — same SQLite file as the
-        scheduler / loop / Agno session use.
-
-        Narrowed the previous bare ``except Exception`` to the
-        specific Settings-load failure classes: ``ImportError``
-        catches an unresolved lazy import inside the settings
-        package, ``FileNotFoundError`` catches a missing config
-        file the loader dereferences, and ``ValidationError``
-        catches a broken user YAML that Pydantic rejects. Any
-        other exception is a genuine bug and now propagates.
-        """
-        if db_path is not None:
-            return Path(str(db_path)).expanduser()
-        project = project_dir if project_dir is not None else Path.cwd()
-        try:
-            data_dir = Settings().storage.data_dir
-        except (ImportError, FileNotFoundError, ValidationError):
-            data_dir = DEFAULT_DATA_DIR
-        return state_db_path(project, data_dir=data_dir)
+        self._db = _resolve_database(db_path, project_dir)
 
     async def upsert(self, row: BackgroundProcessRow) -> UpsertResult:
         """Add or replace a row keyed by pid. Replace (not insert-
         only) so a freak pid reuse doesn't blow up; the latest
         spawn wins.
 
-        SQLite-specific ``ON CONFLICT DO UPDATE`` — same flavour
-        the loop store uses. Other databases would need different
-        upsert syntax but this code only ever runs against
-        SQLite (the file is the project's ``state.db``).
+        ``INSERT … ON CONFLICT DO UPDATE`` on the scope and pid,
+        through :class:`ConflictInsert` so it is the same statement on
+        SQLite and PostgreSQL.
 
         Returns a typed :class:`UpsertResult`; DB failures are
         translated to ``ok=False`` + ``reason`` at the store
@@ -166,12 +142,17 @@ class BackgroundProcessStore:
         (fire-and-forget) can log the reason at DEBUG without an
         ``except Exception`` at the callsite.
         """
-        values = row.to_upsert_values()
+        values = {**row.to_upsert_values(), **self._db.scope.stamp()}
         try:
             async with self._db.session() as session:
-                stmt = insert(BackgroundProcessModel).values(**values)
+                stmt = ConflictInsert.into(session, BackgroundProcessModel).values(**values)
                 stmt = stmt.on_conflict_do_update(
-                    index_elements=[BackgroundProcessModel.pid],
+                    index_elements=[
+                        BackgroundProcessModel.org,
+                        BackgroundProcessModel.producer,
+                        BackgroundProcessModel.project,
+                        BackgroundProcessModel.pid,
+                    ],
                     set_={
                         "cmd": row.cmd,
                         "pgid": row.pgid,
@@ -218,7 +199,10 @@ class BackgroundProcessStore:
             async with self._db.session() as session:
                 result = await session.execute(
                     update(BackgroundProcessModel)
-                    .where(BackgroundProcessModel.pid == pid)
+                    .where(
+                        self._db.scope.where(BackgroundProcessModel),
+                        BackgroundProcessModel.pid == pid,
+                    )
                     .values(exit_code=exit_code, finished_at=stamp)
                 )
                 await session.commit()
@@ -249,6 +233,7 @@ class BackgroundProcessStore:
             async with self._db.session() as session:
                 result = await session.execute(
                     delete(BackgroundProcessModel).where(
+                        self._db.scope.where(BackgroundProcessModel),
                         BackgroundProcessModel.finished_at.is_not(None),
                         BackgroundProcessModel.finished_at < cutoff,
                     )
@@ -271,7 +256,10 @@ class BackgroundProcessStore:
         try:
             async with self._db.session() as session:
                 result = await session.execute(
-                    delete(BackgroundProcessModel).where(BackgroundProcessModel.pid == pid)
+                    delete(BackgroundProcessModel).where(
+                        self._db.scope.where(BackgroundProcessModel),
+                        BackgroundProcessModel.pid == pid,
+                    )
                 )
                 await session.commit()
                 # ``rowcount`` is provider-specific; SQLite exposes
@@ -293,7 +281,9 @@ class BackgroundProcessStore:
         """
         async with self._db.session() as session:
             result = await session.execute(
-                select(BackgroundProcessModel).order_by(BackgroundProcessModel.started_at.asc())
+                select(BackgroundProcessModel)
+                .where(self._db.scope.where(BackgroundProcessModel))
+                .order_by(BackgroundProcessModel.started_at.asc())
             )
             orm_rows = result.scalars().all()
             return [BackgroundProcessRow.from_model(m) for m in orm_rows]

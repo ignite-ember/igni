@@ -364,7 +364,9 @@ class HostRig:
             push=push,
             extensions=extensions,
         )
-        settings = SimpleNamespace(storage=SimpleNamespace(data_dir=str(self.tmp / "data")))
+        settings = SimpleNamespace(
+            storage=SimpleNamespace(data_dir=str(self.tmp / "data"), database_url=None)
+        )
         self.orchestrator = RigOrchestrator(
             backend=self.session,
             transport=self.transport,

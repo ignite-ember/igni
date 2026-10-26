@@ -35,6 +35,11 @@ DECLARED_GATES: dict[str, str] = {
         "Which model the live tests use. Read alongside the key above; "
         "absent it, those tests skip with it."
     ),
+    "IGNI_TEST_DATABASE_URL": (
+        "A PostgreSQL server the storage tests may create and drop "
+        "databases on (tests/test_storage_backends.py). The suite runs "
+        "them on SQLite without it; CI's test-postgres job provides one."
+    ),
     "IGNI_LIVE_WS": (
         "Drives the Playwright specs against a real backend over a "
         "websocket. Lives in the e2e suite rather than here."

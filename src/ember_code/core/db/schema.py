@@ -1,83 +1,88 @@
-"""Is this SQLite file's schema current — answered without alembic.
+"""Is this database's schema current — answered without alembic.
 
 alembic, with the migration scripts it loads, is about 11 MB of a
-backend's memory and only does work when a file is behind. So a
-:class:`Database` first reads the file's revision with :mod:`sqlite3`
-and compares it with :data:`HEAD_REVISION`; only a file that is new or
-behind gets :mod:`ember_code.core.db.migrations` imported and run. A
-backend whose files are current never imports alembic at all.
+backend's memory and only does work when a database is behind. So a
+:class:`Database` first reads the database's revision through
+SQLAlchemy and compares it with :data:`HEAD_REVISION`; only a database
+that is new or behind gets :mod:`ember_code.core.db.migrations`
+imported and run. A backend whose database is current never imports
+alembic at all.
 
 :data:`HEAD_REVISION` is a copy of alembic's head, and
 ``tests/test_migrations_stay_off_the_start_path.py`` fails the moment a
 migration is added without updating it.
 
-The cloud runs migrations once, when a producer's volume is prepared
-(``igni migrate``), so its backends start with every file current.
+The cloud runs migrations once, when its database is prepared
+(``igni migrate``), so its backends start with the schema current.
 """
 
 from __future__ import annotations
 
 import importlib
-import sqlite3
 import threading
-from pathlib import Path
+
+from sqlalchemy import text
+from sqlalchemy.exc import SQLAlchemyError
+
+from ember_code.core.db.engine import cache
+from ember_code.core.db.engine_registry import DatabaseTarget
+from ember_code.core.db.urls import DatabaseUrl
 
 #: alembic's head revision for ``ember_code/migrations``. Kept equal to
 #: it by a test; update it with every new migration.
-HEAD_REVISION = "c7f1a9e2d8b4"
+HEAD_REVISION = "e3b9d4a1c6f2"
 
-#: Where the migrator lives. Imported by name, and only when a file is
-#: behind — this is the database layer's one run-time import, the
+#: Where the migrator lives. Imported by name, and only when a database
+#: is behind — this is the database layer's one run-time import, the
 #: counterpart of the slash-command registry's.
 MIGRATIONS_MODULE = "ember_code.core.db.migrations"
 
 
 class SchemaRevision:
-    """The revision a SQLite file says it is at."""
+    """The revision a database says it is at."""
 
     @staticmethod
-    def of(db_path: Path) -> str | None:
-        """``alembic_version.version_num``, or ``None`` for a file that
-        does not exist or was never migrated."""
-        if not db_path.is_file():
+    def of(target: DatabaseTarget) -> str | None:
+        """``alembic_version.version_num``, or ``None`` for a database
+        that does not exist or was never migrated.
+
+        A SQLite file that does not exist is not created by asking.
+        """
+        url = DatabaseUrl.of(target)
+        path = url.file
+        if url.is_sqlite and (path is None or not path.is_file()):
             return None
         try:
-            connection = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
-        except sqlite3.Error:
+            with cache.get_engine(url).connect() as connection:
+                row = connection.execute(text("SELECT version_num FROM alembic_version")).first()
+        except SQLAlchemyError:
             return None
-        try:
-            row = connection.execute("SELECT version_num FROM alembic_version").fetchone()
-        except sqlite3.Error:
-            return None
-        finally:
-            connection.close()
         return str(row[0]) if row else None
 
     @classmethod
-    def is_current(cls, db_path: Path) -> bool:
-        return cls.of(db_path) == HEAD_REVISION
+    def is_current(cls, target: DatabaseTarget) -> bool:
+        return cls.of(target) == HEAD_REVISION
 
 
 class SchemaKeeper:
-    """Brings a file to the head revision, importing alembic only if it must.
+    """Brings a database to the head revision, importing alembic only if it must.
 
-    Remembers the files it has seen current in this process, so a
-    second :class:`Database` on the same file costs nothing.
+    Remembers the databases it has seen current in this process, so a
+    second :class:`Database` on the same one costs nothing.
     """
 
     def __init__(self) -> None:
         self._lock = threading.Lock()
         self._current: set[str] = set()
 
-    def ensure_current(self, db_path: Path) -> None:
-        resolved = db_path.expanduser().resolve()
-        key = str(resolved)
+    def ensure_current(self, target: DatabaseTarget) -> None:
+        url = DatabaseUrl.of(target)
         with self._lock:
-            if key in self._current:
+            if url.url in self._current:
                 return
-            if not SchemaRevision.is_current(resolved):
-                importlib.import_module(MIGRATIONS_MODULE).upgrade_to_head(resolved)
-            self._current.add(key)
+            if not SchemaRevision.is_current(url):
+                importlib.import_module(MIGRATIONS_MODULE).upgrade_to_head(url)
+            self._current.add(url.url)
 
 
 #: Process-wide keeper, shared by every :class:`Database`.

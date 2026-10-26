@@ -207,7 +207,7 @@ def test_database_startup_does_not_seize_the_root_logger() -> None:
     captured, real_stderr = io.StringIO(), sys.stderr
     try:
         sys.stderr = captured
-        Database(db_path=os.path.join(tempfile.mkdtemp(), "startup.db"))
+        Database(os.path.join(tempfile.mkdtemp(), "startup.db"))
         surviving = list(logging.root.handlers)
     finally:
         sys.stderr = real_stderr

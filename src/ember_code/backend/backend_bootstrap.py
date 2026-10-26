@@ -33,7 +33,7 @@ from typing import TYPE_CHECKING
 from ember_code.backend.hitl_tracer import HITLTracer
 from ember_code.backend.pending_requirements_store import PendingRequirementsStore
 from ember_code.core.config.user_config_store import UserConfigStore
-from ember_code.core.data_paths import state_db_path
+from ember_code.core.db.locator import StorageLocator
 from ember_code.core.session.pending_messages import PendingMessageStore
 from ember_code.core.session.session_preferences import SessionPreferencesStore
 
@@ -62,8 +62,9 @@ class BackendBootstrap:
         # Per-session prefs need to be consulted BEFORE the Session
         # builds its main team, since the team binds whatever model
         # is in ``settings.models.default`` at construction time.
+        storage = StorageLocator.from_settings(settings)
         self.session_prefs = SessionPreferencesStore(
-            state_db_path(resolved_project_dir, data_dir=settings.storage.data_dir),
+            storage.project_database(resolved_project_dir),
         )
         if resume_session_id:
             persisted_model = self.session_prefs.get_model(resume_session_id)
@@ -93,10 +94,7 @@ class BackendBootstrap:
 
         # Pre-persist user messages BEFORE handing them to Agno.
         self.pending_store = PendingMessageStore(
-            state_db_path(
-                self.session.project_dir,
-                data_dir=settings.storage.data_dir,
-            ),
+            storage.project_database(self.session.project_dir),
         )
 
         # Injected into ModelSwitcher by the controller registry —

@@ -2,9 +2,10 @@
 
 igni server's ``docs/service-identity.md`` §10.2. "Your export is ready"
 concerns the person at this keyboard and nobody else, so it never
-leaves the machine: the notice and its read state are a row in a
-SQLite file under igni's data directory, and nothing here talks to
-igni server.
+leaves the machine: the notice and its read state are a row in igni's
+global database (the desktop's ``ember.db``; in the cloud the shared
+database, scoped to the producer), and nothing here talks to igni
+server.
 
 **Once per event.** An extension that retries, or restarts and says the
 same thing again, names the event with ``event_key``; a second notice
@@ -17,14 +18,18 @@ disk, not an unbounded one.
 
 from __future__ import annotations
 
-import contextlib
-import sqlite3
 import uuid
 from datetime import UTC, datetime
 from pathlib import Path
 
-from ember_code.core.data_paths import data_root
-from ember_code.core.session._sqlite_utils import connect_kv
+from sqlalchemy import Index, String, Text, UniqueConstraint, delete, func, select, update
+from sqlalchemy.orm import Mapped, mapped_column
+
+from ember_code.core.db.base import Base
+from ember_code.core.db.database import Database
+from ember_code.core.db.locator import StorageLocator
+from ember_code.core.db.scope import ScopedColumns
+from ember_code.core.db.upsert import ConflictInsert
 from ember_code.notifications.schemas import (
     ExtensionNotice,
     FloorNotification,
@@ -33,24 +38,31 @@ from ember_code.notifications.schemas import (
     NotificationTarget,
 )
 
-_SCHEMA = """
-CREATE TABLE IF NOT EXISTS local_notifications (
-    id          TEXT PRIMARY KEY,
-    source      TEXT NOT NULL,
-    kind        TEXT NOT NULL,
-    title       TEXT NOT NULL,
-    body        TEXT NOT NULL,
-    target      TEXT NOT NULL,
-    event_key   TEXT NOT NULL,
-    created_at  TEXT NOT NULL,
-    read_at     TEXT,
-    UNIQUE (source, event_key)
-)
-"""
+
+class LocalNotificationModel(ScopedColumns, Base):
+    __tablename__ = "local_notifications"
+    __table_args__ = (
+        UniqueConstraint(
+            "org", "producer", "project", "source", "event_key", name="uq_local_notifications_event"
+        ),
+        Index("ix_local_notifications_scope_created", "org", "producer", "project", "created_at"),
+    )
+
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    source: Mapped[str] = mapped_column(String, nullable=False)
+    kind: Mapped[str] = mapped_column(String, nullable=False)
+    title: Mapped[str] = mapped_column(Text, nullable=False)
+    body: Mapped[str] = mapped_column(Text, nullable=False)
+    #: :class:`NotificationTarget` as JSON.
+    target: Mapped[str] = mapped_column(Text, nullable=False)
+    event_key: Mapped[str] = mapped_column(String, nullable=False)
+    #: ISO 8601 in UTC — sorts as it reads, and keeps its offset.
+    created_at: Mapped[str] = mapped_column(String, nullable=False)
+    read_at: Mapped[str | None] = mapped_column(String, nullable=True)
 
 
 class LocalNotificationStore:
-    """The SQLite file local notifications live in."""
+    """The table local notifications live in."""
 
     #: Kept per extension; older ones are dropped as new ones arrive.
     KEEP = 200
@@ -58,46 +70,50 @@ class LocalNotificationStore:
     #: for one igni server issued.
     ID_PREFIX = "local-"
 
-    def __init__(self, db_path: Path) -> None:
-        self._db_path = db_path
-        db_path.parent.mkdir(parents=True, exist_ok=True)
-        with contextlib.closing(self._connect()) as conn, conn:
-            conn.execute(_SCHEMA)
+    def __init__(self, db: Database | str | Path) -> None:
+        self._db = Database.of(db)
 
     @classmethod
-    def from_data_dir(cls, data_dir: str | Path) -> LocalNotificationStore:
-        return cls(data_root(data_dir) / "notifications.db")
-
-    def _connect(self) -> sqlite3.Connection:
-        return connect_kv(self._db_path)
+    def from_locator(cls, locator: StorageLocator) -> LocalNotificationStore:
+        return cls(locator.global_database())
 
     def add(self, source: str, notice: ExtensionNotice) -> FloorNotification | None:
         """Keep ``notice`` from ``source``. ``None`` when its event was already kept."""
         notification_id = f"{self.ID_PREFIX}{uuid.uuid4().hex}"
         created_at = datetime.now(UTC)
-        with contextlib.closing(self._connect()) as conn, conn:
-            cursor = conn.execute(
-                "INSERT OR IGNORE INTO local_notifications "
-                "(id, source, kind, title, body, target, event_key, created_at) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-                (
-                    notification_id,
-                    source,
-                    notice.kind,
-                    notice.title,
-                    notice.body,
-                    notice.target.model_dump_json(),
-                    notice.event_key,
-                    created_at.isoformat(),
-                ),
-            )
-            if cursor.rowcount == 0:
+        scope = self._db.scope
+        with self._db.sync_session() as session, session.begin():
+            inserted = session.execute(
+                ConflictInsert.into(session, LocalNotificationModel)
+                .values(
+                    **scope.stamp(),
+                    id=notification_id,
+                    source=source,
+                    kind=notice.kind,
+                    title=notice.title,
+                    body=notice.body,
+                    target=notice.target.model_dump_json(),
+                    event_key=notice.event_key,
+                    created_at=created_at.isoformat(),
+                )
+                .on_conflict_do_nothing(
+                    index_elements=["org", "producer", "project", "source", "event_key"]
+                )
+                .returning(LocalNotificationModel.id)
+            ).scalar_one_or_none()
+            if inserted is None:
                 return None
-            conn.execute(
-                "DELETE FROM local_notifications WHERE source = ? AND id NOT IN ("
-                "SELECT id FROM local_notifications WHERE source = ? "
-                "ORDER BY created_at DESC LIMIT ?)",
-                (source, source, self.KEEP),
+            mine = (scope.where(LocalNotificationModel), LocalNotificationModel.source == source)
+            kept = (
+                select(LocalNotificationModel.id)
+                .where(*mine)
+                .order_by(LocalNotificationModel.created_at.desc())
+                .limit(self.KEEP)
+            )
+            session.execute(
+                delete(LocalNotificationModel).where(
+                    *mine, LocalNotificationModel.id.not_in(kept.scalar_subquery())
+                )
             )
         return FloorNotification(
             id=notification_id,
@@ -113,20 +129,26 @@ class LocalNotificationStore:
 
     def listing(self, *, limit: int = 100) -> list[FloorNotification]:
         """The newest ``limit``, newest first."""
-        with contextlib.closing(self._connect()) as conn:
-            rows = conn.execute(
-                "SELECT * FROM local_notifications ORDER BY created_at DESC LIMIT ?",
-                (limit,),
-            ).fetchall()
+        with self._db.sync_session() as session:
+            rows = session.scalars(
+                select(LocalNotificationModel)
+                .where(self._db.scope.where(LocalNotificationModel))
+                .order_by(LocalNotificationModel.created_at.desc())
+                .limit(limit)
+            ).all()
         return [self._row(row) for row in rows]
 
     def counts(self) -> NotificationCounts:
-        with contextlib.closing(self._connect()) as conn:
-            rows = conn.execute(
-                "SELECT source, COUNT(*) AS n FROM local_notifications "
-                "WHERE read_at IS NULL GROUP BY source"
-            ).fetchall()
-        by_source = {row["source"]: int(row["n"]) for row in rows}
+        with self._db.sync_session() as session:
+            rows = session.execute(
+                select(LocalNotificationModel.source, func.count())
+                .where(
+                    self._db.scope.where(LocalNotificationModel),
+                    LocalNotificationModel.read_at.is_(None),
+                )
+                .group_by(LocalNotificationModel.source)
+            ).all()
+        by_source = {source: int(n) for source, n in rows}
         return NotificationCounts(unread=sum(by_source.values()), by_source=by_source)
 
     def owns(self, notification_id: str) -> bool:
@@ -135,31 +157,35 @@ class LocalNotificationStore:
 
     def mark_read(self, *, ids: list[str] | None = None, source: str | None = None) -> int:
         """Mark these ids, or everything from ``source``, or (neither) everything."""
-        now = datetime.now(UTC).isoformat()
-        query = "UPDATE local_notifications SET read_at = ? WHERE read_at IS NULL"
-        params: list[str] = [now]
+        conditions = [
+            self._db.scope.where(LocalNotificationModel),
+            LocalNotificationModel.read_at.is_(None),
+        ]
         if ids is not None:
             mine = [i for i in ids if self.owns(i)]
             if not mine:
                 return 0
-            query += f" AND id IN ({', '.join('?' for _ in mine)})"
-            params.extend(mine)
+            conditions.append(LocalNotificationModel.id.in_(mine))
         elif source is not None:
-            query += " AND source = ?"
-            params.append(source)
-        with contextlib.closing(self._connect()) as conn, conn:
-            return conn.execute(query, params).rowcount
+            conditions.append(LocalNotificationModel.source == source)
+        with self._db.sync_session() as session, session.begin():
+            result = session.execute(
+                update(LocalNotificationModel)
+                .where(*conditions)
+                .values(read_at=datetime.now(UTC).isoformat())
+            )
+            return int(result.rowcount or 0)  # type: ignore[attr-defined]
 
     @staticmethod
-    def _row(row: sqlite3.Row) -> FloorNotification:
+    def _row(row: LocalNotificationModel) -> FloorNotification:
         return FloorNotification(
-            id=row["id"],
+            id=row.id,
             origin=NotificationOrigin.LOCAL,
-            source=row["source"],
-            kind=row["kind"],
-            title=row["title"],
-            body=row["body"],
-            target=NotificationTarget.model_validate_json(row["target"]),
-            created_at=datetime.fromisoformat(row["created_at"]),
-            read=row["read_at"] is not None,
+            source=row.source,
+            kind=row.kind,
+            title=row.title,
+            body=row.body,
+            target=NotificationTarget.model_validate_json(row.target),
+            created_at=datetime.fromisoformat(row.created_at),
+            read=row.read_at is not None,
         )

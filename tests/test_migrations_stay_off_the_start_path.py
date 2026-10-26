@@ -1,7 +1,7 @@
 """Migrations run only for a database that is new or behind.
 
-:class:`ember_code.core.db.schema.SchemaKeeper` reads a file's revision
-with :mod:`sqlite3` and imports alembic only when it has to.
+:class:`ember_code.core.db.schema.SchemaKeeper` reads a database's
+revision through SQLAlchemy and imports alembic only when it has to.
 :data:`HEAD_REVISION` is its copy of alembic's head, so the first test
 here is the one that fails when a migration is added without it.
 """
@@ -21,8 +21,8 @@ from alembic.config import Config
 from alembic.script import ScriptDirectory
 
 import ember_code
-from ember_code.core.db.engine import sync_url
 from ember_code.core.db.schema import HEAD_REVISION, SchemaKeeper, SchemaRevision
+from ember_code.core.db.urls import DatabaseUrl
 
 PACKAGE = Path(ember_code.__file__).resolve().parent
 
@@ -51,7 +51,7 @@ def test_a_new_file_is_brought_to_head(tmp_path: Path):
 def test_a_file_behind_head_is_migrated(tmp_path: Path):
     path = tmp_path / "state.db"
     config = Config(str(PACKAGE / "alembic.ini"))
-    config.set_main_option("sqlalchemy.url", sync_url(str(path)))
+    config.set_main_option("sqlalchemy.url", DatabaseUrl.for_file(path).sync)
     config.attributes["configure_logging"] = False
     command.upgrade(config, "9318ebdb0db5")
     assert SchemaRevision.of(path) == "9318ebdb0db5"

@@ -6,13 +6,17 @@ called* — the config directory, the context filenames, the agent's
 name — and this one holds *where a project's state lives*.
 
     ~/.igni/
-      ember.db                        # GLOBAL: agno memory + learning
+      ember.db                        # GLOBAL: which folder a session is
+                                      #         in, window state, local
+                                      #         notifications
       projects/<project_id>/
         state.db                      # PROJECT: scheduler, sessions,
                                       #          loop, background procs
 
 The data root is configurable (``settings.storage.data_dir``) and
-defaults to ``~/.igni``. What an extension keeps on this machine is
+defaults to ``~/.igni``. These are the desktop's files; with
+``storage.database_url`` set (the cloud) both are one database instead
+(:class:`ember_code.core.db.locator.StorageLocator`). What an extension keeps on this machine is
 not here: each has its own directory beside the extension store
 (``IGNI_EXTENSION_DATA``).
 """
@@ -78,7 +82,8 @@ def data_root(data_dir: str | Path = DEFAULT_DATA_DIR) -> Path:
 
 
 def global_db_path(data_dir: str | Path = DEFAULT_DATA_DIR) -> Path:
-    """The one database that is not per-project: memory and learning."""
+    """The one database that is not per-project: which folder a session
+    is in, window state, local notifications."""
     return data_root(data_dir) / "ember.db"
 
 

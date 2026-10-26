@@ -17,7 +17,7 @@ Consumers:
   module-level ``now_epoch`` helper), :meth:`from_model` (mapping
   from the ORM row — kept duck-typed to avoid an import cycle
   with :mod:`process_store`), and :meth:`to_upsert_values` (the
-  values-dict for the SQLite upsert).
+  values-dict for the upsert).
 * :class:`UpsertResult` / :class:`RemoveResult` /
   :class:`ListResult` — typed replacements for the previous
   ``None`` returns of :meth:`BackgroundProcessStore.upsert` /
@@ -27,10 +27,9 @@ Consumers:
   :class:`RehydrateResult`'s design in
   :mod:`shell_orphan_schemas`.
 
-TODO(refactor): once ``LoopStore`` and ``scheduler.store`` grow
-their own resolver classes, extract a shared ``DbPathResolver``
-consumed by all three stores. Left as a follow-up so this PR
-stays scoped to the process-store subsystem.
+The three project stores (this one, ``LoopStore`` and the scheduler's
+``TaskStore``) resolve their database through one
+:meth:`~ember_code.core.db.locator.StorageLocator.database_for`.
 """
 
 from __future__ import annotations
@@ -123,7 +122,7 @@ class BackgroundProcessRow(BaseModel):
         )
 
     def to_upsert_values(self) -> dict[str, int | str | None]:
-        """Return the ``values()`` dict for the SQLite upsert.
+        """Return the ``values()`` dict for the upsert.
 
         Absorbs the hand-rolled ``insert().values(pid=..., cmd=...,
         ...)`` shape that used to live inline in

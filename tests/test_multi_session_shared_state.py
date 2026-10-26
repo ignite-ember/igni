@@ -30,8 +30,10 @@ import sqlite3
 from pathlib import Path
 
 import pytest
+from sqlalchemy import text
 
 from ember_code.core.config.settings import Settings
+from ember_code.core.db.engine_registry import EngineRegistry
 from ember_code.core.session.client_state import ClientStateStore
 from ember_code.core.session.session_directories import SessionDirectoryStore
 
@@ -174,27 +176,25 @@ async def test_client_state_concurrent_writes_from_many_clients(tmp_path: Path):
 # ── SQLite stores: WAL + busy_timeout + explicit close contract ──────
 
 
-def test_kv_helper_sets_wal_and_busy_timeout(tmp_path: Path):
-    """The shared ``connect_kv`` helper must set WAL + a real
-    busy-timeout so concurrent readers/writers in the multi-session BE
-    don't trip ``database is locked`` or block readers behind a write.
+def test_sqlite_connections_use_wal_and_a_busy_timeout(tmp_path: Path):
+    """Every SQLite connection the engine registry opens is in WAL mode
+    with a real busy-timeout, so concurrent readers/writers in the
+    multi-session BE don't trip ``database is locked`` or block readers
+    behind a write.
 
-    Pins the configuration so a regression that removes a pragma is
+    Pins the configuration so a regression that drops either is
     immediately visible. WAL mode persists on the file; busy_timeout
     is per-connection, so both must be set on every connect.
     """
-    import contextlib
-
-    from ember_code.core.session._sqlite_utils import connect_kv
-
-    with contextlib.closing(connect_kv(tmp_path / "kv.db")) as conn:
-        # Journal mode is per-database-file once WAL is set, but each
-        # fresh connect should still verify-or-apply it.
-        mode = conn.execute("PRAGMA journal_mode").fetchone()[0]
-        assert mode.lower() == "wal", f"expected WAL, got {mode!r}"
-        # busy_timeout is per-connection.
-        bt = conn.execute("PRAGMA busy_timeout").fetchone()[0]
-        assert bt >= 1000, f"busy_timeout too low: {bt}"
+    registry = EngineRegistry()
+    try:
+        with registry.get_engine(tmp_path / "kv.db").connect() as conn:
+            mode = conn.execute(text("PRAGMA journal_mode")).scalar()
+            assert str(mode).lower() == "wal", f"expected WAL, got {mode!r}"
+            bt = conn.execute(text("PRAGMA busy_timeout")).scalar()
+            assert int(bt) >= 1000, f"busy_timeout too low: {bt}"
+    finally:
+        registry.dispose_sync()
 
 
 @pytest.mark.asyncio

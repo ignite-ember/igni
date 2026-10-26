@@ -1,8 +1,9 @@
-"""Per-project SQLite-backed store for scheduled tasks (async via SQLAlchemy).
+"""Per-project store for scheduled tasks (async via SQLAlchemy).
 
-Tasks live in ``~/.igni/projects/<project_hash>/state.db`` so each project
-has its own scheduler queue — switching projects doesn't surface another
-project's pending ``/loop`` jobs.
+On the desktop tasks live in ``~/.igni/projects/<project_hash>/state.db``;
+in the cloud in the shared database, filtered by the project's scope.
+Either way each project has its own scheduler queue — switching projects
+doesn't surface another project's pending ``/loop`` jobs.
 """
 
 from __future__ import annotations
@@ -12,12 +13,10 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from sqlalchemy import delete, select
+from sqlalchemy import Select, delete, select
 
-from ember_code.core.config.settings import Settings
-from ember_code.core.data_paths import state_db_path
 from ember_code.core.db.database import Database
-from ember_code.core.paths import DEFAULT_DATA_DIR
+from ember_code.core.db.locator import StorageLocator
 from ember_code.core.scheduler.db_models import ScheduledTaskModel
 from ember_code.core.scheduler.models import ScheduledTask, TaskStatus
 from ember_code.core.scheduler.recurrence import Recurrence
@@ -25,23 +24,8 @@ from ember_code.core.scheduler.recurrence import Recurrence
 logger = logging.getLogger(__name__)
 
 
-def _resolve_db_path(
-    db_path: str | Path | None,
-    project_dir: str | Path | None,
-) -> Path:
-    """Pick a SQLite path. Explicit ``db_path`` wins; otherwise derive from project."""
-    if db_path is not None:
-        return Path(str(db_path)).expanduser()
-    project = project_dir if project_dir is not None else Path.cwd()
-    try:
-        data_dir = Settings().storage.data_dir
-    except Exception:
-        data_dir = DEFAULT_DATA_DIR
-    return state_db_path(project, data_dir=data_dir)
-
-
 class TaskStore:
-    """Persists scheduled tasks in a per-project SQLite file (async)."""
+    """Persists scheduled tasks in the project's database (async)."""
 
     def __init__(
         self,
@@ -53,12 +37,14 @@ class TaskStore:
         if db is not None:
             self._db = db
             return
-        path = _resolve_db_path(db_path, project_dir)
-        self._db = Database(path)
+        self._db = StorageLocator.database_for(db_path, project_dir)
 
     async def add(self, task: ScheduledTask) -> None:
         async with self._db.session() as session, session.begin():
-            session.add(_task_to_row(task))
+            row = _task_to_row(task)
+            for column, value in self._db.scope.stamp().items():
+                setattr(row, column, value)
+            session.add(row)
 
     async def update_status(
         self,
@@ -82,7 +68,9 @@ class TaskStore:
         either commits before it (and wins) or after it (and stands).
         """
         async with self._db.session() as session, session.begin():
-            row = await session.get(ScheduledTaskModel, task_id)
+            row = (
+                await session.execute(self._select_one(task_id).with_for_update())
+            ).scalar_one_or_none()
             if row is None:
                 return False
             if unless_cancelled and row.status == TaskStatus.cancelled.value:
@@ -95,7 +83,9 @@ class TaskStore:
     async def remove(self, task_id: str) -> bool:
         async with self._db.session() as session, session.begin():
             result = await session.execute(
-                delete(ScheduledTaskModel).where(ScheduledTaskModel.id == task_id)
+                delete(ScheduledTaskModel).where(
+                    self._db.scope.where(ScheduledTaskModel), ScheduledTaskModel.id == task_id
+                )
             )
             return (result.rowcount or 0) > 0
 
@@ -106,6 +96,7 @@ class TaskStore:
             result = await session.execute(
                 select(ScheduledTaskModel)
                 .where(
+                    self._db.scope.where(ScheduledTaskModel),
                     ScheduledTaskModel.status == TaskStatus.pending.value,
                     ScheduledTaskModel.scheduled_at <= now,
                 )
@@ -122,7 +113,11 @@ class TaskStore:
         panel and the agent-facing ``list_scheduled_tasks`` tool
         render the store's order verbatim.
         """
-        stmt = select(ScheduledTaskModel).order_by(ScheduledTaskModel.scheduled_at.desc())
+        stmt = (
+            select(ScheduledTaskModel)
+            .where(self._db.scope.where(ScheduledTaskModel))
+            .order_by(ScheduledTaskModel.scheduled_at.desc())
+        )
         if not include_done:
             stmt = stmt.where(
                 ScheduledTaskModel.status.in_((TaskStatus.pending.value, TaskStatus.running.value))
@@ -134,8 +129,13 @@ class TaskStore:
 
     async def get(self, task_id: str) -> ScheduledTask | None:
         async with self._db.session() as session:
-            row = await session.get(ScheduledTaskModel, task_id)
+            row = (await session.execute(self._select_one(task_id))).scalar_one_or_none()
         return _row_to_task(row) if row else None
+
+    def _select_one(self, task_id: str) -> Select[tuple[ScheduledTaskModel]]:
+        return select(ScheduledTaskModel).where(
+            self._db.scope.where(ScheduledTaskModel), ScheduledTaskModel.id == task_id
+        )
 
 
 def _task_to_row(task: ScheduledTask) -> ScheduledTaskModel:

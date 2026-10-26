@@ -7,7 +7,10 @@ modules without buying navigability.
 
 from __future__ import annotations
 
-from pydantic import BaseModel, Field
+import os
+from typing import ClassVar
+
+from pydantic import BaseModel, Field, model_validator
 
 from ember_code.core.paths import home_config_dir
 
@@ -35,9 +38,25 @@ def _home_config_path(*parts: str) -> str:
 
 
 class StorageConfig(BaseModel):
+    #: The variable a deployment names its database with.
+    DATABASE_URL_ENV: ClassVar[str] = "IGNI_DATABASE_URL"
+
     data_dir: str = Field(default_factory=_home_config_path)
     audit_log: str = Field(default_factory=lambda: _home_config_path("audit.log"))
     max_history_runs: int = 10000
+    #: Where igni's state lives when it is not the desktop's files: a
+    #: SQLAlchemy URL, PostgreSQL in the cloud (``docs/CLOUD.md`` §9).
+    #: Unset, each project keeps its ``state.db`` under ``data_dir`` as
+    #: it always has. ``IGNI_DATABASE_URL`` wins over the config file —
+    #: it is a deployment's decision, made where the process is started.
+    database_url: str | None = None
+
+    @model_validator(mode="after")
+    def _database_url_from_environment(self) -> StorageConfig:
+        configured = os.environ.get(self.DATABASE_URL_ENV, "").strip()
+        if configured:
+            self.database_url = configured
+        return self
 
 
 class AuthConfig(BaseModel):

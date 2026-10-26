@@ -35,6 +35,8 @@ from ember_code.backend.session_orchestrator import SessionOrchestrator
 from ember_code.backend.supervisor import BackendSupervisor
 from ember_code.backend.workspace_signals import WorkspaceSignals
 from ember_code.core.config.settings import Settings, load_settings
+from ember_code.core.db.locator import StorageLocator
+from ember_code.core.db.scope import tenancy
 from ember_code.core.plugins.installer import PluginInstaller
 from ember_code.core.prompts.contributions import prompt_contributions
 from ember_code.extensions.contributions import (
@@ -199,6 +201,10 @@ class BackendApp:
         self._transport = ObservedTransport(await self._transport_builder.build())
 
         settings = self._load_settings_with_group_policy()
+        # Whose rows a shared database holds: the producer signed in
+        # here (docs/CLOUD.md §9). Asked only when ``IGNI_DATABASE_URL``
+        # names one — the desktop's files are nobody else's.
+        tenancy.use(SignedInPerson(settings.auth.credentials_file, ExtensionStore()).tenant)
         self._backend = BackendServer(
             settings,
             project_dir=self._project_dir,
@@ -408,7 +414,7 @@ class BackendApp:
                 api_url=self._igni_api_url,
                 session=CredentialsSession(settings.auth.credentials_file),
             ),
-            local=LocalNotificationStore.from_data_dir(settings.storage.data_dir),
+            local=LocalNotificationStore.from_locator(StorageLocator.from_settings(settings)),
             announce=self._push_bridge.notifications_changed,
         )
         receiver = ExtensionNoticeReceiver(registry=self._extensions.registry, sink=center)

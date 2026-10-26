@@ -5,7 +5,9 @@ from pathlib import Path
 import pytest
 from dotenv import load_dotenv
 
+from ember_code.core.config.schemas.storage_and_paths import StorageConfig
 from ember_code.core.config.settings import load_settings
+from ember_code.core.db.scope import tenancy
 from ember_code.core.hooks.extension_gate import ExtensionHookGate
 from ember_code.core.paths import CONFIG_DIR
 from ember_code.extensions.faults import ExtensionFaults
@@ -43,6 +45,17 @@ def _isolate_user_settings(tmp_path_factory, monkeypatch):
     monkeypatch.setattr("pathlib.Path.home", lambda: fake_home)
     monkeypatch.setattr("pathlib.Path.cwd", lambda: fake_cwd)
     monkeypatch.setenv("HOME", str(fake_home))
+
+
+@pytest.fixture(autouse=True)
+def _desktop_storage(monkeypatch):
+    """The suite runs against the desktop's SQLite files, whatever the
+    shell says: a developer's ``IGNI_DATABASE_URL`` must not point every
+    store at a shared database. The PostgreSQL tests name theirs
+    explicitly (``IGNI_TEST_DATABASE_URL``, ``tests/test_storage_backends.py``)."""
+    monkeypatch.delenv(StorageConfig.DATABASE_URL_ENV, raising=False)
+    yield
+    tenancy.use(None)
 
 
 @pytest.fixture(autouse=True)

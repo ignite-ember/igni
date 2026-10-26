@@ -21,6 +21,7 @@ from typing import Any, ClassVar
 from pydantic import BaseModel
 
 from ember_code.core.auth.credentials import CloudCredentials
+from ember_code.core.db.scope import Tenant
 from ember_code.extensions.store import ExtensionStore
 
 
@@ -82,6 +83,18 @@ class SignedInPerson:
             org=credentials.org_id,
             group=listed.group if listed is not None else credentials.group,
         )
+
+    def tenant(self) -> Tenant | None:
+        """Whose rows a shared database holds for this backend (``docs/CLOUD.md`` §9).
+
+        The org is the tenant and the producer is the principal's
+        ``ref``. ``None`` when nobody is signed in, or the sign-in names
+        no org: rows with no tenant would be nobody's to keep apart.
+        """
+        principal = self()
+        if principal is None or not principal.org:
+            return None
+        return Tenant(org=principal.org, producer=principal.ref)
 
     def meta(self) -> dict[str, Any] | None:
         """The ``_meta`` every request to an extension carries, or ``None`` when nobody is signed in."""

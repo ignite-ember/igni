@@ -22,24 +22,31 @@ from sqlalchemy import (
     CheckConstraint,
     DateTime,
     Integer,
+    PrimaryKeyConstraint,
     String,
     Text,
     UniqueConstraint,
+    false,
 )
 from sqlalchemy.orm import Mapped, mapped_column
 
 from ember_code.core.db.base import Base
+from ember_code.core.db.scope import ScopedColumns
 
 
-class LoopStateModel(Base):
+class LoopStateModel(ScopedColumns, Base):
     __tablename__ = "loop_state"
     # Single-row enforcement — the active ``/loop`` is a singleton
-    # per project, so every write targets ``id=1``. A CHECK
-    # constraint guards against a buggy caller inserting a second
-    # row.
-    __table_args__ = (CheckConstraint("id = 1", name="ck_loop_state_singleton"),)
+    # per project, so every write targets ``id=1`` in its scope. A
+    # CHECK constraint guards against a buggy caller inserting a
+    # second row; the scope is part of the key, so each project of
+    # each producer sharing a database has its own one row.
+    __table_args__ = (
+        PrimaryKeyConstraint("org", "producer", "project", "id", name="pk_loop_state"),
+        CheckConstraint("id = 1", name="ck_loop_state_singleton"),
+    )
 
-    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    id: Mapped[int] = mapped_column(Integer, nullable=False)
     run_id: Mapped[str] = mapped_column(String, nullable=False)
     prompt: Mapped[str] = mapped_column(Text, nullable=False)
     iteration_index: Mapped[int] = mapped_column(Integer, nullable=False)
@@ -47,14 +54,18 @@ class LoopStateModel(Base):
     # See :class:`LoopState` for the explicit-vs-implicit cap
     # semantic. Persisted so a restart resumes with the right
     # cap-hit behavior (terminate vs. auto-extend).
-    cap_explicit: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="0")
+    cap_explicit: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=false())
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=False), nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=False), nullable=False)
 
 
-class LoopProgressModel(Base):
+class LoopProgressModel(ScopedColumns, Base):
     __tablename__ = "loop_progress"
-    __table_args__ = (UniqueConstraint("run_id", "key", name="uq_loop_progress_run_key"),)
+    __table_args__ = (
+        UniqueConstraint(
+            "org", "producer", "project", "run_id", "key", name="uq_loop_progress_run_key"
+        ),
+    )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     run_id: Mapped[str] = mapped_column(String, nullable=False, index=True)

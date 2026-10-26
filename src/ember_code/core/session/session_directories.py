@@ -1,10 +1,12 @@
 """Global session → project-directory registry.
 
 Sessions can live in different project directories (one BE, N
-sessions, each potentially a different repo). Per-project state
-(``state.db``) can't answer "which directory does session X belong
-to?" — that's the question you ask BEFORE you know the directory —
-so this registry is GLOBAL: ``<data_dir>/sessions.db``.
+sessions, each potentially a different repo). A project's own state
+can't answer "which directory does session X belong to?" — that's the
+question you ask BEFORE you know the directory — so this registry is
+GLOBAL: the desktop's ``<data_dir>/ember.db``, or the shared database
+in the cloud, where the lookup filters by org and producer only (the
+project is what it answers) and the row records the project it names.
 
 Written whenever a runtime starts or renews its session id; read by
 the session pool when lazily resuming a session a view asked for.
@@ -14,78 +16,81 @@ exactly the pre-pool behaviour.
 
 from __future__ import annotations
 
-import contextlib
 import logging
-import sqlite3
+import time
 from pathlib import Path
 
-from ember_code.core.data_paths import data_root
-from ember_code.core.session._sqlite_utils import connect_kv
+from sqlalchemy import Integer, PrimaryKeyConstraint, String, Text, select
+from sqlalchemy.orm import Mapped, mapped_column
+
+from ember_code.core.db.base import Base
+from ember_code.core.db.database import Database
+from ember_code.core.db.locator import StorageLocator
+from ember_code.core.db.scope import ScopedColumns
+from ember_code.core.db.upsert import ConflictInsert
 
 logger = logging.getLogger(__name__)
 
 
-_SCHEMA = """
-CREATE TABLE IF NOT EXISTS ember_session_directories (
-    session_id TEXT PRIMARY KEY,
-    project_dir TEXT NOT NULL,
-    updated_at INTEGER NOT NULL DEFAULT (strftime('%s', 'now'))
-);
-"""
+class SessionDirectoryModel(ScopedColumns, Base):
+    __tablename__ = "ember_session_directories"
+    # A session is in one project, so the project is not part of the key.
+    __table_args__ = (
+        PrimaryKeyConstraint("org", "producer", "session_id", name="pk_ember_session_directories"),
+    )
+
+    session_id: Mapped[str] = mapped_column(String, nullable=False)
+    project_dir: Mapped[str] = mapped_column(Text, nullable=False)
+    updated_at: Mapped[int] = mapped_column(Integer, nullable=False)
 
 
 class SessionDirectoryStore:
-    """SQLite-backed session_id → project_dir mapping (global)."""
+    """session_id → project_dir mapping (global)."""
 
-    def __init__(self, db_path: Path) -> None:
-        self._db_path = db_path
-        self._db_path.parent.mkdir(parents=True, exist_ok=True)
-        with self._connect() as conn:
-            conn.executescript(_SCHEMA)
+    def __init__(self, db: Database | str | Path) -> None:
+        self._db = Database.of(db)
 
     @classmethod
-    def from_data_dir(cls, data_dir: str | Path) -> SessionDirectoryStore:
-
-        return cls(data_root(data_dir) / "sessions.db")
-
-    def _connect(self) -> sqlite3.Connection:
-
-        return connect_kv(self._db_path)
+    def from_locator(cls, locator: StorageLocator) -> SessionDirectoryStore:
+        return cls(locator.global_database())
 
     def set_dir(self, session_id: str, project_dir: str | Path) -> None:
         """Upsert. Best-effort — a failed write only means a later
-        resume falls back to the BE's boot directory.
-
-        Implementation note: ``sqlite3.Connection.__exit__`` (the
-        context-manager protocol) only commits/rollbacks — it does
-        NOT close the connection. Wrapping with
-        ``contextlib.closing`` guarantees the underlying handle is
-        released immediately, so a hot caller doesn't pile up live
-        Connection objects waiting for GC.
-        """
+        resume falls back to the BE's boot directory."""
         if not session_id:
             return
+        scope = self._db.scope.for_project(project_dir)
+        now = int(time.time())
         try:
-            with contextlib.closing(self._connect()) as conn, conn:
-                conn.execute(
-                    "INSERT INTO ember_session_directories (session_id, project_dir) "
-                    "VALUES (?, ?) "
-                    "ON CONFLICT(session_id) DO UPDATE SET "
-                    "project_dir=excluded.project_dir, "
-                    "updated_at=strftime('%s', 'now')",
-                    (session_id, str(project_dir)),
+            with self._db.sync_session() as session, session.begin():
+                stmt = ConflictInsert.into(session, SessionDirectoryModel).values(
+                    **scope.stamp(),
+                    session_id=session_id,
+                    project_dir=str(project_dir),
+                    updated_at=now,
+                )
+                session.execute(
+                    stmt.on_conflict_do_update(
+                        index_elements=["org", "producer", "session_id"],
+                        set_={
+                            "project": scope.project,
+                            "project_dir": str(project_dir),
+                            "updated_at": now,
+                        },
+                    )
                 )
         except Exception as exc:
             logger.debug("set_dir failed for %s: %s", session_id, exc)
 
     def get_dir(self, session_id: str) -> str | None:
         try:
-            with contextlib.closing(self._connect()) as conn:
-                row = conn.execute(
-                    "SELECT project_dir FROM ember_session_directories WHERE session_id=?",
-                    (session_id,),
-                ).fetchone()
+            with self._db.sync_session() as session:
+                return session.scalar(
+                    select(SessionDirectoryModel.project_dir).where(
+                        self._db.scope.tenant_where(SessionDirectoryModel),
+                        SessionDirectoryModel.session_id == session_id,
+                    )
+                )
         except Exception as exc:
             logger.debug("get_dir failed for %s: %s", session_id, exc)
             return None
-        return row["project_dir"] if row else None

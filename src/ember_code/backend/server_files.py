@@ -6,21 +6,23 @@ a :class:`Session`.
 * :meth:`FilesController.read_file` — sandboxed text file
   preview for the FE.
 * :meth:`FilesController.upload_attachment` — persist a
-  FE-uploaded file to a per-session attachments dir.
+  FE-uploaded file: to a per-session attachments dir on the desktop,
+  as a PostgreSQL large object in the cloud
+  (:mod:`ember_code.core.utils.attachment_store`).
 """
 
 from __future__ import annotations
 
-import base64
 import binascii
-import re
 from os.path import expanduser
 from pathlib import Path
 from typing import TYPE_CHECKING
 
 from pydantic import BaseModel
 
-from ember_code.core.paths import CONFIG_DIR, DEFAULT_DATA_DIR
+from ember_code.core.db.locator import StorageLocator
+from ember_code.core.paths import DEFAULT_DATA_DIR
+from ember_code.core.utils.attachment_store import Attachments, Base64Chunks
 
 if TYPE_CHECKING:
     from ember_code.core.session import Session
@@ -54,10 +56,6 @@ class UploadAttachmentResult(BaseModel):
 # Cap on ``read_file`` size. The RPC is only invoked by the
 # plain-browser fallback preview.
 _READ_FILE_MAX_BYTES = 256 * 1024
-
-# Substitution used to sanitise uploaded filenames before we
-# write them to disk.
-_SAFE_NAME_RE = re.compile(r"[^A-Za-z0-9._-]+")
 
 
 class FilesController:
@@ -220,23 +218,13 @@ class FilesController:
         )
 
     def upload_attachment(self, filename: str, content_base64: str) -> UploadAttachmentResult:
-        """Persist a FE-uploaded file to a per-session attachments
-        dir."""
-        safe = _SAFE_NAME_RE.sub("_", filename) or "file"
-        dest_dir = self._session.project_dir / CONFIG_DIR / "attachments" / self._session.session_id
-        dest_dir.mkdir(parents=True, exist_ok=True)
-        dest = dest_dir / safe
-        if dest.exists():
-            stem, dot, ext = safe.rpartition(".")
-            base = stem if dot else safe
-            suffix = ext if dot else ""
-            n = 2
-            while dest.exists():
-                dest = dest_dir / (f"{base}-{n}{('.' + suffix) if suffix else ''}")
-                n += 1
+        """Persist a FE-uploaded file for this session, decoding and
+        writing it a slice at a time."""
+        store = Attachments.for_project(
+            Path(self._session.project_dir), StorageLocator.from_settings(self._session.settings)
+        )
         try:
-            data = base64.b64decode(content_base64)
+            stored = store.save(self._session.session_id, filename, Base64Chunks(content_base64))
         except (binascii.Error, ValueError) as exc:
             return UploadAttachmentResult(path="", size=0, error=f"invalid base64: {exc}")
-        dest.write_bytes(data)
-        return UploadAttachmentResult(path=str(dest), size=len(data))
+        return UploadAttachmentResult(path=stored.ref, size=stored.size)

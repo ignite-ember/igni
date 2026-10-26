@@ -92,6 +92,44 @@ jobs:
       - name: Run tests
         run: uv run pytest tests/ -q -rs
 
+  # igni's stores against PostgreSQL, the cloud's database (docs/CLOUD.md
+  # section 9). The suite above runs them on SQLite; here the same tests
+  # run again on a real server, which they skip — saying why — wherever
+  # IGNI_TEST_DATABASE_URL is unset. Its own job rather than a matrix
+  # entry for the reason the test job has no matrix: the check name is
+  # what the branch ruleset requires.
+  test-postgres:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version-file: .python-version
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+
+      - name: Install dependencies
+        run: uv sync --extra dev --extra postgres
+
+      - name: Storage tests on PostgreSQL
+        env:
+          IGNI_TEST_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/postgres
+        run: uv run pytest tests/test_storage_backends.py -q -rs
+
   # The Python SDKs under packages/ (igni-service, igni-extension) have
   # dependencies of their own and are checked in their own environments,
   # the way `make packages-check` does locally.
