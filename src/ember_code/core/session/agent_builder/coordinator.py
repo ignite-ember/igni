@@ -187,7 +187,9 @@ class MainAgentBuilder:
             pre_hooks=self._guardrails_factory(s.settings),
             learning=s.learning,
             add_learnings_to_context=True,
-            tool_hooks=[tool_event_hook],
+            # In the cloud, memory-file writes reach the database
+            # after every tool call (``Session.memory_sync_hooks``).
+            tool_hooks=[tool_event_hook, *s.memory_sync_hooks()],
         )
 
     def build(self) -> Any:

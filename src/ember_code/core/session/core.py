@@ -68,6 +68,7 @@ from ember_code.core.guardrails.runner import GuardrailRunner
 from ember_code.core.hooks.events import HookEvent
 from ember_code.core.hooks.executor import HookExecutor
 from ember_code.core.hooks.loader import HookLoader
+from ember_code.core.hooks.memory_sync import MemorySyncHook
 from ember_code.core.hooks.tool_hook import ToolEventHook
 from ember_code.core.init import ProjectInitializer
 from ember_code.core.learn import create_learning_machine  # noqa: F401 — test-patch target
@@ -126,6 +127,7 @@ from ember_code.core.tools.todo import TodoStore
 from ember_code.core.utils.audit import AuditLogger
 from ember_code.core.utils.context import ProjectMemoryBank, load_project_context
 from ember_code.core.utils.display import DisplayManager
+from ember_code.core.utils.memory_files import MemoryMirror
 from ember_code.core.utils.response import extract_response_text  # noqa: F401 — test-patch target
 from ember_code.core.utils.rules_index import RulesIndex
 from ember_code.core.workspace import WorkspaceManager
@@ -393,7 +395,12 @@ class Session:
         """
         self.todo_store = TodoStore()
         self.plan_store = PlanStore()
-        ProjectMemoryBank(self.project_dir).ensure()
+        memory_bank = ProjectMemoryBank(self.project_dir)
+        memory_bank.ensure()
+        # In the cloud the memory directory is a write-through mirror of
+        # the database's rows (``core/utils/memory_files.py``); ``None``
+        # on the desktop, whose files are the store.
+        self.memory_mirror: MemoryMirror | None = memory_bank.mirror()
         self.output_styles: dict[str, OutputStyle] = {}
         self._active_output_style: str = ""
         # Owns the FE push-channel fan-out (callback list +
@@ -1331,6 +1338,11 @@ class Session:
             resolver = MCPToolResolver(mcp_manager_ref=lambda: getattr(self, "mcp_manager", None))
             self._mcp_resolver_obj = resolver
         return resolver.resolve(server, tool)
+
+    def memory_sync_hooks(self) -> list[MemorySyncHook]:
+        """The tool hook that stores memory-file writes, in the cloud."""
+        mirror = getattr(self, "memory_mirror", None)
+        return [MemorySyncHook(mirror)] if mirror is not None else []
 
     def _create_tool_event_hook(self) -> ToolEventHook:
         """Delegate to :meth:`ToolEventHookFactory.create`.

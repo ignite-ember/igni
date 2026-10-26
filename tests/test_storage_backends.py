@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import base64
 import os
+import subprocess
 import time
 import uuid
 from collections.abc import Iterator
@@ -42,6 +43,7 @@ from ember_code.core.db.locator import StorageLocator
 from ember_code.core.db.schema import HEAD_REVISION, SchemaRevision
 from ember_code.core.db.scope import NoTenantError, StorageScope, Tenant, tenancy
 from ember_code.core.db.urls import DatabaseUrl
+from ember_code.core.hooks.memory_sync import MemorySyncHook
 from ember_code.core.loop.models import LoopState
 from ember_code.core.loop.store import LoopProgressStore, LoopStore
 from ember_code.core.memory.scoped_postgres import ScopedAsyncPostgresDb
@@ -61,7 +63,12 @@ from ember_code.core.utils.attachment_store import (
     LargeObjectAttachments,
 )
 from ember_code.core.utils.context_memory import ProjectMemoryBank
-from ember_code.core.utils.memory_files import DatabaseMemoryFiles, MemoryFiles
+from ember_code.core.utils.memory_files import (
+    DatabaseMemoryFiles,
+    DirectoryMemoryFiles,
+    MemoryFiles,
+    MemoryMirror,
+)
 from ember_code.notifications.local_store import LocalNotificationStore
 from ember_code.notifications.schemas import ExtensionNotice, NotificationTarget
 from tests.storage_backends import Scopes
@@ -388,3 +395,60 @@ async def test_agno_rows_are_kept_to_their_scope(postgres_url: str):
     await mine.upsert_user_memory(UserMemory(memory="likes tea", user_id="someone-else"))
     assert [m.memory for m in await mine.get_user_memories()] == ["likes tea"]  # type: ignore[union-attr]
     assert await theirs.get_user_memories() == []
+
+
+# ── Memory files the agent writes ─────────────────────────────────
+
+
+async def test_whatever_writes_a_memory_file_writes_the_row(
+    database_url: DatabaseUrl, tmp_path: Path
+):
+    """In the cloud the memory directory is a mirror of the rows: a file
+    written by any tool — ``save_file``, a shell ``echo`` — is stored,
+    and nothing reaches past it."""
+    db = Database(database_url, scope=Scopes.fresh())
+    files = DatabaseMemoryFiles(db)
+    files.write("old.md", "from an earlier session")
+    directory = tmp_path / "memory"
+    mirror = MemoryMirror(files, directory)
+    assert mirror.fill() == 1
+    assert (directory / "old.md").read_text() == "from an earlier session"
+
+    def save_file(file_name: str, contents: str) -> str:
+        (directory / file_name).write_text(contents)
+        return "saved"
+
+    hook = MemorySyncHook(mirror)
+    assert (
+        await hook(
+            name="save_file",
+            func=save_file,
+            args={"file_name": "MEMORY.md", "contents": "- [Tea](tea.md)\n"},
+        )
+        == "saved"
+    )
+    assert files.read("MEMORY.md") == "- [Tea](tea.md)\n"
+
+    subprocess.run(
+        [
+            "sh",
+            "-c",
+            f"echo 'likes green tea' > '{directory / 'tea.md'}'; rm '{directory / 'old.md'}'",
+        ],
+        check=True,
+    )
+    assert mirror.sync() == 2
+    assert files.names() == ["MEMORY.md", "tea.md"]
+    assert files.read("tea.md") == "likes green tea\n"
+    assert ProjectMemoryBank(tmp_path, files=files).load_index() == "- [Tea](tea.md)\n"
+    assert mirror.sync() == 0, "nothing changed, nothing written"
+
+    # A new VM: the directory comes back from the rows.
+    fresh = tmp_path / "fresh"
+    assert MemoryMirror(files, fresh).fill() == 2
+    assert (fresh / "MEMORY.md").read_text() == "- [Tea](tea.md)\n"
+
+
+def test_the_desktop_has_no_mirror(tmp_path: Path):
+    bank = ProjectMemoryBank(tmp_path, files=DirectoryMemoryFiles(tmp_path / "memory"))
+    assert bank.mirror() is None

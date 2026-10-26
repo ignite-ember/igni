@@ -56,7 +56,7 @@ from pathlib import Path
 
 from ember_code.core.paths import CONFIG_DIR
 from ember_code.core.utils.context_memory_prompt import MemoryWritebackPrompt
-from ember_code.core.utils.memory_files import DirectoryMemoryFiles, MemoryFiles
+from ember_code.core.utils.memory_files import DirectoryMemoryFiles, MemoryFiles, MemoryMirror
 
 logger = logging.getLogger(__name__)
 
@@ -186,6 +186,20 @@ class ProjectMemoryBank:
         self._read_claude_fallback = read_claude_fallback
         self._files = files
 
+    def mirror(self) -> MemoryMirror | None:
+        """The write-through mirror of the memory directory, filled —
+        in the cloud. ``None`` on the desktop, where the files are the
+        store. See :mod:`ember_code.core.utils.memory_files`."""
+        files = self.files()
+        if isinstance(files, DirectoryMemoryFiles):
+            return None
+        mirror = MemoryMirror(files, self.ember_dir())
+        try:
+            mirror.fill()
+        except OSError as exc:
+            logger.warning("memory files: could not fill %s: %s", mirror.directory, exc)
+        return mirror
+
     def files(self) -> MemoryFiles:
         """Where this project's memory files are: :meth:`ember_dir` on the
         desktop, the shared database in the cloud (:class:`MemoryFiles`)."""
@@ -232,6 +246,8 @@ class ProjectMemoryBank:
         """
         target = self.ember_dir()
         if not isinstance(self.files(), DirectoryMemoryFiles):
+            # The cloud: the directory is the database's, filled by
+            # :meth:`mirror` — nothing to create here.
             return target
         try:
             target.mkdir(parents=True, exist_ok=True)

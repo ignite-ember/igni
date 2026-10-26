@@ -55,6 +55,7 @@ from ember_code.backend.session_checkpointer import SessionCheckpointer
 from ember_code.backend.stream_event_dispatcher import StreamEventDispatcher
 from ember_code.core.session.queued_messages import DurableMessageQueue
 from ember_code.core.tools.process_supervisor_locator import supervisors
+from ember_code.core.utils.memory_files import MemoryMirror
 from ember_code.protocol import messages as msg
 
 if TYPE_CHECKING:
@@ -563,6 +564,10 @@ class RunController:
             queue = getattr(self._backend, "message_queue", None)
             if isinstance(queue, DurableMessageQueue):
                 await queue.settle(self._session.db)
+            # Memory files the run wrote, whatever tool wrote them.
+            mirror = getattr(self._session, "memory_mirror", None)
+            if isinstance(mirror, MemoryMirror):
+                await asyncio.to_thread(mirror.sync)
 
         # Fire Stop hook after the natural end-of-run.
         stop_gate = await self._hook_gate.fire_stop()
