@@ -110,21 +110,42 @@ LoadCredentialsResult.model_rebuild(_types_namespace={"Credentials": Credentials
 
 
 class EnvironmentCredentials:
-    """The cloud's credentials: what the gateway put in the environment.
+    """The cloud's credentials: what the gateway hands the VM.
 
     The gateway hands the producer's VM its token (``docs/CLOUD.md``);
-    igni reads it from ``IGNI_ACCESS_TOKEN`` (and the optional
-    ``IGNI_ACCESS_TOKEN_EXPIRES_AT``, ``IGNI_EMAIL``) and never keeps a
-    ``credentials.json``.
+    igni never keeps a ``credentials.json``. Two ways, the first that is
+    set wins:
+
+    * ``IGNI_ACCESS_TOKEN_FILE`` — a file holding the token, which the
+      gateway rewrites (write a temporary file, rename over) whenever it
+      refreshes the token. igni reads it on every credentials load, so a
+      fresh token reaches a running VM — after a resume too — without a
+      restart;
+    * ``IGNI_ACCESS_TOKEN`` — the token itself, fixed for the process's
+      life.
+
+    ``IGNI_ACCESS_TOKEN_EXPIRES_AT`` and ``IGNI_EMAIL`` are optional.
     """
 
+    TOKEN_FILE_ENV = "IGNI_ACCESS_TOKEN_FILE"
     TOKEN_ENV = "IGNI_ACCESS_TOKEN"
     EXPIRES_ENV = "IGNI_ACCESS_TOKEN_EXPIRES_AT"
     EMAIL_ENV = "IGNI_EMAIL"
 
     @classmethod
+    def token(cls) -> str:
+        path = os.environ.get(cls.TOKEN_FILE_ENV, "").strip()
+        if path:
+            try:
+                return Path(path).read_text(encoding="utf-8").strip()
+            except OSError as exc:
+                logger.warning("cannot read the token the gateway wrote at %s: %s", path, exc)
+                return ""
+        return os.environ.get(cls.TOKEN_ENV, "").strip()
+
+    @classmethod
     def load(cls) -> LoadCredentialsResult:
-        token = os.environ.get(cls.TOKEN_ENV, "").strip()
+        token = cls.token()
         if not token:
             return LoadCredentialsResult(ok=False, reason="no_file")
         return LoadCredentialsResult(

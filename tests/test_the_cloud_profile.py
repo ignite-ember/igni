@@ -179,3 +179,17 @@ def test_mcp_approvals_are_only_what_igni_server_delivered(cloud, tmp_path: Path
     assert not approvals.check_approval("local", "/repo/.mcp.json")
     approvals.approve("local", "/repo/.mcp.json")
     assert approvals_file.read_text() == '{"local": ["/repo/.mcp.json"]}', "nothing written"
+
+
+def test_a_fresh_token_reaches_a_running_vm_through_the_file_the_gateway_writes(
+    cloud, monkeypatch, tmp_path: Path
+):
+    token_file = tmp_path / "token"
+    token_file.write_text("first\n")
+    monkeypatch.setenv(EnvironmentCredentials.TOKEN_FILE_ENV, str(token_file))
+    monkeypatch.setenv(EnvironmentCredentials.TOKEN_ENV, "ignored when the file is named")
+    assert CloudCredentials().access_token == "first"
+    fresh = tmp_path / "token.new"
+    fresh.write_text("second")
+    fresh.replace(token_file)  # how the gateway refreshes it
+    assert CloudCredentials().access_token == "second"
