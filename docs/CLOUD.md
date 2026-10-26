@@ -330,7 +330,7 @@ the four raw `sqlite3` stores (`core/session/_sqlite_utils.py`,
 `INSERT OR IGNORE`, `strftime` defaults and own DDL; the SQLite upsert in
 `core/tools/process_store.py`. No back-compat and no data migration.
 
-## 10. The producer's volume (proposed, being measured)
+## 10. The producer's volume (proposed, measured nested)
 
 - **Automatic.** The node agent creates a producer's volume the first
   time the producer appears. Neither the guest, nor the org, nor an
@@ -358,6 +358,40 @@ the four raw `sqlite3` stores (`core/session/_sqlite_utils.py`,
   before every suspend to keep that loss small.
 - **Later**, if managed network storage is outgrown: a block-storage
   cluster (Ceph) behind the same `/dev/vdb`.
+
+Measured (`igni__cloudvm` `c72ae92`, nested, an NFS server VM in the same
+subnet; 8 GB sparse image, loop device, dm-crypt `aes-xts-plain64`, p50 ms):
+
+| | Suspend | Resume | First request |
+|---|---|---|---|
+| No volume, in memory | 9.5 | 4.5 | 51 |
+| Volume, mapping kept on the node | 47 | 4.5 | 56 |
+| Volume, mapped fresh (new node) | 44 | 27 | 54 |
+| Volume, guest flushes before suspend | 62 | 4.5 | 55 |
+| Volume, mapping kept, on disk | 57 | 15 | 162 |
+
+- Resume is unchanged when the node keeps a recently suspended
+  producer's volume mapped and leased; a move to another node adds
+  23–44 ms (lock, loop device, dm-crypt).
+- Suspend rises to 45–60 ms: Firecracker syncs the drive inside every
+  snapshot, which pushes buffered volume writes to NFS. Nobody waits on
+  it.
+- Creating a volume on first use: about 80 ms. Cold boot from base and
+  volume after a node loss: 2.2 s to the first request; packages
+  installed as root and workspace files survived every cycle.
+- File operations against local NVMe: small write plus sync 3.7 vs 1.3 ms,
+  sequential write 207 vs 304 MB/s; `git clone` and `pip install`
+  about the same (download-bound). Keep host readahead on.
+- Isolation from guest root: only the base disk and its volume are
+  visible; the storage server, the node, the internal network and the
+  metadata server stay blocked even after root adds routes; a second
+  open of a volume is refused. Every node agent must use the same
+  `fcntl` lock.
+- **The shared warm base snapshot must not contain a mounted producer
+  volume** — restoring it over another producer's volume corrupts it. The
+  base is taken with a placeholder disk, unmounted, and the producer's
+  volume is swapped in after restore (not measured yet). Each VM needs
+  its own drive path (Firecracker's jailer).
 
 ## 11. Open decisions
 
