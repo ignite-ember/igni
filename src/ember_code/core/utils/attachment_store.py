@@ -8,7 +8,18 @@ shared database, scoped like every other row
 
 Either way an upload arrives as chunks and is written as it arrives, and
 a stored one is read back as chunks: an attachment is never held whole
-in memory by the store. A large object is written and read through the
+in memory by the store.
+
+**Reading one.** A message names an upload by the reference the upload
+returned — a path on the desktop, ``attachment:<id>`` in the cloud —
+and every reader goes through the store, which resolves either:
+:meth:`Attachments.open` streams its bytes, and
+:meth:`Attachments.local_path` gives a file the agent's tools and the
+vision models' media can read, writing a large object out to it chunk by
+chunk the first time (a cache under the session's attachments
+directory; the database stays the record).
+:class:`AttachmentReferences` puts those paths in place of the
+references in a message before anything reads it. A large object is written and read through the
 server-side ``lo_*`` functions, inside one transaction — so a failed
 upload leaves neither a row nor an orphaned object behind.
 """
@@ -96,13 +107,25 @@ class Attachments(ABC):
 
     @abstractmethod
     def open(self, ref: str) -> Iterator[bytes]:
-        """The stored bytes, a chunk at a time."""
+        """The stored bytes, a chunk at a time — for a path or an
+        ``attachment:<id>`` the store holds."""
+
+    @abstractmethod
+    def local_path(self, ref: str) -> Path | None:
+        """A readable file with the attachment's bytes, or ``None`` when
+        there is no such attachment."""
+
+    @staticmethod
+    def _file_chunks(path: Path) -> Iterator[bytes]:
+        with path.open("rb") as source:
+            while chunk := source.read(LargeObjectAttachments.CHUNK):
+                yield chunk
 
     @staticmethod
     def for_project(project_dir: Path, locator: StorageLocator) -> Attachments:
         """Large objects where the shared database is PostgreSQL; files otherwise."""
         if locator.shared and locator.project_url(project_dir).dialect is Dialect.POSTGRESQL:
-            return LargeObjectAttachments(locator.project_database(project_dir))
+            return LargeObjectAttachments(locator.project_database(project_dir), project_dir)
         return DirectoryAttachments(project_dir)
 
 
@@ -141,9 +164,15 @@ class DirectoryAttachments(Attachments):
         return StoredAttachment(ref=str(dest), size=size)
 
     def open(self, ref: str) -> Iterator[bytes]:
-        with Path(ref).open("rb") as source:
-            while chunk := source.read(LargeObjectAttachments.CHUNK):
-                yield chunk
+        if ref.startswith(LargeObjectAttachments.REF_PREFIX):
+            raise FileNotFoundError(f"{ref}: the desktop keeps attachments as files")
+        return self._file_chunks(Path(ref))
+
+    def local_path(self, ref: str) -> Path | None:
+        if ref.startswith(LargeObjectAttachments.REF_PREFIX):
+            return None
+        path = Path(ref)
+        return path if path.is_file() else None
 
 
 class LargeObjectAttachments(Attachments):
@@ -156,10 +185,12 @@ class LargeObjectAttachments(Attachments):
     _INV_WRITE = 0x20000
     _INV_READ = 0x40000
 
-    def __init__(self, db: Database) -> None:
+    def __init__(self, db: Database, project_dir: Path | None = None) -> None:
         if db.url.dialect is not Dialect.POSTGRESQL:
             raise ValueError("large objects are PostgreSQL's")
         self._db = db
+        #: Where :meth:`local_path` writes readable copies.
+        self._project_dir = project_dir if project_dir is not None else Path.cwd()
 
     def save(self, session_id: str, filename: str, chunks: Iterable[bytes]) -> StoredAttachment:
         attachment_id = uuid.uuid4().hex
@@ -199,7 +230,36 @@ class LargeObjectAttachments(Attachments):
                 )
             )
 
+    def local_path(self, ref: str) -> Path | None:
+        if not ref.startswith(self.REF_PREFIX):
+            path = Path(ref)
+            return path if path.is_file() else None
+        row = self._row(ref)
+        if row is None:
+            return None
+        cache = (
+            self._project_dir
+            / CONFIG_DIR
+            / "attachments"
+            / row.session_id
+            / f"{row.id}-{row.filename}"
+        )
+        if cache.is_file() and cache.stat().st_size == row.size:
+            return cache
+        cache.parent.mkdir(parents=True, exist_ok=True)
+        partial = cache.with_name(cache.name + ".partial")
+        with partial.open("wb") as out:
+            for chunk in self.open(ref):
+                out.write(chunk)
+        partial.replace(cache)
+        return cache
+
     def open(self, ref: str) -> Iterator[bytes]:
+        if not ref.startswith(self.REF_PREFIX):
+            return self._file_chunks(Path(ref))
+        return self._read_object(ref)
+
+    def _read_object(self, ref: str) -> Iterator[bytes]:
         row = self._row(ref)
         if row is None:
             raise FileNotFoundError(ref)
@@ -231,8 +291,31 @@ class LargeObjectAttachments(Attachments):
         return True
 
 
+class AttachmentReferences:
+    """The uploads a message names, made readable before anything reads it."""
+
+    #: An upload kept in the database (``LargeObjectAttachments.REF_PREFIX``).
+    PATTERN: ClassVar[re.Pattern[str]] = re.compile(r"attachment:[0-9a-f]{32}")
+
+    @classmethod
+    def present(cls, text: str) -> bool:
+        return cls.PATTERN.search(text) is not None
+
+    @classmethod
+    def localize(cls, text: str, store: Attachments) -> str:
+        """``text`` with each ``attachment:<id>`` the store holds replaced
+        by the readable file :meth:`Attachments.local_path` gives."""
+
+        def readable(match: re.Match[str]) -> str:
+            path = store.local_path(match.group(0))
+            return str(path) if path is not None else match.group(0)
+
+        return cls.PATTERN.sub(readable, text)
+
+
 __all__ = [
     "AttachmentModel",
+    "AttachmentReferences",
     "Attachments",
     "Base64Chunks",
     "DirectoryAttachments",

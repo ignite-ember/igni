@@ -16,6 +16,7 @@ than the builder reaching for private session state.
 from __future__ import annotations
 
 from datetime import datetime
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -26,6 +27,8 @@ from ember_code.backend.schemas_run import (
     PromptBuildResult,
 )
 from ember_code.core.config.model_entry import ModelRegistryEntry
+from ember_code.core.db.locator import StorageLocator
+from ember_code.core.utils.attachment_store import AttachmentReferences, Attachments
 from ember_code.core.utils.media import MediaResolver
 from ember_code.core.utils.mentions import process_file_mentions
 from ember_code.protocol import messages as msg
@@ -86,6 +89,7 @@ class PromptBuilder:
         yields ``info_messages`` in order, then uses ``message`` +
         ``media`` as the Agno inputs."""
         info: list[msg.Info] = []
+        text = self._localize_attachments(text)
         text, mentioned_files = process_file_mentions(text)
         if mentioned_files:
             info.append(msg.Info(text=f"Referenced: {', '.join(mentioned_files)}"))
@@ -127,6 +131,17 @@ class PromptBuilder:
         if isinstance(entry, dict):
             return ModelConfig.model_validate(entry)
         return ModelConfig()
+
+    def _localize_attachments(self, text: str) -> str:
+        """Uploads named ``attachment:<id>`` (the cloud's), read through
+        the store into files every later step can read — the mentions,
+        the vision models' media, the agent's own tools."""
+        if not AttachmentReferences.present(text):
+            return text
+        store = Attachments.for_project(
+            Path(self._session.project_dir), StorageLocator.from_settings(self._session.settings)
+        )
+        return AttachmentReferences.localize(text, store)
 
     def _attach_file_references(
         self,

@@ -24,6 +24,7 @@ import uuid
 from collections.abc import Iterator
 from datetime import datetime, timedelta
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 from agno.db.base import SessionType
@@ -35,6 +36,7 @@ from click.testing import CliRunner
 from sqlalchemy import text
 from sqlalchemy.engine import make_url
 
+from ember_code.backend.server_files import FilesController
 from ember_code.cli.migrate import migrate
 from ember_code.core.db.base import Base
 from ember_code.core.db.database import Database
@@ -57,6 +59,7 @@ from ember_code.core.session.session_preferences import SessionPreferencesStore
 from ember_code.core.tools.process_store import BackgroundProcessStore
 from ember_code.core.tools.process_store_schemas import BackgroundProcessRow
 from ember_code.core.utils.attachment_store import (
+    AttachmentReferences,
     Attachments,
     Base64Chunks,
     DirectoryAttachments,
@@ -452,3 +455,51 @@ async def test_whatever_writes_a_memory_file_writes_the_row(
 def test_the_desktop_has_no_mirror(tmp_path: Path):
     bank = ProjectMemoryBank(tmp_path, files=DirectoryMemoryFiles(tmp_path / "memory"))
     assert bank.mirror() is None
+
+
+# ── Reading an attachment, whichever reference names it ───────────
+
+
+def test_a_message_names_a_cloud_upload_and_it_is_read_through_the_store(
+    postgres_url: str, tmp_path: Path
+):
+    url = DatabaseUrl.parse(postgres_url)
+    tenancy.use(lambda: Tenant(org="acme", producer="person:ada"))
+    locator = StorageLocator(database_url=url.url, data_dir=tmp_path)
+    store = Attachments.for_project(tmp_path, locator)
+    payload = os.urandom(2 * LargeObjectAttachments.CHUNK + 5)
+    stored = store.save("s1", "notes.txt", [payload[:1000], payload[1000:]])
+
+    text = f"summarise @{stored.ref} please"
+    assert AttachmentReferences.present(text)
+    localized = AttachmentReferences.localize(text, store)
+    [path] = [token[1:] for token in localized.split() if token.startswith("@")]
+    assert Path(path).read_bytes() == payload
+    assert Path(path).is_relative_to(tmp_path / ".igni" / "attachments" / "s1")
+    assert AttachmentReferences.localize(text, store) == localized, "the copy is reused"
+
+    # The same store reads a desktop path, and an unknown reference stays as written.
+    plain = tmp_path / "plain.txt"
+    plain.write_text("on disk")
+    assert b"".join(store.open(str(plain))) == b"on disk"
+    unknown = "attachment:" + "0" * 32
+    assert AttachmentReferences.localize(unknown, store) == unknown
+
+    preview = FilesController(
+        SimpleNamespace(
+            project_dir=tmp_path,
+            session_id="s1",
+            settings=SimpleNamespace(
+                storage=SimpleNamespace(data_dir=str(tmp_path), database_url=url.url)
+            ),
+        )
+    ).read_file(stored.ref)
+    assert preview.error == "" and preview.size == len(payload)
+
+
+def test_the_desktop_store_reads_paths_and_knows_no_cloud_references(tmp_path: Path):
+    store = DirectoryAttachments(tmp_path)
+    stored = store.save("s1", "a.txt", [b"hello"])
+    assert store.local_path(stored.ref) == Path(stored.ref)
+    assert b"".join(store.open(stored.ref)) == b"hello"
+    assert store.local_path("attachment:" + "1" * 32) is None

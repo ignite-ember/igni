@@ -22,7 +22,11 @@ from pydantic import BaseModel
 
 from ember_code.core.db.locator import StorageLocator
 from ember_code.core.paths import DEFAULT_DATA_DIR
-from ember_code.core.utils.attachment_store import Attachments, Base64Chunks
+from ember_code.core.utils.attachment_store import (
+    AttachmentReferences,
+    Attachments,
+    Base64Chunks,
+)
 
 if TYPE_CHECKING:
     from ember_code.core.session import Session
@@ -158,12 +162,23 @@ class FilesController:
         renders the file as plain text."""
         return cls._LANG_BY_EXT.get(suffix.lower(), "")
 
+    def _attachments(self) -> Attachments:
+        return Attachments.for_project(
+            Path(self._session.project_dir), StorageLocator.from_settings(self._session.settings)
+        )
+
     def read_file(self, path: str) -> ReadFileResult:
         """Read a small text file for FE preview.
 
         Sandboxed: the resolved path must live under the current
         project dir OR under ``~/.igni``.
         """
+        if AttachmentReferences.present(path):
+            # An upload kept in the database: read through the store.
+            local = self._attachments().local_path(path)
+            if local is None:
+                return ReadFileResult(path=path, contents="", size=0, error="File not found.")
+            path = str(local)
         try:
             requested = Path(path).expanduser()
             if not requested.is_absolute():
@@ -220,9 +235,7 @@ class FilesController:
     def upload_attachment(self, filename: str, content_base64: str) -> UploadAttachmentResult:
         """Persist a FE-uploaded file for this session, decoding and
         writing it a slice at a time."""
-        store = Attachments.for_project(
-            Path(self._session.project_dir), StorageLocator.from_settings(self._session.settings)
-        )
+        store = self._attachments()
         try:
             stored = store.save(self._session.session_id, filename, Base64Chunks(content_base64))
         except (binascii.Error, ValueError) as exc:
