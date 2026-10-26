@@ -380,7 +380,7 @@ class GroupPolicyCache:
         If ``o.source_url`` is set, defer to :class:`PluginInstaller`,
         which clones to ``<data_dir>/group-policy/plugins/<name>``.
         On install failure (``GitError`` / network / bad manifest /
-        already installed by another group) we log and continue —
+        already installed) we log and continue —
         one bad plugin must not abort the rest of the pack.
 
         If ``source_url`` is empty, fall back to writing the entry's
@@ -417,7 +417,7 @@ class GroupPolicyCache:
             )
         except PluginError as exc:
             # ``PluginError`` covers manifest-missing, already
-            # installed by another group, etc. Treat "already
+            # installed, etc. Treat "already
             # installed" as success — the installer is idempotent
             # at the manifest level, not at the URL level.
             msg = str(exc).lower()

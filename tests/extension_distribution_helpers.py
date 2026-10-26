@@ -226,7 +226,7 @@ class Listed:
         groups: list[str] | None = None,
     ) -> None:
         self.archive = archive
-        #: The groups it is switched on for: the person's own by default.
+        #: The groups it is switched on for: the person's group by default.
         self.groups = groups if groups is not None else [PERSON_GROUP]
         self.extension_id = extension_id
         self.version = version
@@ -263,8 +263,8 @@ class FakeIgni:
         self.listed: dict[str, Listed] = {}
         #: The super admin's decisions on collisions, as the listing carries them.
         self.priority: list[str] = []
-        #: The signed-in person's groups, as igni server reads them when it lists.
-        self.groups: list[str] = [PERSON_GROUP]
+        #: The one group the signed-in person belongs to, as igni server reads it when it lists.
+        self.group: str | None = PERSON_GROUP
         self.requests: list[httpx.Request] = []
         self.listing_status = 200
         self.token_status = 200
@@ -301,7 +301,7 @@ class FakeIgni:
             return httpx.Response(
                 200,
                 json={
-                    "groups": self.groups,
+                    "group": self.group,
                     "extensions": [entry.row() for entry in self.listed.values()],
                     "priority": self.priority,
                 },

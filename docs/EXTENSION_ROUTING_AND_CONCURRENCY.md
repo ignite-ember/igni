@@ -3,9 +3,9 @@
 ## Status
 
 Agreed design (2026-10-25). **Built for one person** (§11): extensions
-enabled per group, the person's groups in their session and in the
+enabled per group, the person's one group in their session and in the
 extension listing, a machine installing only what is on for their
-groups, every call naming its principal, `Caller` and
+group, every call naming its principal, `Caller` and
 `ext.service.for_(caller)` in the SDK, and the concurrency harness.
 
 **Superseded — §3 apps, §5–§8 shared-backend routing:** the cloud/API
@@ -20,9 +20,9 @@ not be needed. Those sections stay below as the record of the earlier
 design; the cloud design under discussion replaces them.
 
 **Current** — what is built (§11) and holds under either design:
-per-group enablement (off by default), the person's groups in their
+per-group enablement (off by default), the person's one group in their
 session and in the extension listing, a machine installing only what is
-on for their groups, every call naming its principal, `Caller` and
+on for their group, every call naming its principal, `Caller` and
 `ext.service.for_(caller)` in the SDK, and the concurrency harness.
 
 ## 1. The rule this serves
@@ -39,7 +39,7 @@ there is an app to host it.
 Two requirements follow:
 
 1. **Routing.** An extension is enabled for chosen groups (and apps). A
-   call from app1 must only reach what app1's groups enabled, and the
+   call from app1 must only reach what was enabled for app1, and the
    extension must act for app1, not for app2 or for whoever happened to
    call last.
 2. **Parallelism.** One extension process serves every caller of its
@@ -86,18 +86,22 @@ Principal
   kind:    person | app
   id:      stable id on igni server (user id / app id)
   org:     organisation id
-  groups:  [group ids]            # people only; an app has none
+  group:   group id | null        # a person's one group; an app has none
   session: igni session id | null # which conversation, when there is one
 ```
 
-- **People** belong to groups. Groups hold people, nothing else.
+- **A person belongs to exactly one group** in their organisation (or,
+  briefly, none: they then get no extension). Groups hold people,
+  nothing else. One group is what keeps a person's world unambiguous:
+  one policy pack, one set of extensions, one VM profile — never a
+  merge of several groups' choices, and never a conflict between them.
 - **Apps** are the other producer. An org admin registers an app on the
   portal (name, owner); it gets client credentials (private_key_jwt,
   same as services) and calls igni's API **as itself**. An app is not in
   any group and does not act on behalf of a person.
-- A person's groups are resolved by igni server at token time and
-  carried in the igni token; the backend never trusts groups a caller
-  claims.
+- A person's group is resolved by igni server at token time and
+  carried in the igni token (`group`); the backend never trusts a group
+  a caller claims.
 - In app mode the principal is always the signed-in person.
 
 ## 4. Enablement: who gets which extension
@@ -122,7 +126,7 @@ The floor checks, once, at the edge — the extension never sees a call
 it should not get.
 
 For each call the backend resolves the principal, then filters by the
-principal's groups:
+principal's group (a person) or by the app itself:
 
 | What | Filter |
 |---|---|
@@ -149,7 +153,7 @@ principal in MCP's request `_meta`:
 
 ```json
 {"_meta": {"igni/principal": {"kind": "app", "id": "…", "org": "…",
-           "groups": ["…"], "session": "…"}}}
+           "group": null, "session": "…"}}}
 ```
 
 The SDK turns it into a typed `Caller` the tool receives:
@@ -212,7 +216,7 @@ documented in `igni__code-index/docs/tenancy.md`); nothing changes there.
 
 | Repo | Change |
 |---|---|
-| ember-server | `App` producer + portal page with its enabled extensions; `extensions` group entry kind + per-group enablement UI (off by default); groups in igni tokens; token for a principal on a service's audience; extension list carries groups and apps |
+| ember-server | `App` producer + portal page with its enabled extensions; `extensions` group entry kind + per-group enablement UI (off by default); the person's one group in igni tokens; token for a principal on a service's audience; extension list carries groups and apps |
 | igni (floor) | principal resolution per request; per-principal tool/hook/prompt filtering; principal in MCP `_meta`; per-principal service tokens; concurrent dispatch with timeouts; shared profile allows sidecars |
 | igni-extension SDK | `Caller`; `ext.service.for_(caller)`; concurrency test harness; docs on not blocking the loop |
 | igni-service SDK | nothing new — services already see the person/app through the token |
@@ -226,13 +230,16 @@ documented in `igni__code-index/docs/tenancy.md`); nothing changes there.
 3. Background work is the extension's: local in its own processes,
    server-side in the service's workers.
 4. No pools, copies or queues in the floor; the extension runs its own.
+5. A person belongs to exactly one group (2026-10-26): the token and the
+   listing carry `group`, the principal carries `group`, and nothing
+   merges several groups' packs or extensions.
 
 ## 11. Built (single person)
 
 | Where | What |
 |---|---|
-| igni server | `org_group_extensions` (tenant migration `t0003`); `GET`/`PUT /v1/portal/groups/{group_id}/extensions[/{extension_id}]` (org admin); the group page's **Extensions** tab; `GET /v1/extensions` lists only what is on for the person's groups, with top-level `groups` and each extension's `groups`, and `priority` naming only those; bundle and assets a 404 otherwise; the CLI session token carries `groups` |
-| igni | `DistributionListing.entitled()` installs only extensions whose `groups` meet the person's, and removes one switched off; the person's groups kept in the store (`.groups.json`); `SignedInPerson` is the principal; every tool call to an extension's server carries `_meta["igni/principal"]` (`RequestMetaSession`, only for `source == "extension"`); every hook frame carries `principal`; the token endpoint refuses `X-Igni-Principal` naming anybody but the signed-in person |
+| igni server | `org_group_extensions` (tenant migration `t0003`); `GET`/`PUT /v1/portal/groups/{group_id}/extensions[/{extension_id}]` (org admin); the group page's **Extensions** tab; `GET /v1/extensions` lists only what is on for the person's group, with top-level `group` (theirs) and each extension's `groups` (every group it is on for), and `priority` naming only those; bundle and assets a 404 otherwise; the CLI session token carries `group` |
+| igni | `DistributionListing.entitled()` installs only extensions whose `groups` include the person's `group` (none when they are in no group), and removes one switched off; the person's group kept in the store (`.group.json`); `SignedInPerson` is the principal; every tool call to an extension's server carries `_meta["igni/principal"]` (`RequestMetaSession`, only for `source == "extension"`); every hook frame carries `principal`; the token endpoint refuses `X-Igni-Principal` naming anybody but the signed-in person |
 | igni-extension | `Caller` (a parameter typed `Caller` or `Caller \| None`, filled from the call and left out of the tool's input; `Caller.current()` anywhere inside it, worker threads included); hook handlers take one too; `ext.service.for_(caller)` (`X-Igni-Principal`, one token cache per caller); `testing.ConcurrencyHarness`, `HostHarness.call(..., caller=)`, `FakeHost.hook(..., caller=)` |
 | CodeIndex | `status`, `indicator`, `overview`, `breakdown` take `caller: Caller \| None` and ask the service as them; repositories remembered per caller |
 | Starter | every tool takes `caller: Caller` and calls `ext.service.for_(caller)` |

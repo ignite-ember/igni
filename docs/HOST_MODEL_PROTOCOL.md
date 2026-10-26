@@ -131,9 +131,9 @@ extension declared in `permissions.hooks`. A deciding event carries an
 ```json
 {"op": "hook", "id": "h-12", "event": "PreToolUse",
  "value": {"session_id": "…", "tool_name": "run_shell_command", "tool_args": {"command": "ls"}},
- "principal": {"kind": "person", "id": "u-1", "org": "o-1", "groups": ["g-1"], "session": null}}
+ "principal": {"kind": "person", "id": "u-1", "org": "o-1", "group": "g-1", "session": null}}
 {"op": "hook", "id": null, "event": "SessionStart", "value": {"session_id": "…", "resumed": false},
- "principal": {"kind": "person", "id": "u-1", "org": "o-1", "groups": ["g-1"], "session": null}}
+ "principal": {"kind": "person", "id": "u-1", "org": "o-1", "group": "g-1", "session": null}}
 ```
 
 `principal` is whom the event is for — the shape a tool call carries in

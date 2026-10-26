@@ -74,9 +74,9 @@ DISTRIBUTION_SUFFIX = ".distribution.json"
 #: distribution listing carried it.
 PRIORITY_FILE = ".priority.json"
 
-#: The signed-in person's groups, as the last distribution listing
-#: carried them: who this machine's extensions were installed for.
-GROUPS_FILE = ".groups.json"
+#: The signed-in person's group, as the last distribution listing
+#: carried it: who this machine's extensions were installed for.
+GROUP_FILE = ".group.json"
 
 
 class StoreError(Exception):
@@ -106,10 +106,11 @@ class StoredPriority(BaseModel):
     priority: list[str] = Field(default_factory=list)
 
 
-class StoredGroups(BaseModel):
-    #: The signed-in person's groups in their organisation, read by igni
-    #: server when it listed what they get (its §8.3).
-    groups: list[str] = Field(default_factory=list)
+class StoredGroup(BaseModel):
+    #: The one group the signed-in person belongs to in their
+    #: organisation, read by igni server when it listed what they get
+    #: (its §8.3); ``None`` when they are in none.
+    group: str | None = None
 
 
 class ExtensionStore:
@@ -325,22 +326,22 @@ class ExtensionStore:
             return StoredPriority()
 
     @property
-    def groups_path(self) -> Path:
-        return self._root / GROUPS_FILE
+    def group_path(self) -> Path:
+        return self._root / GROUP_FILE
 
-    def record_groups(self, groups: list[str]) -> None:
-        """Keep the person's groups the listing carried, for the next start before igni answers."""
+    def record_group(self, group: str | None) -> None:
+        """Keep the person's group the listing carried, for the next start before igni answers."""
         self._root.mkdir(parents=True, exist_ok=True)
-        stored = StoredGroups(groups=groups)
-        self.groups_path.write_text(stored.model_dump_json(indent=2) + "\n", encoding="utf-8")
+        stored = StoredGroup(group=group)
+        self.group_path.write_text(stored.model_dump_json(indent=2) + "\n", encoding="utf-8")
 
-    def groups(self) -> list[str] | None:
-        """The person's groups as last received; ``None`` if no listing ever arrived."""
-        path = self.groups_path
+    def group(self) -> StoredGroup | None:
+        """The person's group as last received; ``None`` if no listing ever arrived."""
+        path = self.group_path
         if not path.is_file():
             return None
         try:
-            return StoredGroups.model_validate_json(path.read_text(encoding="utf-8")).groups
+            return StoredGroup.model_validate_json(path.read_text(encoding="utf-8"))
         except (OSError, ValidationError) as exc:
             logger.warning("ignoring %s: %s", path, exc)
             return None

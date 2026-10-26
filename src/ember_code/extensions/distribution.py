@@ -25,11 +25,12 @@ is installed:
    and hand it to the ordinary boot path — trust, profile, capability
    resolution — through :class:`ExtensionLifecycle`.
 
-Only an extension switched on for one of the signed-in person's groups
-is installed (igni server's §8.3): the listing names nothing else, and
-the machine checks each entry's ``groups`` against the person's own. An
-extension igni distributed that is no longer listed — its service gone,
-or switched off for the person's groups — is stopped and removed. A **development install** of the same id is
+A person belongs to exactly one group. Only an extension switched on
+for the signed-in person's group is installed (igni server's §8.3): the
+listing names nothing else, and the machine checks that the person's
+``group`` is in each entry's ``groups``. An extension igni distributed
+that is no longer listed — its service gone, or switched off for the
+person's group — is stopped and removed. A **development install** of the same id is
 left alone in both directions: a developer running their own build of
 an extension is not overwritten by the released one, and its absence
 from the listing is not a reason to delete it.
@@ -116,8 +117,9 @@ class DistributedExtension(BaseModel):
 class DistributionListing(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
-    #: The signed-in person's own groups, read by igni server as it listed.
-    groups: list[str] = Field(default_factory=list)
+    #: The one group the signed-in person belongs to, read by igni
+    #: server as it listed; ``None`` when they are in none.
+    group: str | None = None
     extensions: list[DistributedExtension] = Field(default_factory=list)
     #: The super admin's priority order of extensions, highest first:
     #: it settles every collision (:mod:`ember_code.extensions.impact`)
@@ -125,15 +127,16 @@ class DistributionListing(BaseModel):
     priority: list[str] = Field(default_factory=list)
 
     def entitled(self) -> list[DistributedExtension]:
-        """What the person gets: each extension switched on for one of their groups.
+        """What the person gets: each extension switched on for their group.
 
         igni server lists nothing else (its §8.3); this is the machine's
         own check of the same rule, so an extension reaches only the
         people whose group an org admin switched it on for, whatever a
         listing says.
         """
-        mine = set(self.groups)
-        return [entry for entry in self.extensions if mine & set(entry.groups)]
+        if self.group is None:
+            return []
+        return [entry for entry in self.extensions if self.group in entry.groups]
 
 
 class DownloadedBundle(BaseModel):
@@ -404,7 +407,7 @@ class ExtensionDistribution:
 
             report = SyncReport()
             entitled = listing.entitled()
-            self._store.record_groups(listing.groups)
+            self._store.record_group(listing.group)
             # The priority first: an extension installed below starts
             # with its collisions already settled.
             if self._store.record_priority(listing.priority):
@@ -413,7 +416,7 @@ class ExtensionDistribution:
                     self._on_priority()
             for entry in entitled:
                 await self._bring_up_to_date(client, entry, report)
-            # Switched off for the person's groups is gone, as a removed
+            # Switched off for the person's group is gone, as a removed
             # service is.
             await self._remove_unlisted({entry.extension_id for entry in entitled}, report)
             self._store.prune_assets()

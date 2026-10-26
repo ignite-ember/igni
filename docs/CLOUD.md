@@ -15,8 +15,8 @@ its shared-backend sections are superseded by this document),
   itself has no git or code-host features: no provider sign-in, no pull
   requests, no code-intelligence sandboxes in the floor.
 - **Two kinds of producer**, not connected to each other:
-  - **people**, who belong to groups;
-  - **apps**, which act only as themselves (no groups, never on behalf
+  - **people**, each of whom belongs to exactly one group;
+  - **apps**, which act only as themselves (no group, never on behalf
     of a person).
 - **The desktop stays as it is.** One person, one local backend, local
   extension processes. No microVMs locally.
@@ -67,7 +67,8 @@ Restore caveats the backend and node agent must handle:
 ### VM profiles (proposed)
 
 The org admin defines named profiles and assigns one to each app and each
-group; a person gets their group's profile. A profile holds:
+group; a person, who belongs to exactly one group, gets that group's
+profile — there is never a choice between several. A profile holds:
 
 | Setting | Example "standard" | Example "browser" |
 |---|---|---|
@@ -107,8 +108,8 @@ group; a person gets their group's profile. A profile holds:
 The only thing producers connect to.
 
 1. **Authenticates the producer's token.**
-   - Person: their igni token, which carries their groups (built in
-     `9badded`).
+   - Person: their igni token, which carries their one group
+     (`group`).
    - App: a `private_key_jwt` client an org admin registers on igni
      server, the same client-credentials mechanism services already
      use. Proposed.
@@ -316,7 +317,7 @@ What moves where (audit of `src/ember_code`, 2026-10-26):
 | Uploaded attachments | `<project>/.igni/attachments/` | PostgreSQL large objects |
 | Approvals waiting on the user, messages typed during a run | memory only | PostgreSQL, so a lost VM loses neither |
 | Credentials | `~/.igni/credentials.json` | not stored: the gateway hands the VM the producer's token |
-| Settings, group policy, priority, groups, MCP approvals, extension settings | JSON and YAML under `~/.igni` | delivered by igni server or the image; read-only in the VM (extension settings per producer go to PostgreSQL) |
+| Settings, group policy, priority, the person's group, MCP approvals, extension settings | JSON and YAML under `~/.igni` | delivered by igni server or the image; read-only in the VM (extension settings per producer go to PostgreSQL) |
 | Logs | files under `~/.igni` | standard output, collected by the node |
 | Workspace files, `.igni` in the workspace, worktrees, process logs, installed packages | files | the producer's volume (section 10) |
 

@@ -28,13 +28,25 @@ from igni_extension.testing import (
 )
 
 HINTS = ToolHints(read_only=True, destructive=False, idempotent=True, open_world=False)
-ADA = Caller(kind=CallerKind.PERSON, id="u-ada", org="org-acme", groups=("g-legal",))
-GRACE = Caller(kind=CallerKind.PERSON, id="u-grace", org="org-acme", groups=("g-finance",))
+ADA = Caller(kind=CallerKind.PERSON, id="u-ada", org="org-acme", group="g-legal")
+GRACE = Caller(kind=CallerKind.PERSON, id="u-grace", org="org-acme", group="g-finance")
 PLAN = {"session_id": "s-1", "plan": "Refactor it.", "tasks": [], "attempt": 0}
 
 
 def _text(result: object) -> str:
     return "".join(block.text for block in result.content)  # type: ignore[attr-defined]
+
+
+class TestFromTheWire:
+    def test_a_person_belongs_to_one_group(self) -> None:
+        caller = Caller.of({"kind": "person", "id": "u-ada", "org": "org-acme", "group": "g-legal"})
+
+        assert caller == ADA
+
+    def test_an_app_has_no_group(self) -> None:
+        caller = Caller.of({"kind": "app", "id": "a-ci", "org": "org-acme"})
+
+        assert caller is not None and caller.group is None
 
 
 class TestATool:
@@ -43,7 +55,7 @@ class TestATool:
 
         @ext.tool(hints=HINTS)
         async def whoami(prefix: str, caller: Caller) -> str:
-            return f"{prefix}{caller.id}:{','.join(caller.groups)}"
+            return f"{prefix}{caller.id}:{caller.group}"
 
         async with HostHarness(ext) as host:
             result = await host.call("whoami", {"prefix": "it is "}, caller=ADA)

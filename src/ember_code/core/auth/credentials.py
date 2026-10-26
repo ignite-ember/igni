@@ -281,12 +281,12 @@ class CloudCredentials:
         return self._claims.sub
 
     @property
-    def groups(self) -> list[str]:
-        """The person's groups as their session token was issued with them."""
+    def group(self) -> str | None:
+        """The person's one group as their session token was issued with it."""
         self._load()
         if self._claims is None:
-            return []
-        return list(self._claims.groups)
+            return None
+        return self._claims.group
 
 
 class EmptyCloudCredentials(CloudCredentials):

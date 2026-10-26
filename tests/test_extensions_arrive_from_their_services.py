@@ -696,7 +696,7 @@ def test_a_replace_that_fails_leaves_the_old_bundle(tmp_path, monkeypatch):
     assert not any(p.name.startswith(".acme.notes") for p in store.root.iterdir())
 
 
-# ── Only what an org admin switched on for the person's groups ────────
+# ── Only what an org admin switched on for the person's group ─────────
 
 
 async def test_an_extension_on_for_another_group_is_not_installed(world):
@@ -722,10 +722,21 @@ async def test_switched_off_for_their_group_it_is_removed(world):
     assert world.store.distribution_of("acme.notes") is None
 
 
-async def test_the_persons_groups_are_kept(world):
+async def test_the_persons_group_is_kept(world):
     """What :class:`SignedInPerson` names on every call, before igni answers next time."""
-    world.igni.groups = ["g-legal", "g-ops"]
+    world.igni.group = "g-ops"
 
     await world.distribution.sync()
 
-    assert world.store.groups() == ["g-legal", "g-ops"]
+    stored = world.store.group()
+    assert stored is not None and stored.group == "g-ops"
+
+
+async def test_a_person_in_no_group_gets_nothing(world):
+    world.publish()
+    world.igni.group = None
+
+    report = await world.distribution.sync()
+
+    assert report.installed == []
+    assert world.igni.downloads() == []

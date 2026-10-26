@@ -128,10 +128,10 @@ When nobody is signed in to igni, a request raises `NotSignedIn`.
 ## Whom a call is for: `Caller`
 
 Every call igni makes — a tool call, a page's call, a hook — names whom
-it is for: a person (`kind="person"`, their `id`, `org` and `groups`) or,
-later, an app. A tool or hook handler that wants it declares a parameter
-typed `Caller`; the SDK fills it from the call, and it is never part of
-a tool's input:
+it is for: a person (`kind="person"`, their `id`, `org` and the one
+`group` they belong to) or, later, an app (no group). A tool or hook
+handler that wants it declares a parameter typed `Caller`; the SDK fills
+it from the call, and it is never part of a tool's input:
 
 ```python
 from igni_extension import Caller

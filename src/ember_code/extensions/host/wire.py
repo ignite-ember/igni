@@ -94,7 +94,7 @@ class HookMessage(BaseModel):
     event: str
     value: Any = None
     #: Whom the event is for (``docs/EXTENSION_ROUTING_AND_CONCURRENCY.md``
-    #: §6): ``{kind, id, org, groups, session}``, the same shape a tool
+    #: §6): ``{kind, id, org, group, session}``, the same shape a tool
     #: call carries in ``_meta["igni/principal"]``.
     principal: dict[str, Any] | None = None
 

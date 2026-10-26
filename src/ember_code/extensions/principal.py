@@ -18,7 +18,7 @@ from __future__ import annotations
 from enum import StrEnum
 from typing import Any, ClassVar
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 
 from ember_code.core.auth.credentials import CloudCredentials
 from ember_code.extensions.store import ExtensionStore
@@ -42,8 +42,8 @@ class Principal(BaseModel):
     id: str
     #: Their organisation.
     org: str | None = None
-    #: A person's groups in ``org``; an app has none.
-    groups: list[str] = Field(default_factory=list)
+    #: The one group a person belongs to in ``org``; an app has none.
+    group: str | None = None
     #: The igni session the call comes from, when there is one.
     session: str | None = None
 
@@ -61,9 +61,9 @@ class SignedInPerson:
 
     Read fresh on every call, as the session is: signing in and out
     rewrites the credentials, and a principal remembered from before
-    would answer for somebody who left. Their groups come from the last
-    extension listing — igni server reads them at the time it lists —
-    and the session token's snapshot only before any listing arrived.
+    would answer for somebody who left. Their group comes from the last
+    extension listing — igni server reads it at the time it lists — and
+    the session token's snapshot only before any listing arrived.
     """
 
     def __init__(self, credentials_file: str | None, store: ExtensionStore) -> None:
@@ -75,12 +75,12 @@ class SignedInPerson:
         user_id = credentials.user_id
         if not credentials.is_authenticated or not user_id:
             return None
-        listed = self._store.groups()
+        listed = self._store.group()
         return Principal(
             kind=PrincipalKind.PERSON,
             id=user_id,
             org=credentials.org_id,
-            groups=listed if listed is not None else credentials.groups,
+            group=listed.group if listed is not None else credentials.group,
         )
 
     def meta(self) -> dict[str, Any] | None:

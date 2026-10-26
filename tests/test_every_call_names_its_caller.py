@@ -4,7 +4,7 @@
 call and a slash command carry the principal in the MCP request's
 ``_meta["igni/principal"]``; a hook carries it on its frame. On this
 backend it is the person signed in here — their id, organisation and
-groups — and a process asking the token endpoint for anybody else's
+the one group they belong to — and a process asking the token endpoint for anybody else's
 token is refused.
 """
 
@@ -42,7 +42,7 @@ from ember_code.extensions.store import ExtensionStore
 from tests.extension_distribution_helpers import API_URL, SESSION, FakeIgni
 from tests.host_model_helpers import manifest
 
-ADA = Principal(kind=PrincipalKind.PERSON, id="u-ada", org="org-acme", groups=["g-legal"])
+ADA = Principal(kind=PrincipalKind.PERSON, id="u-ada", org="org-acme", group="g-legal")
 
 
 def _jwt(claims: dict[str, Any]) -> str:
@@ -63,23 +63,33 @@ def _signed_in(tmp_path: Path, **claims: Any) -> str:
 
 class TestTheSignedInPerson:
     def test_is_named_from_their_session(self, tmp_path: Path) -> None:
-        credentials = _signed_in(tmp_path, sub="u-ada", org="org-acme", groups=["g-legal"])
+        credentials = _signed_in(tmp_path, sub="u-ada", org="org-acme", group="g-legal")
 
         principal = SignedInPerson(credentials, ExtensionStore(tmp_path / "store"))()
 
         assert principal == ADA
 
-    def test_their_groups_come_from_the_last_listing_when_there_was_one(
+    def test_their_group_comes_from_the_last_listing_when_there_was_one(
         self, tmp_path: Path
     ) -> None:
-        """The session's are a snapshot of up to 30 days ago; the listing's were read when it listed."""
-        credentials = _signed_in(tmp_path, sub="u-ada", org="org-acme", groups=["g-legal"])
+        """The session's is a snapshot of up to 30 days ago; the listing's was read when it listed."""
+        credentials = _signed_in(tmp_path, sub="u-ada", org="org-acme", group="g-legal")
         store = ExtensionStore(tmp_path / "store")
-        store.record_groups(["g-finance"])
+        store.record_group("g-finance")
 
         principal = SignedInPerson(credentials, store)()
 
-        assert principal is not None and principal.groups == ["g-finance"]
+        assert principal is not None and principal.group == "g-finance"
+
+    def test_a_listing_that_put_them_in_no_group_is_believed(self, tmp_path: Path) -> None:
+        """Taken out of their group since the session was issued: the listing is the fresher word."""
+        credentials = _signed_in(tmp_path, sub="u-ada", org="org-acme", group="g-legal")
+        store = ExtensionStore(tmp_path / "store")
+        store.record_group(None)
+
+        principal = SignedInPerson(credentials, store)()
+
+        assert principal is not None and principal.group is None
 
     def test_nobody_signed_in_is_no_principal(self, tmp_path: Path) -> None:
         person = SignedInPerson(str(tmp_path / "none.json"), ExtensionStore(tmp_path / "store"))
@@ -93,7 +103,7 @@ class TestTheSignedInPerson:
                 "kind": "person",
                 "id": "u-ada",
                 "org": "org-acme",
-                "groups": ["g-legal"],
+                "group": "g-legal",
                 "session": None,
             }
         }

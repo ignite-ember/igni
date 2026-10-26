@@ -2,7 +2,7 @@
 
 Every request igni sends this process — a tool call, a page's call, a
 hook — names the producer it is for: a person (with their organisation
-and groups) or an app. A tool or hook handler that wants it declares a
+and the one group they belong to) or an app. A tool or hook handler that wants it declares a
 parameter typed `Caller`, and the SDK passes it in; anything running
 inside that call can also ask `Caller.current()`.
 
@@ -32,7 +32,7 @@ from functools import wraps
 from typing import Any, ClassVar, get_type_hints
 
 from mcp.server.lowlevel.server import request_ctx
-from pydantic import BaseModel, ConfigDict, Field, ValidationError
+from pydantic import BaseModel, ConfigDict, ValidationError
 
 
 class CallerKind(StrEnum):
@@ -59,8 +59,8 @@ class Caller(BaseModel):
     id: str
     #: Their organisation.
     org: str | None = None
-    #: A person's groups in `org`; an app has none.
-    groups: tuple[str, ...] = Field(default_factory=tuple)
+    #: The one group a person belongs to in `org`; an app has none.
+    group: str | None = None
     #: The igni session the call comes from, when there is one.
     session: str | None = None
 

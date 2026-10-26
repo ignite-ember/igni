@@ -138,7 +138,7 @@ This is the headline story for **admins who want a curated AI experience deliver
 
 - **Group as a unit of curation.** `ember-server`'s portal exposes group CRUD (`endpoints/portal/groups.py:33+` — `POST /groups`, `GET /groups`, `PATCH /groups/<id>`, plus `OrgGroupMemberList`, `OrgGroupOverrideList`, `OrgGroupPack`). An org admin creates a group ("Frontend Platform", "Security", "Data Platform"), assigns members, then attaches override entries to the group.
 - **Override kinds.** Each group's pack carries four kinds of overrides — `agents` (markdown), `mcps` (JSON), `plugins` (git-source URL or YAML), `settings` (JSON or YAML, deep-merged into the config). Each entry can be `enabled: True` (push in) or `enabled: False` (block). Schema: `core/config/group_policy.py:27-69` (`GroupPolicyOverrideEntry`) and `core/config/group_policy.py:72-119` (`GroupPolicyPack`).
-- **Client materialization.** At startup, the CLI fetches the pack for the authenticated user's groups and materializes each entry:
+- **Client materialization.** At startup, the CLI fetches the pack for the authenticated user's group (a person belongs to exactly one) and materializes each entry:
   - Agents → `~/.igni/group-policy/agents/<name>.md` (picked up by the agent loader at priority 4.5)
   - MCPs → `~/.igni/group-policy/mcps/<name>.json`
   - Plugins → installed via `PluginInstaller` into `<data_dir>/group-policy/plugins/` (priority 4.5 — between project-igni and managed-igni), so the plugin loader sees them naturally

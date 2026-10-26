@@ -569,7 +569,7 @@ A profile is also where the air-gap answer lives: Postgres is a customer-run ins
 
 Entitlement and configuration are group-level in both deployments; capability existence is deployment-level.
 
-**An extension is off until an org admin switches it on for a group.** A super admin approving a service is trust; it gives the extension to nobody. igni server lists, and serves the bundle and assets of, only the extensions switched on for one of the signed-in person's groups (igni server's service-identity spec, §8.3), and the machine installs and offers only those — checking each listed extension's `groups` against the person's own. Every call into an extension then names whom it is for (`_meta["igni/principal"]` on a tool call, `principal` on a hook frame), and the SDK hands it to the tool as a `Caller`. The whole design, and what is still to decide for apps and a backend serving several people, is `docs/EXTENSION_ROUTING_AND_CONCURRENCY.md`.
+**An extension is off until an org admin switches it on for a group.** A super admin approving a service is trust; it gives the extension to nobody. igni server lists, and serves the bundle and assets of, only the extensions switched on for the signed-in person's group (igni server's service-identity spec, §8.3), and the machine installs and offers only those — checking that each listed extension's `groups` include the person's `group`. A person belongs to exactly one group, so there is never a merge of several groups' extensions or packs, and nothing to arbitrate between them. Every call into an extension then names whom it is for (`_meta["igni/principal"]` on a tool call, `principal` on a hook frame), and the SDK hands it to the tool as a `Caller`. The whole design, and what is still to decide for apps and a backend serving several people, is `docs/EXTENSION_ROUTING_AND_CONCURRENCY.md`.
 
 | Layer | Decides | User override? |
 |---|---|---|
@@ -579,7 +579,7 @@ Entitlement and configuration are group-level in both deployments; capability ex
 
 - **A group may narrow, never widen.** Deployment grants are a ceiling; a pack asking for more is a validation error.
 - **Hiding is not disabling.** `contributes.hide` removes a surface while the capability still runs; `enabled: false` turns it off.
-- **One pack per session** — group membership resolves server-side, so there is no client-side merge to arbitrate.
+- **One pack per session** — a person belongs to exactly one group, resolved server-side, so there is no merge of several groups' packs to arbitrate.
 - **Local deployments hold exactly one pack: the principal's.** The cache materialises plain files, including `tools/*.py` and executable `scripts/*.sh`, so a pack a user is not entitled to is a disclosure. The server decides what a deployment may hold; a laptop asking for another group's pack gets a refusal.
 - **On a shared BE the policy cache must be keyed by `group_id`.** It is not today — one tree per data dir, pruned against whichever pack polled last.
 - **Record `group_id` and the pack ETag in every session trace.** Different groups legitimately produce different work; without this, "why did it behave differently?" is unanswerable.
