@@ -351,13 +351,15 @@ database per org, shared by its people and apps. Every row carries its
 org, its producer and its project (the folder it belongs to), and the
 backend filters by them, the way changing directory shows only that
 directory's chats today. No database, schema or VM per producer for
-data. Proposed safety net: PostgreSQL row-level security keyed on the
-producer, set per connection, so a missing filter returns nothing
-instead of someone else's rows (open decision).
+data. Under the backend's filter, PostgreSQL row-level security keyed
+on the producer's own database role, so a missing filter — or igni
+compromised inside a VM — returns nothing instead of someone else's
+rows (below).
 
 What moves where (audit of `src/ember_code`, 2026-10-26; built in
 `ccbca59`, `9ef5eda`, `1e231c4`, `dac89aa`, `7fc48b0`, `66b6a36`,
-`7a99d1a` and `7c94a2a` unless the row says otherwise):
+`7a99d1a`, `7c94a2a`, `fa78797`, `4ece789`, `23fdd06`, `3cf7bfe`,
+`21aac46` and `f6a932b` unless the row says otherwise):
 
 | State | Desktop (unchanged unless noted) | Cloud |
 |---|---|---|
@@ -365,11 +367,11 @@ What moves where (audit of `src/ember_code`, 2026-10-26; built in
 | Schedules, `/loop` state, background processes | alembic tables in `state.db` | the same tables, scoped |
 | Pending and interrupted messages, model per session | alembic tables in `state.db` (were raw `sqlite3`) | the same tables, scoped |
 | Session → directory, window state and extensions' own state, local notifications | alembic tables in one global database in the data directory (`global_db_path`; were `sessions.db`, `client_state.db`, `notifications.db`) | the same tables, scoped |
-| Approvals waiting on the user (main agent, auto-resolved, sub-agents, and the calls waiting above a sub-agent), messages typed during a run | `waiting_approvals`, `waiting_spawns` and `queued_messages` in `state.db` (were memory only) | the same tables, scoped |
+| Approvals waiting on the user (main agent, auto-resolved, sub-agents and teams, the calls waiting above them and the finished calls of their turns), messages typed during a run | `waiting_approvals`, `waiting_spawns`, `turn_results` and `queued_messages` in `state.db` (were memory only) | the same tables, scoped |
 | `MEMORY.md` memory files | files under `~/.igni/projects/` | `memory_files` rows; the memory directory is a write-through mirror of them |
 | Uploaded attachments | `<project>/.igni/attachments/` | PostgreSQL large objects, written and read in chunks, an `attachments` row each |
-| Credentials | `~/.igni/credentials.json` | the environment the gateway sets (`IGNI_ACCESS_TOKEN`); no file is read or written |
-| Settings, group policy, priority, the person's group, MCP approvals, extension settings | JSON and YAML under `~/.igni` | settings only from the image (command line, managed policy) and igni server (group policy); nothing under `~/.igni` or the workspace's `.igni`. The rest of this row (priority, MCP approvals, extension settings per producer) is not built |
+| Credentials | `~/.igni/credentials.json` | from the gateway: a token file it rewrites on refresh (`IGNI_ACCESS_TOKEN_FILE`) or a fixed `IGNI_ACCESS_TOKEN`; `credentials.json` is never read or written |
+| Settings, group policy, priority, the person's group, MCP approvals, extension settings | JSON and YAML under `~/.igni` | settings only from the image (command line, managed policy) and igni server (group policy); nothing under `~/.igni` or the workspace's `.igni`. Priority and the person's group from igni server's listing (`GET /v1/extensions`), kept in the process; MCP approvals are the servers igni server's group policy delivered, none approvable in the VM; extension settings a row per extension (`extension_settings`), scoped |
 | Logs | files under `~/.igni` | JSON lines on standard output, collected by the node: no backend log, `debug.log`, `llm_calls.log`, `hitl_trace.log` or audit log file |
 | Workspace files, `.igni` in the workspace, worktrees, process logs, installed packages | files | the producer's volume (section 10) |
 
@@ -399,9 +401,65 @@ unique per VM, not per org. Every query goes through `StorageScope`
 folder, so two clones of one repository share state as they do at home.
 A shared database with nobody signed in refuses to open rather than read
 unscoped. The one lookup that cannot know the project — which folder a
-session is in — filters by org and producer only. Row-level security is
-not built; adding it means setting the scope per connection where
-`StorageScope` is applied.
+session is in — filters by org and producer only. Under that filter,
+row-level security (below) holds the same line in the database.
+
+**Row-level security** (`core/db/rls.py`), so the isolation holds when
+igni inside a VM is buggy or compromised:
+
+- *Each producer connects as its own PostgreSQL role.* The role is bound
+  to its org and producer in `producer_roles(role_name, org, producer)`,
+  a table no producer role can read or write; the policies reach it only
+  through `SECURITY DEFINER` functions keyed on `session_user` — the role
+  that logged in, which `SET ROLE` cannot change. Nothing the VM can
+  `SET` decides whose rows it sees. A mapping table rather than role
+  names spelling the ids: org and producer ids are free-form and may not
+  fit a role name, and an opaque name rotates without the data changing.
+- *Every igni table* with `org` and `producer` columns has `ENABLE` and
+  `FORCE ROW LEVEL SECURITY` and one policy, for reading and writing, on
+  org and producer; the project stays the application's filter (a person
+  sees all their projects). *Agno's tables* (schema `ai`) are held by the
+  scope prefix of `user_id`; its versions table is readable, the tables
+  igni does not use are closed. *Large objects* belong to the producer's
+  role that uploaded them, with `lo_compat_privileges` off; the
+  `attachments` row naming an oid is under the table policy.
+- Producer roles take their table privileges from the group role
+  `igni_runtime`, granted `WITH INHERIT TRUE, SET FALSE` (PostgreSQL 16 or
+  later), so a producer cannot `SET ROLE` to it either; no producer role
+  owns a table or has `BYPASSRLS`. The tables belong to an admin role,
+  which runs migrations: `igni migrate --database-url <admin url>` also
+  makes Agno's tables (a producer's role may not, and igni tells Agno
+  not to at run time) and applies the roles, functions, grants and
+  policies on every run, so a table a migration adds is covered. The
+  admin role must bypass row-level security (superuser or `BYPASSRLS`)
+  for a migration that moves data.
+- Cost: every policy column leads a primary key or an index; measured on
+  a point query by primary key on local PostgreSQL 17, about 130 µs per
+  round trip as the admin role and 165 µs as a producer role — the policy
+  is a one-time filter over the same index scan.
+
+**Provisioning contract** (for the node agent and igni server, build
+plan steps 3 and 5). With the org database's admin URL:
+
+- `igni db grant-producer --org <org> --producer person:<id>|app:<id>`
+  creates the producer's role, or rotates its password when it exists,
+  and prints JSON: `role`, `password`, `database_url`. The platform hands
+  `database_url` to the producer's VM as `IGNI_DATABASE_URL`, the way it
+  hands the token. The org and producer must be the ones the producer's
+  token names: the application's filter and the policy then agree, and a
+  write in any other scope is refused by the database.
+- `igni db revoke-producer --org <org> --producer <id>` drops the role.
+  What it owned (its uploads' large objects) passes to the admin role;
+  its rows stay, unreachable until a role is granted again.
+
+**Token refresh contract** (the gateway's, build plan step 4). The VM's
+environment names `IGNI_ACCESS_TOKEN_FILE`, a file holding the
+producer's token. The gateway rewrites it — write a temporary file in
+the same directory, rename it over — whenever it refreshes the token, and
+after a resume before the VM is used. igni reads the file on every
+credentials load, so a fresh token reaches a running VM without a restart
+or any call into it. `IGNI_ACCESS_TOKEN` (fixed for the process) remains
+for a short-lived VM.
 
 **Agno's tables** keep Agno's schema; `ScopedAsyncPostgresDb` is a
 wrapper. A session is stored under `<org>/<producer>/<project>#<id>` and
@@ -441,7 +499,27 @@ a subscriber of each one with `chat.approvals.changed`):
   handed to the waiting `spawn_agent` call as the tool's result, and the
   main agent's run continues and streams to the session's windows
   (`backend/cold_spawn_resume.py`). The same path serves the desktop
-  after igni is quit and started again.
+  after igni is quit and started again;
+- a *nested chain* (an agent spawned by a spawned agent) is continued
+  level by level, each through the same stream handler as a live
+  sub-agent: its progress reaches the window and it can ask again —
+  deeper or at its own level — and that approval is stored with the calls
+  still waiting above it;
+- a *multi-agent `spawn_team`* is rebuilt (members, mode, leader model)
+  and its stored run continued: Agno pauses a team only once every member
+  delegated to in the turn has returned or paused, so the finished
+  members keep their stored results and only the paused ones continue;
+- a waiting call that *shared its turn* with other tool calls is
+  continued with a complete turn: the calls that finished give their
+  results (kept in `turn_results` by a tool hook on the main agent and
+  on spawned agents), and calls still running at the restart are
+  reported as interrupted, not run again — a call cut off may already
+  have done what it does, and twice is worse than the model knowing;
+- work *being continued* when the backend died — an approval answered,
+  the agent or team still running — is reported failed to the call
+  waiting on it, not re-run (same reason), and that call's run goes on
+  when a window next attaches. The spawn link lives until the paused
+  run's stream ends, which is how a restart tells this case apart.
 
 **Messages typed during a run** are a row from queueing; a run that
 takes one marks it taken and records it in the conversation under the
@@ -451,15 +529,12 @@ not hold: each is delivered into the conversation exactly once.
 
 What is not covered yet:
 
-- A cold-boot sub-agent resume continues one `spawn_agent` (or a
-  single-agent `spawn_team`) call. A multi-agent `spawn_team` that paused
-  is not continued after a restart (its approval can be answered); nor is
-  a waiting call that shared its assistant turn with other tool calls
-  still running when the backend died. An intermediate sub-agent in a
-  nested chain is continued without streaming, and is not paused again.
-- Credentials from the environment are read as they are set at start;
-  refreshing the token is the gateway's (section 3).
-- Priority, MCP approvals and extension settings in the cloud.
+- MCP approvals per person: igni server has no endpoint for them, so
+  the cloud approves exactly the servers its group policy delivers. A
+  per-person approval list would need one on igni server.
+- A main-agent approval answered and then cut off by a restart while
+  its run was being continued is not reported: Agno's stored run stays
+  paused, with nothing left to answer.
 
 ## 10. The producer's volume (proposed, measured nested)
 
@@ -526,7 +601,7 @@ subnet; 8 GB sparse image, loop device, dm-crypt `aes-xts-plain64`, p50 ms):
 
 ## 11. Open decisions
 
-1. **Row-level security** under the producer filter (section 9).
+1. ~~**Row-level security** under the producer filter~~ — decided and built: per-producer roles (section 9).
 2. **Extensions running inside the VM:** their data folder is scratch
    on the producer's volume and anything durable belongs in their
    service? (Remote extensions, the default, keep data in their
