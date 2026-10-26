@@ -64,6 +64,44 @@ Restore caveats the backend and node agent must handle:
 | Clones share IP, MAC and ARP state | one network namespace per VM, a fixed host tap MAC |
 | Snapshots need identical CPUs | pin each pool to one instance family |
 
+### VM profiles (proposed)
+
+The org admin defines named profiles and assigns one to each app and each
+group; a person gets their group's profile. A profile holds:
+
+| Setting | Example "standard" | Example "browser" |
+|---|---|---|
+| Memory ceiling and CPUs | 256 MB, 1 vCPU | 4 GB, 2 vCPU |
+| `idle_before_suspend` | 10 s | 10 min, or never |
+| Drop caches before suspend (e.g. close the headless browser) | — | yes |
+
+- The platform sets the maximum ceiling and the longest timeout; time
+  awake counts against the org's quota.
+- A long `idle_before_suspend` is for producers whose suspend would be
+  large: a headless browser dirties hundreds of MB to GBs, so suspending
+  and resuming it between closely spaced requests costs more than
+  staying awake.
+- A new timeout applies at once; a new ceiling at the producer's next
+  cold boot (a memory snapshot keeps the size it was taken with). The
+  node agent forces that cold boot at the next suspend; nothing is lost,
+  since durable state is in PostgreSQL and on the volume.
+
+### Elastic memory: a hard ceiling, real usage only
+
+- **The ceiling is fixed at boot** and never exceeded.
+- **Growing needs no request.** The host backs only the pages the guest
+  touches, so a VM at 300 MB of a 4 GB ceiling holds 300 MB of host RAM.
+- **Shrinking gives memory back.** The guest reports freed pages to the
+  host through Firecracker's balloon device (free page reporting) and
+  the host releases them. igni closes heavy things (the browser) when a
+  run ends, not only at suspend, and the guest trims its file cache on a
+  timer. Released pages are also left out of the next snapshot.
+- **Overcommit is deliberate.** Ceilings may add up to more than the
+  host's RAM. The node agent watches real usage and reclaims memory or
+  stops placing new VMs on a host that is running short.
+- To measure: how fast freed memory returns to the host in Firecracker
+  1.17, and its effect on snapshot size and resume.
+
 ## 3. The gateway (proposed)
 
 The only thing producers connect to.
