@@ -110,6 +110,14 @@ class SpawnCalls:
         return list(cls._chain.get())
 
     @classmethod
+    def path_to(cls, name: str, chain: list[ParentCall] | None = None) -> list[str]:
+        """The agents from below the main agent down to ``name`` — how a
+        dialog names who is asking. The outermost call is the main
+        agent's, which the path leaves out."""
+        calls = cls.current() if chain is None else chain
+        return [*(p.agent_name for p in reversed(calls[:-1])), name]
+
+    @classmethod
     @contextlib.contextmanager
     def entered(cls, call: ParentCall | None) -> Iterator[None]:
         """Run the spawned agent under ``call`` (nothing when ``None``)."""

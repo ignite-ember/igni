@@ -389,10 +389,14 @@ class SubAgentStreamHandler(BaseStreamHandler[SubAgentStreamState]):
 class ResumedSubAgentStreamHandler(SubAgentStreamHandler):
     """A sub-agent's paused run, continued instead of started.
 
-    Used after a restart (``backend/cold_spawn_resume.py``): the run was
-    paused for approvals the person has now answered, and is continued
-    from Agno's stored copy with those decisions. Everything after the
-    first stream — another pause, the final answer — is the parent's.
+    Used after a restart (``backend/cold_spawn_resume.py``) for two kinds
+    of paused run: one Agno stored, paused for approvals the person has
+    now answered (continued by ``run_id``), and one rebuilt from a call
+    that was waiting on another agent (continued from ``run_response``
+    with that agent's answer as the call's result). Everything after the
+    first stream — another pause, the final answer — is the parent's, so
+    a continued run streams its progress and can be paused again like a
+    live one.
     """
 
     def __init__(
@@ -402,17 +406,26 @@ class ResumedSubAgentStreamHandler(SubAgentStreamHandler):
         run_id: str,
         session_id: str,
         requirements: list[Any],
+        run_response: Any = None,
         **kwargs: Any,
     ) -> None:
         super().__init__(agent, "", **kwargs)
         self._resume_run_id = run_id
         self._resume_session_id = session_id
         self._requirements = requirements
+        self._run_response = run_response
         # The run id latches from the continued run's events, which
         # registers it for cancellation like any other.
         self.state.current_session_id = session_id
 
     def _first_stream(self) -> Any:
+        if self._run_response is not None:
+            return self._runnable.acontinue_run(
+                run_response=self._run_response,
+                session_id=self._resume_session_id,
+                requirements=self._requirements,
+                stream=True,
+            )
         return self._runnable.acontinue_run(
             run_id=self._resume_run_id,
             session_id=self._resume_session_id,

@@ -134,6 +134,26 @@ def _remove_tool(side: Side) -> Any:
     return remove_build
 
 
+def _remove_cache_tool(side: Side) -> Any:
+    @tool(requires_confirmation=True)
+    def remove_cache() -> str:
+        """Remove the cache directory."""
+        side.calls.append("remove cache")
+        return "cache removed"
+
+    return remove_cache
+
+
+def _publish_tool(side: Side) -> Any:
+    @tool(requires_confirmation=True)
+    def publish(channel: str) -> str:
+        """Publish a release."""
+        side.calls.append(f"publish {channel}")
+        return f"published {channel}"
+
+    return publish
+
+
 def _main_deploys(messages: list[Message]) -> ModelResponse:
     results = _tool_results(messages)
     if not results:
@@ -146,6 +166,31 @@ def _main_spawns(messages: list[Message]) -> ModelResponse:
     if not results:
         return _call("call-spawn", "spawn_agent", task="clean the build", agent_name="cleaner")
     return ModelResponse(content=f"Main finished after: {results[-1]}")
+
+
+def _main_spawns_planner(messages: list[Message]) -> ModelResponse:
+    results = _tool_results(messages)
+    if not results:
+        return _call("call-plan", "spawn_agent", task="ship it", agent_name="planner")
+    return ModelResponse(content=f"Main finished after: {results[-1]}")
+
+
+def _planner(messages: list[Message]) -> ModelResponse:
+    results = _tool_results(messages)
+    if not results:
+        return _call("call-clean", "spawn_agent", task="clean the build", agent_name="cleaner")
+    if not any(r.startswith("published") for r in results):
+        return _call("call-publish", "publish", channel="release")
+    return ModelResponse(content=f"planner done: {results[-1]} after {results[0]}")
+
+
+def _thorough_cleaner(messages: list[Message]) -> ModelResponse:
+    results = _tool_results(messages)
+    if not results:
+        return _call("call-remove", "remove_build")
+    if len(results) == 1:
+        return _call("call-remove-cache", "remove_cache")
+    return ModelResponse(content=f"cleaner says {results[0]} and {results[1]}")
 
 
 def _cleaner(messages: list[Message]) -> ModelResponse:
@@ -209,6 +254,7 @@ class Backend:
         main_script: Script,
         with_spawn: bool,
         spawn_timeout: int | None = None,
+        thorough: bool = False,
     ) -> None:
         self.agno_db = store.agno()
         state = store.state()
@@ -218,11 +264,13 @@ class Backend:
         self.coordinator = SubAgentHITLCoordinator()
         self.coordinator.attach_journal(journal, lambda: SESSION)
         self.coordinator.restore(SESSION)
-        self.pool = FakePool(self.agno_db, side)
-        tools: list[Any] = [_deploy_tool(side)]
         settings = Settings()
         if spawn_timeout is not None:
             settings.orchestration.sub_team_timeout = spawn_timeout
+        self.pool = FakePool(
+            self.agno_db, side, coordinator=self.coordinator, settings=settings, thorough=thorough
+        )
+        tools: list[Any] = [_deploy_tool(side)]
         if with_spawn:
             tools = [
                 OrchestrateTools(
@@ -257,22 +305,61 @@ class Backend:
 
 
 class FakePool:
-    """The agent pool, as ``spawn_agent`` reaches it: one specialist."""
+    """The agent pool, as ``spawn_agent`` reaches it.
 
-    def __init__(self, db: Any, side: Side) -> None:
+    ``cleaner`` asks before removing the build (and, as ``thorough``,
+    the cache as well); ``planner`` spawns the cleaner and then asks
+    before publishing — a chain two spawns deep.
+    """
+
+    def __init__(
+        self,
+        db: Any,
+        side: Side,
+        *,
+        coordinator: SubAgentHITLCoordinator,
+        settings: Settings,
+        thorough: bool = False,
+    ) -> None:
         self._db = db
         self._side = side
+        self._coordinator = coordinator
+        self._settings = settings
+        self._thorough = thorough
         self._budget = SpawnBudget(max_agents=10)
 
+    @property
+    def db(self) -> Any:
+        return self._db
+
     def get(self, name: str) -> Agent:
-        if name != "cleaner":
-            raise KeyError(name)
-        return Agent(
-            name="cleaner",
-            model=ScriptedModel(_cleaner),
-            tools=[_remove_tool(self._side)],
-            db=self._db,
-        )
+        if name == "cleaner":
+            tools = [_remove_tool(self._side)]
+            if self._thorough:
+                tools.append(_remove_cache_tool(self._side))
+            return Agent(
+                name="cleaner",
+                model=ScriptedModel(_thorough_cleaner if self._thorough else _cleaner),
+                tools=tools,
+                db=self._db,
+            )
+        if name == "planner":
+            return Agent(
+                name="planner",
+                model=ScriptedModel(_planner),
+                tools=[
+                    OrchestrateTools(
+                        pool=self,
+                        settings=self._settings,
+                        session_id=SESSION,
+                        hitl_coordinator=self._coordinator,
+                        current_depth=1,
+                    ),
+                    _publish_tool(self._side),
+                ],
+                db=self._db,
+            )
+        raise KeyError(name)
 
     def get_definition(self, name: str) -> Any:
         return None
@@ -434,3 +521,92 @@ def test_a_run_that_only_waits_on_a_person_is_not_running():
     assert Activity.of(sessions).suspendable
     sessions.append(SessionActivity(session_id="c", state=ActivityState.RUNNING))
     assert not Activity.of(sessions).suspendable
+
+
+async def _until_waiting(coordinator: SubAgentHITLCoordinator, count: int = 1) -> list[Any]:
+    """The requests a coordinator's handlers are blocked on, once there are ``count``."""
+    for _ in range(500):
+        waiting = [r for m in coordinator.waiting_requests() for r in m.requirements]
+        if coordinator.waiting_count >= count and len(waiting) >= count:
+            return waiting
+        await asyncio.sleep(0.01)
+    raise AssertionError("no request arrived")
+
+
+async def test_a_nested_chain_asks_again_deeper_and_higher_without_a_restart(
+    database_url: DatabaseUrl, tmp_path: Path
+):
+    side = Side()
+    backend = Backend(
+        Store(database_url, tmp_path),
+        side,
+        main_script=_main_spawns_planner,
+        with_spawn=True,
+        thorough=True,
+    )
+    outcome: list[str] = []
+
+    async def run_main() -> None:
+        async for event in backend.main.arun("ship", stream=True, stream_events=True):
+            if isinstance(event, agent_events.RunCompletedEvent):
+                outcome.append(str(event.content))
+
+    running = asyncio.create_task(run_main())
+    asked = []
+    for _ in range(3):
+        [request] = await _until_waiting(backend.coordinator)
+        asked.append((request.tool_name, request.agent_path))
+        backend.coordinator.resolve(request.requirement_id, "confirm")
+    await asyncio.wait_for(running, timeout=10)
+
+    assert asked == [
+        ("remove_build", ["planner", "cleaner"]),
+        ("remove_cache", ["planner", "cleaner"]),
+        ("publish", ["planner"]),
+    ]
+    assert side.calls == ["remove build", "remove cache", "publish release"]
+    [final] = outcome
+    assert "planner done: published release" in final
+    assert "cleaner says build removed and cache removed" in final
+
+
+async def test_a_nested_chain_continued_after_a_restart_asks_again_and_finishes(
+    database_url: DatabaseUrl, tmp_path: Path
+):
+    """The deepest sub-agent's approval is answered after a restart. Its
+    continuation asks again (deeper, in the new backend), then the planner
+    above it — continued from its stored call — asks its own, and the
+    main agent finishes with both answers."""
+    side = Side()
+    store = Store(database_url, tmp_path)
+    before = Backend(store, side, main_script=_main_spawns_planner, with_spawn=True, thorough=True)
+
+    async def run_main() -> None:
+        async for _ in before.main.arun("ship", stream=True, stream_events=True):
+            pass
+
+    running = asyncio.create_task(run_main())
+    [first] = await _until_waiting(before.coordinator)
+    assert first.agent_path == ["planner", "cleaner"]
+    dead = before  # abandoned mid-run
+
+    after = Backend(store, side, main_script=_main_spawns_planner, with_spawn=True, thorough=True)
+    resuming = asyncio.create_task(after.answer(first.requirement_id))
+    asked = []
+    for _ in range(2):
+        [request] = await _until_waiting(after.coordinator)
+        asked.append((request.tool_name, request.agent_path))
+        assert not await after.answer(request.requirement_id), "answered in this backend"
+    replies = await asyncio.wait_for(resuming, timeout=10)
+    assert not [r for r in replies if isinstance(r, msg.Error)], replies
+
+    assert asked == [("remove_cache", ["planner", "cleaner"]), ("publish", ["planner"])]
+    assert side.calls == ["remove build", "remove cache", "publish release"]
+    final = after.collect.completed_content()
+    assert final.startswith("Main finished after: [Agent: planner]")
+    assert "planner done: published release" in final
+    assert "cleaner says build removed and cache removed" in final
+    assert after.hitl.waiting_messages() == []
+
+    running.cancel()
+    del dead

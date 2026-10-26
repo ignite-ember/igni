@@ -63,11 +63,21 @@ class ColdSpawnResume:
                 "with the previous backend and cannot be continued."
             )
             return
-        answer = await self._continue_sub_agent(ready)
-        self._session.sub_agent_hitl.forget_spawn(ready.run_id)
-        if answer is None:
+        agent = self._pool_agent(link.agent_name)
+        if agent is None:
             yield msg.Error(text=f"The agent {link.agent_name!r} is no longer available.")
             return
+        result = await self._continue(
+            ResumedSubAgentStreamHandler,
+            agent,
+            chain=link.parents,
+            path=SpawnCalls.path_to(link.agent_name, link.parents),
+            run_id=ready.run_id,
+            session_id=link.agent_session_id,
+            requirements=ready.requirements,
+        )
+        self._session.sub_agent_hitl.forget_spawn(ready.run_id)
+        answer = self.tool_result(link.agent_name, link.parents[0], result)
         for depth, parent in enumerate(link.parents):
             run_output = self.paused_run(parent, answer)
             if self._is_main(parent):
@@ -87,41 +97,51 @@ class ColdSpawnResume:
             if caller is None:
                 yield msg.Error(text=f"The agent {parent.agent_name!r} is no longer available.")
                 return
-            with SpawnCalls.restored(link.parents[depth + 1 :]):
-                output = await caller.acontinue_run(
-                    run_response=run_output,
-                    requirements=list(run_output.requirements or []),
-                    session_id=parent.session_id,
-                    stream=False,
-                )
+            # Continued like a live sub-agent: its progress reaches the
+            # window, and it can ask the person again — that pause is
+            # stored with the calls still waiting above it.
+            rest = link.parents[depth + 1 :]
+            result = await self._continue(
+                ResumedSubAgentStreamHandler,
+                caller,
+                chain=rest,
+                path=SpawnCalls.path_to(parent.agent_name, rest),
+                run_id=parent.run_id,
+                session_id=parent.session_id,
+                requirements=list(run_output.requirements or []),
+                run_response=run_output,
+            )
             # Its answer is the result of the call waiting on *it*.
-            waiting = link.parents[depth + 1] if depth + 1 < len(link.parents) else parent
-            answer = self.tool_result(parent.agent_name, waiting, str(output.content or ""))
+            waiting = rest[0] if rest else parent
+            answer = self.tool_result(parent.agent_name, waiting, result)
 
-    async def _continue_sub_agent(self, ready: RestoredRun) -> str | None:
-        link = ready.link
-        assert link is not None
-        agent = self._pool_agent(link.agent_name)
-        if agent is None:
-            return None
+    async def _continue(
+        self,
+        handler_cls: Any,
+        runnable: Any,
+        *,
+        chain: list[ParentCall],
+        path: list[str],
+        **resume: Any,
+    ) -> str:
+        """Run one continued agent through its stream handler, under the
+        calls still waiting above it."""
         tools = self._orchestrate_tools()
-        with SpawnCalls.restored(link.parents):
-            handler = ResumedSubAgentStreamHandler(
-                agent,
-                run_id=ready.run_id,
-                session_id=link.agent_session_id,
-                requirements=ready.requirements,
+        with SpawnCalls.restored(chain):
+            handler = handler_cls(
+                runnable,
                 on_progress=tools.on_progress if tools is not None else None,
                 hitl_coordinator=self._session.sub_agent_hitl,
-                agent_path=[link.agent_name],
+                agent_path=path,
                 card_id="",
                 subagent_registry=(
                     tools.subagent_registry if tools is not None else SubAgentRegistry()
                 ),
                 event_appender=tools.event_appender if tools is not None else None,
+                **resume,
             )
             result, _activity = await handler.run()
-        return self.tool_result(link.agent_name, link.parents[0], result)
+        return str(result)
 
     @staticmethod
     def tool_result(agent_name: str, parent: ParentCall, result: str) -> str:

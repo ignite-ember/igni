@@ -61,7 +61,7 @@ from ember_code.core.tools.orchestrate_events import (
     TeamMode,
 )
 from ember_code.core.tools.orchestrate_sandbox import SpawnSandbox
-from ember_code.core.tools.spawn_context import SpawnDeadline
+from ember_code.core.tools.spawn_context import SpawnCalls, SpawnDeadline
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -518,7 +518,9 @@ class AgentSpawn(SpawnRunner):
             self._effective_task,
             on_progress=self._on_progress,
             hitl_coordinator=self._hitl_coordinator,
-            agent_path=[self._agent_name],
+            # Nested spawns name every agent between the main agent and
+            # this one, so the person sees who is asking.
+            agent_path=SpawnCalls.path_to(self._agent_name),
             card_id=self._card_id,
             subagent_registry=self._subagent_registry,
             event_appender=self._event_appender,
