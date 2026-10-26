@@ -69,6 +69,8 @@ class PendingRequirementsStore:
         self._auto_resolved: dict[str, list[Any]] = {}
         self._journal = journal
         self._session_id = session_id
+        #: Main-agent runs a previous backend was continuing when it died.
+        self._interrupted_runs: list[str] = []
 
     # ── Durability ────────────────────────────────────────────────
 
@@ -86,7 +88,26 @@ class PendingRequirementsStore:
                 restored += 1
             elif stored.origin is ApprovalOrigin.AUTO_RESOLVED:
                 self._auto_resolved.setdefault(stored.run_id, []).append(stored.requirement)
+            elif stored.origin is ApprovalOrigin.CONTINUING:
+                self._interrupted_runs.append(stored.run_id)
         return restored
+
+    def begin_continuing(self, run_id: str) -> None:
+        """The run's approvals are answered and it is being continued."""
+        if self._journal is not None:
+            self._journal.record_continuing(session_id=self._current_session(), run_id=run_id)
+
+    def end_continuing(self, run_id: str) -> None:
+        if self._journal is not None:
+            self._journal.forget_continuing(run_id)
+
+    def take_interrupted_runs(self) -> list[str]:
+        """Runs whose continuation the previous backend did not finish —
+        each returned once; the marker goes with it."""
+        runs, self._interrupted_runs = self._interrupted_runs, []
+        for run_id in runs:
+            self.end_continuing(run_id)
+        return runs
 
     def waiting_messages(self) -> list[msg.RunPaused]:
         """One ``RunPaused`` per run with approvals waiting — what a

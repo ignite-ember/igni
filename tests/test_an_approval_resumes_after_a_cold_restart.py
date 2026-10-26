@@ -318,6 +318,7 @@ class Backend:
         thorough: bool = False,
         stuck: bool = False,
         extra_tools: list[Any] | None = None,
+        main_tools: list[Any] | None = None,
     ) -> None:
         self.agno_db = store.agno()
         state = store.state()
@@ -338,7 +339,7 @@ class Backend:
             thorough=thorough,
             stuck=stuck,
         )
-        tools: list[Any] = [_deploy_tool(side)]
+        tools: list[Any] = main_tools if main_tools is not None else [_deploy_tool(side)]
         if with_spawn:
             tools = [
                 OrchestrateTools(
@@ -896,3 +897,88 @@ async def test_a_team_members_approval_is_answered_without_a_restart(
     assert side.calls == ["write notes", "remove build"]
     [final] = outcome
     assert "team done:" in final and "cleaner says build removed" in final
+
+
+def _stuck_deploy_tool(side: Side) -> Any:
+    @tool(requires_confirmation=True)
+    async def deploy(target: str) -> str:
+        """Deploy to a target."""
+        side.calls.append(f"deploy {target} started")
+        await asyncio.Event().wait()
+        return "never"
+
+    return deploy
+
+
+def _deploys_then_chats(messages: list[Message]) -> ModelResponse:
+    last_user = next((m for m in reversed(messages) if m.role == "user"), None)
+    if last_user is not None and str(last_user.content) == "anything else?":
+        return ModelResponse(content="here to help")
+    return _main_deploys(messages)
+
+
+async def test_a_main_agent_run_cut_while_continuing_is_reported_once(
+    database_url: DatabaseUrl, tmp_path: Path
+):
+    """The main agent's approval is answered, and the backend dies while
+    the approved tool is still running. After the restart the session is
+    told once that the run was interrupted, Agno's stored run is no longer
+    paused with nothing to answer, the tool is not run again, and the
+    conversation goes on."""
+    side = Side()
+    store = Store(database_url, tmp_path)
+    before = Backend(
+        store,
+        side,
+        main_script=_deploys_then_chats,
+        with_spawn=False,
+        main_tools=[_stuck_deploy_tool(side)],
+    )
+    paused = None
+    async for event in before.main.arun("deploy it", stream=True, stream_events=True):
+        if isinstance(event, agent_events.RunPausedEvent):
+            paused = event
+    assert paused is not None
+    [shown] = PauseHandler(evaluator=None, store=before.store).handle(paused).messages
+    answering = asyncio.create_task(
+        before.answer(shown.requirements[0].requirement_id)  # type: ignore[attr-defined]
+    )
+    for _ in range(200):
+        if "deploy prod started" in side.calls:
+            break
+        await asyncio.sleep(0.01)
+    assert "deploy prod started" in side.calls
+    dead = before  # dies with the approved tool running
+
+    after = Backend(
+        store,
+        side,
+        main_script=_deploys_then_chats,
+        with_spawn=False,
+        main_tools=[_stuck_deploy_tool(side)],
+    )
+    assert after.hitl.waiting_messages() == []
+    replies = [m async for m in after.hitl.resume_interrupted()]
+    assert [r.text for r in replies if isinstance(r, msg.Info)] == [HitlController.INTERRUPTED_RUN]
+    assert [m async for m in after.hitl.resume_interrupted()] == [], "reported once"
+    restarted = Backend(
+        store,
+        side,
+        main_script=_deploys_then_chats,
+        with_spawn=False,
+        main_tools=[_stuck_deploy_tool(side)],
+    )
+    assert [m async for m in restarted.hitl.resume_interrupted()] == [], "and not again later"
+
+    run = await _stored_run(after.agno_db, paused.run_id)
+    assert run.status != RunStatus.paused
+    assert side.calls == ["deploy prod started"], "not run again"
+
+    answers = []
+    async for event in after.main.arun("anything else?", stream=True, stream_events=True):
+        if isinstance(event, agent_events.RunCompletedEvent):
+            answers.append(str(event.content))
+    assert answers == ["here to help"]
+
+    answering.cancel()
+    del dead

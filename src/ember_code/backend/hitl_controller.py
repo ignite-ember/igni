@@ -32,9 +32,13 @@ compare on ``decision.action``.
 
 from __future__ import annotations
 
+import inspect
 import logging
 from collections.abc import AsyncIterator
 from typing import TYPE_CHECKING, Any
+
+from agno.db.base import SessionType
+from agno.run.base import RunStatus
 
 from ember_code.backend.cold_spawn_resume import ColdSpawnResume
 from ember_code.backend.hitl_stream_mux import HITLStreamMultiplexer
@@ -265,16 +269,25 @@ class HitlController:
             len(main_resolved_reqs),
             run_id,
         )
-        async for proto in self._stream_factory(
-            team.acontinue_run(
-                run_id=run_id,
-                session_id=self._session.session_id,
-                requirements=main_resolved_reqs,
-                stream=True,
-                stream_events=True,
-            )  # type: ignore[call-overload]  # kwargs + agno overload interplay
-        ):
-            yield proto
+        # Marked while it runs: a backend that dies before the run ends
+        # leaves the mark, and the next one reports the run interrupted
+        # rather than leave it paused with nothing to answer.
+        if run_id:
+            self._store.begin_continuing(run_id)
+        try:
+            async for proto in self._stream_factory(
+                team.acontinue_run(
+                    run_id=run_id,
+                    session_id=self._session.session_id,
+                    requirements=main_resolved_reqs,
+                    stream=True,
+                    stream_events=True,
+                )  # type: ignore[call-overload]  # kwargs + agno overload interplay
+            ):
+                yield proto
+        finally:
+            if run_id:
+                self._store.end_continuing(run_id)
 
         # Fire Stop hook after continuation completes: the extensions
         # that hook it first, then the configured hooks.
@@ -421,14 +434,49 @@ class HitlController:
             *self._session.sub_agent_hitl.waiting_requests(),
         ]
 
+    #: What the session is told about a main-agent run cut off while it
+    #: was being continued.
+    INTERRUPTED_RUN = (
+        "A run was interrupted: igni restarted while it was continuing after "
+        "its approval was answered. It was not run again — what it did before "
+        "the restart may or may not have taken effect. You can carry on the "
+        "conversation."
+    )
+
+    async def _close_interrupted_run(self, run_id: str) -> bool:
+        """Mark Agno's stored run as ended in error, so it is no longer
+        paused with nothing left to answer. ``True`` when it was found."""
+        db = getattr(self._session.main_team, "db", None)
+        if db is None:
+            return False
+        found = db.get_session(session_id=self._session.session_id, session_type=SessionType.AGENT)
+        stored = await found if inspect.isawaitable(found) else found
+        for run in getattr(stored, "runs", None) or []:
+            if run.run_id != run_id:
+                continue
+            if run.status == RunStatus.paused:
+                run.status = RunStatus.error
+                run.content = self.INTERRUPTED_RUN
+                saved = db.upsert_session(stored)
+                if inspect.isawaitable(saved):
+                    await saved
+            return True
+        return False
+
     async def resume_interrupted(self) -> AsyncIterator[msg.Message]:
         """Finish what a previous backend was continuing when it died.
 
-        A sub-agent or team whose approval had been answered, and was
-        still being continued, left its spawn link behind. It is reported
-        failed to the call waiting on it, and that call's run goes on
-        (``ColdSpawnResume.interrupted``). Each is taken once.
+        A main-agent run whose approvals had been answered left its
+        ``continuing`` mark: the session is told it was interrupted, and
+        Agno's stored run is closed rather than left paused. A sub-agent
+        or team left its spawn link: it is reported failed to the call
+        waiting on it, and that call's run goes on
+        (``ColdSpawnResume.interrupted``). None is run again; each is
+        taken once.
         """
+        for run_id in self._store.take_interrupted_runs():
+            if await self._close_interrupted_run(run_id):
+                yield msg.Info(text=self.INTERRUPTED_RUN)
         for link in self._session.sub_agent_hitl.take_interrupted():
             async for proto in ColdSpawnResume(self._session, self._stream_factory).interrupted(
                 link

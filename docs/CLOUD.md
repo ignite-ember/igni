@@ -533,7 +533,11 @@ a subscriber of each one with `chat.approvals.changed`):
   the agent or team still running — is reported failed to the call
   waiting on it, not re-run (same reason), and that call's run goes on
   when a window next attaches. The spawn link lives until the paused
-  run's stream ends, which is how a restart tells this case apart.
+  run's stream ends, which is how a restart tells this case apart. The
+  main agent's own run is marked (`continuing`) while it is continued;
+  one left marked is reported to the session once as interrupted, its
+  stored run is closed in error instead of staying paused with nothing
+  to answer, and the conversation goes on.
 
 **Messages typed during a run** are a row from queueing; a run that
 takes one marks it taken and records it in the conversation under the
@@ -545,10 +549,8 @@ What is not covered yet:
 
 - MCP approvals per person: igni server has no endpoint for them, so
   the cloud approves exactly the servers its group policy delivers. A
-  per-person approval list would need one on igni server.
-- A main-agent approval answered and then cut off by a restart while
-  its run was being continued is not reported: Agno's stored run stays
-  paused, with nothing left to answer.
+  per-person approval list needs one there (part of the igni server
+  work).
 
 ## 10. The producer's volume (proposed, measured nested)
 

@@ -38,6 +38,7 @@ from enum import StrEnum
 from pathlib import Path
 from typing import Any
 
+from agno.models.response import ToolExecution
 from agno.run.requirement import RunRequirement
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import Index, Integer, PrimaryKeyConstraint, String, Text, delete, select, update
@@ -64,6 +65,9 @@ class ApprovalOrigin(StrEnum):
     SUB_AGENT = "sub_agent"
     #: Decided by the permission policy; kept for the resume of its run.
     AUTO_RESOLVED = "auto_resolved"
+    #: Not an approval: the main agent's run, its approvals answered, is
+    #: being continued. Left behind only by a backend that died meanwhile.
+    CONTINUING = "continuing"
 
 
 class WaitingApprovalModel(ScopedColumns, Base):
@@ -193,7 +197,7 @@ class ApprovalJournal:
                 )
         except Exception as exc:
             logger.debug("approval journal: record %s failed: %s", requirement_id, exc)
-        if origin is not ApprovalOrigin.AUTO_RESOLVED:
+        if origin in (ApprovalOrigin.MAIN, ApprovalOrigin.SUB_AGENT):
             approval_events.announce(
                 ApprovalChange(
                     session_id=session_id,
@@ -204,6 +208,20 @@ class ApprovalJournal:
                     tool_name=request.tool_name if request is not None else "",
                 )
             )
+
+    def record_continuing(self, *, session_id: str, run_id: str) -> None:
+        """The main agent's run ``run_id`` is being continued after its
+        approvals were answered — until :meth:`forget_continuing`."""
+        self.record(
+            requirement_id=f"continuing-{run_id}",
+            session_id=session_id,
+            run_id=run_id,
+            origin=ApprovalOrigin.CONTINUING,
+            requirement=RunRequirement(tool_execution=ToolExecution(tool_name="continue")),
+        )
+
+    def forget_continuing(self, run_id: str) -> None:
+        self.forget(f"continuing-{run_id}")
 
     def record_auto_resolved(self, *, session_id: str, run_id: str, requirement: Any) -> None:
         self.record(
@@ -397,7 +415,7 @@ class ApprovalJournal:
             logger.debug("approval journal: delete failed: %s", exc)
             return
         for requirement_id, session_id, run_id, origin in gone:
-            if origin == ApprovalOrigin.AUTO_RESOLVED.value:
+            if origin not in (ApprovalOrigin.MAIN.value, ApprovalOrigin.SUB_AGENT.value):
                 continue
             approval_events.announce(
                 ApprovalChange(
