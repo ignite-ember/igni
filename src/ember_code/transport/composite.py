@@ -78,6 +78,11 @@ class CompositeTransport(Transport):
             if not self._pumps:
                 self._pumps = [asyncio.create_task(self._pump(t)) for t in self._transports]
 
+    @property
+    def client_count(self) -> int:
+        """Clients connected across every child that counts them."""
+        return sum(getattr(t, "client_count", 0) for t in self._transports)
+
     def watch_connections(self, watcher: Callable[[str, str], None]) -> None:
         """Forward to every child that reports its views coming and going."""
         for t in self._transports:

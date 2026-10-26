@@ -20,12 +20,14 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
 from collections.abc import MutableSequence
 from pathlib import Path
 from typing import Any
 
 from ember_code.backend.agent_refresh import AgentRefresh
 from ember_code.backend.command_handler import CommandHandler
+from ember_code.backend.guest import CloudGuest
 from ember_code.backend.host_backend import HostModelWiring, ObservedTransport
 from ember_code.backend.login_coordinator import LoginCoordinator
 from ember_code.backend.push_bridge import PushNotificationBridge
@@ -160,6 +162,7 @@ class BackendApp:
         # The host object model and the socket processes reach it on.
         self._host_model: HostModel | None = None
         self._host_channel: HostChannel | None = None
+        self._guest = CloudGuest.current()
 
     def _load_settings_with_group_policy(self) -> Settings:
         """Build this process's ``Settings`` with the org's policy applied.
@@ -197,9 +200,32 @@ class BackendApp:
     async def run(self) -> None:
         """Boot, serve, and tear down. Exceptions in the boot or
         serve phases are logged; teardown always runs."""
+        try:
+            await self._boot_and_serve()
+        finally:
+            # Whatever ended the process, the guest agent must not go on
+            # reading ``ready`` or an activity nobody keeps true.
+            if self._guest is not None:
+                await self._guest.stop()
+
+    async def _boot_and_serve(self) -> None:
+        # In a producer's VM: the files igni and the guest agent share
+        # (docs/CLOUD.md §9). ``None`` on the desktop.
+        guest = self._guest
+        if guest is not None:
+            guest.starting()
         # Wrapped once, at the root, so the host object model sees
         # every message igni sends any window — see ``host_backend``.
         self._transport = ObservedTransport(await self._transport_builder.build())
+        if guest is not None:
+            # Listening, imports done: a warm base may be snapshotted
+            # here, before anyone it is for is known. Nothing above
+            # this line is any producer's.
+            guest.listening()
+            if await guest.bind(self._transport) is not None:
+                # The producer's volume is mounted now; a working
+                # directory taken before it would still be the image's.
+                os.chdir(self._project_dir)
 
         settings = self._load_settings_with_group_policy()
         # Whose rows a shared database holds: the producer signed in
@@ -362,6 +388,16 @@ class BackendApp:
         )
         self._supervisor.start_evictor()
         self._supervisor.mark_running()
+        if guest is not None and self._host_model is not None:
+            # Before any window connects: an idle VM nobody is
+            # looking at is the one the node agent most wants to know
+            # it may suspend.
+            guest.serving(
+                model=self._host_model,
+                transport=self._transport,
+                notifications=notifications,
+                on_rebind=self._supervisor.request_shutdown,
+            )
 
         try:
             if self._ws_port is not None:

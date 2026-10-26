@@ -214,6 +214,20 @@ class NotificationStreamFollower:
         self._backoff.reset()
         self.start()
 
+    async def reconnect(self) -> None:
+        """Open a fresh connection, keeping the cursor — after a snapshot restore.
+
+        The connection the follower holds may be to a server that dropped
+        it while the VM slept; waiting out the read timeout on it would
+        leave the person's notifications stale for a minute. Only when
+        following: a follower that stopped stays stopped.
+        """
+        if not self.following:
+            return
+        await self.stop()
+        self._backoff.reset()
+        self.start()
+
     async def stop(self) -> None:
         task, self._task = self._task, None
         if task is None:

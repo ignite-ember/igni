@@ -20,7 +20,9 @@ A SQLite connection is opened with a five-second busy timeout and put
 in WAL mode, so readers do not block the writer and a contended write
 waits instead of failing with ``database is locked`` — what the raw
 ``sqlite3`` stores used to set on every connection of their own.
-PostgreSQL needs neither.
+PostgreSQL needs neither; its connections get TCP keepalives and a
+timeout instead (:class:`PostgresConnectionSetup`), so a connection a
+snapshot restore left dead fails fast and the pool replaces it.
 
 Production callers should use the shared :class:`EngineCache`
 singleton (``core/db/engine.py`` exposes ``cache``). Per-instance
@@ -31,6 +33,8 @@ create two pools on it (the exact bug the cache exists to prevent).
 
 from __future__ import annotations
 
+import asyncio
+import logging
 import threading
 from pathlib import Path
 from typing import Any
@@ -45,6 +49,8 @@ from sqlalchemy.ext.asyncio import (
 from sqlalchemy.orm import Session, sessionmaker
 
 from ember_code.core.db.urls import DatabaseUrl
+
+logger = logging.getLogger(__name__)
 
 #: Target for :meth:`EngineRegistry.get_engine` and friends.
 DatabaseTarget = str | Path | DatabaseUrl
@@ -73,6 +79,36 @@ class SqliteConnectionSetup:
     @classmethod
     def attach(cls, engine: Engine) -> None:
         event.listen(engine, "connect", cls.on_connect)
+
+
+class PostgresConnectionSetup:
+    """What every PostgreSQL connection igni opens is set up with.
+
+    A connection whose server or network went away without a word — a
+    VM restored from a snapshot, a NAT entry that expired while it
+    slept — fails within seconds instead of the kernel's quarter of an
+    hour of retransmissions: the pool's pre-ping on it errors out and
+    the pool opens a fresh one (``docs/CLOUD.md`` §9). libpq parameters,
+    which psycopg takes for its sync and async connections alike; a
+    platform without ``TCP_USER_TIMEOUT`` ignores that one.
+    """
+
+    CONNECT_TIMEOUT_SECONDS = 10
+    KEEPALIVE_IDLE_SECONDS = 30
+    KEEPALIVE_INTERVAL_SECONDS = 10
+    KEEPALIVE_COUNT = 3
+    USER_TIMEOUT_MS = 30_000
+
+    @classmethod
+    def connect_args(cls) -> dict[str, Any]:
+        return {
+            "connect_timeout": cls.CONNECT_TIMEOUT_SECONDS,
+            "keepalives": 1,
+            "keepalives_idle": cls.KEEPALIVE_IDLE_SECONDS,
+            "keepalives_interval": cls.KEEPALIVE_INTERVAL_SECONDS,
+            "keepalives_count": cls.KEEPALIVE_COUNT,
+            "tcp_user_timeout": cls.USER_TIMEOUT_MS,
+        }
 
 
 class EngineRegistry:
@@ -104,7 +140,11 @@ class EngineRegistry:
                     )
                     SqliteConnectionSetup.attach(engine)
                 else:
-                    engine = create_engine(url.sync, pool_pre_ping=True)
+                    engine = create_engine(
+                        url.sync,
+                        pool_pre_ping=True,
+                        connect_args=PostgresConnectionSetup.connect_args(),
+                    )
                 self._sync_engines[url.url] = engine
             return engine
 
@@ -132,7 +172,11 @@ class EngineRegistry:
                     )
                     SqliteConnectionSetup.attach(engine.sync_engine)
                 else:
-                    engine = create_async_engine(url.async_, pool_pre_ping=True)
+                    engine = create_async_engine(
+                        url.async_,
+                        pool_pre_ping=True,
+                        connect_args=PostgresConnectionSetup.connect_args(),
+                    )
                 self._async_engines[url.url] = engine
             return engine
 
@@ -162,6 +206,33 @@ class EngineRegistry:
             self._async_engines.clear()
             self._async_sessionmakers.clear()
 
+    #: How long closing one engine's pooled connections may take before
+    #: they are dropped unclosed.
+    RESET_TIMEOUT_SECONDS = 5.0
+
+    async def reset_pools(self) -> None:
+        """Drop every pooled connection; keep the engines.
+
+        After a snapshot restore (``docs/CLOUD.md`` §9) a pooled
+        connection may be to a server that dropped it while the VM was
+        away. Stores keep their engines, so the engines stay and only
+        their pools are replaced: the next query opens a fresh
+        connection. A close that does not finish in
+        :attr:`RESET_TIMEOUT_SECONDS` leaves the connections to the
+        garbage collector rather than wait on a dead socket.
+        """
+        with self._lock:
+            sync_engines: list[Engine] = list(self._sync_engines.values())
+            async_engines: list[AsyncEngine] = list(self._async_engines.values())
+        for sync_engine in sync_engines:
+            sync_engine.dispose()
+        for async_engine in async_engines:
+            try:
+                await asyncio.wait_for(async_engine.dispose(), timeout=self.RESET_TIMEOUT_SECONDS)
+            except Exception as exc:
+                logger.info("dropping %s's connections unclosed: %s", async_engine.url, exc)
+                await async_engine.dispose(close=False)
+
     async def dispose(self) -> None:
         """Async-aware disposal: awaits every cached async engine, then
         disposes the sync engines and clears every cache."""
@@ -175,4 +246,9 @@ class EngineRegistry:
         self.dispose_sync()
 
 
-__all__ = ["DatabaseTarget", "EngineRegistry", "SqliteConnectionSetup"]
+__all__ = [
+    "DatabaseTarget",
+    "EngineRegistry",
+    "PostgresConnectionSetup",
+    "SqliteConnectionSetup",
+]

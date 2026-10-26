@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import json
 import logging
+from collections.abc import Callable
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -50,6 +51,11 @@ class BroadcastSignals:
     def __init__(self, model: HostModel) -> None:
         self.model = model
         self.state = model.state
+        self._activity_listeners: list[Callable[[dict[str, Any]], None]] = []
+
+    def on_activity(self, listener: Callable[[dict[str, Any]], None]) -> None:
+        """Be told the new ``app.activity`` whenever ``app.activity_changed`` is."""
+        self._activity_listeners.append(listener)
 
     # ── Outbound messages ─────────────────────────────────────────
 
@@ -85,6 +91,11 @@ class BroadcastSignals:
             return
         self.state.activity = activity
         self.model.emit("app.activity_changed", activity)
+        for listener in list(self._activity_listeners):
+            try:
+                listener(activity)
+            except Exception:
+                logger.exception("an activity listener failed")
 
     def approval_changed(self, change: ApprovalChange) -> None:
         """An approval appeared or went away (``core/approvals/events.py``)."""

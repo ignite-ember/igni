@@ -84,6 +84,10 @@ class EngineCache:
     def get_async_sessionmaker(self, target: DatabaseTarget) -> async_sessionmaker[AsyncSession]:
         return self._registry.get_async_sessionmaker(target)
 
+    async def reset_pools(self) -> None:
+        """Drop every pooled connection, keeping the engines (:meth:`EngineRegistry.reset_pools`)."""
+        await self._registry.reset_pools()
+
     def dispose_all(self) -> None:
         """Close every cached engine — used in tests and on shutdown.
 

@@ -225,12 +225,15 @@ class OrchestratorHostBackend:
         return list(latest.values())
 
     def activity(self) -> dict[str, Any]:
+        return self.activity_model().model_dump(mode="json")
+
+    def activity_model(self) -> Activity:
         sessions = []
         for runtime in self._orchestrator.pool.runtimes:
             probe = getattr(runtime.backend, "activity", None)
             if probe is not None:
                 sessions.append(probe())
-        return Activity.of(sessions).model_dump(mode="json")
+        return Activity.of(sessions)
 
     def waiting_approvals(self, session_id: str) -> list[msg.Message]:
         runtime = self._orchestrator.pool.find(session_id)

@@ -123,6 +123,11 @@ class NotificationCenter:
         """:meth:`signed_in`, for a synchronous sign-in listener."""
         asyncio.get_running_loop().create_task(self.signed_in())
 
+    async def resumed(self, _away: float = 0.0) -> None:
+        """The VM was restored from a snapshot: catch up, on a fresh connection."""
+        self.wake()
+        await self._follower.reconnect()
+
     async def signed_out(self) -> None:
         """Nobody is signed in: forget their notifications."""
         await self._follower.stop()
