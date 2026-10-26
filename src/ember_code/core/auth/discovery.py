@@ -57,6 +57,8 @@ import dns.asyncresolver
 import dns.exception
 import httpx
 
+from ember_code.core.activity.http import busy_call
+
 logger = logging.getLogger(__name__)
 
 #: Where a customer publishes it, relative to their email domain.
@@ -219,12 +221,15 @@ async def discover(email: str) -> Discovered:
 
     url = f"https://{domain}{WELL_KNOWN}"
     try:
-        async with httpx.AsyncClient(
-            timeout=TIMEOUT_SECONDS,
-            # A redirect is a different host answering a question
-            # asked of this one.
-            follow_redirects=False,
-        ) as client:
+        async with (
+            busy_call("igni-server"),
+            httpx.AsyncClient(
+                timeout=TIMEOUT_SECONDS,
+                # A redirect is a different host answering a question
+                # asked of this one.
+                follow_redirects=False,
+            ) as client,
+        ):
             response = await client.get(url, headers={"Accept": "application/json"})
     except Exception as exc:  # noqa: BLE001 — DNS, TLS, timeouts, refusals
         # No web root, or none that answers. The zone may still say.

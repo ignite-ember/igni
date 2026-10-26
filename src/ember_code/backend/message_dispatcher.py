@@ -28,6 +28,7 @@ from collections.abc import MutableSequence
 from typing import Any
 
 from ember_code.backend.login_coordinator import LoginCoordinator
+from ember_code.core.activity import BusyKind, background
 from ember_code.extensions.registry import ExtensionRefused
 from ember_code.extensions.rpc import ExtensionRpc
 from ember_code.protocol import messages as msg
@@ -232,7 +233,9 @@ class MessageDispatcher:
         if runtime is not None:
             runtime.spawn_auto_name(coro)
         else:
-            asyncio.create_task(coro)
+            background.start(
+                coro, holder="auto-name", reason="naming the session", kind=BusyKind.POST_RUN
+            )
 
     async def _auto_name_coro(self) -> None:
         # ``maybe_auto_name_session`` now returns an ``AutoNameResult``

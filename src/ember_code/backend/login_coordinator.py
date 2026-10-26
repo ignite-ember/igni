@@ -24,6 +24,7 @@ from typing import Any
 
 from ember_code.backend.push_bridge import PushNotificationBridge
 from ember_code.backend.schemas_rpc import LoginResult, LoginStarted
+from ember_code.core.activity import background
 
 logger = logging.getLogger(__name__)
 
@@ -57,7 +58,8 @@ class LoginCoordinator:
         and ack immediately. The actual login result arrives
         asynchronously via a ``login_result`` push notification."""
         await self.cancel()
-        self._task = asyncio.create_task(self._run_login())
+        # Waits on a person signing in: not busy.
+        self._task = background.daemon(self._run_login(), name="login")
         return LoginStarted(started=True)
 
     async def cancel(self) -> None:

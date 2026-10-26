@@ -32,13 +32,13 @@ table keeps importing them by name.
 
 from __future__ import annotations
 
-import asyncio
 import contextlib
 import logging
 import uuid
 from typing import TYPE_CHECKING
 
 from ember_code.backend.command_result import CommandResult
+from ember_code.core.activity import background
 from ember_code.protocol.messages import CommandAction
 
 if TYPE_CHECKING:
@@ -81,7 +81,9 @@ class SessionCommand:
         # the backend reads this and exposes get_status().
         self._session.latch_input_tokens(0)
 
-        asyncio.create_task(self._revalidate_group())
+        background.start(
+            self._revalidate_group(), holder="session", reason="revalidating the group"
+        )
         return CommandResult.for_action(CommandAction.CLEAR)
 
     async def sessions(self) -> CommandResult:

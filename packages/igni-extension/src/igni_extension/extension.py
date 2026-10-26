@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
-from collections.abc import Awaitable, Callable, Mapping
+from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
 from typing import Any
 
 import anyio
@@ -32,6 +32,7 @@ from igni_extension.errors import NotConfigured
 from igni_extension.hints import ToolHints, ToolHintsMissing
 from igni_extension.hooks import HookEvent, HookHandler, HookHandlers
 from igni_extension.host import Host
+from igni_extension.host_model import BusyLease
 from igni_extension.members import Signal
 from igni_extension.prompt import PromptConditions
 from igni_extension.service import ServiceClient
@@ -154,6 +155,48 @@ class IgniExtension:
     @property
     def signals(self) -> SignalHandlers:
         return self._signals
+
+    # ── Busy ────────────────────────────────────────────────────────
+
+    async def busy(self, reason: str, ttl: float | None = None) -> BusyLease:
+        """Say this extension is working, so igni's process is not suspended under it.
+
+        In the cloud igni's VM sleeps when nothing is busy. Work the
+        extension does on its own — indexing, a sync — takes a lease for
+        `reason`; it expires after `ttl` seconds (default and at most
+        600) unless renewed by calling again, so a stuck extension cannot
+        keep the VM awake. `ext.done(reason)` lets go; `ext.busy_while`
+        does both and renews in between.
+        """
+        return await self.host.self.busy(reason, ttl)
+
+    async def done(self, reason: str) -> None:
+        """Let go of the lease `busy` took for `reason`."""
+        await self.host.self.done(reason)
+
+    @contextlib.asynccontextmanager
+    async def busy_while(self, reason: str, ttl: float = 120.0) -> AsyncIterator[None]:
+        """Busy for as long as the block runs, renewed every half `ttl`.
+
+        async with ext.busy_while("indexing"):
+            await index_everything()
+        """
+        await self.busy(reason, ttl)
+
+        async def renew() -> None:
+            while True:
+                await asyncio.sleep(ttl / 2)
+                await self.busy(reason, ttl)
+
+        renewing = asyncio.get_running_loop().create_task(renew())
+        try:
+            yield
+        finally:
+            renewing.cancel()
+            with contextlib.suppress(asyncio.CancelledError, Exception):
+                await renewing
+            with contextlib.suppress(Exception):
+                await self.done(reason)
 
     # ── Its service ─────────────────────────────────────────────────
 

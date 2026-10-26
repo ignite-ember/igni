@@ -20,6 +20,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
+import threading
 import uuid
 from collections import OrderedDict
 from collections.abc import Callable
@@ -30,6 +31,7 @@ from ember_code.backend.activity import Activity
 from ember_code.backend.message_dispatcher import _serialize
 from ember_code.backend.rpc_router import POOL_LEVEL_RPCS
 from ember_code.backend.session_orchestrator import SessionOrchestrator
+from ember_code.core.activity import ActivityRegistry, background
 from ember_code.core.approvals.events import approval_events
 from ember_code.core.hooks.extension_gate import ExtensionHookGate
 from ember_code.extensions.host.broadcasts import BroadcastSignals
@@ -233,7 +235,7 @@ class OrchestratorHostBackend:
             probe = getattr(runtime.backend, "activity", None)
             if probe is not None:
                 sessions.append(probe())
-        return Activity.of(sessions)
+        return Activity.now(sessions, ActivityRegistry.shared())
 
     def waiting_approvals(self, session_id: str) -> list[msg.Message]:
         runtime = self._orchestrator.pool.find(session_id)
@@ -250,9 +252,37 @@ class OrchestratorHostBackend:
 
     def broadcast(self, message: msg.Message) -> None:
         with contextlib.suppress(RuntimeError):
-            task = asyncio.get_running_loop().create_task(self._transport.send(message))
+            # A message to the windows: too short to count as busy.
+            task = background.daemon(self._transport.send(message), name="host-broadcast")
             self._tasks.add(task)
             task.add_done_callback(self._tasks.discard)
+
+
+class ActivityNudge:
+    """Tells the host model to look at the activity again when the registry moves.
+
+    A lease can be taken or let go on any thread; the model is the
+    loop's. Several moves before the loop gets round to it are one look.
+    """
+
+    def __init__(self, model: HostModel, loop: asyncio.AbstractEventLoop) -> None:
+        self._model = model
+        self._loop = loop
+        self._pending = False
+        self._lock = threading.Lock()
+
+    def __call__(self) -> None:
+        with self._lock:
+            if self._pending:
+                return
+            self._pending = True
+        with contextlib.suppress(RuntimeError):
+            self._loop.call_soon_threadsafe(self._look)
+
+    def _look(self) -> None:
+        with self._lock:
+            self._pending = False
+        self._model.broadcasts.activity_moved()
 
 
 class HostModelWiring:
@@ -304,6 +334,9 @@ class HostModelWiring:
         approval_events.watch(model.broadcasts.approval_changed)
         if workspace_signals is not None:
             workspace_signals.attach_model(model)
+        # Busy leases and wakes move the activity too (``core/activity``).
+        with contextlib.suppress(RuntimeError):
+            ActivityRegistry.shared().watch(ActivityNudge(model, asyncio.get_running_loop()))
         watch_connections = getattr(transport.inner, "watch_connections", None)
         if watch_connections is not None:
 

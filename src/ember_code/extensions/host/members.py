@@ -1254,6 +1254,21 @@ class SelfMembers(Members):
     async def web_url(self, c: Call) -> Any:
         return self.model.extension_info(c.extension_id).get("web_url")
 
+    @call("self.busy")
+    async def busy(self, c: Call) -> Any:
+        reason = c.params.get("reason")
+        if not isinstance(reason, str) or not reason:
+            raise HostModelError(ErrorCode.INVALID, "busy needs a reason")
+        ttl = c.params.get("ttl_seconds")
+        if ttl is not None and not isinstance(ttl, int | float):
+            raise HostModelError(ErrorCode.INVALID, "ttl_seconds is a number of seconds")
+        lease = self.model.extension_busy.busy(c.extension_id, reason, ttl)
+        return lease.model_dump(mode="json")
+
+    @call("self.done")
+    async def done(self, c: Call) -> Any:
+        self.model.extension_busy.done(c.extension_id, str(c.params.get("reason", "")))
+
 
 class HookMembers(Members):
     @get("hooks.details")

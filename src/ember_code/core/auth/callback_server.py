@@ -37,12 +37,12 @@ import contextlib
 import logging
 import socket
 from http.server import BaseHTTPRequestHandler, HTTPServer
-from threading import Thread
 from types import TracebackType
 from urllib.parse import parse_qs, urlparse
 
 import httpx
 
+from ember_code.core.activity import background
 from ember_code.core.auth._success_page import SUCCESS_PAGE
 
 logger = logging.getLogger(__name__)
@@ -101,8 +101,8 @@ class CallbackServer:
         self._server.timeout = 1.0
         self._server.callback_server = self
 
-        self._thread = Thread(target=self._serve, daemon=True)
-        self._thread.start()
+        # Waits on a person signing in in their browser: not busy.
+        self._thread = background.thread(self._serve, name="auth-callback")
 
     @staticmethod
     def _find_free_port() -> int:

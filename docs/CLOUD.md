@@ -531,11 +531,44 @@ moves all three, default `/run/igni`):
   the image's supervisor to start one that binds afresh. An igni started
   with `IGNI_DATABASE_URL` set and no file binds at once, as before.
 - `activity.json` (`IGNI_ACTIVITY_FILE`): `app.activity` — `state`,
-  `suspendable`, `waiting_approvals`, `sessions` — plus `running` (runs
-  working), `clients` (windows connected) and `written_at_ms`. Written
-  whole (temporary file, rename) on every `app.activity_changed`, on any
-  change seen in a check every second, and every 4 s while a run is
-  going; removed when igni exits.
+  `suspendable`, `waiting_approvals`, `sessions`, `busy`, `wake_at` —
+  plus `running` (runs working), `clients` (windows connected) and
+  `written_at_ms`. Written whole (temporary file, rename) on every
+  `app.activity_changed`, on any change seen in a check every second,
+  and every 4 s while it is not suspendable; removed when igni exits.
+  For the node agent:
+  - Times are Unix milliseconds (`written_at_ms`, `wake_at`, and `since`
+    / `expires_at` in `busy`).
+  - `busy` is a list of `{kind, holder, reason, since, expires_at}` —
+    what holds igni awake outside a run's own turn. `kind` is one of
+    `post_run`, `model_call`, `http_call`, `mcp_call`, `extension_call`,
+    `scheduled_task`, `process`, `monitor`, `extension`, `background`.
+    Any entry makes `state` `running` and `suspendable` false. An entry
+    with `expires_at` stops counting then on igni's side; the file is
+    rewritten when it does.
+  - `wake_at` (Unix milliseconds, or `null`) is the earliest time igni has
+    work due while nothing runs — today the scheduler's next task. A
+    suspended VM should be woken at it (and need not be woken before it
+    for igni's sake).
+
+**What decides `suspendable`** (`core/activity`, core — the desktop has
+it too and suspends nothing). One registry of **busy leases**: anything
+working holds one while it works and lets it go when done — every HTTP
+call igni makes (model calls, igni server, services: `BusyAsyncClient`,
+until a streamed answer is closed, at most 15 minutes), MCP tool calls,
+extension service calls, scheduled tasks while they run, background
+shell processes and monitors while they run, post-run work (learning
+extraction, session naming), and an extension that says it is working
+(`self.busy` in the host model, `ext.busy(reason, ttl)` /
+`ext.busy_while(reason)` in the Python SDK: a lease per reason that
+expires after at most 600 s unless renewed, and goes when the
+extension stops). A run counts through its session as before; waiting
+on a person holds nothing. Every task or thread igni starts goes through
+one helper (`BackgroundTasks`: `start` holds a lease until the work
+ends, `daemon` is for loops that live as long as their owner and hold
+none); `tests/test_background_work_is_accounted_for.py` fails on any
+other `create_task`, `ensure_future`, `Thread` and the like under
+`src/`. Work due later publishes a **wake**; the earliest is `wake_at`.
 
 **Randomness.** Every VM restored from one warm base starts with the
 same memory, pseudo-random generators included. The kernel's are

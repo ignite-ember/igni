@@ -32,6 +32,7 @@ from typing import Any
 
 import httpx
 
+from ember_code.core.activity.http import busy_call
 from ember_code.core.tools.web_schemas import FetchResult, HttpFetcherConfig
 from ember_code.core.utils.http_retry import retry_with_backoff
 
@@ -145,7 +146,10 @@ class HttpFetcher:
         """
 
         async def _make_request() -> httpx.Response:
-            async with httpx.AsyncClient(**self._config.httpx_kwargs()) as client:
+            async with (
+                busy_call("web-fetch"),
+                httpx.AsyncClient(**self._config.httpx_kwargs()) as client,
+            ):
                 response = await client.get(url, headers=headers)
                 response.raise_for_status()
                 return response

@@ -46,6 +46,8 @@ from typing import Annotated, Self
 import httpx
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from ember_code.core.activity.http import busy_call
+
 logger = logging.getLogger(__name__)
 
 #: The largest single asset igni takes.
@@ -251,6 +253,7 @@ class AssetSource:
         try:
             received = 0
             with (
+                busy_call("extension-assets"),
                 httpx.Client(
                     transport=self._transport, timeout=self._timeout, follow_redirects=True
                 ) as client,

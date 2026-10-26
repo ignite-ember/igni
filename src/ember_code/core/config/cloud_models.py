@@ -35,6 +35,7 @@ from typing import Any
 import httpx
 from pydantic import BaseModel, ConfigDict, Field
 
+from ember_code.core.activity.http import busy_call
 from ember_code.core.config.endpoint import is_configured
 from ember_code.core.config.model_entry import ModelRegistryEntry
 
@@ -176,7 +177,10 @@ class CloudModelCatalogClient:
 
         url = f"{self._api_url.rstrip('/')}/v1/chat/models"
         try:
-            with httpx.Client(timeout=self.FETCH_TIMEOUT_SECONDS) as client:
+            with (
+                busy_call("model-catalog"),
+                httpx.Client(timeout=self.FETCH_TIMEOUT_SECONDS) as client,
+            ):
                 resp = client.get(
                     url,
                     headers={"Authorization": f"Bearer {self._cloud_token}"},

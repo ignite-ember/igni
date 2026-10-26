@@ -1,11 +1,11 @@
-// GENERATED from the igni host schema 1.7.0 by ember_code.extensions.host.codegen — do not edit. Run `make host-sdks` after changing the schema.
+// GENERATED from the igni host schema 1.8.0 by ember_code.extensions.host.codegen — do not edit. Run `make host-sdks` after changing the schema.
 //
 // `bridge.host` as an extension's page sees it. Read
 // `docs/HOST_OBJECT_MODEL.md` in igni for what each object is.
 
 import { HostObject, Property, Signal, type HostLink, type JsonValue } from "./hostModel";
 
-export const SCHEMA_VERSION = "1.7.0";
+export const SCHEMA_VERSION = "1.8.0";
 
 /** One change anywhere in the model, as `host.changed` reports it. */
 export interface Change {
@@ -351,10 +351,28 @@ export interface SessionActivity {
 export interface Activity {
   /** `idle`, `waiting` or `running`. */
   state: string;
-  /** Nothing is running. */
+  /** Nothing is running and nothing is busy. */
   suspendable: boolean;
   waiting_approvals: number;
   sessions: SessionActivity[];
+  /** What holds igni busy outside a run's turn: calls out, scheduled tasks, processes, extensions that said they are working (`self.busy`). */
+  busy: BusyLease[];
+  /** When something is next due while nothing runs (ISO 8601, UTC): when a suspended igni should be woken. */
+  wake_at: string | null;
+}
+
+/** One thing igni is busy with. A lease with `expires_at` stops counting then, whether or not it was let go. */
+export interface BusyLease {
+  id: string;
+  /** `post_run`, `model_call`, `http_call`, `mcp_call`, `extension_call`, `scheduled_task`, `process`, `monitor`, `extension` or `background`. */
+  kind: string;
+  /** Who holds it: an extension id, a server, a task. */
+  holder: string;
+  reason: string;
+  /** ISO 8601. */
+  since: string;
+  /** ISO 8601; `None` until let go. */
+  expires_at: string | null;
 }
 
 /** The reason for an approval, arriving after it. */
@@ -1779,6 +1797,16 @@ export class HostSelf extends HostObject {
     this.web_url = new Property(this, "web_url", false);
     this.settings_changed = new Signal("self.settings_changed");
     this.state_changed = new Signal("self.state_changed");
+  }
+
+  /** Say this extension is working inside igni's process, so the process is not suspended under it (in the cloud, its VM). A lease for `reason`: it expires after `ttl_seconds` (default and at most 600) unless renewed by calling again with the same reason, so an extension that stops answering cannot keep igni awake. Shown in `app.activity`'s `busy`. */
+  busy(reason: string, ttl_seconds?: number): Promise<BusyLease> {
+    return this.call<BusyLease>("busy", { reason, ttl_seconds });
+  }
+
+  /** Let go of the lease `busy` took for `reason`. Nothing happens if there is none. */
+  done(reason: string): Promise<void> {
+    return this.call<void>("done", { reason });
   }
 }
 

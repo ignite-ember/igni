@@ -38,6 +38,8 @@ import threading
 import time
 from typing import TYPE_CHECKING
 
+from ember_code.core.activity import BusyKind, background
+
 if TYPE_CHECKING:
     from ember_code.core.tools.process_supervisor import ProcessSupervisor
 
@@ -157,7 +159,13 @@ class ManagedProcess:
         immediately after :meth:`ProcessRegistry.add`; separate
         from ``__init__`` so tests can construct a bare instance
         without a running loop."""
-        self._reader_task = asyncio.create_task(self._reader())
+        # Busy while the process runs: its output ends when it does.
+        self._reader_task = background.start(
+            self._reader(),
+            holder=f"process:{self.proc.pid}",
+            reason=self.cmd[:80],
+            kind=BusyKind.PROCESS,
+        )
 
     @property
     def reader_task(self) -> asyncio.Task | None:

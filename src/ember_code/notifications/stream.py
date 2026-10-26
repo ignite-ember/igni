@@ -39,6 +39,7 @@ from enum import StrEnum
 import httpx
 from pydantic import BaseModel
 
+from ember_code.core.activity import background
 from ember_code.extensions.service_token import NotSignedIn
 from ember_code.notifications.server_client import SignedInServer
 
@@ -202,7 +203,8 @@ class NotificationStreamFollower:
         if self.following:
             return
         self._opens = 0
-        self._task = asyncio.get_running_loop().create_task(self._run())
+        # Held open for as long as somebody is signed in: not busy.
+        self._task = background.daemon(self._run(), name="notification-stream")
 
     async def restart(self) -> None:
         """Follow afresh — after a sign-in, as whoever is signed in now.

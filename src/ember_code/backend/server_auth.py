@@ -28,6 +28,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from ember_code.backend.schemas_rpc import CloudPlan, LoginResult
+from ember_code.core.activity import background
 from ember_code.core.auth.credentials import (
     CloudCredentials,
     Credentials,
@@ -83,7 +84,7 @@ class _StatusForwarder:
         # Coroutine callbacks are scheduled fire-and-forget so the
         # login flow doesn't have to await status echoes.
         if asyncio.iscoroutine(result):
-            asyncio.ensure_future(result)
+            background.start(result, holder="auth", reason="a status callback")
 
 
 class AuthController:
@@ -153,7 +154,12 @@ class AuthController:
             except RuntimeError:
                 loop = None
             if loop is not None:
-                loop.create_task(self._hydrate_group_policy(existing_token, force=True))
+                background.start(
+                    self._hydrate_group_policy(existing_token, force=True),
+                    holder="group-policy",
+                    reason="reading the group's policy",
+                    loop=loop,
+                )
                 self.start_group_policy_polling()
 
     def start_group_policy_polling(self) -> None:
@@ -177,7 +183,9 @@ class AuthController:
             loop = asyncio.get_running_loop()
         except RuntimeError:
             return
-        self._poll_task = loop.create_task(self._poll_group_policy(interval))
+        self._poll_task = background.daemon(
+            self._poll_group_policy(interval), name="group-policy-poll", loop=loop
+        )
 
     def stop_group_policy_polling(self) -> None:
         """Cancel the timer. Idempotent; safe on a loop that has gone."""

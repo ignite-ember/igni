@@ -31,6 +31,8 @@ import httpx
 from agno.team import Team
 
 from ember_code.backend.schemas_run import HttpClientCloseResult
+from ember_code.core.activity import BusyKind
+from ember_code.core.activity.http import BusyAsyncClient
 
 logger = logging.getLogger(__name__)
 
@@ -82,7 +84,9 @@ class ModelHttpClientManager:
         # old client's connections will eventually time out on their
         # own.
         if model is not None:
-            model.http_client = httpx.AsyncClient(limits=self._limits)
+            model.http_client = BusyAsyncClient(
+                busy_holder="model", busy_kind=BusyKind.MODEL_CALL, limits=self._limits
+            )
         return result
 
     @staticmethod

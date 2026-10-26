@@ -62,6 +62,7 @@ from collections.abc import Callable
 import httpx
 from pydantic import BaseModel, ValidationError
 
+from ember_code.core.activity.http import busy_call
 from ember_code.core.auth.credentials import CloudCredentials
 from ember_code.core.config.endpoint import is_configured
 from ember_code.extensions.origin import (
@@ -225,9 +226,10 @@ class ServiceTokenExchange:
         if session.org_id:
             form["organisation"] = session.org_id
         try:
-            async with httpx.AsyncClient(
-                timeout=self._timeout, transport=self._transport
-            ) as client:
+            async with (
+                busy_call("igni-server"),
+                httpx.AsyncClient(timeout=self._timeout, transport=self._transport) as client,
+            ):
                 response = await client.post(f"{api_url}{self.TOKEN_PATH}", data=form)
         except httpx.HTTPError as exc:
             raise TokenExchangeFailed(f"igni could not be reached: {exc}") from exc

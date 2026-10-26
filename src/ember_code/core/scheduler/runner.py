@@ -8,9 +8,10 @@ configurable. Each task has a timeout to prevent runaway executions.
 import asyncio
 import logging
 from collections.abc import Callable, Coroutine
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any
 
+from ember_code.core.activity import ActivityRegistry, BusyKind, background
 from ember_code.core.scheduler.models import ScheduledTask, TaskStatus
 from ember_code.core.scheduler.store import TaskStore
 
@@ -66,13 +67,14 @@ class SchedulerRunner:
         self._running = False
         self._poll_task: asyncio.Task | None = None
         self._active_tasks: set[asyncio.Task] = set()
+        self._wake_holder = f"scheduler:{id(self):x}"
 
     def start(self) -> None:
         """Start the background polling loop."""
         if self._running:
             return
         self._running = True
-        self._poll_task = asyncio.create_task(self._poll_loop())
+        self._poll_task = background.daemon(self._poll_loop(), name="scheduler-poll")
         logger.info(
             "Scheduler started (poll every %.0fs, timeout %.0fs, max concurrent %d)",
             self._poll_interval,
@@ -89,6 +91,7 @@ class SchedulerRunner:
         for t in self._active_tasks:
             t.cancel()
         self._active_tasks.clear()
+        ActivityRegistry.shared().wake(self._wake_holder, None)
         logger.info("Scheduler stopped")
 
     @property
@@ -106,14 +109,35 @@ class SchedulerRunner:
     async def _check_and_spawn(self) -> None:
         """Find due tasks and spawn them, respecting the concurrency limit."""
         due_tasks = await self._store.get_due_tasks()
+        await self._publish_wake()
         for task in due_tasks:
             # Mark as running so the next poll doesn't pick it up again
             await self._store.update_status(task.id, TaskStatus.running)
             logger.info("Spawning scheduled task %s: %s", task.id, task.description)
 
-            bg = asyncio.create_task(self._run_with_semaphore(task.id, task.description))
+            bg = background.start(
+                self._run_with_semaphore(task.id, task.description),
+                holder=f"scheduled-task:{task.id}",
+                reason=task.description[:80],
+                kind=BusyKind.SCHEDULED_TASK,
+            )
             self._active_tasks.add(bg)
             bg.add_done_callback(self._active_tasks.discard)
+
+    async def _publish_wake(self) -> None:
+        """Tell the activity registry when the next task is due.
+
+        So a process that is suspended while nothing runs is woken for
+        it (``core/activity``). Times are stored as local wall-clock
+        times; the wake is in UTC.
+        """
+        try:
+            due = await self._store.next_pending_at()
+        except Exception:
+            logger.debug("could not read the next scheduled task", exc_info=True)
+            return
+        at = due.astimezone(UTC) if due is not None else None
+        ActivityRegistry.shared().wake(self._wake_holder, at, "a scheduled task")
 
     async def _run_with_semaphore(self, task_id: str, description: str) -> None:
         """Acquire the semaphore, then execute the task."""

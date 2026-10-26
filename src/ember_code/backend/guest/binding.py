@@ -46,6 +46,7 @@ from typing import Any, ClassVar
 from pydantic import BaseModel, ConfigDict, Field
 
 from ember_code.backend.guest.watch import DirectoryWatch
+from ember_code.core.activity import background
 from ember_code.core.auth.credentials import CloudCredentials, EnvironmentCredentials
 from ember_code.core.config.schemas.storage_and_paths import StorageConfig
 from ember_code.core.db.scope import Tenant
@@ -254,7 +255,7 @@ class ProducerBinding:
     async def bind(self, transport: Any = None) -> ProducerEnv:
         """Wait until the file binds, refusing ``transport``'s requests meanwhile."""
         refusal = (
-            asyncio.get_running_loop().create_task(UnboundRefusal(transport).run())
+            background.daemon(UnboundRefusal(transport).run(), name="unbound-refusal")
             if transport is not None
             else None
         )
@@ -300,7 +301,7 @@ class ProducerBinding:
     def watch(self, on_changed: Callable[[ProducerEnv], None]) -> None:
         """After binding: be told if the file comes to name another producer or database."""
         if self._watch is None:
-            self._watch = asyncio.get_running_loop().create_task(self._watch_loop(on_changed))
+            self._watch = background.daemon(self._watch_loop(on_changed), name="producer-env-watch")
 
     async def stop(self) -> None:
         task, self._watch = self._watch, None

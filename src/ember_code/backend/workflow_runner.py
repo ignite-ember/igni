@@ -54,6 +54,7 @@ from ember_code.backend.schemas_workflows import (
     WorkflowMeta,
     WorkflowMetaEnvelope,
 )
+from ember_code.core.activity import background
 from ember_code.core.paths import CONFIG_DIR
 
 if TYPE_CHECKING:
@@ -352,16 +353,19 @@ class WorkflowRunner:
         # forever (agent bridge). The runner owns the tasks so
         # cancel() can stop them.
         state.tasks = [
-            asyncio.create_task(
+            background.daemon(
                 self._drain_stdout(state, session),
                 name=f"workflow-drain-{workflow_run_id}",
             ),
-            asyncio.create_task(
+            background.daemon(
                 self._bridge_agents(state, session),
                 name=f"workflow-bridge-{workflow_run_id}",
             ),
-            asyncio.create_task(
+            # The workflow's script running: busy until it ends.
+            background.start(
                 self._await_completion(state, session),
+                holder=f"workflow:{workflow_run_id}",
+                reason="a workflow",
                 name=f"workflow-await-{workflow_run_id}",
             ),
         ]
@@ -447,7 +451,8 @@ class WorkflowRunner:
                 # awaiting our reply. Resolve it concurrently so the
                 # drain can keep reading.
                 if event.type == "agent_request":
-                    asyncio.create_task(
+                    # The agent run it starts is the session's to account for.
+                    background.daemon(
                         self._handle_agent_request(state, session, event),
                         name=f"workflow-agent-{state.workflow_run_id}-{event.payload.get('id', '?')}",
                     )

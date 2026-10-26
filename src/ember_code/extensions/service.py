@@ -27,6 +27,8 @@ import json
 import logging
 from typing import Any, Protocol, runtime_checkable
 
+from ember_code.core.activity import ActivityRegistry, BusyKind
+
 logger = logging.getLogger(__name__)
 
 #: The longest igni waits on one call into an extension's service. The
@@ -89,7 +91,8 @@ class McpExtensionService:
                 unanswered=True,
             )
         try:
-            result = await asyncio.wait_for(self._call(client, method, args), CALL_TIMEOUT_S)
+            with ActivityRegistry.shared().hold(BusyKind.EXTENSION_CALL, self._server_name, method):
+                result = await asyncio.wait_for(self._call(client, method, args), CALL_TIMEOUT_S)
         except TimeoutError as exc:
             raise ExtensionServiceError(
                 f"'{method}' on '{self._server_name}' did not answer within {CALL_TIMEOUT_S:g}s",

@@ -20,7 +20,6 @@ gives shutdown paths a composable teardown seam.
 
 from __future__ import annotations
 
-import asyncio
 import logging
 from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING
@@ -29,6 +28,7 @@ from ember_code.backend.schemas_scheduler import (
     TaskCompletedPayload,
     TaskCreatedPayload,
 )
+from ember_code.core.activity import background
 from ember_code.core.hooks.events import HookEvent
 from ember_code.core.scheduler.models import ScheduledTask, TaskStatus
 from ember_code.core.scheduler.prompt import wrap_scheduled_prompt
@@ -218,11 +218,13 @@ class SchedulerController:
                 task_id=task_id,
                 description=description,
             )
-            asyncio.create_task(
+            background.start(
                 self._hook_executor.execute(
                     event=HookEvent.TASK_CREATED.value,
                     payload=payload.model_dump(),
-                )
+                ),
+                holder="hook",
+                reason=HookEvent.TASK_CREATED.value,
             )
 
         def on_completed(
@@ -250,11 +252,13 @@ class SchedulerController:
                     else SchedulerEventType.ERROR.value
                 ),
             )
-            asyncio.create_task(
+            background.start(
                 self._hook_executor.execute(
                     event=HookEvent.TASK_COMPLETED.value,
                     payload=payload.model_dump(),
-                )
+                ),
+                holder="hook",
+                reason=HookEvent.TASK_COMPLETED.value,
             )
 
 

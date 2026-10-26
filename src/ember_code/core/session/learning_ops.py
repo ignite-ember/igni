@@ -18,13 +18,13 @@ sprawled fields / methods on the Session god-class.
 
 from __future__ import annotations
 
-import asyncio
 import logging
 from collections.abc import Callable
 from typing import Any, ClassVar
 
 from agno.models.message import Message as AgnoMessage
 
+from ember_code.core.activity import BusyKind, background
 from ember_code.core.config.models import ModelRegistry
 from ember_code.core.config.settings import Settings
 
@@ -180,4 +180,6 @@ class SessionLearningManager:
             except Exception as exc:  # noqa: BLE001 — opportunistic path
                 logger.warning("Learning extraction failed: %s", exc)
 
-        asyncio.create_task(_run())
+        background.start(
+            _run(), holder="learning", reason="learning extraction", kind=BusyKind.POST_RUN
+        )

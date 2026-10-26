@@ -38,6 +38,7 @@ from ember_code.backend.schemas_sessions import (
 # ``session_pool.SessionStampingTransport`` keeps working. New code
 # should import from :mod:`session_stamping_transport` directly.
 from ember_code.backend.session_stamping_transport import SessionStampingTransport
+from ember_code.core.activity import BusyKind, background
 
 logger = logging.getLogger(__name__)
 
@@ -174,7 +175,9 @@ class SessionRuntime:
         itself on completion, guaranteeing the task handle stays
         strongly referenced for its whole lifetime.
         """
-        task = asyncio.create_task(coro)
+        task = background.start(
+            coro, holder="auto-name", reason="naming the session", kind=BusyKind.POST_RUN
+        )
         self._auto_name_tasks.add(task)
         task.add_done_callback(self._auto_name_tasks.discard)
         return task

@@ -34,6 +34,7 @@ from websockets.datastructures import Headers
 from websockets.http11 import Request as HttpRequest
 from websockets.http11 import Response as HttpResponse
 
+from ember_code.core.activity import BusyKind, background
 from ember_code.extensions.host.hooks import ExtensionHooks
 from ember_code.extensions.host.model import HostModel
 from ember_code.extensions.host.processes import PROCESS_GROUP_HEADER, ExtensionProcesses
@@ -149,7 +150,9 @@ class HostChannel:
         self._secrets.pop(extension_id, None)
         for connection in list(self._connections.pop(extension_id, set())):
             with contextlib.suppress(Exception):
-                asyncio.get_running_loop().create_task(connection.close(4001, "revoked"))
+                background.start(
+                    connection.close(4001, "revoked"), holder=extension_id, reason="revoking"
+                )
 
     # ── Admission ─────────────────────────────────────────────────
 
@@ -199,7 +202,9 @@ class HostChannel:
             extension_id=extension_id,
             granted=grants.granted(self._model.schema.permission_names()) if grants else [],
         )
-        writer = asyncio.create_task(self._write(connection, sink))
+        writer = background.daemon(
+            self._write(connection, sink), name=f"host-channel-{extension_id}"
+        )
         pending: set[asyncio.Task[None]] = set()
         self._hooks.connect(extension_id, sink.send)
         try:
@@ -209,7 +214,12 @@ class HostChannel:
                 # Which process group to end if it hangs (:mod:`.processes`).
                 await self._processes.claim(extension_id, group)
             async for raw in connection:
-                task = asyncio.create_task(self._answer(extension_id, subscriber, sink, raw))
+                task = background.start(
+                    self._answer(extension_id, subscriber, sink, raw),
+                    holder=extension_id,
+                    reason="a host model call",
+                    kind=BusyKind.EXTENSION_CALL,
+                )
                 pending.add(task)
                 task.add_done_callback(pending.discard)
         except Exception as exc:  # noqa: BLE001 — a connection ends however it ends

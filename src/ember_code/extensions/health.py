@@ -36,6 +36,7 @@ import logging
 import time
 from typing import Any
 
+from ember_code.core.activity import background
 from ember_code.extensions.host.processes import ExtensionProcesses
 from ember_code.extensions.installer import server_name
 from ember_code.extensions.registry import ExtensionRegistry, ExtensionState
@@ -97,7 +98,7 @@ class ExtensionHealth:
         """Begin probing. Idempotent."""
         if self._task is not None and not self._task.done():
             return
-        self._task = asyncio.create_task(self._loop(), name="extension-health")
+        self._task = background.daemon(self._loop(), name="extension-health")
 
     @property
     def pending_probes(self) -> int:
@@ -205,8 +206,11 @@ class ExtensionHealth:
         """
         if self._registry.get(extension_id) is None:
             return
-        task = asyncio.create_task(
-            self._restart_quietly(extension_id), name=f"restart-{extension_id}"
+        task = background.start(
+            self._restart_quietly(extension_id),
+            holder=extension_id,
+            reason="restarting",
+            name=f"restart-{extension_id}",
         )
         self._pending.add(task)
         task.add_done_callback(self._pending.discard)
@@ -273,7 +277,12 @@ class ExtensionHealth:
         """
         if self._registry.get(extension_id) is None:
             return
-        task = asyncio.create_task(self._probe_quietly(extension_id), name=f"probe-{extension_id}")
+        task = background.start(
+            self._probe_quietly(extension_id),
+            holder=extension_id,
+            reason="probing",
+            name=f"probe-{extension_id}",
+        )
         # Held so the loop does not garbage-collect a running task,
         # which is the documented way to lose one silently.
         self._pending.add(task)

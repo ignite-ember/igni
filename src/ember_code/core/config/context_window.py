@@ -37,6 +37,7 @@ from typing import Literal
 import httpx
 from pydantic import BaseModel
 
+from ember_code.core.activity.http import busy_call
 from ember_code.core.config.model_entry import ModelRegistryEntry
 
 logger = logging.getLogger(__name__)
@@ -153,7 +154,7 @@ class ContextWindowResolver:
         if api_key:
             headers["Authorization"] = f"Bearer {api_key}"
         try:
-            async with httpx.AsyncClient(timeout=5.0) as client:
+            async with busy_call("model-catalog"), httpx.AsyncClient(timeout=5.0) as client:
                 resp = await client.get(url, headers=headers)
             if resp.status_code != 200:
                 logger.debug(

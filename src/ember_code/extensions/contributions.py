@@ -67,6 +67,7 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
+from ember_code.core.activity import background
 from ember_code.core.contributed_commands import ContributedCommands
 from ember_code.core.contributed_commands import (
     contributed_commands as default_commands,
@@ -280,7 +281,13 @@ class ExtensionContributions:
             logger.debug("extension %s: no event loop to fetch its prompt text on", entry.id)
             return
 
-        task = loop.create_task(self.apply(entry.manifest), name=f"contrib-{entry.id}")
+        task = background.start(
+            self.apply(entry.manifest),
+            holder=entry.id,
+            reason="reading its prompt contributions",
+            name=f"contrib-{entry.id}",
+            loop=loop,
+        )
         self._pending.add(task)
         task.add_done_callback(self._pending.discard)
 

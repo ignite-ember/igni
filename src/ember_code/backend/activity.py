@@ -15,9 +15,12 @@ object model's ``app.activity`` reports it to the node agent.
 
 from __future__ import annotations
 
+from datetime import datetime
 from enum import StrEnum
 
 from pydantic import BaseModel, Field
+
+from ember_code.core.activity import ActivityRegistry, BusyLease
 
 
 class ActivityState(StrEnum):
@@ -62,18 +65,30 @@ class SessionActivity(BaseModel):
 
 
 class Activity(BaseModel):
-    """The backend as a whole: running if any session runs."""
+    """The backend as a whole: running if any session runs or anything holds a busy lease."""
 
     state: ActivityState
-    #: Whether the VM may be suspended now: nothing is running.
+    #: Whether the VM may be suspended now: nothing is running and nothing is busy.
     suspendable: bool
     waiting_approvals: int = 0
     sessions: list[SessionActivity] = Field(default_factory=list)
+    #: What is working outside a run's own turn (``core/activity``): calls
+    #: out, scheduled tasks, processes, extensions that said they are busy.
+    busy: list[BusyLease] = Field(default_factory=list)
+    #: The earliest time something is due while nothing runs: when to wake.
+    wake_at: datetime | None = None
 
     @classmethod
-    def of(cls, sessions: list[SessionActivity]) -> Activity:
+    def of(
+        cls,
+        sessions: list[SessionActivity],
+        *,
+        busy: list[BusyLease] | None = None,
+        wake_at: datetime | None = None,
+    ) -> Activity:
+        busy = busy or []
         states = {s.state for s in sessions}
-        if ActivityState.RUNNING in states:
+        if ActivityState.RUNNING in states or busy:
             state = ActivityState.RUNNING
         elif ActivityState.WAITING in states:
             state = ActivityState.WAITING
@@ -84,7 +99,14 @@ class Activity(BaseModel):
             suspendable=state is not ActivityState.RUNNING,
             waiting_approvals=sum(s.waiting_approvals for s in sessions),
             sessions=sessions,
+            busy=busy,
+            wake_at=wake_at,
         )
+
+    @classmethod
+    def now(cls, sessions: list[SessionActivity], registry: ActivityRegistry) -> Activity:
+        """``sessions``, with what ``registry`` says is busy and due."""
+        return cls.of(sessions, busy=registry.busy(), wake_at=registry.wake_at())
 
 
 __all__ = ["Activity", "ActivityState", "SessionActivity"]

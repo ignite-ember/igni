@@ -75,7 +75,9 @@ A Rust service, one per host:
 - Profiles: ceiling and CPUs at boot, `idle_before_suspend`, cold boot
   when the ceiling changes. igni writes `/run/igni/activity.json`
   (`suspendable`, running runs, waiting approvals, connected clients),
-  `dbffea2`.
+  `dbffea2`; with what holds it busy (`busy`: calls out, scheduled tasks,
+  processes, monitors, extensions' `ext.busy`) and when to wake it
+  (`wake_at`). The node agent should wake a suspended VM at `wake_at`.
 - Memory: watch real usage, reclaim, refuse placements when short;
   under pressure hint and trim the largest VMs first. Patched
   Firecracker (discard-aware diffs, `.discard` sidecar journaled and

@@ -65,7 +65,7 @@ def _sent_payload(bridge) -> dict:
 class TestTheCompletionPushIsSendable:
     def test_a_successful_task_publishes_its_output(self, bridge, monkeypatch):
         monkeypatch.setattr(
-            "ember_code.backend.push_bridge.asyncio.ensure_future", lambda coro: coro
+            "ember_code.backend.push_bridge.background.daemon", lambda work, **_: work
         )
 
         bridge._on_scheduler_completed("t1", "nightly report", True, "42 rows written")
@@ -76,7 +76,7 @@ class TestTheCompletionPushIsSendable:
 
     def test_a_failed_task_publishes_its_error(self, bridge, monkeypatch):
         monkeypatch.setattr(
-            "ember_code.backend.push_bridge.asyncio.ensure_future", lambda coro: coro
+            "ember_code.backend.push_bridge.background.daemon", lambda work, **_: work
         )
 
         bridge._on_scheduler_completed("t2", "nightly report", False, "Task timed out after 300s")
@@ -91,7 +91,7 @@ class TestTheCompletionPushIsSendable:
         blank result the client cannot interpret.
         """
         monkeypatch.setattr(
-            "ember_code.backend.push_bridge.asyncio.ensure_future", lambda coro: coro
+            "ember_code.backend.push_bridge.background.daemon", lambda work, **_: work
         )
 
         bridge._on_scheduler_completed("t3", "nightly report", False)

@@ -41,6 +41,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
+from ember_code.core.activity import background
 from ember_code.extensions.events import HostTopic
 
 logger = logging.getLogger(__name__)
@@ -190,7 +191,7 @@ class WorkspaceWatcher:
         """Begin polling. A no-op if the loop is already running."""
         if self._task is not None and not self._task.done():
             return
-        self._task = asyncio.create_task(self._loop())
+        self._task = background.daemon(self._loop(), name="workspace-watch")
 
     async def stop(self) -> None:
         """Cancel the poll task and wait for it to go."""

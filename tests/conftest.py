@@ -7,6 +7,7 @@ from pathlib import Path
 import pytest
 from dotenv import load_dotenv
 
+from ember_code.core.activity import ActivityRegistry
 from ember_code.core.approvals.events import approval_events
 from ember_code.core.config.schemas.storage_and_paths import StorageConfig
 from ember_code.core.config.settings import load_settings
@@ -94,6 +95,14 @@ def database_url(request, tmp_path: Path) -> DatabaseUrl:
     if request.param is Dialect.POSTGRESQL:
         return DatabaseUrl.parse(request.getfixturevalue("postgres_url"))
     return DatabaseUrl.for_file(tmp_path / "shared.db")
+
+
+@pytest.fixture(autouse=True)
+def _a_fresh_activity_registry():
+    """Busy leases and wakes are the process's; each test starts with none."""
+    ActivityRegistry.reset_shared()
+    yield
+    ActivityRegistry.reset_shared()
 
 
 @pytest.fixture(autouse=True)

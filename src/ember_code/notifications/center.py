@@ -27,6 +27,7 @@ from datetime import UTC, datetime
 
 import httpx
 
+from ember_code.core.activity import background
 from ember_code.extensions.service_token import NotSignedIn
 from ember_code.notifications.local_store import LocalNotificationStore
 from ember_code.notifications.schemas import (
@@ -121,7 +122,7 @@ class NotificationCenter:
 
     def schedule_signed_in(self) -> None:
         """:meth:`signed_in`, for a synchronous sign-in listener."""
-        asyncio.get_running_loop().create_task(self.signed_in())
+        background.start(self.signed_in(), holder="notifications", reason="a sign-in")
 
     async def resumed(self, _away: float = 0.0) -> None:
         """The VM was restored from a snapshot: catch up, on a fresh connection."""
@@ -152,7 +153,9 @@ class NotificationCenter:
         if self._refreshing is not None and not self._refreshing.done():
             self._again = True
             return
-        self._refreshing = asyncio.get_running_loop().create_task(self._refresh_until_settled())
+        self._refreshing = background.start(
+            self._refresh_until_settled(), holder="notifications", reason="reading notifications"
+        )
 
     async def _refresh_until_settled(self) -> None:
         while True:

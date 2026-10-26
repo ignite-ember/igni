@@ -34,7 +34,7 @@ from ember_code.extensions.host.spec import (
 )
 
 #: The model's version. Semver; see the module docstring.
-SCHEMA_VERSION = "1.7.0"
+SCHEMA_VERSION = "1.8.0"
 
 # ── Permissions ───────────────────────────────────────────────────
 
@@ -457,9 +457,37 @@ TYPES = (
         "its own or a sub-agent's — is `waiting`, not `running`: nothing happens until the "
         "decision, so the process may be suspended and the decision wakes it.",
         field("state", "str", "`idle`, `waiting` or `running`."),
-        field("suspendable", "bool", "Nothing is running."),
+        field("suspendable", "bool", "Nothing is running and nothing is busy."),
         field("waiting_approvals", "int"),
         field("sessions", "list[SessionActivity]"),
+        field(
+            "busy",
+            "list[BusyLease]",
+            "What holds igni busy outside a run's turn: calls out, scheduled tasks, "
+            "processes, extensions that said they are working (`self.busy`).",
+        ),
+        field(
+            "wake_at",
+            "str | None",
+            "When something is next due while nothing runs (ISO 8601, UTC): when a "
+            "suspended igni should be woken.",
+        ),
+    ),
+    typedef(
+        "BusyLease",
+        "One thing igni is busy with. A lease with `expires_at` stops counting then, "
+        "whether or not it was let go.",
+        field("id", "str"),
+        field(
+            "kind",
+            "str",
+            "`post_run`, `model_call`, `http_call`, `mcp_call`, `extension_call`, "
+            "`scheduled_task`, `process`, `monitor`, `extension` or `background`.",
+        ),
+        field("holder", "str", "Who holds it: an extension id, a server, a task."),
+        field("reason", "str"),
+        field("since", "str", "ISO 8601."),
+        field("expires_at", "str | None", "ISO 8601; `None` until let go."),
     ),
     typedef(
         "ApprovalDetails",
@@ -1868,6 +1896,24 @@ OBJECTS = (
         signals=(
             signal("settings_changed", "SettingsChange", "Its settings changed."),
             signal("state_changed", "ExtensionStateChange", "Its health moved."),
+        ),
+        methods=(
+            method(
+                "busy",
+                "Say this extension is working inside igni's process, so the process is not "
+                "suspended under it (in the cloud, its VM). A lease for `reason`: it expires "
+                "after `ttl_seconds` (default and at most 600) unless renewed by calling "
+                "again with the same reason, so an extension that stops answering cannot "
+                "keep igni awake. Shown in `app.activity`'s `busy`.",
+                param("reason", "str"),
+                param("ttl_seconds", "float", "Default and at most 600.", optional=True),
+                result="BusyLease",
+            ),
+            method(
+                "done",
+                "Let go of the lease `busy` took for `reason`. Nothing happens if there is none.",
+                param("reason", "str"),
+            ),
         ),
     ),
 )

@@ -53,6 +53,7 @@ from ember_code.backend.schemas_lifecycle import InterruptedRunSummary
 from ember_code.backend.schemas_run import CancelAgentRunResult, MediaAttachments, RunPhase
 from ember_code.backend.session_checkpointer import SessionCheckpointer
 from ember_code.backend.stream_event_dispatcher import StreamEventDispatcher
+from ember_code.core.activity import background
 from ember_code.core.session.queued_messages import DurableMessageQueue
 from ember_code.core.tools.process_supervisor_locator import supervisors
 from ember_code.core.utils.memory_files import MemoryMirror
@@ -357,9 +358,11 @@ class RunController:
         if pending_id is None:
             return
         try:
-            loop = asyncio.get_running_loop()
-            loop.create_task(
+            asyncio.get_running_loop()
+            background.start(
                 self._pending_journal.mark_interrupted(pending_id, reason, last_error),
+                holder="run",
+                reason="recording an interrupted run",
                 name=f"mark_interrupted:{reason}:{pending_id[:8]}",
             )
         except RuntimeError:
@@ -515,7 +518,9 @@ class RunController:
 
         # Periodic checkpoint task — see SessionCheckpointer.run_forever
         # (BackendServer._periodic_checkpoint is the late-binding hook).
-        checkpoint_task = asyncio.create_task(self._periodic_checkpoint_via_backend(team))
+        checkpoint_task = background.daemon(
+            self._periodic_checkpoint_via_backend(team), name="run-checkpoint"
+        )
 
         media_kwargs = media.to_kwargs() if media is not None else {}
         self._transition_to(RunPhase.streaming)

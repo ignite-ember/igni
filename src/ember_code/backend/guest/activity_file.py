@@ -8,7 +8,8 @@ only extension processes, so the file is how it leaves igni.
 Written whole (:class:`AtomicFile`) when anything in it changes — told
 by the host model's ``app.activity_changed`` and checked every second
 for what moves without a signal, such as a window connecting — and at
-least every :attr:`ActivityFile.HEARTBEAT_SECONDS` while a run is going:
+least every :attr:`ActivityFile.HEARTBEAT_SECONDS` while it is not
+suspendable (a run going, or anything busy):
 the guest agent treats a file older than ten seconds that still says
 ``running`` as stale (``suspendable: null``), so an igni that died
 mid-run does not keep its VM awake forever. Removed when igni stops.
@@ -21,14 +22,48 @@ import contextlib
 import logging
 import time
 from collections.abc import Callable
+from datetime import datetime
 from pathlib import Path
 
 from pydantic import BaseModel, Field
 
 from ember_code.backend.activity import Activity, ActivityState, SessionActivity
 from ember_code.backend.guest.files import AtomicFile
+from ember_code.core.activity import BusyLease, background
 
 logger = logging.getLogger(__name__)
+
+
+class UnixMs:
+    """Times in the file are Unix milliseconds: what the node agent compares with its clock."""
+
+    @staticmethod
+    def of(moment: datetime | None) -> int | None:
+        return None if moment is None else int(moment.timestamp() * 1000)
+
+
+class GuestBusy(BaseModel):
+    """One busy lease, as the node agent reads it."""
+
+    kind: str
+    holder: str
+    reason: str = ""
+    #: Unix milliseconds.
+    since: int
+    #: Unix milliseconds; ``None`` until let go.
+    expires_at: int | None = None
+
+    @classmethod
+    def of(cls, lease: BusyLease) -> GuestBusy:
+        since = UnixMs.of(lease.since)
+        assert since is not None
+        return cls(
+            kind=lease.kind.value,
+            holder=lease.holder,
+            reason=lease.reason,
+            since=since,
+            expires_at=UnixMs.of(lease.expires_at),
+        )
 
 
 class GuestActivity(BaseModel):
@@ -43,6 +78,10 @@ class GuestActivity(BaseModel):
     #: Windows and other clients connected to igni.
     clients: int = 0
     sessions: list[SessionActivity] = Field(default_factory=list)
+    #: What holds igni busy: ``{kind, holder, reason, since, expires_at}`` each.
+    busy: list[GuestBusy] = Field(default_factory=list)
+    #: When to wake igni if it is suspended, Unix milliseconds: the earliest thing due.
+    wake_at: int | None = None
     #: When igni wrote it, in Unix milliseconds.
     written_at_ms: int = 0
 
@@ -55,6 +94,8 @@ class GuestActivity(BaseModel):
             running=sum(1 for s in activity.sessions if s.state is ActivityState.RUNNING),
             clients=clients,
             sessions=activity.sessions,
+            busy=[GuestBusy.of(lease) for lease in activity.busy],
+            wake_at=UnixMs.of(activity.wake_at),
             written_at_ms=int(now * 1000),
         )
 
@@ -107,10 +148,7 @@ class ActivityFile:
             logger.debug("activity file: activity unavailable: %s", exc)
             return False
         now = self._clock()
-        heartbeat_due = (
-            current.state is ActivityState.RUNNING
-            and now - self._written_at >= self.HEARTBEAT_SECONDS
-        )
+        heartbeat_due = not current.suspendable and now - self._written_at >= self.HEARTBEAT_SECONDS
         if not force and current.same_as(self._written) and not heartbeat_due:
             return False
         try:
@@ -133,7 +171,8 @@ class ActivityFile:
         if self._task is not None:
             return
         self.refresh(force=True)
-        self._task = asyncio.get_running_loop().create_task(self._run())
+        # Not busy: it reports busyness, it is not any.
+        self._task = background.daemon(self._run(), name="activity-file")
 
     async def stop(self) -> None:
         task, self._task = self._task, None

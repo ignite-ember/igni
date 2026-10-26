@@ -45,6 +45,7 @@ from typing import Any, Protocol, TypeVar
 import httpx
 from pydantic import BaseModel, ConfigDict, ValidationError
 
+from ember_code.core.activity.http import busy_call
 from ember_code.core.decisions.schemas import (
     DecideAnswer,
     DecideCall,
@@ -225,15 +226,18 @@ class Laya:
         for attempt in (1, 2):
             connection = await self._connection()
             try:
-                async with httpx.AsyncClient(
-                    base_url=connection.base_url,
-                    transport=connection.transport,
-                    timeout=self.TIMEOUT,
-                    headers={
-                        "authorization": f"Bearer {connection.token}",
-                        "content-type": "application/json",
-                    },
-                ) as client:
+                async with (
+                    busy_call("decisions"),
+                    httpx.AsyncClient(
+                        base_url=connection.base_url,
+                        transport=connection.transport,
+                        timeout=self.TIMEOUT,
+                        headers={
+                            "authorization": f"Bearer {connection.token}",
+                            "content-type": "application/json",
+                        },
+                    ) as client,
+                ):
                     response = await client.post(path, content=body)
             except httpx.ConnectError as exc:
                 # A local service that idled out between our check and the call.

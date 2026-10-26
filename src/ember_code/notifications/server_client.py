@@ -14,6 +14,7 @@ from collections.abc import Callable
 import httpx
 from pydantic import ValidationError
 
+from ember_code.core.activity.http import busy_call
 from ember_code.core.config.endpoint import is_configured
 from ember_code.extensions.service_token import IgniSession, NotSignedIn
 from ember_code.notifications.schemas import (
@@ -115,9 +116,10 @@ class IgniNotificationsClient:
     ) -> httpx.Response:
         api_url, session = self._server.current()
         try:
-            async with httpx.AsyncClient(
-                timeout=self._timeout, transport=self._transport
-            ) as client:
+            async with (
+                busy_call("igni-server"),
+                httpx.AsyncClient(timeout=self._timeout, transport=self._transport) as client,
+            ):
                 response = await client.request(
                     method,
                     f"{api_url}{path}",

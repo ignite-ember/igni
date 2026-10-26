@@ -60,6 +60,8 @@ from typing import Any, Protocol
 import httpx
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
+from ember_code.core.activity import background
+from ember_code.core.activity.http import busy_call
 from ember_code.core.config.endpoint import is_configured
 from ember_code.extensions.assets import (
     AssetCache,
@@ -190,9 +192,13 @@ class DistributionClient:
 
     async def listing(self) -> DistributionListing:
         try:
-            async with httpx.AsyncClient(
-                timeout=self._timeout, transport=self._transport
-            ) as client:
+            async with (
+                busy_call("extension-distribution"),
+                httpx.AsyncClient(
+                    timeout=self._timeout,
+                    transport=self._transport,
+                ) as client,
+            ):
                 response = await client.get(
                     f"{self._api_url}{self.LISTING_PATH}", headers=self._headers
                 )
@@ -209,8 +215,10 @@ class DistributionClient:
         url = f"{self._api_url}{self.LISTING_PATH}/{extension_id}/bundle"
         try:
             async with (
+                busy_call("extension-distribution"),
                 httpx.AsyncClient(
-                    timeout=self._download_timeout, transport=self._transport
+                    timeout=self._download_timeout,
+                    transport=self._transport,
                 ) as client,
                 client.stream("GET", url, headers=self._headers) as response,
             ):
@@ -237,8 +245,10 @@ class DistributionClient:
         partial = cache.partial()
         try:
             async with (
+                busy_call("extension-distribution"),
                 httpx.AsyncClient(
-                    timeout=ASSET_DOWNLOAD_TIMEOUT, transport=self._transport
+                    timeout=ASSET_DOWNLOAD_TIMEOUT,
+                    transport=self._transport,
                 ) as client,
                 client.stream("GET", url, headers=self._headers) as response,
             ):
@@ -354,7 +364,9 @@ class ExtensionDistribution:
         at once: a sign-in during the start-up sync must still see the
         listing for the person who just signed in.
         """
-        task = asyncio.get_running_loop().create_task(self._sync_logged())
+        task = background.start(
+            self._sync_logged(), holder="extension-distribution", reason="syncing extensions"
+        )
         self._tasks.add(task)
         task.add_done_callback(self._tasks.discard)
         return task

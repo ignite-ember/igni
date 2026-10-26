@@ -38,6 +38,7 @@ import threading
 import time
 from typing import Any
 
+from ember_code.core.activity import background
 from ember_code.core.tools.async_fire_and_forget import AsyncFireAndForget
 from ember_code.core.tools.managed_process import process_group_of
 from ember_code.core.tools.process_bus import ProcessEventBus
@@ -334,7 +335,7 @@ class ProcessRegistry:
                 # edge case).
                 self.log_store.cleanup(pid)
 
-        task = asyncio.create_task(_evict())
+        task = background.daemon(_evict(), name=f"process-evict-{pid}")
         with self._lock:
             self._eviction_tasks[pid] = task
 

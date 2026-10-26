@@ -29,6 +29,7 @@ from ember_code.backend.schemas_pause import (
     SubagentPause,
     TeamStreamEvent,
 )
+from ember_code.core.activity import background
 from ember_code.core.text_tags import (
     INITIAL_STATE,
     ThinkParseState,
@@ -127,8 +128,11 @@ class HITLStreamMultiplexer:
         # be refused as "nobody to ask" — a race the model's thinking time
         # usually hides and a fast tool call does not.
         sub_hitl.listeners = getattr(sub_hitl, "listeners", 0) + 1
-        team_task = asyncio.create_task(self._drain_team(team_stream, agno_queue))
-        sub_task = asyncio.create_task(self._drain_subagent_hitl(sub_hitl, agno_queue))
+        # Part of a run, which its session accounts for.
+        team_task = background.daemon(self._drain_team(team_stream, agno_queue), name="hitl-team")
+        sub_task = background.daemon(
+            self._drain_subagent_hitl(sub_hitl, agno_queue), name="hitl-subagents"
+        )
         # Kept so a nested resume can stand this relay down — see
         # :meth:`_hand_relay_to_nested`.
         self._sub_task, self._queue = sub_task, agno_queue

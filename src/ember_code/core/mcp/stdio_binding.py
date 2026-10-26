@@ -143,9 +143,13 @@ class StdioMCPBinding:
 
         timeout = getattr(mcp_tools, "timeout_seconds", 30) or 30
         read_timeout = timedelta(seconds=timeout)
-        if request_meta is not None:
+        if RequestMetaSession is not None:
             mcp_tools._session_context = RequestMetaSession(  # type: ignore[assignment]
-                read, write, read_timeout_seconds=read_timeout, request_meta=request_meta
+                read,
+                write,
+                read_timeout_seconds=read_timeout,
+                request_meta=request_meta,
+                busy_holder=f"mcp:{name}",
             )
         else:
             mcp_tools._session_context = ClientSession(  # type: ignore[assignment]

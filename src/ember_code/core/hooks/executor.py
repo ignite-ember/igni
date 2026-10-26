@@ -30,6 +30,7 @@ import logging
 from collections.abc import Awaitable, Callable
 from typing import Any
 
+from ember_code.core.activity import background
 from ember_code.core.hooks.envelope import HookEnvelope
 from ember_code.core.hooks.events import HookEvent
 from ember_code.core.hooks.extension_gate import ExtensionHookGate
@@ -271,7 +272,7 @@ class HookExecutor:
         garbage collector take the task mid-execution. The set also
         gives :meth:`drain_background` something to wait on.
         """
-        task = asyncio.ensure_future(coro)
+        task = background.start(coro, holder="hook", reason="an async hook")
         self._background.add(task)
         task.add_done_callback(self._background.discard)
         return task

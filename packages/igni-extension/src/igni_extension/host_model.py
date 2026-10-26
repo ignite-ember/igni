@@ -1,4 +1,4 @@
-"""GENERATED from the igni host schema 1.7.0 by ember_code.extensions.host.codegen — do not edit. Run `make host-sdks` after changing the schema.
+"""GENERATED from the igni host schema 1.8.0 by ember_code.extensions.host.codegen — do not edit. Run `make host-sdks` after changing the schema.
 
 `ext.host` as an extension's process sees it. Read
 `docs/HOST_OBJECT_MODEL.md` in igni for what each object is.
@@ -22,7 +22,7 @@ from igni_extension.members import (
 )
 from igni_extension.notifications import LocalNotification, Target
 
-SCHEMA_VERSION = "1.7.0"
+SCHEMA_VERSION = "1.8.0"
 
 NotificationTarget = Target
 
@@ -497,9 +497,30 @@ class Activity(BaseModel):
     state: str
     """`idle`, `waiting` or `running`."""
     suspendable: bool
-    """Nothing is running."""
+    """Nothing is running and nothing is busy."""
     waiting_approvals: int
     sessions: list[SessionActivity]
+    busy: list[BusyLease]
+    """What holds igni busy outside a run's turn: calls out, scheduled tasks, processes, extensions that said they are working (`self.busy`)."""
+    wake_at: str | None
+    """When something is next due while nothing runs (ISO 8601, UTC): when a suspended igni should be woken."""
+
+
+class BusyLease(BaseModel):
+    """One thing igni is busy with. A lease with `expires_at` stops counting then, whether or not it was let go."""
+
+    model_config = ConfigDict(extra="allow")
+
+    id: str
+    kind: str
+    """`post_run`, `model_call`, `http_call`, `mcp_call`, `extension_call`, `scheduled_task`, `process`, `monitor`, `extension` or `background`."""
+    holder: str
+    """Who holds it: an extension id, a server, a task."""
+    reason: str
+    since: str
+    """ISO 8601."""
+    expires_at: str | None
+    """ISO 8601; `None` until let go."""
 
 
 class ApprovalDetails(BaseModel):
@@ -1786,6 +1807,14 @@ class HostSelf(HostObject):
         self.state_changed: Signal[ExtensionStateChange] = Signal("self.state_changed", ExtensionStateChange)
         """Its health moved."""
 
+    async def busy(self, reason: str, ttl_seconds: float | None = None) -> BusyLease:
+        """Say this extension is working inside igni's process, so the process is not suspended under it (in the cloud, its VM). A lease for `reason`: it expires after `ttl_seconds` (default and at most 600) unless renewed by calling again with the same reason, so an extension that stops answering cannot keep igni awake. Shown in `app.activity`'s `busy`."""
+        return cast(BusyLease, await self._call("busy", {"reason": reason, "ttl_seconds": ttl_seconds}, BusyLease))
+
+    async def done(self, reason: str) -> None:
+        """Let go of the lease `busy` took for `reason`. Nothing happens if there is none."""
+        await self._call("done", {"reason": reason}, NO_RESULT)
+
 class Host(HostObject):
     """The root. `changed` reports every change anywhere in the model, for an extension that wants to see all of it; each delivery needs the grant of the member that changed."""
 
@@ -1837,6 +1866,7 @@ __all__ = [
     "ApprovalChange",
     "ApprovalDetails",
     "ApprovalResolved",
+    "BusyLease",
     "Change",
     "ChatMessage",
     "CollectionChange",

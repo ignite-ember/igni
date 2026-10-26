@@ -33,6 +33,7 @@ from ember_code.backend.schemas_push import (
     SchedulerStartedPayload,
     SessionNamedPayload,
 )
+from ember_code.core.activity import background
 from ember_code.core.tools.edit import (
     FileEditNotifier,
     default_file_edit_notifier,
@@ -129,7 +130,8 @@ class PushNotificationBridge:
 
     def _on_scheduler_started(self, task_id: str, description: str) -> None:
         payload = SchedulerStartedPayload(task_id=task_id, description=description)
-        asyncio.ensure_future(self._transport.send(msg.push_scheduler_started(payload)))
+        # A message to the windows: too short to count as busy.
+        background.daemon(self._transport.send(msg.push_scheduler_started(payload)), name="push")
 
     def _on_scheduler_completed(
         self, task_id: str, description: str, succeeded: bool, detail: str = ""
@@ -148,7 +150,7 @@ class PushNotificationBridge:
             description=description,
             result=detail if detail else ("completed" if succeeded else "failed"),
         )
-        asyncio.ensure_future(self._transport.send(msg.push_scheduler_completed(payload)))
+        background.daemon(self._transport.send(msg.push_scheduler_completed(payload)), name="push")
 
     def start_scheduler(self, backend: Any) -> None:
         """Kick off the scheduled-task poller with our push
@@ -341,8 +343,10 @@ class PushNotificationBridge:
         orchestrate progress thread all end up here."""
 
         def _send() -> None:
-            asyncio.ensure_future(
-                self._transport.send(msg.PushNotification(channel=channel, payload=payload))
+            # A message to the windows: too short to count as busy.
+            background.daemon(
+                self._transport.send(msg.PushNotification(channel=channel, payload=payload)),
+                name=f"push-{channel}",
             )
 
         # Event loop closed during shutdown — drop the push instead

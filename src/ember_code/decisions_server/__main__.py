@@ -23,12 +23,12 @@ import logging
 import os
 import socket
 import sys
-import threading
 from pathlib import Path
 
 import click
 import uvicorn
 
+from ember_code.core.activity import background
 from ember_code.decisions_server.app import DecisionsApp
 from ember_code.decisions_server.model import LayaModel
 
@@ -62,10 +62,14 @@ class DecisionsServer:
                 pass
             self.stop()
 
-        threading.Thread(target=drain, name="decisions-stdin", daemon=True).start()
+        background.thread(drain, name="decisions-stdin")
 
     async def _serve(self, sock: socket.socket) -> None:
-        idle = asyncio.create_task(self._idle_out()) if self._idle_seconds > 0 else None
+        idle = (
+            background.daemon(self._idle_out(), name="decisions-idle")
+            if self._idle_seconds > 0
+            else None
+        )
         try:
             await self._server.serve(sockets=[sock])
         finally:

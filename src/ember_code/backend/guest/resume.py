@@ -28,6 +28,8 @@ import logging
 import time
 from collections.abc import Awaitable, Callable
 
+from ember_code.core.activity import background
+
 logger = logging.getLogger(__name__)
 
 #: Told how many seconds the VM was away.
@@ -84,7 +86,7 @@ class ResumeWatch:
     def start(self) -> None:
         if self._task is None:
             self._last = (self._wall(), self._monotonic())
-            self._task = asyncio.get_running_loop().create_task(self._run())
+            self._task = background.daemon(self._run(), name="resume-watch")
 
     async def stop(self) -> None:
         task, self._task = self._task, None

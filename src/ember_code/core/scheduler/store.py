@@ -13,7 +13,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from sqlalchemy import Select, delete, select
+from sqlalchemy import Select, delete, func, select
 
 from ember_code.core.db.database import Database
 from ember_code.core.db.locator import StorageLocator
@@ -104,6 +104,17 @@ class TaskStore:
             )
             rows = result.scalars().all()
         return [_row_to_task(r) for r in rows]
+
+    async def next_pending_at(self) -> datetime | None:
+        """When the earliest pending task is due, or ``None``."""
+        async with self._db.session() as session:
+            result = await session.execute(
+                select(func.min(ScheduledTaskModel.scheduled_at)).where(
+                    self._db.scope.where(ScheduledTaskModel),
+                    ScheduledTaskModel.status == TaskStatus.pending.value,
+                )
+            )
+            return result.scalar_one_or_none()
 
     async def get_all(self, include_done: bool = False) -> list[ScheduledTask]:
         """Get all tasks, optionally including completed/failed/cancelled.

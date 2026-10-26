@@ -41,6 +41,7 @@ from ember_code.backend.schemas_rpc import (
 )
 from ember_code.backend.session_pool import SessionPool, SessionRuntime
 from ember_code.backend.session_stamping_transport import SessionStampingTransport
+from ember_code.core.activity import background
 from ember_code.core.db.locator import StorageLocator
 from ember_code.core.session.client_state import ClientStateStore
 from ember_code.core.session.session_directories import SessionDirectoryStore
@@ -458,11 +459,21 @@ class SessionOrchestrator:
         """Be shown every message a window sends that a runtime handles."""
         self._inbound_watchers.append(watcher)
 
-    def spawn_dispatch(self, message: Any) -> asyncio.Task:
-        """Dispatch a message as a window's would be, in the background."""
-        task = asyncio.create_task(self.dispatch(message))
+    def _start_dispatch(self, work: Any) -> asyncio.Future[Any]:
+        """A message's handling, in the background.
+
+        Not a busy lease of its own: a message that starts a run is the
+        session's to account for — running, or waiting on a person, which
+        must not count as busy — and anything else it does is short.
+        """
+        task = background.daemon(work, name="dispatch")
         self._in_flight.add(task)
         task.add_done_callback(self._in_flight.discard)
+        return task
+
+    def spawn_dispatch(self, message: Any) -> asyncio.Task:
+        """Dispatch a message as a window's would be, in the background."""
+        task = self._start_dispatch(self.dispatch(message))
         return task
 
     async def post_from_extension(
@@ -487,9 +498,7 @@ class SessionOrchestrator:
         if queued:
             await dispatcher.queue_from_extension(extension_id, text)
             return
-        task = asyncio.create_task(dispatcher.post_from_extension(extension_id, text, media or {}))
-        self._in_flight.add(task)
-        task.add_done_callback(self._in_flight.discard)
+        self._start_dispatch(dispatcher.post_from_extension(extension_id, text, media or {}))
 
     def _dispatcher_for(self, rt: SessionRuntime) -> MessageDispatcher:
         if rt is self._default_runtime and self._default_dispatcher is not None:
@@ -573,9 +582,7 @@ class SessionOrchestrator:
                 break
             if shutdown_event.is_set():
                 break
-            task = asyncio.create_task(self.dispatch(message))
-            self._in_flight.add(task)
-            task.add_done_callback(self._in_flight.discard)
+            self._start_dispatch(self.dispatch(message))
 
         # Drain in-flight tasks before shutting down so we don't
         # drop mid-stream messages on graceful exit.

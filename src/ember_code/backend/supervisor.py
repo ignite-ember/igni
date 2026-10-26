@@ -34,6 +34,7 @@ from typing import Any
 from ember_code.backend.lockfile import Lockfile
 from ember_code.backend.schemas_lockfile import LockfilePayload
 from ember_code.backend.schemas_rpc import LifecyclePhase
+from ember_code.core.activity import background
 
 logger = logging.getLogger(__name__)
 
@@ -225,10 +226,12 @@ class BackendSupervisor:
                 self._loop.add_signal_handler(release_signal, self._on_release_signal)
 
     def start_parent_watchdog(self) -> None:
-        self._parent_watch_task = asyncio.create_task(self._watch_parent_loop())
+        self._parent_watch_task = background.daemon(self._watch_parent_loop(), name="parent-watch")
 
     def start_transport_close_watcher(self) -> None:
-        self._transport_close_task = asyncio.create_task(self._close_transport_on_shutdown())
+        self._transport_close_task = background.daemon(
+            self._close_transport_on_shutdown(), name="transport-close"
+        )
 
     def start_evictor(self, sweep_interval_seconds: float = 5 * 60) -> None:
         """Kick off the periodic eviction sweep. Requires
@@ -236,7 +239,9 @@ class BackendSupervisor:
         if self._pool is None:  # pragma: no cover — defensive
             logger.warning("start_evictor called before set_pool; no sweeps will run")
             return
-        self._evictor_task = asyncio.create_task(self._evictor_loop(sweep_interval_seconds))
+        self._evictor_task = background.daemon(
+            self._evictor_loop(sweep_interval_seconds), name="session-evictor"
+        )
 
     def mark_running(self) -> None:
         """Boot finished successfully; transition BOOTING → RUNNING."""
@@ -336,7 +341,9 @@ class BackendSupervisor:
             before,
         )
         if self._pool is not None:
-            self._loop.create_task(self._pool.evict_idle())
+            background.start(
+                self._pool.evict_idle(), holder="session-pool", reason="evicting", loop=self._loop
+            )
 
     # ── Background loops ─────────────────────────────────────────
 

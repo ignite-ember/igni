@@ -24,6 +24,8 @@ from typing import Any
 
 import httpx
 
+from ember_code.core.activity import BusyKind
+from ember_code.core.activity.http import BusyAsyncClient
 from ember_code.core.config.llm_call_logger import LlmCallLogger
 from ember_code.core.config.logging_model import LoggingModel
 from ember_code.core.config.model_entry import ModelRegistryEntry
@@ -127,7 +129,9 @@ class OpenAILikeBuilder(ProviderClientBuilder):
         # Short keepalive expiry avoids stale connections that
         # hang when reused after idle periods (e.g. between user
         # messages).
-        kwargs["http_client"] = httpx.AsyncClient(
+        kwargs["http_client"] = BusyAsyncClient(
+            busy_holder="model",
+            busy_kind=BusyKind.MODEL_CALL,
             timeout=httpx.Timeout(timeout_s),
             limits=httpx.Limits(
                 max_connections=10,

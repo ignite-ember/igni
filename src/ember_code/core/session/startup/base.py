@@ -23,6 +23,8 @@ import logging
 from collections.abc import Callable, Coroutine
 from typing import TYPE_CHECKING
 
+from ember_code.core.activity import background
+
 if TYPE_CHECKING:
     from ember_code.core.session.core import Session
 
@@ -69,10 +71,10 @@ class SessionStartupPhase:
         warning in the no-loop early-return case.
         """
         try:
-            loop = asyncio.get_running_loop()
+            asyncio.get_running_loop()
         except RuntimeError:
             return False
-        loop.create_task(coro_factory())
+        background.start(coro_factory(), holder="startup", reason=type(self).__name__)
         return True
 
     def _log_swallowed(self, exc: BaseException, action: str) -> None:

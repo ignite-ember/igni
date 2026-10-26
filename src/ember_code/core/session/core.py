@@ -46,7 +46,6 @@ and all its members receive the same ``db`` and ``session_id``,
 so all turns are automatically persisted and restored.
 """
 
-import asyncio
 import contextlib
 import getpass
 import logging
@@ -58,6 +57,7 @@ from typing import Any
 from agno.agent import Agent
 
 from ember_code.backend.schemas_model import ModelSwitchResult
+from ember_code.core.activity import background
 from ember_code.core.agents import AgentPool
 from ember_code.core.auth.credentials import CloudCredentials
 from ember_code.core.broadcast_schema import BroadcastEvent
@@ -859,7 +859,11 @@ class Session:
             assert follow_up is not None
             coordinator.update_details(req_id, await follow_up() or reason)
 
-        explaining = asyncio.create_task(explain_on_screen()) if follow_up else None
+        explaining = (
+            background.start(explain_on_screen(), holder="approval", reason="explaining a call")
+            if follow_up
+            else None
+        )
         try:
             await coordinator.wait_resolved(req_id)
         finally:

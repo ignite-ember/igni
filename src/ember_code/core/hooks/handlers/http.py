@@ -13,6 +13,7 @@ from typing import ClassVar
 
 import httpx
 
+from ember_code.core.activity.http import busy_call
 from ember_code.core.hooks.envelope import HookEnvelope
 from ember_code.core.hooks.handlers.base import HookHandler
 from ember_code.core.hooks.schemas import (
@@ -42,7 +43,7 @@ class HttpHookHandler(HookHandler):
             # ``$WEBHOOK_TOKEN`` in settings.json without pre-
             # rendering.
             headers = {k: os.path.expandvars(v) for k, v in hook.headers.items()}
-            async with httpx.AsyncClient(timeout=timeout_secs) as client:
+            async with busy_call("hook"), httpx.AsyncClient(timeout=timeout_secs) as client:
                 response = await client.post(
                     hook.url,
                     json=payload.to_wire_dict(),

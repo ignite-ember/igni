@@ -25,7 +25,9 @@ from typing import Any
 from pydantic import BaseModel, ValidationError
 
 from ember_code.backend.workspace_watch import GitWorkspace, Head
+from ember_code.core.activity import background
 from ember_code.core.decisions import Laya
+from ember_code.extensions.busy import ExtensionBusy
 from ember_code.extensions.events import HostTopic
 from ember_code.extensions.host.backend import HostBackend
 from ember_code.extensions.host.broadcasts import BroadcastSignals
@@ -50,7 +52,7 @@ from ember_code.extensions.host.windows import (
     Windows,
 )
 from ember_code.extensions.host.wire import ErrorBody, Op, Reply, Request, SignalMessage
-from ember_code.extensions.registry import ExtensionRegistry, InstalledExtension
+from ember_code.extensions.registry import ExtensionRegistry, ExtensionState, InstalledExtension
 from ember_code.extensions.store import ExtensionStore
 from ember_code.extensions.web_home import ExtensionWebHome
 from ember_code.protocol import messages as msg
@@ -137,6 +139,8 @@ class HostModel:
         self.windows.on_change(self._window_model_changed)
         self.windows.on_window(self._window_changed)
         self.broadcasts = BroadcastSignals(self)
+        #: Extensions that said they are working (``self.busy``).
+        self.extension_busy = ExtensionBusy()
         self._impl: dict[tuple[str, str], Impl] = {}
         for members_class in ALL_MEMBERS:
             for key, impl in members_class(self).table().items():
@@ -367,7 +371,7 @@ class HostModel:
     def spawn(self, coro: Any) -> None:
         """Run something in the background, kept until it finishes."""
         try:
-            task = asyncio.get_running_loop().create_task(coro)
+            task = background.start(coro, holder="host-model", reason="host model work")
         except RuntimeError:
             coro.close()
             return
@@ -547,6 +551,9 @@ class HostModel:
 
     def extension_changed(self, entry: InstalledExtension | None, extension_id: str) -> None:
         """The registry moved: an extension's state, for it and for whoever may see all."""
+        if entry is None or entry.state is not ExtensionState.READY:
+            # Stopped, failed or gone: it is working on nothing any more.
+            self.extension_busy.release_all(extension_id)
         if entry is None:
             return
         change = {"extension_id": extension_id, "state": entry.state.value, "reason": entry.reason}
