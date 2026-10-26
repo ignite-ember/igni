@@ -73,6 +73,11 @@ from ember_code.core.utils.memory_files import (
     MemoryFiles,
     MemoryMirror,
 )
+from ember_code.extensions.settings_values import (
+    DatabaseSettingsValues,
+    FileSettingsValues,
+    SettingsValues,
+)
 from ember_code.notifications.local_store import LocalNotificationStore
 from ember_code.notifications.schemas import ExtensionNotice, NotificationTarget
 from tests.storage_backends import Scopes
@@ -504,3 +509,35 @@ def test_the_desktop_store_reads_paths_and_knows_no_cloud_references(tmp_path: P
     assert store.local_path(stored.ref) == Path(stored.ref)
     assert b"".join(store.open(stored.ref)) == b"hello"
     assert store.local_path("attachment:" + "1" * 32) is None
+
+
+def test_extension_settings_are_per_producer_in_the_cloud(
+    database_url: DatabaseUrl, tmp_path: Path
+):
+    mine, theirs = Scopes.pair(database_url)
+    DatabaseSettingsValues(mine.in_scope(mine.scope.without_project())).write(
+        "acme.reviewer", {"strict": True}
+    )
+    assert DatabaseSettingsValues(mine.in_scope(mine.scope.without_project())).read(
+        "acme.reviewer"
+    ) == {"strict": True}
+    assert DatabaseSettingsValues(theirs).read("acme.reviewer") == {}
+
+    tenancy.use(lambda: Tenant(org="acme", producer="person:ada"))
+    locator = StorageLocator(database_url=database_url.url, data_dir=tmp_path)
+    values = SettingsValues.for_store(tmp_path / "extensions", locator)
+    assert isinstance(values, DatabaseSettingsValues)
+    values.write("acme.reviewer", {"level": "high"})
+    assert values.read("acme.reviewer") == {"level": "high"}
+    assert not list(tmp_path.glob("**/*.settings.json")), "no file in the cloud"
+    values.delete("acme.reviewer")
+    assert values.read("acme.reviewer") == {}
+
+
+def test_the_desktop_keeps_extension_settings_beside_the_bundles(tmp_path: Path):
+    values = SettingsValues.for_store(
+        tmp_path, StorageLocator(database_url=None, data_dir=tmp_path)
+    )
+    assert isinstance(values, FileSettingsValues)
+    values.write("acme.reviewer", {"strict": True})
+    assert (tmp_path / "acme.reviewer.settings.json").is_file()

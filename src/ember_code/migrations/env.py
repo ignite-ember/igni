@@ -23,6 +23,7 @@ from ember_code.core.session import session_preferences as _session_preferences 
 from ember_code.core.tools import process_store as _process_store  # noqa: F401
 from ember_code.core.utils import attachment_store as _attachment_store  # noqa: F401
 from ember_code.core.utils import memory_files as _memory_files  # noqa: F401
+from ember_code.extensions import settings_values as _extension_settings  # noqa: F401
 from ember_code.notifications import local_store as _local_notifications  # noqa: F401
 
 config = context.config

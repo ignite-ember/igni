@@ -8,7 +8,9 @@ from pathlib import Path
 from rich.console import Console
 from rich.prompt import Confirm
 
+from ember_code.core.config.group_policy import group_policy_dir
 from ember_code.core.paths import CONFIG_DIR
+from ember_code.core.profile import RuntimeProfile
 
 logger = logging.getLogger(__name__)
 
@@ -30,11 +32,23 @@ class MCPApprovalManager:
     in a plugin, and connecting a stdio server means spawning its
     ``command`` locally as the user; cloning a repo and sending one
     message must not be enough to run it.
+
+    **In the cloud** (``IGNI_PROFILE=cloud``) approvals come from igni
+    server and are read-only in the VM: a server is approved when igni
+    server delivered it — a group policy's ``mcps`` entry, which an
+    administrator configured — and no other is, nor can be approved
+    from inside the VM. Nothing is read from or written to
+    ``mcp-approved.json``.
     """
 
-    def __init__(self, approval_path: Path | None = None) -> None:
+    def __init__(
+        self, approval_path: Path | None = None, delivered_dir: Path | None = None
+    ) -> None:
         self._path = approval_path or (Path.home() / CONFIG_DIR / "mcp-approved.json")
-        self._approved: dict[str, list[str]] = self._load()
+        self._cloud = RuntimeProfile.current().is_cloud
+        #: Where igni server's group policy delivers MCP configs.
+        self._delivered = delivered_dir or (group_policy_dir() / "mcps")
+        self._approved: dict[str, list[str]] = {} if self._cloud else self._load()
 
     # ------------------------------------------------------------------
     # Public API
@@ -42,6 +56,8 @@ class MCPApprovalManager:
 
     def is_approved(self, server_name: str, config_path: str) -> bool:
         """Return True if *server_name* from *config_path* is already approved."""
+        if self._cloud:
+            return self._is_delivered(config_path)
         if self._is_user_global(config_path):
             return True
         # No basename-based trust here. Matching on ``.mcp.json`` /
@@ -52,6 +68,12 @@ class MCPApprovalManager:
 
     def approve(self, server_name: str, config_path: str) -> None:
         """Mark *server_name* from *config_path* as approved and persist."""
+        if self._cloud:
+            logger.warning(
+                "MCP approvals come from igni server in the cloud; not approving '%s'",
+                server_name,
+            )
+            return
         sources = self._approved.setdefault(server_name, [])
         if config_path not in sources:
             sources.append(config_path)
@@ -65,6 +87,13 @@ class MCPApprovalManager:
         """
         if self.is_approved(server_name, config_path):
             return True
+        if self._cloud:
+            logger.warning(
+                "MCP '%s' from %s is not one igni server delivered — not connecting.",
+                server_name,
+                config_path,
+            )
+            return False
 
         if not self._can_prompt():
             # Fail closed. The auto-connect pass runs on the backend's
@@ -105,6 +134,13 @@ class MCPApprovalManager:
     # ------------------------------------------------------------------
     # Internals
     # ------------------------------------------------------------------
+
+    def _is_delivered(self, config_path: str) -> bool:
+        """Whether igni server's group policy delivered *config_path*."""
+        try:
+            return Path(config_path).resolve().is_relative_to(self._delivered.resolve())
+        except (OSError, ValueError):
+            return False
 
     @staticmethod
     def _is_user_global(config_path: str) -> bool:

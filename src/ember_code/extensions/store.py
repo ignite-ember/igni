@@ -33,17 +33,19 @@ removing the bundle removes it.
 
 from __future__ import annotations
 
-import json
 import logging
 import shutil
 from datetime import datetime
 from pathlib import Path
+from typing import ClassVar
 
 from pydantic import BaseModel, Field, ValidationError
 
 from ember_code.core.paths import home_config_dir
+from ember_code.core.profile import RuntimeProfile
 from ember_code.extensions.assets import AssetCache, ReadOnlyTree
 from ember_code.extensions.manifest import ExtensionManifest
+from ember_code.extensions.settings_values import SettingsValues
 
 logger = logging.getLogger(__name__)
 
@@ -114,10 +116,28 @@ class StoredGroup(BaseModel):
 
 
 class ExtensionStore:
-    """The installed bundles on disk."""
+    """The installed bundles on disk.
+
+    In the cloud (``IGNI_PROFILE=cloud``) what igni server sends with the
+    listing — the priority order and the person's group — is kept in this
+    process only: it is igni server's, read-only in the VM, and a VM
+    starts by asking again. Settings values live in the database
+    (:mod:`ember_code.extensions.settings_values`).
+    """
+
+    #: What the listing carried, in the cloud: by store root.
+    _received_priority: ClassVar[dict[str, StoredPriority]] = {}
+    _received_group: ClassVar[dict[str, StoredGroup]] = {}
 
     def __init__(self, root: Path | None = None) -> None:
         self._root = root if root is not None else home_config_dir() / EXTENSIONS_DIR
+        self._values: SettingsValues | None = None
+
+    @property
+    def settings_values(self) -> SettingsValues:
+        if self._values is None:
+            self._values = SettingsValues.for_store(self._root)
+        return self._values
 
     @property
     def root(self) -> Path:
@@ -307,6 +327,9 @@ class ExtensionStore:
         stored = StoredPriority(priority=priority)
         if self._stored() == stored:
             return False
+        if RuntimeProfile.current().is_cloud:
+            self._received_priority[str(self._root)] = stored
+            return True
         self._root.mkdir(parents=True, exist_ok=True)
         self.priority_path.write_text(stored.model_dump_json(indent=2) + "\n", encoding="utf-8")
         return True
@@ -316,6 +339,8 @@ class ExtensionStore:
         return self._stored().priority
 
     def _stored(self) -> StoredPriority:
+        if RuntimeProfile.current().is_cloud:
+            return self._received_priority.get(str(self._root), StoredPriority())
         path = self.priority_path
         if not path.is_file():
             return StoredPriority()
@@ -331,12 +356,17 @@ class ExtensionStore:
 
     def record_group(self, group: str | None) -> None:
         """Keep the person's group the listing carried, for the next start before igni answers."""
+        if RuntimeProfile.current().is_cloud:
+            self._received_group[str(self._root)] = StoredGroup(group=group)
+            return
         self._root.mkdir(parents=True, exist_ok=True)
         stored = StoredGroup(group=group)
         self.group_path.write_text(stored.model_dump_json(indent=2) + "\n", encoding="utf-8")
 
     def group(self) -> StoredGroup | None:
         """The person's group as last received; ``None`` if no listing ever arrived."""
+        if RuntimeProfile.current().is_cloud:
+            return self._received_group.get(str(self._root))
         path = self.group_path
         if not path.is_file():
             return None
@@ -374,17 +404,7 @@ class ExtensionStore:
         if not declared:
             return {}
 
-        stored: dict[str, object] = {}
-        path = self.settings_path(manifest.id)
-        if path.is_file():
-            try:
-                raw = json.loads(path.read_text(encoding="utf-8"))
-                if isinstance(raw, dict):
-                    stored = raw
-            except (OSError, json.JSONDecodeError) as exc:
-                # A corrupt settings file must not stop the extension
-                # starting; defaults are a working configuration.
-                logger.warning("ignoring %s: %s", path, exc)
+        stored = self.settings_values.read(manifest.id)
 
         return {
             key: stored.get(key, setting.default)
@@ -414,10 +434,7 @@ class ExtensionStore:
                 raise StoreError(f"{manifest.id}: {key!r} must be one of {setting.options}")
 
         merged = {**self.settings(manifest), **values}
-        self._root.mkdir(parents=True, exist_ok=True)
-        self.settings_path(manifest.id).write_text(
-            json.dumps(merged, indent=2, sort_keys=True) + "\n", encoding="utf-8"
-        )
+        self.settings_values.write(manifest.id, merged)
         return merged
 
     def remove(self, extension_id: str) -> bool:
@@ -436,6 +453,6 @@ class ExtensionStore:
         # Its settings go with it. Leaving them would mean
         # reinstalling an extension silently inherited whatever the
         # last administrator had configured.
-        self.settings_path(extension_id).unlink(missing_ok=True)
+        self.settings_values.delete(extension_id)
         logger.info("removed extension %s", extension_id)
         return True

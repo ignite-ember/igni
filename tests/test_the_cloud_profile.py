@@ -28,9 +28,11 @@ from ember_code.core.config.llm_call_logger import LlmCallLogger
 from ember_code.core.config.settings import Settings, load_settings
 from ember_code.core.db.locator import StorageLocator
 from ember_code.core.logs import StdoutLog
+from ember_code.core.mcp.approval import MCPApprovalManager
 from ember_code.core.profile import PROFILE_ENV, RuntimeProfile
 from ember_code.core.utils.audit import AuditLogger
 from ember_code.core.utils.audit_schemas import AuditEntry
+from ember_code.extensions.store import ExtensionStore, StoredGroup
 
 
 @pytest.fixture
@@ -154,3 +156,26 @@ def test_the_cloud_needs_its_database(cloud, tmp_path: Path):
     with pytest.raises(RuntimeError, match="IGNI_DATABASE_URL"):
         StorageLocator(database_url=None, data_dir=tmp_path)
     assert StorageLocator(database_url=f"sqlite:///{tmp_path}/x.db", data_dir=tmp_path).shared
+
+
+def test_priority_and_group_are_igni_servers_and_never_written(cloud, tmp_path: Path):
+    root = tmp_path / "extensions"
+    assert ExtensionStore(root).record_priority(["acme.a", "acme.b"])
+    ExtensionStore(root).record_group("engineering")
+    assert ExtensionStore(root).priority() == ["acme.a", "acme.b"]
+    assert ExtensionStore(root).group() == StoredGroup(group="engineering")
+    assert not root.exists(), "nothing written in the VM"
+
+
+def test_mcp_approvals_are_only_what_igni_server_delivered(cloud, tmp_path: Path):
+    delivered = tmp_path / "group-policy" / "mcps"
+    delivered.mkdir(parents=True)
+    approvals_file = tmp_path / "mcp-approved.json"
+    approvals_file.write_text('{"local": ["/repo/.mcp.json"]}')
+    approvals = MCPApprovalManager(approval_path=approvals_file, delivered_dir=delivered)
+
+    assert approvals.is_approved("search", str(delivered / "search.json"))
+    assert not approvals.is_approved("local", "/repo/.mcp.json"), "the file is not read"
+    assert not approvals.check_approval("local", "/repo/.mcp.json")
+    approvals.approve("local", "/repo/.mcp.json")
+    assert approvals_file.read_text() == '{"local": ["/repo/.mcp.json"]}', "nothing written"
