@@ -115,13 +115,27 @@ ceiling):
   all 80 cycles; the per-VM warm image is 3.7× smaller.
 - A 4 GiB ceiling suspends in 18–26 ms (10–16 ms at 256 MiB): ceilings
   should fit the profile.
-- Gaps being worked on: fragmented free memory (pieces under 2 MiB, as
-  Chromium leaves it) is not returned — about 1 GB stayed on the host
-  after the browser closed; freed pages still land in the suspend diff (a
-  guest that grows and shrinks 1 GiB between suspends writes a 1.1 GB
-  diff, about 5 s), to be fixed by a Firecracker patch that leaves
-  reported pages out of the dirty log; the guest's page cache needs its
-  own trim.
+- The three gaps, closed (`igni__cloudvm` `57ed5e9`, decided defaults):
+  - **Fragmentation:** free page reporting at order 3 (set through sysfs
+    after boot; kernel 6.1 ignores the boot parameter) plus an idle-time
+    cgroup v2 `memory.reclaim` trim. After headless Chromium the host
+    holds 352 MB instead of 1,006 MB (guest's own use plus the ~150 MB
+    every fresh VM carries). No guest compaction: it stalled requests
+    220–270 ms.
+  - **Freed pages in suspend diffs:** a 93-line Firecracker patch records
+    every range the balloon discards and leaves pages still untouched at
+    snapshot time out of the diff, listing them in a `.discard` sidecar
+    the node agent journals and punches out of the memory file. The
+    grow-and-shrink-1-GiB case: 1,134 MB / 5.5 s per suspend stock,
+    88 MB / 0.48 s patched; resume and first request unchanged; 160
+    restores with a checksummed 256 MB guest buffer, no data lost.
+    Production seccomp must allow reading `/proc/self/pagemap`.
+  - **Page cache:** `memory.reclaim` returns 93% of what `drop_caches`
+    does but keeps hot files (a hot re-read 16 ms vs 243 ms). No
+    `drop_caches` timer. Future guest kernels get MGLRU.
+- Node agent, before every suspend: `memory.reclaim` trim, one hinting
+  run (~0.1 s), then the journaled suspend. Under host pressure: hinting
+  and trim on the largest VMs first.
 
 ## 3. The gateway (proposed)
 

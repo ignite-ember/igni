@@ -46,8 +46,9 @@ configuration. One code path. What is built and what is not:
 - After restore: resync the clock, reseed randomness, reconnect to igni
   server and services; flush the volume when a run ends and before
   suspend; close heavy caches (the browser) when the profile says so.
-- Free page reporting through Firecracker's balloon; a timer that trims
-  the file cache.
+- Free page reporting through Firecracker's balloon at order 3 (sysfs,
+  after boot); an idle-time cgroup v2 `memory.reclaim` trimmer; no
+  `drop_caches`, no compaction; MGLRU in future kernels.
 - The warm base snapshot built from it, one per image version.
 - Profile layers: a profile's package list built into a signed read-only
   layer from the customer's mirror, with a warm snapshot per profile.
@@ -66,7 +67,11 @@ A Rust service, one per host:
   only one node opens a volume, hand the VM a single disk.
 - Profiles: ceiling and CPUs at boot, `idle_before_suspend`, cold boot
   when the ceiling changes.
-- Memory: watch real usage, reclaim, refuse placements when short.
+- Memory: watch real usage, reclaim, refuse placements when short;
+  under pressure hint and trim the largest VMs first. Patched
+  Firecracker (discard-aware diffs, `.discard` sidecar journaled and
+  punched on apply, seccomp allowing the pagemap read); before suspend:
+  trim, one hinting run, journaled suspend.
 - An API the gateway calls: ensure running, suspend, status, run a
   command in a VM (through the guest agent), audited.
 - Per-producer PostgreSQL logins: create on first use, hand to the VM
