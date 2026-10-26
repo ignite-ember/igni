@@ -44,6 +44,7 @@ from typing import Any
 import click
 
 from ember_code import __version__
+from ember_code.cli.db import db
 from ember_code.cli.ext import ext
 from ember_code.cli.invocation import (
     CliInvocation,
@@ -284,3 +285,4 @@ if __name__ == "__main__":
 # Registered after the callback so the module reads top to bottom.
 cli.add_command(ext)
 cli.add_command(migrate)
+cli.add_command(db)

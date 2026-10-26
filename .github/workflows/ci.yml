@@ -133,6 +133,7 @@ jobs:
           tests/test_storage_backends.py
           tests/test_approvals_and_queued_messages_survive_a_restart.py
           tests/test_an_approval_resumes_after_a_cold_restart.py
+          tests/test_row_level_security.py
 
   # The Python SDKs under packages/ (igni-service, igni-extension) have
   # dependencies of their own and are checked in their own environments,

@@ -101,7 +101,8 @@ def test_igni_migrate_prepares_the_named_database(database_url: DatabaseUrl, tmp
     )
     assert result.exit_code == 0, result.output
     assert HEAD_REVISION in result.output
-    assert len(result.output.strip().splitlines()) == 1, "one database, migrated once"
+    reports = [line for line in result.output.splitlines() if HEAD_REVISION in line]
+    assert len(reports) == 1, "one database, migrated once"
     password = make_url(database_url.url).password
     assert not password or password not in result.output
 

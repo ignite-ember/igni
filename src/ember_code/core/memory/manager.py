@@ -109,6 +109,9 @@ class StorageManager:
         return ScopedAsyncPostgresDb(
             scope=storage.scope(self.project_dir),
             db_engine=cache.get_async_engine(url),
+            # ``igni migrate`` made Agno's tables as the admin role: a
+            # producer's role may not create any (``core/db/rls.py``).
+            create_schema=False,
             session_table=self.SESSION_TABLE,
             memory_table=self.MEMORY_TABLE,
         )
