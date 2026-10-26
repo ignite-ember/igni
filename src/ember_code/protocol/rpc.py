@@ -312,6 +312,11 @@ class RpcMethod(StrEnum):
     # to acknowledge. Pool-level: an event is the producer's, not a
     # session's.
     DELIVER_SERVICE_EVENTS = "deliver_service_events"
+    # The gateway handing a producer's VM the person's own session when
+    # they sign in through it, for igni to exchange for the VM's own
+    # credential (igni server's service-identity §16). Pool-level: the
+    # credential is the VM's. Answers the credential's state.
+    VM_SIGN_IN = "vm_sign_in"
 
 
 def validate_rpc_table(registered_keys: Iterable[str]) -> None:

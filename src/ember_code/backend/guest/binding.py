@@ -7,19 +7,20 @@ nothing producer-specific — and waits for the node agent to write
 ``/run/igni/producer.env`` (``docs/guest-protocol.md``)::
 
     IGNI_ACCESS_TOKEN_FILE=/run/igni/token
+    IGNI_VM_CREDENTIAL_FILE=/vol/igni/vm-credential
     IGNI_PRODUCER=person:<id>
     IGNI_ORG=<org>
     IGNI_DATABASE_URL=postgresql://...
 
-The file is written atomically (temporary file, rename), after the token
-file and after the producer's volume is mounted, and the protocol has no
+The file is written atomically (temporary file, rename), after the
+producer's volume is mounted, and the protocol has no
 "look now" call. On Linux igni watches the run directory with inotify
 (:class:`~ember_code.backend.guest.watch.DirectoryWatch`): the rename is
 an ``IN_MOVED_TO``, and igni looks at once. It still looks every
 :attr:`ProducerBinding.FALLBACK_SECONDS` in case an event is missed;
 where inotify is missing it polls every :attr:`ProducerBinding.POLL_SECONDS`
-— a ``stat`` of a tmpfs file. Once it names a database, and the token it
-points at is a producer's whose org and id are the ones it names, the
+— a ``stat`` of a tmpfs file. Once it names a database, an org and a
+producer — and a token, if one is there yet, is that producer's — the
 variables are put in igni's environment and :meth:`ProducerBinding.bind`
 returns: the backend then loads its settings and opens the database, as
 it would have with those variables set from the start. Until then every
@@ -184,6 +185,13 @@ class ProducerBinding:
     def bound(self) -> ProducerEnv | None:
         return self._bound
 
+    @property
+    def tenant(self) -> Tenant | None:
+        """Whose VM this is, as ``producer.env`` named it once bound."""
+        if self._bound is None:
+            return None
+        return Tenant(org=self._bound.org, producer=self._bound.producer)
+
     def needed(self) -> bool:
         """Whether to wait: the file is the source when present, and when nothing else names a database."""
         return self.path.exists() or not self._environ.get(StorageConfig.DATABASE_URL_ENV, "")
@@ -198,23 +206,26 @@ class ProducerBinding:
             return BindingAttempt(waiting_for=f"{self.path} to be readable ({exc})")
         if not env.database_url:
             return BindingAttempt(env=env, waiting_for=f"{self.path} to name IGNI_DATABASE_URL")
-        # The token is read through the environment the file sets, so
-        # apply it to a copy first: nothing changes until it all holds.
-        tenant = self._tenant_under(env)
-        if tenant is None:
+        if not env.org or not env.producer:
             return BindingAttempt(
-                env=env, waiting_for="a producer's token in IGNI_ACCESS_TOKEN_FILE"
+                env=env, waiting_for=f"{self.path} to name IGNI_ORG and IGNI_PRODUCER"
             )
-        if env.org and env.org != tenant.org:
-            return BindingAttempt(
-                env=env, waiting_for=f"IGNI_ORG={env.org} to match the token's org {tenant.org}"
-            )
-        if env.producer and env.producer != tenant.producer:
+        named = Tenant(org=env.org, producer=env.producer)
+        # No token is needed to bind: a producer's VM may be made before
+        # anybody signed in, and works locally until somebody does. A
+        # token there is, though, must be the named producer's. It is
+        # read through the environment the file sets, so apply that to a
+        # copy first: nothing changes until it all holds.
+        token = self._tenant_under(env)
+        if token is not None and token != named:
             return BindingAttempt(
                 env=env,
-                waiting_for=f"IGNI_PRODUCER={env.producer} to match the token's {tenant.producer}",
+                waiting_for=(
+                    f"the token's {token.producer} of {token.org} to be "
+                    f"{named.producer} of {named.org}, as {self.path} says"
+                ),
             )
-        return BindingAttempt(env=env, tenant=tenant)
+        return BindingAttempt(env=env, tenant=named)
 
     def _tenant_under(self, env: ProducerEnv) -> Tenant | None:
         """The token's tenant, read where the file says the token is.

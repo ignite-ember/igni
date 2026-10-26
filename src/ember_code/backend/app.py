@@ -233,7 +233,14 @@ class BackendApp:
         # Whose rows a shared database holds: the producer signed in
         # here (docs/CLOUD.md §9). Asked only when ``IGNI_DATABASE_URL``
         # names one — the desktop's files are nobody else's.
-        tenancy.use(SignedInPerson(settings.auth.credentials_file, ExtensionStore()).tenant)
+        # A producer's VM is the producer ``producer.env`` named, signed in
+        # or not yet (``backend/guest``).
+        bound = guest.tenant if guest is not None else None
+        tenancy.use(
+            (lambda: bound)
+            if bound is not None
+            else SignedInPerson(settings.auth.credentials_file, ExtensionStore()).tenant
+        )
         self._backend = BackendServer(
             settings,
             project_dir=self._project_dir,
@@ -410,7 +417,9 @@ class BackendApp:
                 transport=self._transport,
                 notifications=notifications,
                 on_rebind=self._supervisor.request_shutdown,
+                api_url=self._igni_api_url,
             )
+            self._orchestrator.attach_vm_sign_in(guest.vm_sign_in)
 
         try:
             if self._ws_port is not None:

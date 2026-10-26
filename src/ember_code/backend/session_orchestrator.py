@@ -24,7 +24,7 @@ import contextlib
 import logging
 import os
 import uuid
-from collections.abc import MutableSequence
+from collections.abc import Awaitable, Callable, MutableSequence
 from pathlib import Path
 from typing import Any
 
@@ -59,6 +59,10 @@ from ember_code.protocol import messages as msg
 from ember_code.protocol.rpc import RpcMethod
 
 logger = logging.getLogger(__name__)
+
+#: Takes a person's session for the VM's own credential; answers its state
+#: (``backend/guest/credential.py``'s ``StateChange``).
+VmSignIn = Callable[[str, str | None], Awaitable[Any]]
 
 
 class SessionOrchestrator:
@@ -131,6 +135,7 @@ class SessionOrchestrator:
         self._host_model: Any = None
         self._page_tokens: PageServiceTokens | None = None
         self._event_inbox: ServiceEventInbox | None = None
+        self._vm_sign_in: VmSignIn | None = None
         self._inbound_watchers: list[Any] = []
 
     @property
@@ -446,6 +451,29 @@ class SessionOrchestrator:
             )
         )
 
+    def attach_vm_sign_in(self, sign_in: VmSignIn | None) -> None:
+        """Who takes ``vm_sign_in``: the VM's credential keeper, in the cloud."""
+        self._vm_sign_in = sign_in
+
+    async def _handle_vm_sign_in(self, message: Any) -> None:
+        """``vm_sign_in``: ``{session_token, organisation?}`` → the credential's state."""
+        args = message.args or {}
+        sign_in = self._vm_sign_in
+        token = args.get("session_token")
+        if sign_in is None or not isinstance(token, str) or not token:
+            await self._transport.send(
+                msg.RPCResponse(
+                    id=message.id or "",
+                    error="vm_sign_in: a producer's VM takes the person's session_token",
+                )
+            )
+            return
+        organisation = args.get("organisation")
+        change = await sign_in(token, organisation if isinstance(organisation, str) else None)
+        await self._transport.send(
+            msg.RPCResponse(id=message.id or "", result=change.model_dump(mode="json"))
+        )
+
     def attach_event_inbox(self, inbox: ServiceEventInbox | None) -> None:
         """Where the platform's ``deliver_service_events`` go."""
         self._event_inbox = inbox
@@ -566,6 +594,8 @@ class SessionOrchestrator:
                     await self._handle_service_token(message)
                 elif message.method == RpcMethod.DELIVER_SERVICE_EVENTS:
                     await self._handle_service_events(message)
+                elif message.method == RpcMethod.VM_SIGN_IN:
+                    await self._handle_vm_sign_in(message)
                 else:
                     await self._handle_window_model(message)
                 return

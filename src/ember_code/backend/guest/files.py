@@ -20,8 +20,9 @@ class AtomicFile:
     #: Readable by the guest agent whoever igni runs as.
     MODE = 0o644
 
-    def __init__(self, path: Path) -> None:
+    def __init__(self, path: Path, *, mode: int | None = None) -> None:
         self.path = path
+        self._mode = self.MODE if mode is None else mode
 
     def write(self, data: bytes) -> None:
         directory = self.path.parent
@@ -32,7 +33,7 @@ class AtomicFile:
                 handle.write(data)
                 handle.flush()
                 os.fsync(handle.fileno())
-            os.chmod(temp, self.MODE)
+            os.chmod(temp, self._mode)
             os.replace(temp, self.path)
         except BaseException:
             with contextlib.suppress(OSError):

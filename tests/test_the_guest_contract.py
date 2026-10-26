@@ -311,24 +311,31 @@ def test_it_says_what_it_is_waiting_for(cloud, tmp_path: Path):
     assert "to be written" in binding.attempt().waiting_for
     path.write_text(f"IGNI_ORG={ORG}\n")
     assert "IGNI_DATABASE_URL" in binding.attempt().waiting_for
-    path.write_text(f"IGNI_DATABASE_URL=sqlite:///x.db\nIGNI_ACCESS_TOKEN_FILE={tmp_path / 't'}\n")
-    assert "token" in binding.attempt().waiting_for
-    (tmp_path / "t").write_text(ADA_TOKEN)
-    assert binding.attempt().bound
+    path.write_text("IGNI_DATABASE_URL=sqlite:///x.db\n")
+    assert "IGNI_ORG and IGNI_PRODUCER" in binding.attempt().waiting_for
+
+
+def test_it_binds_before_anybody_signed_in(cloud, tmp_path: Path):
+    """A producer's VM is made before the person's first sign-in: no token, still bound."""
+    path = tmp_path / "producer.env"
+    path.write_text(
+        f"IGNI_DATABASE_URL=sqlite:///x.db\nIGNI_ORG={ORG}\nIGNI_PRODUCER={PRODUCER}\n"
+        f"IGNI_ACCESS_TOKEN_FILE={tmp_path / 'not-yet'}\n"
+    )
+    attempt = ProducerBinding(path, environ={}).attempt()
+    assert attempt.bound and attempt.tenant == Tenant(org=ORG, producer=PRODUCER)
 
 
 @pytest.mark.parametrize(
-    ("org", "producer", "complaint"),
-    [("org-other", PRODUCER, "IGNI_ORG"), (ORG, "person:u-eve", "IGNI_PRODUCER")],
+    ("org", "producer"),
+    [("org-other", PRODUCER), (ORG, "person:u-eve")],
 )
-def test_a_producer_env_that_disagrees_with_the_token_does_not_bind(
-    cloud, tmp_path: Path, org: str, producer: str, complaint: str
-):
+def test_a_token_of_another_producer_does_not_bind(cloud, tmp_path: Path, org: str, producer: str):
     _hand_over(tmp_path, "sqlite:///x.db", org=org, producer=producer)
     environ: dict[str, str] = {}
     attempt = ProducerBinding(tmp_path / "producer.env", environ=environ).attempt()
     assert not attempt.bound
-    assert complaint in attempt.waiting_for
+    assert f"to be {producer} of {org}" in attempt.waiting_for
     assert environ == {}, "nothing is applied until it all holds"
 
 
@@ -695,3 +702,58 @@ async def test_serving_keeps_the_file_and_reconnects_after_a_restore(run_dir: Pa
     finally:
         await guest.stop()
     assert not (run_dir / "activity.json").exists()
+
+
+async def test_bound_before_any_sign_in_says_so_to_the_windows_and_the_node_agent(
+    cloud, run_dir: Path, tmp_path: Path, monkeypatch
+):
+    for name in (GuestPaths.VM_CREDENTIAL_ENV,):
+        monkeypatch.setenv(name, "")
+    paths = GuestPaths.from_env()
+    AtomicFile(paths.producer_env).write(
+        (
+            f"IGNI_DATABASE_URL=sqlite:///{tmp_path / 'x.db'}\nIGNI_ORG={ORG}\n"
+            f"IGNI_PRODUCER={PRODUCER}\nIGNI_ACCESS_TOKEN_FILE={run_dir / 'token'}\n"
+            f"IGNI_VM_CREDENTIAL_FILE={tmp_path / 'vol' / 'vm-credential'}\n"
+        ).encode()
+    )
+    guest = CloudGuest(
+        paths,
+        binding=ProducerBinding(paths.producer_env, poll_seconds=0.01),
+        restores=RestoreWatch(paths.restored, watch=False),
+        gc_freeze=False,
+    )
+    assert await asyncio.wait_for(guest.bind(None), timeout=5) is not None
+    assert guest.tenant == Tenant(org=ORG, producer=PRODUCER), "bound without a token"
+
+    sent: list[Any] = []
+
+    class Transport:
+        inner = type("Inner", (), {"client_count": 1})()
+
+        async def send(self, message: Any) -> None:
+            sent.append(message)
+
+    class Model:
+        def __init__(self) -> None:
+            self.backend = self
+            self.broadcasts = self
+
+        def activity(self) -> dict[str, Any]:
+            return Activity.of([]).model_dump(mode="json")
+
+        def on_activity(self, listener: Any) -> None:
+            pass
+
+    guest.serving(model=Model(), transport=Transport(), api_url=lambda: "https://igni.test")
+    try:
+        for _ in range(100):
+            if guest.credentials and guest.credentials.state.value == "needs_sign_in" and sent:
+                break
+            await asyncio.sleep(0.01)
+        written = json.loads((run_dir / "activity.json").read_text())
+        assert written["credential"] == "needs_sign_in"
+        [push] = [m for m in sent if getattr(m, "channel", "") == "vm_credential"]
+        assert push.payload["state"] == "needs_sign_in"
+    finally:
+        await guest.stop()

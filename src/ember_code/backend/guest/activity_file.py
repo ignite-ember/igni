@@ -82,11 +82,16 @@ class GuestActivity(BaseModel):
     busy: list[GuestBusy] = Field(default_factory=list)
     #: When to wake igni if it is suspended, Unix milliseconds: the earliest thing due.
     wake_at: int | None = None
+    #: The VM credential: ``ready``, ``needs_sign_in``, ``needs_reissue``,
+    #: ``unreachable``; ``None`` where there is none to keep.
+    credential: str | None = None
     #: When igni wrote it, in Unix milliseconds.
     written_at_ms: int = 0
 
     @classmethod
-    def of(cls, activity: Activity, *, clients: int, now: float) -> GuestActivity:
+    def of(
+        cls, activity: Activity, *, clients: int, now: float, credential: str | None = None
+    ) -> GuestActivity:
         return cls(
             state=activity.state,
             suspendable=activity.suspendable,
@@ -96,6 +101,7 @@ class GuestActivity(BaseModel):
             sessions=activity.sessions,
             busy=[GuestBusy.of(lease) for lease in activity.busy],
             wake_at=UnixMs.of(activity.wake_at),
+            credential=credential,
             written_at_ms=int(now * 1000),
         )
 
@@ -119,11 +125,13 @@ class ActivityFile:
         *,
         activity: Callable[[], Activity],
         clients: Callable[[], int],
+        credential: Callable[[], str | None] | None = None,
         clock: Callable[[], float] = time.time,
     ) -> None:
         self._file = AtomicFile(path)
         self._activity = activity
         self._clients = clients
+        self._credential = credential
         self._clock = clock
         self._written: GuestActivity | None = None
         self._written_at = 0.0
@@ -142,7 +150,12 @@ class ActivityFile:
     def refresh(self, *, force: bool = False) -> bool:
         """Write the file if it changed, is due a heartbeat, or ``force``. True when written."""
         try:
-            current = GuestActivity.of(self._activity(), clients=self._clients(), now=self._clock())
+            current = GuestActivity.of(
+                self._activity(),
+                clients=self._clients(),
+                now=self._clock(),
+                credential=self._credential() if self._credential is not None else None,
+            )
         except Exception as exc:
             logger.debug("activity file: activity unavailable: %s", exc)
             return False

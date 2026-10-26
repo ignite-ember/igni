@@ -184,6 +184,7 @@ RPC_UNREACHABLE: dict[RpcMethod, str] = {
     RpcMethod.WINDOW_MODEL: "channel",
     RpcMethod.EXTENSION_SERVICE_TOKEN: "service",
     RpcMethod.DELIVER_SERVICE_EVENTS: "events",
+    RpcMethod.VM_SIGN_IN: "credentials",
 }
 
 

@@ -32,14 +32,23 @@ from typing import Any
 from ember_code.backend.activity import Activity
 from ember_code.backend.guest.activity_file import ActivityFile
 from ember_code.backend.guest.binding import ProducerBinding, ProducerEnv
+from ember_code.backend.guest.credential import (
+    CredentialFile,
+    CredentialState,
+    StateChange,
+    VmCredentialExchange,
+    VmCredentials,
+)
 from ember_code.backend.guest.entropy import ProcessEntropy
 from ember_code.backend.guest.files import ReadyFile
 from ember_code.backend.guest.paths import GuestPaths
 from ember_code.backend.guest.resume import Restored, RestoreWatch
 from ember_code.backend.guest.warm import WarmImports
-from ember_code.core.activity import ActivityRegistry
+from ember_code.core.activity import ActivityRegistry, background
 from ember_code.core.db.engine import cache
+from ember_code.core.db.scope import Tenant
 from ember_code.core.profile import RuntimeProfile
+from ember_code.protocol import messages as msg
 
 logger = logging.getLogger(__name__)
 
@@ -64,6 +73,7 @@ class CloudGuest:
         self.entropy = ProcessEntropy()
         self._gc_freeze = gc_freeze
         self.activity: ActivityFile | None = None
+        self.credentials: VmCredentials | None = None
         self._model: Any = None
         self._transport: Any = None
 
@@ -106,12 +116,17 @@ class CloudGuest:
         transport: Any,
         notifications: Any = None,
         on_rebind: Callable[[], None] | None = None,
+        api_url: Callable[[], str | None] | None = None,
     ) -> None:
         """Start what runs while igni serves the producer."""
         self._model = model
         self._transport = transport
+        self.credentials = self._credentials_for(api_url)
         self.activity = ActivityFile(
-            self.paths.activity, activity=self._current_activity, clients=self._clients
+            self.paths.activity,
+            activity=self._current_activity,
+            clients=self._clients,
+            credential=self._credential_state,
         )
         model.broadcasts.on_activity(self.activity.changed)
         # A window coming or going changes ``clients``.
@@ -130,13 +145,31 @@ class CloudGuest:
         self.restores.start()
         if self.binding.bound is not None and on_rebind is not None:
             self.binding.watch(lambda _env: on_rebind())
+        if self.credentials is not None:
+            self.restores.on_restore(self._renew_credential)
+            background.start(
+                self.credentials.start(), holder="vm-credential", reason="a token from it"
+            )
         # Everything igni built to serve this producer stays: frozen, the
         # collector no longer walks (and so writes to) it while igni idles.
         if self._gc_freeze:
             gc.collect()
             gc.freeze()
 
+    async def vm_sign_in(self, session_token: str, organisation: str | None = None) -> StateChange:
+        """The gateway handed the person's session (``vm_sign_in``): get the VM its credential."""
+        if self.credentials is None:
+            return StateChange(state=CredentialState.NEEDS_SIGN_IN, message="not a producer's VM")
+        return await self.credentials.sign_in(session_token, organisation)
+
+    @property
+    def tenant(self) -> Tenant | None:
+        """Whose VM this is, once bound."""
+        return self.binding.tenant
+
     async def stop(self) -> None:
+        if self.credentials is not None:
+            await self.credentials.stop()
         await self.restores.stop()
         await self.binding.stop()
         if self.activity is not None:
@@ -152,6 +185,41 @@ class CloudGuest:
     def _clients(self) -> int:
         inner = getattr(self._transport, "inner", self._transport)
         return int(getattr(inner, "client_count", 0) or 0)
+
+    def _credentials_for(self, api_url: Callable[[], str | None] | None) -> VmCredentials | None:
+        """The credential keeper, for a VM bound to a producer through ``producer.env``."""
+        bound = self.binding.bound
+        if bound is None or api_url is None:
+            return None
+        # Read now: ``producer.env`` named the files after igni started.
+        paths = GuestPaths.from_env()
+        return VmCredentials(
+            credential_file=CredentialFile(paths.vm_credential),
+            token_file=paths.token,
+            exchange=VmCredentialExchange(api_url),
+            producer=bound.producer,
+            on_state=self._credential_moved,
+        )
+
+    def _credential_state(self) -> str | None:
+        return self.credentials.state.value if self.credentials is not None else None
+
+    def _credential_moved(self, change: StateChange) -> None:
+        """Tell the windows, and the node agent through ``activity.json``."""
+        if change.state is not CredentialState.READY:
+            logger.warning("VM credential: %s (%s)", change.state.value, change.message)
+        if self._transport is not None:
+            background.daemon(
+                self._transport.send(
+                    msg.PushNotification(channel="vm_credential", payload=change.model_dump())
+                ),
+                name="push-vm-credential",
+            )
+        self._rewrite_now()
+
+    async def _renew_credential(self, _restored: Restored) -> None:
+        if self.credentials is not None:
+            await self.credentials.refresh(force=False)
 
     def _rewrite_now(self) -> None:
         if self.activity is not None:

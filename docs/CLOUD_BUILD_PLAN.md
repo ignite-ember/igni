@@ -86,8 +86,10 @@ A Rust service, one per host:
 - An API the gateway calls: ensure running, suspend, status, run a
   command in a VM (through the guest agent), audited.
 - Per-producer PostgreSQL logins: create on first use, hand to the VM
-  with the token (`/run/igni/producer.env`, which igni binds to,
-  `dbffea2`; `IGNI_PRODUCER` is `person:<id>`, as the token names it).
+  (`/run/igni/producer.env`, which igni binds to, `dbffea2`, without
+  needing a token; `IGNI_PRODUCER` is `person:<id>` or `app:<id>`, as
+  the token names it). An app's VM credential is written to the volume
+  once (`IGNI_VM_CREDENTIAL_FILE`); igni keeps it and its tokens.
 
 ## 4. Gateway (M)
 
@@ -96,7 +98,9 @@ A Rust service, one per host:
   connection while it restores, routes the host object model over WSS.
 - Places new producers on hosts with free memory; moves a producer when
   its node is gone (cold boot from its volume).
-- Hands the VM the producer's token.
+- Hands a person's VM their session when they sign in through it
+  (`vm_sign_in`), for igni to exchange for the VM's own credential; it
+  never hands a producer a token (`CLOUD.md` section 9).
 - Hands a producer's events to its igni: pulls them, calls
   `deliver_service_events` with them, and acknowledges what igni answers
   in `acknowledge` (`CLOUD.md` section 6).

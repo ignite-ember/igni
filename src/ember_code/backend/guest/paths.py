@@ -27,6 +27,9 @@ class GuestPaths(BaseModel):
     READY_ENV: ClassVar[str] = "IGNI_READY_FILE"
     PRODUCER_ENV_ENV: ClassVar[str] = "IGNI_PRODUCER_ENV_FILE"
     RESTORED_ENV: ClassVar[str] = "IGNI_RESTORED_FILE"
+    TOKEN_ENV: ClassVar[str] = "IGNI_ACCESS_TOKEN_FILE"
+    VM_CREDENTIAL_ENV: ClassVar[str] = "IGNI_VM_CREDENTIAL_FILE"
+    DEFAULT_VM_CREDENTIAL: ClassVar[str] = "/vol/igni/vm-credential"
     DEFAULT_RUN_DIR: ClassVar[str] = "/run/igni"
 
     #: igni's ``app.activity``, written by igni, read by the guest agent's ``status``.
@@ -37,6 +40,10 @@ class GuestPaths(BaseModel):
     producer_env: Path
     #: ``{generation, at_ms, clock_step_ms}``, rewritten by the guest agent after every restore.
     restored: Path
+    #: The access token igni keeps from the VM credential (``producer.env`` names it).
+    token: Path
+    #: The VM's credential, on the producer's volume (``producer.env`` names it).
+    vm_credential: Path
 
     @classmethod
     def from_env(cls, environ: Mapping[str, str] | None = None) -> GuestPaths:
@@ -52,6 +59,10 @@ class GuestPaths(BaseModel):
             ready=named(cls.READY_ENV, "ready"),
             producer_env=named(cls.PRODUCER_ENV_ENV, "producer.env"),
             restored=named(cls.RESTORED_ENV, "restored"),
+            token=named(cls.TOKEN_ENV, "token"),
+            vm_credential=Path(
+                env.get(cls.VM_CREDENTIAL_ENV, "").strip() or cls.DEFAULT_VM_CREDENTIAL
+            ),
         )
 
 

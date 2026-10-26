@@ -182,6 +182,7 @@ async def test_binding_wakes_on_the_rename_and_falls_back_to_polling(tmp_path: P
     (tmp_path / "token").write_text(_token())
     (tmp_path / ".p.tmp").write_text(
         f"IGNI_ACCESS_TOKEN_FILE={tmp_path / 'token'}\nIGNI_DATABASE_URL=sqlite:///x.db\n"
+        "IGNI_ORG=org-acme\nIGNI_PRODUCER=person:u-ada\n"
     )
     handed = time.perf_counter()
     os.replace(tmp_path / ".p.tmp", tmp_path / "producer.env")

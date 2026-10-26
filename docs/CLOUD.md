@@ -500,14 +500,40 @@ plan steps 3 and 5). With the org database's admin URL:
   What it owned (its uploads' large objects) passes to the admin role;
   its rows stay, unreachable until a role is granted again.
 
-**Token refresh contract** (the gateway's, build plan step 4). The VM's
-environment names `IGNI_ACCESS_TOKEN_FILE`, a file holding the
-producer's token. The gateway rewrites it — write a temporary file in
-the same directory, rename it over — whenever it refreshes the token, and
-after a resume before the VM is used. igni reads the file on every
-credentials load, so a fresh token reaches a running VM without a restart
-or any call into it. `IGNI_ACCESS_TOKEN` (fixed for the process) remains
-for a short-lived VM.
+**The VM's own credential** (igni server's service-identity §16;
+`backend/guest/credential.py`). The platform never mints a producer a
+token: each VM holds a **VM credential** and exchanges it for every token
+it needs. A person's comes when they sign in through the gateway, which
+hands their session to igni with the `vm_sign_in` RPC
+(`{session_token, organisation?}`, answered with the credential's state);
+igni exchanges it (`vm-sign-in` grant). An app's the node agent writes to
+the volume once; igni takes it when it appears, without a restart. The
+credential lives in `IGNI_VM_CREDENTIAL_FILE` (on the volume, `0600`,
+replaced atomically and fsynced); the 15-minute access token igni gets
+from it goes to `IGNI_ACCESS_TOKEN_FILE` (the run directory), which every
+part of igni already reads on every credentials load, so nothing else
+changes when it is renewed. Renewal (`vm-credential` grant) runs a minute
+before expiry, after a restore, and one at a time; every exchange rotates
+the credential, and the new one is written before the token is. A crash
+between the exchange and that write leaves the rotated-away credential
+on the volume; presenting it again is reuse, which revokes the family —
+the person signs in again, an app is re-issued (the window is one round
+trip and an fsync). `invalid_grant` (revoked, reused, idle 90 days, the
+person signed out or was removed, the app deleted) removes the token and
+puts the VM in **needs sign-in** (a person) or **needs re-issue** (an
+app, logged as an error): pushed to the windows (`vm_credential`) and
+written to `activity.json` (`credential`). The node agent no longer
+writes or refreshes tokens; `IGNI_ACCESS_TOKEN` (fixed for the process)
+remains for a VM started without the guest contract.
+
+**Bound before anybody signed in.** igni binds with `producer.env`'s
+database, org and producer alone — automatic provisioning boots a
+producer's VM before the person ever signs in. Its rows are that
+producer's from the start (the tenant is `producer.env`'s; a token, once
+there, must name the same producer). Everything local works — the
+database, the stores, sessions — and whatever needs igni server or a
+service says it needs sign-in until the credential arrives, which igni
+picks up without a restart.
 
 **Guest contract** (igni's side of the guest protocol in
 `igni__cloudvm`; `backend/guest/`, cloud profile only). Three
