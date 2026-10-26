@@ -11,13 +11,17 @@ from __future__ import annotations
 import json
 import subprocess
 import sys
+from pathlib import Path
 
 from click.testing import CliRunner
 from sqlalchemy import create_engine, text
 
 from ember_code.cli.db import db as igni_db
+from ember_code.cli.migrate import SchemaMigration
 from ember_code.core.db.admin_cli import db
+from ember_code.core.db.locator import StorageLocator
 from ember_code.core.db.urls import DatabaseUrl
+from tests.storage_backends import ThrowawayPostgres
 
 
 def test_the_command_imports_none_of_the_rest_of_igni():
@@ -44,7 +48,18 @@ def test_without_a_database_it_says_how_to_name_one(monkeypatch):
 
 
 def test_it_grants_and_revokes_a_producer(postgres_url: str):
-    admin = DatabaseUrl.parse(postgres_url)
+    database = ThrowawayPostgres(postgres_url)
+    admin = DatabaseUrl.parse(database.create())
+    locator = StorageLocator(database_url=admin.url, data_dir="/nonexistent")
+    for target in SchemaMigration(locator, project=Path("/")).targets():
+        SchemaMigration.migrate(target)
+    try:
+        _grant_and_revoke(admin)
+    finally:
+        database.drop()
+
+
+def _grant_and_revoke(admin: DatabaseUrl) -> None:
     granted = CliRunner().invoke(
         db,
         [

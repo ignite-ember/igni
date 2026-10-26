@@ -11,9 +11,9 @@ so none can be busy without the :class:`ActivityRegistry` knowing:
   would never be idle; what it *does* when it wakes holds its own;
 * :meth:`BackgroundTasks.thread` — a thread, the same two ways.
 
-Both keep a reference to what they start until it ends, which a bare
-``create_task`` does not: a task nobody references may be collected
-mid-flight. ``tests/test_background_work_is_accounted_for.py`` fails when
+Both keep a reference to what they start until it ends — on its loop,
+so it goes with the loop — which a bare ``create_task`` does not: a task
+nobody references may be collected mid-flight. ``tests/test_background_work_is_accounted_for.py`` fails when
 code under ``src/`` starts a task or thread any other way.
 """
 
@@ -39,7 +39,6 @@ class BackgroundTasks:
 
     def __init__(self, registry: ActivityRegistry | None = None) -> None:
         self._registry = registry
-        self._tasks: set[asyncio.Future[Any]] = set()
         self._lock = threading.Lock()
 
     @classmethod
@@ -166,13 +165,33 @@ class BackgroundTasks:
         return worker
 
     async def drain(self) -> None:
-        """Wait for everything started here; for tests and shutdown."""
+        """Wait for everything started here on this loop; for tests and shutdown."""
+        bucket = self._bucket(asyncio.get_running_loop())
         while True:
             with self._lock:
-                pending = [t for t in self._tasks if not t.done()]
+                pending = [t for t in bucket if not t.done()]
             if not pending:
                 return
             await asyncio.gather(*pending, return_exceptions=True)
+
+    #: Where a loop keeps the tasks started on it (see :meth:`_bucket`).
+    _BUCKET = "_igni_background_tasks"
+
+    def _bucket(self, loop: asyncio.AbstractEventLoop) -> set[asyncio.Future[Any]]:
+        """The loop's own set of what was started on it.
+
+        Held by the loop rather than here: a reference from here would
+        outlive the loop, and a task its loop closed under would then
+        never be collected — nor its coroutine closed, so a database
+        transaction it had open would stay open, holding its locks. The
+        loop and its tasks reference each other, which the collector
+        frees together once the loop is gone.
+        """
+        bucket: set[asyncio.Future[Any]] | None = getattr(loop, self._BUCKET, None)
+        if bucket is None:
+            bucket = set()
+            setattr(loop, self._BUCKET, bucket)
+        return bucket
 
     def _schedule(
         self,
@@ -186,14 +205,15 @@ class BackgroundTasks:
             future: asyncio.Future[T] = target_loop.create_task(work, name=name)
         else:
             future = asyncio.ensure_future(work, loop=loop)
+        bucket = self._bucket(future.get_loop())
         with self._lock:
-            self._tasks.add(future)
-        future.add_done_callback(self._forget)
+            bucket.add(future)
+        future.add_done_callback(lambda done: self._forget(bucket, done))
         return future
 
-    def _forget(self, future: asyncio.Future[Any]) -> None:
+    def _forget(self, bucket: set[asyncio.Future[Any]], future: asyncio.Future[Any]) -> None:
         with self._lock:
-            self._tasks.discard(future)
+            bucket.discard(future)
 
 
 #: The process's one instance.

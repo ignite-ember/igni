@@ -28,6 +28,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
+import pytest
 from agno.agent import Agent
 from agno.db.base import SessionType
 from agno.db.sqlite import AsyncSqliteDb
@@ -57,6 +58,23 @@ from ember_code.protocol import messages as msg
 from tests.storage_backends import Scopes
 
 SESSION = "cold-s1"
+
+
+@pytest.fixture(autouse=True)
+async def _runs_finish_their_writes():
+    """Let what a test's runs left going finish before its loop closes.
+
+    Agno saves a session after a run in tasks of its own; a loop closed
+    under one leaves its transaction open on the server (PostgreSQL),
+    holding locks a later test's migration then waits on for ever.
+    """
+    yield
+    current = asyncio.current_task()
+    pending = [t for t in asyncio.all_tasks() if t is not current and not t.done()]
+    if pending:
+        await asyncio.wait(pending, timeout=2)
+
+
 MAIN = "igni"
 
 Script = Callable[[list[Message]], ModelResponse]
