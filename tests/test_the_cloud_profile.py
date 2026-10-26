@@ -45,6 +45,10 @@ def cloud(monkeypatch) -> Iterator[None]:
 def clean_loggers() -> Iterator[None]:
     names = ("ember_code", "ember_code.llm_calls", "httpx", "httpcore")
     saved = {n: list(logging.getLogger(n).handlers) for n in names}
+    # A handler another test left behind would answer for the one
+    # under test (``LlmCallLogger`` installs only when there is none).
+    for name in names:
+        logging.getLogger(name).handlers[:] = []
     yield
     for name, handlers in saved.items():
         logging.getLogger(name).handlers[:] = handlers
