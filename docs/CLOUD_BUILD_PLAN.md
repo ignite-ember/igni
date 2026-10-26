@@ -55,7 +55,8 @@ configuration. One code path. What is built and what is not:
 - The warm base snapshot built from it, one per image version. igni's
   side built, `dbffea2`: `/run/igni/ready` once it listens, and late
   binding to the producer `/run/igni/producer.env` names, refusing
-  requests until then.
+  requests until then; what a bound backend imports is imported before
+  `ready`, so it is in the snapshot (`WarmImports`).
 - Profile layers: a profile's package list built into a signed read-only
   layer from the customer's mirror, with a warm snapshot per profile.
 - The guest agent (vsock): flush, reseed, cache trim, hinting, and

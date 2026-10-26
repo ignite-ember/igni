@@ -34,6 +34,7 @@ from ember_code.backend.guest import (
     ResumeWatch,
     TokenTenant,
     UnboundRefusal,
+    WarmImports,
 )
 from ember_code.core.auth.credentials import EnvironmentCredentials
 from ember_code.core.config.schemas.storage_and_paths import StorageConfig
@@ -135,6 +136,30 @@ def test_ready_is_written_and_cleared(tmp_path: Path):
     ready.clear()
     ready.clear()
     assert not ready.path.exists()
+
+
+def test_what_a_bound_backend_imports_is_imported_before_ready(tmp_path: Path):
+    class Recorded(WarmImports):
+        def run(self) -> None:
+            self.ready_then = (tmp_path / "ready").exists()
+
+    warm = Recorded()
+    guest = CloudGuest(GuestPaths.from_env({GuestPaths.RUN_DIR_ENV: str(tmp_path)}), warm=warm)
+    guest.listening()
+    assert warm.ready_then is False, "imports first: the snapshot is taken at ready"
+    assert (tmp_path / "ready").exists()
+
+
+def test_every_warm_module_is_importable_here():
+    warm = WarmImports()
+    warm.run()
+    assert warm.skipped == [], "a renamed module would silently stop being warmed"
+
+
+def test_a_missing_optional_module_is_skipped():
+    warm = WarmImports(("json", "igni_no_such_module"))
+    warm.run()
+    assert warm.skipped == ["igni_no_such_module"]
 
 
 # ── activity.json ─────────────────────────────────────────────────

@@ -12,6 +12,7 @@ from ember_code.backend.guest.contract import CloudGuest
 from ember_code.backend.guest.files import AtomicFile, ReadyFile
 from ember_code.backend.guest.paths import GuestPaths
 from ember_code.backend.guest.resume import ResumeWatch
+from ember_code.backend.guest.warm import WarmImports
 
 __all__ = [
     "ActivityFile",
@@ -26,4 +27,5 @@ __all__ = [
     "ResumeWatch",
     "TokenTenant",
     "UnboundRefusal",
+    "WarmImports",
 ]

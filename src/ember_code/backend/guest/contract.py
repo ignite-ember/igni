@@ -5,7 +5,9 @@ Cloud profile only; the desktop never builds one. In boot order:
 
 1. :meth:`CloudGuest.starting` — a ``ready`` file left by an earlier igni
    in this VM is removed before anything else;
-2. :meth:`CloudGuest.listening` — once the transport listens, ``ready``
+2. :meth:`CloudGuest.listening` — once the transport listens, what a
+   bound backend's first run would import is imported
+   (:class:`~ember_code.backend.guest.warm.WarmImports`) and ``ready``
    is written: the node agent may now take a warm base snapshot;
 3. :meth:`CloudGuest.bind` — when no producer is known yet, igni waits
    for ``producer.env``, refusing requests meanwhile
@@ -29,6 +31,7 @@ from ember_code.backend.guest.binding import ProducerBinding, ProducerEnv
 from ember_code.backend.guest.files import ReadyFile
 from ember_code.backend.guest.paths import GuestPaths
 from ember_code.backend.guest.resume import ResumeWatch
+from ember_code.backend.guest.warm import WarmImports
 from ember_code.core.db.engine import cache
 from ember_code.core.profile import RuntimeProfile
 
@@ -44,11 +47,13 @@ class CloudGuest:
         *,
         binding: ProducerBinding | None = None,
         resume: ResumeWatch | None = None,
+        warm: WarmImports | None = None,
     ) -> None:
         self.paths = paths
         self.ready = ReadyFile(paths.ready)
         self.binding = binding if binding is not None else ProducerBinding(paths.producer_env)
         self.resume = resume if resume is not None else ResumeWatch()
+        self.warm = warm if warm is not None else WarmImports()
         self.activity: ActivityFile | None = None
         self._model: Any = None
         self._transport: Any = None
@@ -67,6 +72,8 @@ class CloudGuest:
             logger.warning("cannot clear %s: %s", self.ready.path, exc)
 
     def listening(self) -> None:
+        """Warm the imports a bound backend needs, then say ``ready``."""
+        self.warm.run()
         try:
             self.ready.mark()
         except OSError as exc:

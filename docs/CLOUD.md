@@ -483,7 +483,16 @@ moves all three, default `/run/igni`):
 - `ready` (`IGNI_READY_FILE`): written once igni listens, its imports
   done, before any producer is known — so a warm base snapshot can be
   taken there. Removed when igni starts and when it exits, so a file
-  left by an earlier igni never says a new one serves.
+  left by an earlier igni never says a new one serves. Before writing it
+  igni also imports what a bound backend's first bind, request and turn
+  would (`WarmImports`: the PostgreSQL driver, alembic's schema check,
+  the OpenAI client's streaming path, Agno's run internals, the tool
+  hooks), so they are in the shared snapshot rather than paid for by
+  each producer. Measured with `scripts/measure_warm_base.py`
+  (PostgreSQL, fake model, Apple M-series, five runs each): RSS at
+  `ready` 153.9 → 169.2 MB, `producer.env` → first answered request
+  0.34 → 0.27 s, modules still imported after `ready` 130 → 9 (macOS
+  platform probes only).
 - `producer.env` (`IGNI_PRODUCER_ENV_FILE`): **late binding.** A warm
   base's igni starts with no producer. While the file is missing (or
   names no `IGNI_DATABASE_URL`) igni opens nothing — no settings, no
