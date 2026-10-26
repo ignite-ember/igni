@@ -8,7 +8,10 @@ from pathlib import Path
 from rich.console import Console
 from rich.prompt import Confirm
 
+from ember_code.core.auth.credentials import CloudCredentials
 from ember_code.core.config.group_policy import group_policy_dir
+from ember_code.core.config.settings import load_settings
+from ember_code.core.mcp.person_approvals import PersonMcpApprovals
 from ember_code.core.paths import CONFIG_DIR
 from ember_code.core.profile import RuntimeProfile
 
@@ -16,6 +19,30 @@ logger = logging.getLogger(__name__)
 
 # User-global config path — servers from here are auto-approved.
 _USER_GLOBAL_MCP = str(Path.home() / CONFIG_DIR / ".mcp.json")
+
+
+class ConfiguredApiUrl:
+    """igni server's URL from this process's settings, read once."""
+
+    def __init__(self) -> None:
+        self._url: str | None = None
+        self._read = False
+
+    def __call__(self) -> str | None:
+        if not self._read:
+            self._read = True
+            try:
+                self._url = load_settings().api_url or None
+            except Exception as exc:
+                logger.warning("MCP approvals: settings did not load: %s", exc)
+        return self._url
+
+
+class SessionToken:
+    """The person's session token, read fresh (it is refreshed)."""
+
+    def __call__(self) -> str | None:
+        return CloudCredentials().access_token
 
 
 class MCPApprovalManager:
@@ -33,22 +60,37 @@ class MCPApprovalManager:
     ``command`` locally as the user; cloning a repo and sending one
     message must not be enough to run it.
 
-    **In the cloud** (``IGNI_PROFILE=cloud``) approvals come from igni
-    server and are read-only in the VM: a server is approved when igni
-    server delivered it — a group policy's ``mcps`` entry, which an
-    administrator configured — and no other is, nor can be approved
-    from inside the VM. Nothing is read from or written to
+    **In the cloud** (``IGNI_PROFILE=cloud``) a server is approved when
+    group policy offers it — igni server delivered it as a group
+    policy's ``mcps`` entry, which an administrator configured — *and*
+    the person approved it, which igni server keeps per person
+    (``/v1/me/mcp-approvals``, :class:`PersonMcpApprovals`): once,
+    for every VM of theirs. :meth:`approve` records it there; nothing
+    not offered can be approved. Nothing is read from or written to
     ``mcp-approved.json``.
     """
 
     def __init__(
-        self, approval_path: Path | None = None, delivered_dir: Path | None = None
+        self,
+        approval_path: Path | None = None,
+        delivered_dir: Path | None = None,
+        person_approvals: PersonMcpApprovals | None = None,
     ) -> None:
         self._path = approval_path or (Path.home() / CONFIG_DIR / "mcp-approved.json")
         self._cloud = RuntimeProfile.current().is_cloud
         #: Where igni server's group policy delivers MCP configs.
         self._delivered = delivered_dir or (group_policy_dir() / "mcps")
         self._approved: dict[str, list[str]] = {} if self._cloud else self._load()
+        #: The person's own approvals, on igni server (cloud).
+        self._person = (
+            person_approvals
+            if person_approvals is not None
+            else (
+                PersonMcpApprovals(api_url=ConfiguredApiUrl(), token=SessionToken())
+                if self._cloud
+                else None
+            )
+        )
 
     # ------------------------------------------------------------------
     # Public API
@@ -57,7 +99,12 @@ class MCPApprovalManager:
     def is_approved(self, server_name: str, config_path: str) -> bool:
         """Return True if *server_name* from *config_path* is already approved."""
         if self._cloud:
-            return self._is_delivered(config_path)
+            # Offered by group policy, and approved by the person.
+            return (
+                self._is_delivered(config_path)
+                and self._person is not None
+                and self._person.approved(server_name, config_path)
+            )
         if self._is_user_global(config_path):
             return True
         # No basename-based trust here. Matching on ``.mcp.json`` /
@@ -69,10 +116,15 @@ class MCPApprovalManager:
     def approve(self, server_name: str, config_path: str) -> None:
         """Mark *server_name* from *config_path* as approved and persist."""
         if self._cloud:
-            logger.warning(
-                "MCP approvals come from igni server in the cloud; not approving '%s'",
-                server_name,
-            )
+            if not self._is_delivered(config_path):
+                logger.warning(
+                    "MCP '%s' from %s is not offered by group policy; not approving it",
+                    server_name,
+                    config_path,
+                )
+                return
+            if self._person is not None:
+                self._person.approve(server_name, config_path)
             return
         sources = self._approved.setdefault(server_name, [])
         if config_path not in sources:
@@ -89,7 +141,8 @@ class MCPApprovalManager:
             return True
         if self._cloud:
             logger.warning(
-                "MCP '%s' from %s is not one igni server delivered — not connecting.",
+                "MCP '%s' from %s is not offered by group policy and approved by the "
+                "person on igni server (/v1/me/mcp-approvals) — not connecting.",
                 server_name,
                 config_path,
             )

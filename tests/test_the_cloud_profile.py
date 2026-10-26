@@ -14,6 +14,7 @@ import logging
 from collections.abc import Iterator
 from pathlib import Path
 
+import httpx
 import pytest
 
 from ember_code.backend.hitl_tracer import HITLTracer
@@ -29,6 +30,7 @@ from ember_code.core.config.settings import Settings, load_settings
 from ember_code.core.db.locator import StorageLocator
 from ember_code.core.logs import StdoutLog
 from ember_code.core.mcp.approval import MCPApprovalManager
+from ember_code.core.mcp.person_approvals import PersonMcpApprovals
 from ember_code.core.profile import PROFILE_ENV, RuntimeProfile
 from ember_code.core.utils.audit import AuditLogger
 from ember_code.core.utils.audit_schemas import AuditEntry
@@ -167,18 +169,87 @@ def test_priority_and_group_are_igni_servers_and_never_written(cloud, tmp_path: 
     assert not root.exists(), "nothing written in the VM"
 
 
-def test_mcp_approvals_are_only_what_igni_server_delivered(cloud, tmp_path: Path):
+class PersonApprovalsServer:
+    """igni server's ``/v1/me/mcp-approvals``, for one person."""
+
+    def __init__(self) -> None:
+        self.rows: list[dict[str, str]] = []
+        self.calls: list[str] = []
+
+    def handle(self, request: httpx.Request) -> httpx.Response:
+        self.calls.append(request.method)
+        assert request.headers["Authorization"] == "Bearer the-session"
+        if request.method == "POST":
+            body = json.loads(request.content)
+            if body not in [{"server": r["server"], "source": r["source"]} for r in self.rows]:
+                self.rows.append({**body, "approved_at": "2026-10-26T12:00:00Z"})
+        elif request.method == "DELETE":
+            key = (request.url.params["server"], request.url.params["source"])
+            self.rows = [r for r in self.rows if (r["server"], r["source"]) != key]
+            return httpx.Response(204)
+        return httpx.Response(200, json={"approvals": self.rows})
+
+
+def test_mcp_servers_are_offered_by_group_policy_and_approved_by_the_person(cloud, tmp_path: Path):
     delivered = tmp_path / "group-policy" / "mcps"
     delivered.mkdir(parents=True)
     approvals_file = tmp_path / "mcp-approved.json"
     approvals_file.write_text('{"local": ["/repo/.mcp.json"]}')
-    approvals = MCPApprovalManager(approval_path=approvals_file, delivered_dir=delivered)
+    server = PersonApprovalsServer()
+    person = PersonMcpApprovals(
+        api_url=lambda: "https://igni.test",
+        token=lambda: "the-session",
+        transport=httpx.MockTransport(server.handle),
+    )
+    approvals = MCPApprovalManager(
+        approval_path=approvals_file, delivered_dir=delivered, person_approvals=person
+    )
+    search = str(delivered / "search.json")
 
-    assert approvals.is_approved("search", str(delivered / "search.json"))
+    assert not approvals.is_approved("search", search), "offered, not yet approved"
+    approvals.approve("search", search)
+    assert approvals.is_approved("search", search), "approved on igni server, for every VM"
+    assert server.rows[0]["source"] == search
+
     assert not approvals.is_approved("local", "/repo/.mcp.json"), "the file is not read"
-    assert not approvals.check_approval("local", "/repo/.mcp.json")
     approvals.approve("local", "/repo/.mcp.json")
+    assert not approvals.is_approved("local", "/repo/.mcp.json"), "not offered: not approvable"
+    assert not approvals.check_approval("local", "/repo/.mcp.json")
     assert approvals_file.read_text() == '{"local": ["/repo/.mcp.json"]}', "nothing written"
+
+
+def test_a_persons_approvals_are_read_once_a_minute_and_withdrawn_there():
+    server = PersonApprovalsServer()
+    server.rows.append({"server": "search", "source": "/gp/search.json"})
+    now = [0.0]
+    person = PersonMcpApprovals(
+        api_url=lambda: "https://igni.test",
+        token=lambda: "the-session",
+        transport=httpx.MockTransport(server.handle),
+        clock=lambda: now[0],
+    )
+    assert person.approved("search", "/gp/search.json")
+    assert person.approved("search", "/gp/search.json")
+    assert server.calls == ["GET"], "cached"
+    person.withdraw("search", "/gp/search.json")
+    assert not person.approved("search", "/gp/search.json")
+    now[0] += PersonMcpApprovals.TTL_SECONDS
+    person.approved("search", "/gp/search.json")
+    assert server.calls == ["GET", "DELETE", "GET"]
+
+
+def test_an_unreachable_server_approves_nothing():
+    def down(request: httpx.Request) -> httpx.Response:
+        raise httpx.ConnectError("no route", request=request)
+
+    person = PersonMcpApprovals(
+        api_url=lambda: "https://igni.test",
+        token=lambda: "the-session",
+        transport=httpx.MockTransport(down),
+    )
+    assert not person.approved("search", "/gp/search.json")
+    signed_out = PersonMcpApprovals(api_url=lambda: "https://igni.test", token=lambda: None)
+    assert not signed_out.approved("search", "/gp/search.json")
 
 
 def test_a_fresh_token_reaches_a_running_vm_through_the_file_the_gateway_writes(
