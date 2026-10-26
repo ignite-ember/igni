@@ -49,6 +49,10 @@ configuration. One code path. What is built and what is not:
 - Free page reporting through Firecracker's balloon; a timer that trims
   the file cache.
 - The warm base snapshot built from it, one per image version.
+- Profile layers: a profile's package list built into a signed read-only
+  layer from the customer's mirror, with a warm snapshot per profile.
+- The guest agent (vsock): flush, reseed, cache trim, hinting, and
+  running commands as root with streamed output and exit code.
 
 ## 3. Node agent (L) — grows out of `cvm`
 
@@ -63,7 +67,10 @@ A Rust service, one per host:
 - Profiles: ceiling and CPUs at boot, `idle_before_suspend`, cold boot
   when the ceiling changes.
 - Memory: watch real usage, reclaim, refuse placements when short.
-- An API the gateway calls: ensure running, suspend, status.
+- An API the gateway calls: ensure running, suspend, status, run a
+  command in a VM (through the guest agent), audited.
+- Per-producer PostgreSQL logins: create on first use, hand to the VM
+  with the token.
 
 ## 4. Gateway (M)
 
@@ -81,7 +88,10 @@ A Rust service, one per host:
 - VM profiles on the portal: define, assign to a group or an app,
   platform caps, quota.
 - Event delivery to a producer that wakes its VM (`CLOUD.md` section 6).
-- One group per person (in progress).
+- One group per person (built: ember-server `c70d3fd`, igni `918e22d`).
+- Profile packages on the portal; commands in VMs: the producer in its
+  own VM, org admins in their org, the super admin anywhere; jobs for
+  many VMs applied at each VM's next wake; the audit log.
 
 ## 6. End to end on bare metal (M)
 

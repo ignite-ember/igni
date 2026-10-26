@@ -252,6 +252,36 @@ must run inside the producer's microVM holds it awake with a bounded,
 visible `ext.busy(...)` (proposed): an org-set maximum, renewable, shown
 in the extensions panel, counted against the producer's quota.
 
+## 7. Packages and commands in a VM (proposed)
+
+Two ways to put software in a producer's VM, besides asking igni's agent
+(which is root in the VM).
+
+**Prepared packages, per profile.** A VM profile (section 2) carries a
+package list (apt, pip, npm) or a setup script. The platform builds it
+into a read-only **profile layer** between the shared base and each
+producer's writable layer, signed and built from the customer's own
+package mirror so air-gapped installs work. Every VM with the profile
+shares it (Chromium stored once, not per VM), and each profile has its
+own warm snapshot. A changed list rebuilds the layer; a VM picks it up
+at its next cold boot.
+
+**Commands, dynamically.** API → gateway → (wakes the VM) → node agent →
+a small agent inside the guest over vsock (no network path into the VM)
+→ runs the command as root, streams output and the exit code back.
+
+| | Decision (2026-10-26) |
+|---|---|
+| Who may run commands | the producer in their own VM (a person, or an app with its token); an org admin in any VM of their org; the super admin in any VM of the platform. Every command audited: who, which VM, the command, exit code |
+| A suspended VM | one VM: the command wakes it. Many VMs (a group, a profile, an org): a job applied to each VM at its next wake, never a mass wake |
+| Lifetime | what a command installs lives in the producer's writable layer, which an image upgrade may reset; anything meant to last belongs in the profile |
+
+The super admin can also define profiles and their packages and assign
+them in any org.
+
+The guest agent is the same one that flushes the volume, reseeds after
+restore, trims the page cache and triggers free page hinting.
+
 ## 8. Suspend and resume: measured
 
 Proof of concept in the `igni__cloudvm` repository (`RESULTS.md`, raw
