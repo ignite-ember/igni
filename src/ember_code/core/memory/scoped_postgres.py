@@ -26,12 +26,14 @@ schedules, approvals — are not scoped. igni does not write them.
 from __future__ import annotations
 
 import copy
-from typing import Any
+import threading
+from typing import Any, ClassVar
 
 from agno.db.base import SessionType
 from agno.db.postgres import AsyncPostgresDb
 from agno.db.schemas.memory import UserMemory
 from agno.session import Session
+from sqlalchemy import Table
 
 from ember_code.core.db.scope import StorageScope
 
@@ -42,6 +44,50 @@ class ScopedAsyncPostgresDb(AsyncPostgresDb):
     def __init__(self, *, scope: StorageScope, **kwargs: Any) -> None:
         super().__init__(**kwargs)
         self._scoped_user_id = scope.agno_user_id
+
+    # ── Tables ────────────────────────────────────────────────────
+
+    #: Tables found, per database, schema, kind and name — for the process.
+    _tables: ClassVar[dict[tuple[str, str, str, str], Table]] = {}
+    _tables_lock: ClassVar[threading.Lock] = threading.Lock()
+    #: Agno's name attribute for each kind of table igni uses.
+    _NAME_ATTRIBUTES: ClassVar[dict[str, str]] = {
+        "sessions": "session_table_name",
+        "memories": "memory_table_name",
+        "versions": "versions_table_name",
+        "learnings": "learnings_table_name",
+    }
+
+    async def _get_table(
+        self, table_type: str, create_table_if_not_found: bool | None = False
+    ) -> Any:
+        """Agno's table, looked up once per process instead of on every query.
+
+        Agno checks that a table exists, that its columns are right and
+        reflects it on *every* call — three round trips before each
+        query, which after a restore are three on a fresh connection.
+        The schema is fixed while igni runs (``igni migrate`` made it,
+        as the admin role), so a table once found is kept. One not found
+        is asked again: it may be made later.
+        """
+        attribute = self._NAME_ATTRIBUTES.get(table_type)
+        if attribute is None:
+            return await super()._get_table(table_type, create_table_if_not_found)
+        key = (
+            self.db_engine.url.render_as_string(hide_password=True),
+            self.db_schema or "",
+            table_type,
+            str(getattr(self, attribute, "")),
+        )
+        with self._tables_lock:
+            known = self._tables.get(key)
+        if known is not None:
+            return known
+        table = await super()._get_table(table_type, create_table_if_not_found)
+        if table is not None:
+            with self._tables_lock:
+                self._tables[key] = table
+        return table
 
     @property
     def scoped_user_id(self) -> str:

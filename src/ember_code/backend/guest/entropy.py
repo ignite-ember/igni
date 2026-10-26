@@ -32,6 +32,7 @@ import logging
 import random
 import sys
 import tempfile
+import types
 
 logger = logging.getLogger(__name__)
 
@@ -58,13 +59,19 @@ class ProcessEntropy:
     def _module_generators() -> list[random.Random]:
         found: dict[int, random.Random] = {}
         for module in list(sys.modules.values()):
-            namespace = getattr(module, "__dict__", None)
-            if not isinstance(namespace, dict):
+            # Plain modules only: a lazy module (``importlib.util.LazyLoader``
+            # and its kind) imports itself when its namespace is touched,
+            # and reseeding must not import anything.
+            if type(module) is not types.ModuleType:
                 continue
+            namespace = module.__dict__
             for value in list(namespace.values()):
+                # ``type()``, not ``isinstance``: the latter asks a lazy
+                # proxy for its ``__class__``, which imports what it stands for.
+                kind = type(value)
                 if (
-                    isinstance(value, random.Random)
-                    and not isinstance(value, random.SystemRandom)
+                    issubclass(kind, random.Random)
+                    and not issubclass(kind, random.SystemRandom)
                     and value is not getattr(random, "_inst", None)
                 ):
                     found[id(value)] = value

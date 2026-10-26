@@ -26,6 +26,7 @@ from __future__ import annotations
 import hashlib
 import logging
 import subprocess
+import threading
 from pathlib import Path
 
 from ember_code.core.paths import DEFAULT_DATA_DIR
@@ -50,6 +51,79 @@ def canonical_project_dir(project_dir: str | Path) -> Path:
     return Path(str(project_dir)).expanduser().resolve(strict=False)
 
 
+class ProjectIds:
+    """Project ids, asked of git once per repository state.
+
+    The id comes from ``git remote get-url origin``, a subprocess — and
+    one backend boot asks for it about a dozen times (every store that
+    opens a scope). Kept per project directory until the repository's
+    ``.git`` or its ``config`` changes, which is where a remote is
+    added, removed or renamed; so a remote set mid-session is seen as
+    before, and an unchanged repository costs a few ``stat`` calls.
+    """
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._ids: dict[str, tuple[tuple[object, ...], str]] = {}
+
+    def of(self, project_dir: str | Path) -> str:
+        project = canonical_project_dir(project_dir)
+        fingerprint = self._fingerprint(project)
+        key = str(project)
+        with self._lock:
+            known = self._ids.get(key)
+        if known is not None and known[0] == fingerprint:
+            return known[1]
+        project_id = self._ask_git(project)
+        with self._lock:
+            self._ids[key] = (fingerprint, project_id)
+        return project_id
+
+    def clear(self) -> None:
+        with self._lock:
+            self._ids.clear()
+
+    @staticmethod
+    def _fingerprint(project: Path) -> tuple[object, ...]:
+        """The state of the nearest ``.git`` and its ``config``; empty outside a repository."""
+        for directory in (project, *project.parents):
+            git = directory / ".git"
+            try:
+                stat = git.stat()
+            except OSError:
+                continue
+            marks: list[object] = [str(git), stat.st_mtime_ns, stat.st_ino]
+            try:
+                config = (git / "config").stat()
+            except OSError:
+                pass
+            else:
+                marks += [config.st_mtime_ns, config.st_size, config.st_ino]
+            return tuple(marks)
+        return ()
+
+    @staticmethod
+    def _ask_git(project: Path) -> str:
+        project_id = str(project)
+        try:
+            result = subprocess.run(
+                ["git", "remote", "get-url", "origin"],
+                capture_output=True,
+                text=True,
+                cwd=str(project),
+                timeout=_GIT_TIMEOUT_SECONDS,
+            )
+            if result.returncode == 0 and result.stdout.strip():
+                project_id = result.stdout.strip()
+        except Exception as exc:
+            logger.debug("git remote lookup failed for %s: %s", project, exc)
+        return hashlib.sha256(project_id.encode()).hexdigest()[:16]
+
+
+#: The process's one cache of them.
+project_ids = ProjectIds()
+
+
 def resolve_project_id(project_dir: str | Path) -> str:
     """A stable id for ``project_dir``, for naming its data directory.
 
@@ -57,24 +131,9 @@ def resolve_project_id(project_dir: str | Path) -> str:
     clones of the same repository share an index, and from the
     absolute path when there is not. Both are SHA-256 hashed and
     truncated — long enough that a collision across one user's
-    projects is not worth reasoning about.
+    projects is not worth reasoning about. Cached (:class:`ProjectIds`).
     """
-    project = canonical_project_dir(project_dir)
-    project_id = str(project)
-    try:
-        result = subprocess.run(
-            ["git", "remote", "get-url", "origin"],
-            capture_output=True,
-            text=True,
-            cwd=str(project),
-            timeout=_GIT_TIMEOUT_SECONDS,
-        )
-        if result.returncode == 0 and result.stdout.strip():
-            project_id = result.stdout.strip()
-    except Exception as exc:
-        logger.debug("git remote lookup failed for %s: %s", project_dir, exc)
-
-    return hashlib.sha256(project_id.encode()).hexdigest()[:16]
+    return project_ids.of(project_dir)
 
 
 def data_root(data_dir: str | Path = DEFAULT_DATA_DIR) -> Path:
@@ -104,10 +163,12 @@ def state_db_path(project: str | Path, *, data_dir: str | Path = DEFAULT_DATA_DI
 
 
 __all__ = [
+    "ProjectIds",
     "canonical_project_dir",
     "data_root",
     "global_db_path",
     "project_data_dir",
+    "project_ids",
     "resolve_project_id",
     "state_db_path",
 ]

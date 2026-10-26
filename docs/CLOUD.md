@@ -493,13 +493,34 @@ moves all three, default `/run/igni`):
   `ready` 153.9 → 169.2 MB, `producer.env` → first answered request
   0.34 → 0.27 s, modules still imported after `ready` 130 → 9 (macOS
   platform probes only).
+
+  **After binding** igni boots its backend, and that path is kept short:
+  everything producer-independent is imported before `ready` (above);
+  a project's id asks git once per repository state instead of once per
+  store opening a scope (`ProjectIds`, eleven subprocesses → one); Agno's
+  tables are checked and reflected once per process instead of before
+  every query (`ScopedAsyncPostgresDb`, three round trips per read →
+  none). Measured bound → first answered request, PostgreSQL on the same
+  machine: 224 → 105 ms — settings 1 ms, the session (`BackendServer`)
+  101 → 48 ms, its start (`startup`: schema check, the boot session's
+  interrupted-run probe, persisted loop and plan state) 85 → 40 ms, the
+  pool, host model and extensions under 3 ms. What is left needs the
+  producer's database or volume: the first table reflection and schema
+  check per database, and the agents and memory files on the volume.
+  The plugin marketplace registration and other background services
+  start after the first answer, off the path.
 - `producer.env` (`IGNI_PRODUCER_ENV_FILE`): **late binding.** A warm
   base's igni starts with no producer. While the file is missing (or
   names no `IGNI_DATABASE_URL`) igni opens nothing — no settings, no
   database, nothing under the home directory — and answers every request
   with a refusal (an RPC's `error`, else an `error` message). It looks for
-  the file every 100 ms (a `stat`; the protocol has no "look now" call
-  and the file arrives by rename). It binds when the file names a
+  the file the moment it is renamed into place: igni watches the run
+  directory with inotify (`IN_MOVED_TO`; measured rename → wake 0.04 ms
+  median in a Linux container), looking again every second in case an
+  event is missed, and polls every 100 ms where inotify is missing (the
+  protocol has no "look now" call). Measured end to end on macOS, which
+  polls: `producer.env` renamed → bound 87–92 ms, nearly all of it the
+  poll interval. It binds when the file names a
   database and the token in `IGNI_ACCESS_TOKEN_FILE` is a producer's
   whose org and `person:<id>` are the file's `IGNI_ORG` and
   `IGNI_PRODUCER`; only `IGNI_*` lines are taken into the environment.

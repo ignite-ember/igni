@@ -84,6 +84,7 @@ def cloud(monkeypatch) -> None:
         ProducerEnv.ORG_ENV,
         ProducerEnv.PRODUCER_ENV,
     ):
+        monkeypatch.setenv(name, "")  # recorded, so put back as it was
         monkeypatch.delenv(name, raising=False)
 
 
@@ -347,7 +348,9 @@ def test_requests_before_binding_are_refused():
 
 async def test_a_changed_producer_is_reported_after_binding(cloud, tmp_path: Path, monkeypatch):
     for name in ("IGNI_ACCESS_TOKEN_FILE", "IGNI_ORG", "IGNI_PRODUCER"):
+        monkeypatch.setenv(name, "")  # recorded, so put back as it was
         monkeypatch.delenv(name, raising=False)
+    monkeypatch.setenv(StorageConfig.DATABASE_URL_ENV, "")  # recorded, so put back as it was
     monkeypatch.delenv(StorageConfig.DATABASE_URL_ENV, raising=False)
     _hand_over(tmp_path, "sqlite:///x.db")
     binding = ProducerBinding(tmp_path / "producer.env", poll_seconds=0.01)
@@ -547,6 +550,13 @@ def test_module_level_generators_and_temp_names_are_reseeded(monkeypatch):
     assert ProcessEntropy().reseed() >= 2
     assert library.rng.random() != expected  # type: ignore[attr-defined]
     assert tempfile._name_sequence is None  # type: ignore[attr-defined]
+
+
+def test_reseeding_imports_nothing():
+    """A lazy module or proxy asked for its class imports what it stands for."""
+    before = set(sys.modules)
+    ProcessEntropy().reseed()
+    assert set(sys.modules) == before
 
 
 async def test_binding_reseeds(cloud, tmp_path: Path, monkeypatch):

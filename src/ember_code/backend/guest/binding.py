@@ -13,7 +13,11 @@ nothing producer-specific — and waits for the node agent to write
 
 The file is written atomically (temporary file, rename), after the token
 file and after the producer's volume is mounted, and the protocol has no
-"look now" call, so igni looks for it every :attr:`ProducerBinding.POLL_SECONDS`
+"look now" call. On Linux igni watches the run directory with inotify
+(:class:`~ember_code.backend.guest.watch.DirectoryWatch`): the rename is
+an ``IN_MOVED_TO``, and igni looks at once. It still looks every
+:attr:`ProducerBinding.FALLBACK_SECONDS` in case an event is missed;
+where inotify is missing it polls every :attr:`ProducerBinding.POLL_SECONDS`
 — a ``stat`` of a tmpfs file. Once it names a database, and the token it
 points at is a producer's whose org and id are the ones it names, the
 variables are put in igni's environment and :meth:`ProducerBinding.bind`
@@ -34,12 +38,14 @@ import asyncio
 import contextlib
 import logging
 import os
+import time
 from collections.abc import Callable, MutableMapping
 from pathlib import Path
 from typing import Any, ClassVar
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from ember_code.backend.guest.watch import DirectoryWatch
 from ember_code.core.auth.credentials import CloudCredentials, EnvironmentCredentials
 from ember_code.core.config.schemas.storage_and_paths import StorageConfig
 from ember_code.core.db.scope import Tenant
@@ -147,7 +153,12 @@ class UnboundRefusal:
 class ProducerBinding:
     """Waits for ``producer.env`` and binds igni to the producer it names."""
 
+    #: Between looks when the directory cannot be watched.
     POLL_SECONDS = 0.1
+    #: Between looks when it is watched: only a fallback for a missed event.
+    FALLBACK_SECONDS = 1.0
+    #: An unchanged file is read again this often (the token may have come).
+    RELOOK_SECONDS = 1.0
 
     def __init__(
         self,
@@ -156,11 +167,13 @@ class ProducerBinding:
         environ: MutableMapping[str, str] | None = None,
         tenant: Callable[[], Tenant | None] | None = None,
         poll_seconds: float | None = None,
+        watch: bool = True,
     ) -> None:
         self.path = path
         self._environ = os.environ if environ is None else environ
         self._tenant = tenant if tenant is not None else TokenTenant()
         self._poll = self.POLL_SECONDS if poll_seconds is None else poll_seconds
+        self._directory = DirectoryWatch(path.parent) if watch else None
         self._seen: tuple[int, int, int] | None = None
         self._said = ""
         self._bound: ProducerEnv | None = None
@@ -247,11 +260,12 @@ class ProducerBinding:
         )
         try:
             # The token can arrive after the file, so a file that has not
-            # changed is still looked at again, at a slower pace.
-            idle = 0
+            # changed is still looked at again, every second.
+            last_look = float("-inf")
             while True:
-                if self._changed() or idle * self._poll >= 1.0:
-                    idle = 0
+                now = time.monotonic()
+                if self._changed() or now - last_look >= self.RELOOK_SECONDS:
+                    last_look = now
                     attempt = self.attempt()
                     if attempt.bound and attempt.env is not None:
                         attempt.env.apply(self._environ)
@@ -264,13 +278,24 @@ class ProducerBinding:
                         )
                         return attempt.env
                     self._say(attempt)
-                idle += 1
-                await asyncio.sleep(self._poll)
+                await self._next()
         finally:
             if refusal is not None:
                 refusal.cancel()
                 with contextlib.suppress(asyncio.CancelledError):
                     await refusal
+
+    @property
+    def watching(self) -> bool:
+        return self._directory is not None and self._directory.watching
+
+    async def _next(self) -> None:
+        """Until the run directory changes — or a poll interval, where it cannot be watched."""
+        directory = self._directory
+        if directory is not None and (directory.watching or directory.start()):
+            await directory.wait(self.FALLBACK_SECONDS)
+        else:
+            await asyncio.sleep(self._poll)
 
     def watch(self, on_changed: Callable[[ProducerEnv], None]) -> None:
         """After binding: be told if the file comes to name another producer or database."""
@@ -283,11 +308,13 @@ class ProducerBinding:
             task.cancel()
             with contextlib.suppress(asyncio.CancelledError):
                 await task
+        if self._directory is not None:
+            self._directory.close()
 
     async def _watch_loop(self, on_changed: Callable[[ProducerEnv], None]) -> None:
         assert self._bound is not None
         while True:
-            await asyncio.sleep(self._poll)
+            await self._next()
             if not self._changed():
                 continue
             try:
