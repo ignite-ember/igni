@@ -179,6 +179,7 @@ RehydrateStep = Literal[
     "plan_decisions",
     "todos",
     "plan_store",
+    "queued_messages",
 ]
 
 

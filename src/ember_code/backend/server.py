@@ -576,6 +576,10 @@ class BackendServer:
         """See :meth:`RehydrateController.event_log`."""
         return await self.rehydrate.event_log()
 
+    async def _rehydrate_queued_messages(self) -> RehydrateOutcome:
+        """See :meth:`RehydrateController.queued_messages`."""
+        return await self.rehydrate.queued_messages(getattr(self, "message_queue", None))
+
     async def _rehydrate_orphan_processes(self) -> RehydrateOutcome:
         """See :meth:`RehydrateController.orphan_processes`."""
         return await self.rehydrate.orphan_processes()

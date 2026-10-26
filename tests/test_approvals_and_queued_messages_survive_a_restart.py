@@ -194,31 +194,82 @@ async def test_a_sub_agents_approval_is_asked_again_and_can_be_answered(
     assert fresh.restore(SESSION) == 0, "an answered approval is not asked again"
 
 
+class SavedConversation:
+    """Agno's copy of the session: the message ids its runs hold."""
+
+    def __init__(self) -> None:
+        self.messages: list[Any] = []
+
+    def record(self, run_output: Any) -> None:
+        self.messages.extend(run_output.messages)
+
+    async def get_session(self, **_: Any) -> Any:
+        return SimpleNamespace(runs=[SimpleNamespace(messages=list(self.messages))])
+
+
 async def test_a_queued_message_is_delivered_once_across_a_restart(database_url: DatabaseUrl):
     db = Database(database_url, scope=Scopes.fresh())
+    saved = SavedConversation()
 
     def queue(session: str = SESSION) -> DurableMessageQueue:
         return DurableMessageQueue(QueuedMessageStore(db), session_id=lambda: session)
 
     first = queue()
-    first.append("also run the tests")
-    first.append("and update the changelog")
-    first.append("then open a pull request")
-    assert first.pop(0) == "also run the tests"
-
-    # Restart: what was not delivered is still waiting, in order.
-    second = queue()
-    assert list(second) == ["and update the changelog", "then open a pull request"]
+    for text in ("also run the tests", "and update the changelog", "then open a pull request"):
+        first.append(text)
+    assert list(queue()) == list(first), "each one is a row"
     assert list(queue("another-session")) == []
 
-    # A run takes it the way it always has: after its next tool call.
-    bridge = QueueBridge(queue=second)
+    # A run takes the first after its next tool call and records it in
+    # the conversation; the session is saved, and the run settles.
+    bridge = QueueBridge(queue=first)
     await bridge.injector(name="read_file", func=lambda: "contents", args={})
-    assert [m.text for m in bridge.buffer.items] == [
+    run_output = SimpleNamespace(messages=[])
+    bridge.persister(run_output=run_output)
+    saved.record(run_output)
+    await first.settle(saved)
+
+    # The next run takes one, and the backend dies before the session is
+    # saved. Another one waits.
+    first.append("and tag the release")
+    second_run = QueueBridge(queue=first)
+    await second_run.injector(name="read_file", func=lambda: "contents", args={})
+    lost = [m.text for m in second_run.buffer.items]
+    assert lost == ["and tag the release"]
+
+    # Restart. Nothing waiting was taken twice, and what the dead run
+    # took — never recorded — is offered again, once.
+    after = queue()
+    assert list(after) == []
+    assert await after.recover(saved) == 1
+    assert list(after) == ["and tag the release"]
+    assert await queue().recover(saved) == 0, "recovered once"
+
+    # And what was recorded before the crash is never offered again.
+    recorded = [m.content for m in saved.messages]
+    assert recorded == [
+        "also run the tests",
         "and update the changelog",
         "then open a pull request",
     ]
-    assert list(queue()) == [], "delivered messages are not delivered again"
+
+
+async def test_a_message_recorded_before_the_crash_is_not_offered_again(
+    database_url: DatabaseUrl,
+):
+    db = Database(database_url, scope=Scopes.fresh())
+    saved = SavedConversation()
+    first = DurableMessageQueue(QueuedMessageStore(db), session_id=lambda: SESSION)
+    first.append("run the migrations")
+    bridge = QueueBridge(queue=first)
+    await bridge.injector(name="read_file", func=lambda: "contents", args={})
+    run_output = SimpleNamespace(messages=[])
+    bridge.persister(run_output=run_output)
+    saved.record(run_output)
+    # The session was saved; the backend died before the run settled.
+    after = DurableMessageQueue(QueuedMessageStore(db), session_id=lambda: SESSION)
+    assert await after.recover(saved) == 0
+    assert list(after) == []
 
 
 def test_another_producers_queue_is_not_read(database_url: DatabaseUrl):

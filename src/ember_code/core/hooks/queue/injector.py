@@ -22,7 +22,7 @@ from typing import Any
 
 from .agno_adapter import AgnoCallableAdapter
 from .buffer import InjectedRunBuffer
-from .schemas import InjectedNote, QueueCallbacks, ToolHookInvocation
+from .schemas import InjectedNote, QueueCallbacks, TakenMessage, TakesMessages, ToolHookInvocation
 
 
 class QueueInjectorHook(AgnoCallableAdapter):
@@ -104,8 +104,8 @@ class QueueInjectorHook(AgnoCallableAdapter):
         """
         drained = []
         while self._queue:
-            text = self._queue.pop(0)
-            message = self._buffer.append(text)
+            taken = self._take()
+            message = self._buffer.append(taken.text, message_id=taken.id or None)
             drained.append(message)
 
         if not drained:
@@ -115,6 +115,12 @@ class QueueInjectorHook(AgnoCallableAdapter):
             self._callbacks.notify_inject(message.text)
         self._callbacks.notify_queue_changed()
         return drained
+
+    def _take(self) -> TakenMessage:
+        """The next message, with the durable queue's id when it has one."""
+        if isinstance(self._queue, TakesMessages):
+            return self._queue.take()
+        return TakenMessage(id="", text=self._queue.pop(0))
 
     # ── Compatibility surface ────────────────────────────────────────
     #

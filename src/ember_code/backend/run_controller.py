@@ -53,6 +53,7 @@ from ember_code.backend.schemas_lifecycle import InterruptedRunSummary
 from ember_code.backend.schemas_run import CancelAgentRunResult, MediaAttachments, RunPhase
 from ember_code.backend.session_checkpointer import SessionCheckpointer
 from ember_code.backend.stream_event_dispatcher import StreamEventDispatcher
+from ember_code.core.session.queued_messages import DurableMessageQueue
 from ember_code.core.tools.process_supervisor_locator import supervisors
 from ember_code.protocol import messages as msg
 
@@ -557,6 +558,11 @@ class RunController:
             with contextlib.suppress(asyncio.CancelledError):
                 await checkpoint_task
             await self._close_http_client(team)
+            # Queued messages this run took are deleted once the saved
+            # conversation holds them (``DurableMessageQueue``).
+            queue = getattr(self._backend, "message_queue", None)
+            if isinstance(queue, DurableMessageQueue):
+                await queue.settle(self._session.db)
 
         # Fire Stop hook after the natural end-of-run.
         stop_gate = await self._hook_gate.fire_stop()
