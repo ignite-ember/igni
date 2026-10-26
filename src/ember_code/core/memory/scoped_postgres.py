@@ -10,18 +10,22 @@ each write is stamped with it and each read and delete is filtered by
 it, whatever the caller passed. Like :class:`StorageScope` for igni's own
 tables, it is the one place the filter lives.
 
-What ``user_id`` cannot do (the gaps, until row-level security):
+A session's primary key is its ``session_id`` alone, and Agno's upsert
+conflicts on it. So the scope is also part of the key the database
+holds: a session is stored as ``<org>/<producer>/<project>#<id>``
+(:meth:`ScopedAsyncPostgresDb.stored_id`) and handed back with the
+plain id. Two producers' sessions with the same id are two rows, kept
+apart by the database's primary key rather than by the ids being random.
+Agno's table and its columns are unchanged — a wrapper, not a fork of
+its schema — so Agno's own migrations still apply.
 
-* A session's primary key is its ``session_id`` alone. Agno's upsert
-  only updates a row whose ``user_id`` is the writer's, so a session
-  whose id collides with another scope's (igni's ids are eight hex
-  characters) is not written over — but neither is it saved.
-* Agno's other tables — metrics, evals, knowledge, traces, spans,
-  schedules, approvals — are not scoped. igni does not write them.
+Agno's other tables — metrics, evals, knowledge, traces, spans,
+schedules, approvals — are not scoped. igni does not write them.
 """
 
 from __future__ import annotations
 
+import copy
 from typing import Any
 
 from agno.db.base import SessionType
@@ -45,11 +49,41 @@ class ScopedAsyncPostgresDb(AsyncPostgresDb):
 
     # ── Sessions ──────────────────────────────────────────────────
 
+    @property
+    def key_prefix(self) -> str:
+        return f"{self._scoped_user_id}#"
+
+    def stored_id(self, session_id: str) -> str:
+        """The key a session is stored under: the scope, then the id."""
+        return f"{self.key_prefix}{session_id}"
+
+    def _plain(self, found: Any) -> Any:
+        """What Agno read back, with the scope taken off every session id."""
+        if found is None:
+            return None
+        if isinstance(found, tuple):
+            return tuple(self._plain(item) for item in found)
+        if isinstance(found, list):
+            return [self._plain(item) for item in found]
+        if isinstance(found, dict):
+            session_id = found.get("session_id")
+            if isinstance(session_id, str):
+                return {**found, "session_id": session_id.removeprefix(self.key_prefix)}
+            return found
+        session_id = getattr(found, "session_id", None)
+        if isinstance(session_id, str):
+            found.session_id = session_id.removeprefix(self.key_prefix)
+        return found
+
     async def delete_session(self, session_id: str, user_id: str | None = None) -> bool:
-        return await super().delete_session(session_id, user_id=self._scoped_user_id)
+        return await super().delete_session(
+            self.stored_id(session_id), user_id=self._scoped_user_id
+        )
 
     async def delete_sessions(self, session_ids: list[str], user_id: str | None = None) -> None:
-        await super().delete_sessions(session_ids, user_id=self._scoped_user_id)
+        await super().delete_sessions(
+            [self.stored_id(s) for s in session_ids], user_id=self._scoped_user_id
+        )
 
     async def get_session(
         self,
@@ -58,11 +92,13 @@ class ScopedAsyncPostgresDb(AsyncPostgresDb):
         user_id: str | None = None,
         deserialize: bool | None = True,
     ) -> Any:
-        return await super().get_session(
-            session_id,
-            session_type=session_type,
-            user_id=self._scoped_user_id,
-            deserialize=deserialize,
+        return self._plain(
+            await super().get_session(
+                self.stored_id(session_id),
+                session_type=session_type,
+                user_id=self._scoped_user_id,
+                deserialize=deserialize,
+            )
         )
 
     async def get_sessions(
@@ -79,18 +115,20 @@ class ScopedAsyncPostgresDb(AsyncPostgresDb):
         sort_order: str | None = None,
         deserialize: bool | None = True,
     ) -> Any:
-        return await super().get_sessions(
-            session_type=session_type,
-            user_id=self._scoped_user_id,
-            component_id=component_id,
-            session_name=session_name,
-            start_timestamp=start_timestamp,
-            end_timestamp=end_timestamp,
-            limit=limit,
-            page=page,
-            sort_by=sort_by,
-            sort_order=sort_order,
-            deserialize=deserialize,
+        return self._plain(
+            await super().get_sessions(
+                session_type=session_type,
+                user_id=self._scoped_user_id,
+                component_id=component_id,
+                session_name=session_name,
+                start_timestamp=start_timestamp,
+                end_timestamp=end_timestamp,
+                limit=limit,
+                page=page,
+                sort_by=sort_by,
+                sort_order=sort_order,
+                deserialize=deserialize,
+            )
         )
 
     async def rename_session(
@@ -101,17 +139,22 @@ class ScopedAsyncPostgresDb(AsyncPostgresDb):
         user_id: str | None = None,
         deserialize: bool | None = True,
     ) -> Any:
-        return await super().rename_session(
-            session_id,
-            session_type,
-            session_name,
-            user_id=self._scoped_user_id,
-            deserialize=deserialize,
+        return self._plain(
+            await super().rename_session(
+                self.stored_id(session_id),
+                session_type,
+                session_name,
+                user_id=self._scoped_user_id,
+                deserialize=deserialize,
+            )
         )
 
     async def upsert_session(self, session: Session, deserialize: bool | None = True) -> Any:
-        session.user_id = self._scoped_user_id
-        return await super().upsert_session(session, deserialize=deserialize)
+        # A copy: the caller's session keeps its plain id.
+        stored = copy.copy(session)
+        stored.session_id = self.stored_id(session.session_id)
+        stored.user_id = self._scoped_user_id
+        return self._plain(await super().upsert_session(stored, deserialize=deserialize))
 
     # ── Memories ──────────────────────────────────────────────────
 

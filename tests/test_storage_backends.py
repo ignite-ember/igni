@@ -366,13 +366,24 @@ async def test_agno_rows_are_kept_to_their_scope(postgres_url: str):
     listed = await mine.get_sessions(session_type=SessionType.AGENT)
     assert [s.session_id for s in listed] == [session_id]  # type: ignore[union-attr]
     assert await theirs.delete_session(session_id) is False
-    # The same id from another scope is not written over: Agno's upsert
-    # only updates a row whose ``user_id`` is the writer's.
+    # The same id in another scope is another row: the scope is part of
+    # the key the database holds, not only a filter.
     await theirs.upsert_session(
         AgentSession(session_id=session_id, agent_id="other", created_at=now)
     )
     kept = await mine.get_session(session_id, SessionType.AGENT)
     assert kept is not None and kept.agent_id == "igni"  # type: ignore[union-attr]
+    other = await theirs.get_session(session_id, SessionType.AGENT)
+    assert other is not None and other.agent_id == "other"  # type: ignore[union-attr]
+    assert other.session_id == session_id  # type: ignore[union-attr]
+    with cache.get_engine(url).connect() as connection:
+        stored = connection.scalars(
+            text("SELECT session_id FROM ai.ember_sessions WHERE session_id LIKE :id"),
+            {"id": f"%#{session_id}"},
+        ).all()
+    assert sorted(stored) == sorted([mine.stored_id(session_id), theirs.stored_id(session_id)])
+    assert await mine.delete_session(session_id) is True
+    assert await theirs.get_session(session_id, SessionType.AGENT) is not None
 
     await mine.upsert_user_memory(UserMemory(memory="likes tea", user_id="someone-else"))
     assert [m.memory for m in await mine.get_user_memories()] == ["likes tea"]  # type: ignore[union-attr]
