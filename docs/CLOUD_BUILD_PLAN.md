@@ -31,11 +31,11 @@ configuration. One code path. What is built and what is not:
 | Database URL in settings instead of a file path; engine registry, `Database`, migrations and `igni migrate` keyed by URL; the revision read through SQLAlchemy, not `sqlite3` | M | built, `ccbca59` |
 | The four raw `sqlite3` stores (pending messages, session preferences, session directories, client state) and local notifications moved onto SQLAlchemy and alembic, no SQLite-only syntax | M | built, `ccbca59` |
 | Agno storage chosen by URL: `AsyncSqliteDb` on the desktop, `AsyncPostgresDb` in the cloud | S | built, `ccbca59` |
-| Org, producer and project columns on every row in the cloud; every query filtered by them (row-level security if decided) | M | built, `ccbca59`; row-level security not built (undecided); Agno's tables scoped by `user_id` only |
-| A store interface for `MEMORY.md` memories and attachments: files on the desktop, PostgreSQL (large objects for attachments) in the cloud | M | built, `ccbca59`; the agent still writes memory files to disk, and readers of attachments by path do not read `attachment:<id>` |
-| Approvals waiting on the user and messages typed during a run written as they happen | M | built, `9ef5eda` — on the desktop too |
-| Logs to standard output in the cloud; credentials and settings not read from `~/.igni` there | S | not built |
-| CI runs the suite against SQLite and PostgreSQL | S | built, `ccbca59`: the suite on SQLite, the storage tests also on PostgreSQL (`test-postgres` job) |
+| Org, producer and project columns on every row in the cloud; every query filtered by them (row-level security if decided) | M | built, `ccbca59`; Agno's session key scoped too, `1e231c4`; row-level security not built (undecided) |
+| A store interface for `MEMORY.md` memories and attachments: files on the desktop, PostgreSQL (large objects for attachments) in the cloud | M | built, `ccbca59`; the agent's memory writes stored through a write-through mirror, `7fc48b0`; every attachment reader through the store, `66b6a36` |
+| Approvals waiting on the user and messages typed during a run written as they happen | M | built, `9ef5eda` — on the desktop too; a queued message taken, then deleted once the conversation holds it, `dac89aa`; approvals resume later — waiting counts as idle (`app.activity`), sub-agents continue after a cold boot, `chat.approvals.changed` for apps, `7c94a2a` |
+| Logs to standard output in the cloud; credentials and settings not read from `~/.igni` there | S | built, `7a99d1a`: the cloud profile is `IGNI_PROFILE=cloud` |
+| CI runs the suite against SQLite and PostgreSQL | S | built, `ccbca59`: the suite on SQLite, the storage and restart tests also on PostgreSQL (`test-postgres` job) |
 
 ## 2. Guest image (M)
 

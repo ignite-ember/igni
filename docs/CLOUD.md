@@ -326,32 +326,38 @@ producer, set per connection, so a missing filter returns nothing
 instead of someone else's rows (open decision).
 
 What moves where (audit of `src/ember_code`, 2026-10-26; built in
-`ccbca59` and `9ef5eda` unless the row says otherwise):
+`ccbca59`, `9ef5eda`, `1e231c4`, `dac89aa`, `7fc48b0`, `66b6a36`,
+`7a99d1a` and `7c94a2a` unless the row says otherwise):
 
 | State | Desktop (unchanged unless noted) | Cloud |
 |---|---|---|
-| Sessions, transcripts, runs, `session_data` (event log, todos, plan decisions), memories, learning, sub-agent sessions | Agno `AsyncSqliteDb` in the project's `state.db` (`core/memory/manager.py`) | Agno's `AsyncPostgresDb` as `ScopedAsyncPostgresDb`, on igni's engine: the scope is Agno's `user_id` |
+| Sessions, transcripts, runs, `session_data` (event log, todos, plan decisions), memories, learning, sub-agent sessions | Agno `AsyncSqliteDb` in the project's `state.db` (`core/memory/manager.py`) | Agno's `AsyncPostgresDb` as `ScopedAsyncPostgresDb`, on igni's engine: the scope is in the session's key and in `user_id` |
 | Schedules, `/loop` state, background processes | alembic tables in `state.db` | the same tables, scoped |
 | Pending and interrupted messages, model per session | alembic tables in `state.db` (were raw `sqlite3`) | the same tables, scoped |
 | Session → directory, window state and extensions' own state, local notifications | alembic tables in one global database in the data directory (`global_db_path`; were `sessions.db`, `client_state.db`, `notifications.db`) | the same tables, scoped |
-| Approvals waiting on the user (main agent, auto-resolved, sub-agents), messages typed during a run | `waiting_approvals` and `queued_messages` in `state.db` (were memory only) | the same tables, scoped |
-| `MEMORY.md` memory files | files under `~/.igni/projects/` | `memory_files` rows — read; the agent still writes files (below) |
+| Approvals waiting on the user (main agent, auto-resolved, sub-agents, and the calls waiting above a sub-agent), messages typed during a run | `waiting_approvals`, `waiting_spawns` and `queued_messages` in `state.db` (were memory only) | the same tables, scoped |
+| `MEMORY.md` memory files | files under `~/.igni/projects/` | `memory_files` rows; the memory directory is a write-through mirror of them |
 | Uploaded attachments | `<project>/.igni/attachments/` | PostgreSQL large objects, written and read in chunks, an `attachments` row each |
-| Credentials | `~/.igni/credentials.json` | not stored: the gateway hands the VM the producer's token (not built) |
-| Settings, group policy, priority, the person's group, MCP approvals, extension settings | JSON and YAML under `~/.igni` | delivered by igni server or the image; read-only in the VM (extension settings per producer go to PostgreSQL) (not built) |
-| Logs | files under `~/.igni` | standard output, collected by the node (not built) |
+| Credentials | `~/.igni/credentials.json` | the environment the gateway sets (`IGNI_ACCESS_TOKEN`); no file is read or written |
+| Settings, group policy, priority, the person's group, MCP approvals, extension settings | JSON and YAML under `~/.igni` | settings only from the image (command line, managed policy) and igni server (group policy); nothing under `~/.igni` or the workspace's `.igni`. The rest of this row (priority, MCP approvals, extension settings per producer) is not built |
+| Logs | files under `~/.igni` | JSON lines on standard output, collected by the node: no backend log, `debug.log`, `llm_calls.log`, `hitl_trace.log` or audit log file |
 | Workspace files, `.igni` in the workspace, worktrees, process logs, installed packages | files | the producer's volume (section 10) |
 
-**How it is chosen.** One code path; `storage.database_url`
+**The cloud profile is one setting:** `IGNI_PROFILE=cloud`, set by the
+image (`core/profile.py`). An environment variable rather than a setting,
+because it decides where settings come from. It is what turns logs,
+credentials and settings to the cloud's (above) and makes
+`IGNI_DATABASE_URL` required; anything else is the desktop.
+
+**How the database is chosen.** One code path; `storage.database_url`
 (`IGNI_DATABASE_URL`) picks the backend. Unset, a project's state is its
 `state.db` and what is no one project's is the global database in the
-data directory, as before. Set,
-both are that one database and every row is scoped. The URL may be any
-spelling of PostgreSQL (`postgresql://`, `postgres://`,
-`+asyncpg`, `+psycopg`); igni speaks psycopg 3 to it, sync and async,
-one driver for alembic, its stores and Agno (the `postgres` extra).
-`igni migrate` (`--database-url`) prepares it; a backend whose schema is
-current still never imports alembic.
+data directory, as before. Set, both are that one database and every row
+is scoped. The URL may be any spelling of PostgreSQL (`postgresql://`,
+`postgres://`, `+asyncpg`, `+psycopg`); igni speaks psycopg 3 to it,
+sync and async, one driver for alembic, its stores and Agno (the
+`postgres` extra). `igni migrate` (`--database-url`) prepares it; a
+backend whose schema is current still never imports alembic.
 
 **Scoping, in one place.** Every igni table carries `org`, `producer`
 and `project` (empty on the desktop, whose file is already its own), and
@@ -367,27 +373,63 @@ session is in — filters by org and producer only. Row-level security is
 not built; adding it means setting the scope per connection where
 `StorageScope` is applied.
 
+**Agno's tables** keep Agno's schema; `ScopedAsyncPostgresDb` is a
+wrapper. A session is stored under `<org>/<producer>/<project>#<id>` and
+handed back with the plain id, so two producers' sessions with one id
+are two rows apart by the database's primary key, not by ids being
+random; `user_id` carries the same scope and is forced on every session,
+memory and learning read and write. Agno's other tables (metrics, evals,
+knowledge, traces) are not scoped; igni does not write them. A shared
+*SQLite* URL (tests) uses `AsyncSqliteDb`, unscoped.
+
+**Memory files** are written with the agent's ordinary file tools — a
+shell command as well as `save_file` — so the store is not a tool the
+agent could go around: in the cloud the memory directory is a mirror of
+the `memory_files` rows, filled at session start and compared with them
+after every tool call the main agent makes and after every run; each
+file written, changed or removed becomes the row's state.
+
+**Attachments** are named by what the upload returned — a path on the
+desktop, `attachment:<id>` in the cloud — and every reader goes through
+the attachments store, which resolves either: the prompt builder turns
+a reference into a readable file (a large object written out chunk by
+chunk the first time) before the mentions, the vision models' media and
+the agent's tools read it, and the file preview reads it the same way.
+
+**Approvals do not expire** and resume their run however late, whoever
+answers (a window, or an app through the host object model, which tells
+a subscriber of each one with `chat.approvals.changed`):
+
+- a run waiting only on a person — the main agent paused, or
+  `spawn_agent` calls whose sub-agents are all paused — counts as
+  *waiting*, not running; the host object model's `app.activity`
+  (`suspendable`) is what the node agent reads before suspending. The
+  snapshot keeps the waiting run frozen, and the decision wakes it. A
+  spawn's own timeout stops while it waits on a person;
+- after a cold boot, the main agent's run resumes by its id from Agno's
+  copy; a sub-agent's is continued from `waiting_spawns`, its answer is
+  handed to the waiting `spawn_agent` call as the tool's result, and the
+  main agent's run continues and streams to the session's windows
+  (`backend/cold_spawn_resume.py`). The same path serves the desktop
+  after igni is quit and started again.
+
+**Messages typed during a run** are a row from queueing; a run that
+takes one marks it taken and records it in the conversation under the
+row's id; the row is deleted once Agno's saved session holds that id. A
+backend that starts offers again every taken message the session does
+not hold: each is delivered into the conversation exactly once.
+
 What is not covered yet:
 
-- **Agno's tables** have no scope columns. `user_id`
-  (`<org>/<producer>/<project>`) is forced on every session, memory and
-  learning read and write. Their key is still `session_id` alone, and
-  igni's ids are eight hex characters: Agno will not overwrite another
-  scope's session with a colliding id, but the colliding one is not
-  saved. Agno's other tables (metrics, evals, knowledge, traces) are not
-  scoped; igni does not write them. A shared *SQLite* URL (tests) uses
-  `AsyncSqliteDb`, unscoped.
-- **Memory files**: the session reads `MEMORY.md` from the database, but
-  the agent writes memory files with its file tools, to paths on the
-  volume. A memory tool or a write-through is needed.
-- **Attachments**: an upload's reference in the cloud is
-  `attachment:<id>`, not a path; what reads an attachment by path does
-  not read that yet.
-- **Approvals** come back after a restart and resume their run from
-  Agno's stored copy; a sub-agent's request comes back and can be
-  answered, but the `spawn_agent` call that waited on it died with the
-  backend, so nothing resumes on the answer. A message a run took and
-  then died with is gone with that run (delivered once, never twice).
+- A cold-boot sub-agent resume continues one `spawn_agent` (or a
+  single-agent `spawn_team`) call. A multi-agent `spawn_team` that paused
+  is not continued after a restart (its approval can be answered); nor is
+  a waiting call that shared its assistant turn with other tool calls
+  still running when the backend died. An intermediate sub-agent in a
+  nested chain is continued without streaming, and is not paused again.
+- Credentials from the environment are read as they are set at start;
+  refreshing the token is the gateway's (section 3).
+- Priority, MCP approvals and extension settings in the cloud.
 
 ## 10. The producer's volume (proposed, measured nested)
 
