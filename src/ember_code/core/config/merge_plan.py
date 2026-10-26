@@ -42,6 +42,7 @@ from ember_code.core.config.cloud_model_migrator import CloudModelMigrator
 from ember_code.core.config.config_io import YamlSource
 from ember_code.core.config.managed_policy import ManagedPolicySource
 from ember_code.core.paths import home_config_dir, project_config_dir
+from ember_code.core.profile import RuntimeProfile
 
 if TYPE_CHECKING:
     from ember_code.core.config.group_policy import GroupPolicyPack
@@ -345,17 +346,28 @@ class SettingsMergePlan:
         # instance, because the ratchet reads what this one actually set.
         cli_tier = CliTier(cli)
 
+        # The cloud profile reads no settings file of its own: not the
+        # user's under ``~/.igni``, not the workspace's ``.igni``. What it
+        # runs with comes from the image (the command line, managed
+        # policy) and from igni server (group policy) — ``core/profile.py``.
+        local_tiers: list[Tier] = (
+            []
+            if RuntimeProfile.current().is_cloud
+            else [
+                # User global (lowest priority above built-in defaults)
+                YamlTier(user_ember / "config.yaml"),
+                JsonFragmentTier(user_ember / "settings.json"),
+                JsonFragmentTier(user_ember / "settings.local.json"),
+                # Project (committed)
+                YamlTier(project_ember / "config.yaml"),
+                JsonFragmentTier(project_ember / "settings.json"),
+                # Project local (gitignored)
+                YamlTier(project_ember / "config.local.yaml"),
+                JsonFragmentTier(project_ember / "settings.local.json"),
+            ]
+        )
         tiers: list[Tier] = [
-            # User global (lowest priority above built-in defaults)
-            YamlTier(user_ember / "config.yaml"),
-            JsonFragmentTier(user_ember / "settings.json"),
-            JsonFragmentTier(user_ember / "settings.local.json"),
-            # Project (committed)
-            YamlTier(project_ember / "config.yaml"),
-            JsonFragmentTier(project_ember / "settings.json"),
-            # Project local (gitignored)
-            YamlTier(project_ember / "config.local.yaml"),
-            JsonFragmentTier(project_ember / "settings.local.json"),
+            *local_tiers,
             # CLI
             cli_tier,
             # Org-group policy — wins over CLI, loses to sysadmin

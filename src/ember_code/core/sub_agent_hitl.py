@@ -41,6 +41,7 @@ from typing import TYPE_CHECKING, Any
 from pydantic import BaseModel, ConfigDict, Field
 
 from ember_code.core.paths import DEFAULT_DATA_DIR
+from ember_code.core.profile import RuntimeProfile
 from ember_code.core.session.approval_journal import ApprovalJournal, ApprovalOrigin
 from ember_code.protocol import messages as msg
 from ember_code.protocol.agno_tool_formatter import default_registry
@@ -156,6 +157,18 @@ class SubAgentHITLCoordinator:
                 by_run.setdefault(entry.run_id, []).append(request)
         return [msg.RunPaused(run_id=run_id, requirements=reqs) for run_id, reqs in by_run.items()]
 
+    def _trace_file(self, run_id: str, agent_path: list[str] | None) -> None:
+        try:
+            with open(
+                Path(os.path.expanduser(f"{DEFAULT_DATA_DIR}/hitl_trace.log")), "a"
+            ) as trace_f:
+                trace_f.write(
+                    f"{time.strftime('%H:%M:%S')} pid={os.getpid()} "
+                    f"coord.push_requirement: coord_id={id(self)} run_id={run_id} path={agent_path}\n"
+                )
+        except Exception:
+            pass
+
     def _write(self, req_id: str) -> None:
         if self._journal is None:
             return
@@ -187,16 +200,16 @@ class SubAgentHITLCoordinator:
             agent_path,
         )
         # Direct trace — see backend/server.py for why we bypass logging.
-        try:
-            with open(
-                Path(os.path.expanduser(f"{DEFAULT_DATA_DIR}/hitl_trace.log")), "a"
-            ) as trace_f:
-                trace_f.write(
-                    f"{time.strftime('%H:%M:%S')} pid={os.getpid()} "
-                    f"coord.push_requirement: coord_id={id(self)} run_id={run_id} path={agent_path}\n"
-                )
-        except Exception:
-            pass
+        # The cloud keeps no trace file: the record goes to standard output.
+        if RuntimeProfile.current().is_cloud:
+            logging.getLogger("ember_code.hitl_trace").info(
+                "coord.push_requirement: coord_id=%s run_id=%s path=%s",
+                id(self),
+                run_id,
+                agent_path,
+            )
+        else:
+            self._trace_file(run_id, agent_path)
         req_id = str(uuid.uuid4())[:8]
         self._pending[req_id] = _PendingEntry(
             requirement=req,

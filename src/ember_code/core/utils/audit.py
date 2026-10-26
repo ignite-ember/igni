@@ -20,10 +20,12 @@ keep a single import site (matches the ``update_checker.py`` /
 
 from __future__ import annotations
 
+import json
 import logging
 from pathlib import Path
 
 from ember_code.core.config.settings import Settings
+from ember_code.core.profile import RuntimeProfile
 from ember_code.core.utils.audit_schemas import (
     AuditDetails,
     AuditEntry,
@@ -71,9 +73,15 @@ class AuditLogger:
     turn.
     """
 
+    #: Where entries go in the cloud: standard output, as JSON lines.
+    CLOUD_LOGGER = logging.getLogger("ember_code.audit")
+
     def __init__(self, settings: Settings) -> None:
         self._log_path = Path(settings.storage.audit_log).expanduser()
-        self._log_path.parent.mkdir(parents=True, exist_ok=True)
+        #: The cloud keeps no audit file (``core/profile.py``).
+        self._to_stdout = RuntimeProfile.current().is_cloud
+        if not self._to_stdout:
+            self._log_path.parent.mkdir(parents=True, exist_ok=True)
         # First IO failure emits a warning; subsequent failures
         # are silent so a read-only-disk session doesn't spam.
         self._warned_on_write_failure = False
@@ -94,6 +102,11 @@ class AuditLogger:
         design; a logging failure must not break an in-flight
         tool call.
         """
+        if self._to_stdout:
+            self.CLOUD_LOGGER.info(
+                "audit", extra={"fields": {"audit": json.loads(entry.to_jsonl_line())}}
+            )
+            return AuditWriteResult(ok=True)
         try:
             with open(self._log_path, "a", encoding="utf-8") as f:
                 f.write(entry.to_jsonl_line())

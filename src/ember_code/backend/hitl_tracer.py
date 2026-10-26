@@ -27,8 +27,12 @@ import time
 from pathlib import Path
 
 from ember_code.core.paths import DEFAULT_DATA_DIR
+from ember_code.core.profile import RuntimeProfile
 
 logger = logging.getLogger(__name__)
+
+#: Where the trace goes in the cloud (standard output, ``core/logs.py``).
+TRACE_LOGGER = logging.getLogger("ember_code.hitl_trace")
 
 # Path resolution happens at import time — no I/O until ``.trace()``
 # fires (which calls ``mkdir(parents=True, exist_ok=True)``).
@@ -70,6 +74,10 @@ class HITLTracer:
         ``_hitl_trace`` behaviour exactly.
         """
         if not self._enabled:
+            return
+        if RuntimeProfile.current().is_cloud:
+            # No hitl_trace.log in the cloud: a record on standard output.
+            TRACE_LOGGER.info(text)
             return
         try:
             self._path.parent.mkdir(parents=True, exist_ok=True)

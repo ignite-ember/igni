@@ -21,7 +21,9 @@ import os
 from pathlib import Path
 
 from ember_code.core.config.caller_inspector import CallerContextInspector
+from ember_code.core.logs import StdoutLog
 from ember_code.core.paths import DEFAULT_DATA_DIR
+from ember_code.core.profile import RuntimeProfile
 
 
 class LlmCallLogger:
@@ -61,10 +63,14 @@ class LlmCallLogger:
         if self._configured or self._logger.handlers:
             self._configured = True
             return
-        self._log_dir.mkdir(parents=True, exist_ok=True)
-        log_path = self._log_dir / "llm_calls.log"
-        handler = logging.FileHandler(log_path)
-        handler.setFormatter(logging.Formatter("%(asctime)s %(message)s", datefmt="%H:%M:%S"))
+        handler: logging.Handler
+        if RuntimeProfile.current().is_cloud:
+            # No llm_calls.log in the cloud: standard output, as JSON lines.
+            handler = StdoutLog.handler()
+        else:
+            self._log_dir.mkdir(parents=True, exist_ok=True)
+            handler = logging.FileHandler(self._log_dir / "llm_calls.log")
+            handler.setFormatter(logging.Formatter("%(asctime)s %(message)s", datefmt="%H:%M:%S"))
         self._logger.addHandler(handler)
         self._logger.setLevel(logging.INFO)
         # File only, for the same reason as the transport loggers below — and

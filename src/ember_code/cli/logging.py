@@ -16,7 +16,9 @@ import logging
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
+from ember_code.core.logs import StdoutLog
 from ember_code.core.paths import CONFIG_DIR
+from ember_code.core.profile import RuntimeProfile
 
 
 class DebugLogging:
@@ -39,14 +41,18 @@ class DebugLogging:
         the trace.
         """
         log_path = path if path is not None else cls.DEFAULT_PATH
-        log_path.parent.mkdir(parents=True, exist_ok=True)
-
-        handler = RotatingFileHandler(
-            str(log_path),
-            maxBytes=cls._MAX_BYTES,
-            backupCount=cls._BACKUPS,
-        )
-        handler.setFormatter(logging.Formatter(cls._FORMAT))
+        handler: logging.Handler
+        if RuntimeProfile.current().is_cloud:
+            # No debug.log in the cloud: standard output, as JSON lines.
+            handler = StdoutLog.handler()
+        else:
+            log_path.parent.mkdir(parents=True, exist_ok=True)
+            handler = RotatingFileHandler(
+                str(log_path),
+                maxBytes=cls._MAX_BYTES,
+                backupCount=cls._BACKUPS,
+            )
+            handler.setFormatter(logging.Formatter(cls._FORMAT))
 
         logging.root.handlers.clear()
         logging.root.addHandler(handler)

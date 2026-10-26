@@ -34,7 +34,9 @@ from typing import TYPE_CHECKING
 
 from websockets.asyncio.server import serve
 
+from ember_code.core.logs import StdoutLog
 from ember_code.core.paths import CONFIG_DIR
+from ember_code.core.profile import RuntimeProfile
 from ember_code.protocol.messages import Message, Welcome
 from ember_code.protocol.registry import MessageRegistry
 from ember_code.transport._ws_client import MirroredClient, SendResult
@@ -82,7 +84,6 @@ if os.environ.get("IGNI_CHUNK_TRACE") == "1" and not any(
     _trace_path = Path(
         os.environ.get("IGNI_CHUNK_TRACE_LOG") or (Path.home() / CONFIG_DIR / "chunk_trace.log")
     )
-    _trace_path.parent.mkdir(parents=True, exist_ok=True)
 
     class _FlushingFileHandler(logging.FileHandler):
         """Line-buffer after each emit so a ``tail -f`` shows chunks
@@ -95,8 +96,16 @@ if os.environ.get("IGNI_CHUNK_TRACE") == "1" and not any(
             super().emit(record)
             self.flush()
 
-    _trace_handler = _FlushingFileHandler(str(_trace_path), mode="a")
-    _trace_handler.setFormatter(logging.Formatter("%(asctime)s %(name)s %(levelname)s %(message)s"))
+    _trace_handler: logging.Handler
+    if RuntimeProfile.current().is_cloud:
+        # The cloud keeps no trace file: standard output, as JSON lines.
+        _trace_handler = StdoutLog.handler()
+    else:
+        _trace_path.parent.mkdir(parents=True, exist_ok=True)
+        _trace_handler = _FlushingFileHandler(str(_trace_path), mode="a")
+        _trace_handler.setFormatter(
+            logging.Formatter("%(asctime)s %(name)s %(levelname)s %(message)s")
+        )
     _trace_handler._ember_chunk_trace = True  # type: ignore[attr-defined]
     logger.addHandler(_trace_handler)
     logger.setLevel(logging.DEBUG)

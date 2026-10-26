@@ -13,6 +13,7 @@ from ember_code.core.db.scope import tenancy
 from ember_code.core.db.urls import DatabaseUrl, Dialect
 from ember_code.core.hooks.extension_gate import ExtensionHookGate
 from ember_code.core.paths import CONFIG_DIR
+from ember_code.core.profile import PROFILE_ENV
 from ember_code.extensions.faults import ExtensionFaults
 from ember_code.extensions.host.hooks import ExtensionHooks
 from ember_code.extensions.host.processes import ExtensionProcesses
@@ -58,6 +59,7 @@ def _desktop_storage(monkeypatch):
     store at a shared database. The PostgreSQL tests name theirs
     explicitly (``IGNI_TEST_DATABASE_URL``, ``tests/test_storage_backends.py``)."""
     monkeypatch.delenv(StorageConfig.DATABASE_URL_ENV, raising=False)
+    monkeypatch.delenv(PROFILE_ENV, raising=False)
     yield
     tenancy.use(None)
 
