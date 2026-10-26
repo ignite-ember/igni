@@ -16,7 +16,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
-from collections.abc import Callable
+from collections.abc import Callable, MutableSequence
 from typing import Any
 
 from ember_code.backend.schemas_push import (
@@ -60,7 +60,7 @@ class PushNotificationBridge:
         *,
         transport: Any,
         loop: asyncio.AbstractEventLoop | None,
-        queue: list[str],
+        queue: MutableSequence[str],
         file_edit_notifier: FileEditNotifier | None = None,
     ) -> None:
         self._transport = transport
@@ -92,7 +92,7 @@ class PushNotificationBridge:
         self._live_session_count = probe
 
     def for_transport(
-        self, transport: Any, *, queue: list[str] | None = None
+        self, transport: Any, *, queue: MutableSequence[str] | None = None
     ) -> PushNotificationBridge:
         """Sub-bridge bound to a different transport (typically a
         :class:`SessionStampingTransport` for a pooled runtime). The

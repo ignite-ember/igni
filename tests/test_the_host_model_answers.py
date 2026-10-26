@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -308,6 +309,28 @@ class TestApprovals:
         # Every window dismisses the dialog, as when the person answers.
         assert [m.requirement_id for m in rig.windows.of(msg.RequirementResolved)] == ["q1"]
         assert ok(await rig.ask(ext, "get", "chat.approvals.waiting")) == []
+
+    async def test_an_approval_the_backend_restored_is_waiting_before_any_window(
+        self, rig: HostRig
+    ) -> None:
+        """After a restart the backend reads its approvals back from the
+        database; nothing has been broadcast, and the host knows them."""
+        ext = rig.install(host=["chat.approvals"])
+        restored = msg.RunPaused(
+            session_id="boot",
+            run_id="r",
+            requirements=[msg.HITLRequest(requirement_id="q9", tool_name="shell")],
+        )
+        rig.session.hitl = SimpleNamespace(waiting_messages=lambda: [restored])
+        [waiting] = ok(await rig.ask(ext, "get", "chat.approvals.waiting"))
+        assert waiting["requirement_id"] == "q9"
+        ok(
+            await rig.ask(
+                ext, "call", "chat.approvals.answer", requirement_id="q9", action="reject"
+            )
+        )
+        await rig.settle()
+        assert rig.session.answers == [("q9", "reject", "")]
 
 
 class TestCommands:

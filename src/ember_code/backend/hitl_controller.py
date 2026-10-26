@@ -400,6 +400,19 @@ class HitlController:
         """
         return HITLStreamMultiplexer.build_subagent_paused(entries)
 
+    def waiting_messages(self) -> list[msg.RunPaused]:
+        """Every approval of this session still waiting on the person,
+        as the ``RunPaused`` a window shows a dialog for.
+
+        Sent to a window when it attaches, so a dialog survives both a
+        reload and a backend restart (the approvals are read back from
+        the journal at start): the main agent's, then its sub-agents'.
+        """
+        return [
+            *self._store.waiting_messages(),
+            *self._session.sub_agent_hitl.waiting_requests(),
+        ]
+
     def sweep_run(self, run_id: str) -> None:
         """Drop pending + auto-resolved entries for a finished run.
 
@@ -439,7 +452,7 @@ class HitlController:
         batch."""
         if batch_run_id is None or this_run_id == batch_run_id:
             return None
-        self._store.register(requirement_id, entry)
+        self._store.register(requirement_id, entry)  # back as it was, request and all
         return msg.Error(
             text=(
                 f"Cross-run HITL batch rejected: "

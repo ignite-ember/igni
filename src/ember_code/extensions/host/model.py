@@ -65,7 +65,10 @@ class HostState:
 
     #: The last update check's answer.
     update: dict[str, Any] | None = None
-    #: Approvals waiting, by session, by requirement id.
+    #: Approvals waiting, by session, by requirement id. A mirror of the
+    #: backend's, which are in the database (``ApprovalJournal``): kept
+    #: from what is broadcast, and read from the backend for a session
+    #: it has not heard of — after a restart.
     approvals: dict[str, dict[str, dict[str, Any]]] = field(default_factory=dict)
     #: The last top-level run of each session.
     last_run: dict[str, str] = field(default_factory=dict)

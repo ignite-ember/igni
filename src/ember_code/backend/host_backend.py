@@ -222,6 +222,13 @@ class OrchestratorHostBackend:
             latest[str(payload["spec_id"])] = BroadcastSignals.view(session_id, payload)
         return list(latest.values())
 
+    def waiting_approvals(self, session_id: str) -> list[msg.Message]:
+        runtime = self._orchestrator.pool.find(session_id)
+        hitl = getattr(runtime.backend, "hitl", None) if runtime is not None else None
+        if hitl is None:
+            return []
+        return list(hitl.waiting_messages())
+
     def project_dir_of(self, session_id: str) -> Path:
         runtime = self._orchestrator.pool.find(session_id)
         if runtime is None:

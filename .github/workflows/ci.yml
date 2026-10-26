@@ -128,7 +128,10 @@ jobs:
       - name: Storage tests on PostgreSQL
         env:
           IGNI_TEST_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/postgres
-        run: uv run pytest tests/test_storage_backends.py -q -rs
+        run: >-
+          uv run pytest -q -rs
+          tests/test_storage_backends.py
+          tests/test_approvals_and_queued_messages_survive_a_restart.py
 
   # The Python SDKs under packages/ (igni-service, igni-extension) have
   # dependencies of their own and are checked in their own environments,

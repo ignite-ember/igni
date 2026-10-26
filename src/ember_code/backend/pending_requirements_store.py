@@ -15,14 +15,25 @@ flagged the previous state (two dicts mutated independently) as a
 correctness seam because ``HitlController._merge_auto_resolved`` and
 ``server_pause.drop_pending_for_run`` both had to sweep both dicts
 in the right order.
+
+Both buckets are written through to an
+:class:`~ember_code.core.session.approval_journal.ApprovalJournal` when
+the store is given one (the backend always does): an approval is a row
+in the project's database from the moment it is asked until it is
+answered or its run ends, and :meth:`restore` reads them back after a
+restart, so the question is shown again and can be answered — the run
+resumes from Agno's own copy of it (``acontinue_run`` by ``run_id``).
 """
 
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable
 from typing import Any
 
 from ember_code.backend.schemas_pause import PendingRequirement
+from ember_code.core.session.approval_journal import ApprovalJournal, ApprovalOrigin
+from ember_code.protocol import messages as msg
 
 logger = logging.getLogger(__name__)
 
@@ -43,23 +54,79 @@ class PendingRequirementsStore:
     :meth:`drain_auto_resolved`.
     """
 
-    def __init__(self) -> None:
-        """Empty store — one instance per :class:`BackendServer`."""
+    def __init__(
+        self,
+        journal: ApprovalJournal | None = None,
+        session_id: Callable[[], str] | None = None,
+    ) -> None:
+        """Empty store — one instance per :class:`BackendServer`.
+
+        ``journal`` and ``session_id`` (asked on every write: the
+        backend's session id can change under it) make it durable;
+        without them it is memory only, as tests build it.
+        """
         self._pending: dict[str, PendingRequirement] = {}
         self._auto_resolved: dict[str, list[Any]] = {}
+        self._journal = journal
+        self._session_id = session_id
+
+    # ── Durability ────────────────────────────────────────────────
+
+    def restore(self, session_id: str) -> int:
+        """Read back what ``session_id`` left waiting. Returns how many
+        approvals wait on the person."""
+        if self._journal is None:
+            return 0
+        restored = 0
+        for stored in self._journal.waiting(session_id):
+            if stored.origin is ApprovalOrigin.MAIN:
+                self._pending[stored.requirement_id] = PendingRequirement(
+                    req=stored.requirement, run_id=stored.run_id or None, request=stored.request
+                )
+                restored += 1
+            elif stored.origin is ApprovalOrigin.AUTO_RESOLVED:
+                self._auto_resolved.setdefault(stored.run_id, []).append(stored.requirement)
+        return restored
+
+    def waiting_messages(self) -> list[msg.RunPaused]:
+        """One ``RunPaused`` per run with approvals waiting — what a
+        window attaching to the session is shown again."""
+        by_run: dict[str, list[msg.HITLRequest]] = {}
+        for entry in self._pending.values():
+            if entry.request is not None:
+                by_run.setdefault(entry.run_id or "", []).append(entry.request)
+        return [
+            msg.RunPaused(run_id=run_id, requirements=requests)
+            for run_id, requests in by_run.items()
+        ]
+
+    def _current_session(self) -> str:
+        return self._session_id() if self._session_id is not None else ""
 
     # ── Read/mutate the pending bucket ────────────────────────────
 
     def register(self, req_id: str, entry: PendingRequirement) -> None:
         """Stash a requirement waiting for the user."""
         self._pending[req_id] = entry
+        if self._journal is not None:
+            self._journal.record(
+                requirement_id=req_id,
+                session_id=self._current_session(),
+                run_id=entry.run_id,
+                origin=ApprovalOrigin.MAIN,
+                requirement=entry.req,
+                request=entry.request,
+            )
 
     def pop(self, req_id: str) -> PendingRequirement | None:
         """Remove and return the pending requirement, or ``None`` if
         unknown. Used by both the sub-agent-claim path (drop the
         main-team entry to keep the store clean) and the user-
         decision resolver."""
-        return self._pending.pop(req_id, None)
+        entry = self._pending.pop(req_id, None)
+        if entry is not None and self._journal is not None:
+            self._journal.forget(req_id)
+        return entry
 
     def has(self, req_id: str) -> bool:
         """True when the id is currently pending. Kept for the
@@ -84,6 +151,8 @@ class PendingRequirementsStore:
         for rid in stale:
             self._pending.pop(rid, None)
         self._auto_resolved.pop(run_id, None)
+        if self._journal is not None:
+            self._journal.forget_run(run_id)
         if stale:
             logger.debug(
                 "sweep_run: dropped %d stale requirement(s) for run_id=%s",
@@ -103,6 +172,11 @@ class PendingRequirementsStore:
         if not reqs:
             return
         self._auto_resolved.setdefault(run_id, []).extend(reqs)
+        if self._journal is not None:
+            for req in reqs:
+                self._journal.record_auto_resolved(
+                    session_id=self._current_session(), run_id=run_id, requirement=req
+                )
 
     def drain_auto_resolved(self, run_id: str | None) -> list[Any]:
         """Pop and return the auto-resolved list for a run.
@@ -113,7 +187,10 @@ class PendingRequirementsStore:
         auto-decision."""
         if run_id is None:
             return []
-        return self._auto_resolved.pop(run_id, [])
+        drained = self._auto_resolved.pop(run_id, [])
+        if drained and self._journal is not None:
+            self._journal.forget_run(run_id, origin=ApprovalOrigin.AUTO_RESOLVED)
+        return drained
 
     def auto_resolved_snapshot(self) -> dict[str, list[Any]]:
         """Copy of the auto-resolved bucket for test assertions.

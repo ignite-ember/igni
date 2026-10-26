@@ -23,7 +23,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
-from collections.abc import Awaitable, Callable, Coroutine
+from collections.abc import Awaitable, Callable, Coroutine, MutableSequence
 from typing import Any
 
 from ember_code.backend.schemas_sessions import (
@@ -59,7 +59,7 @@ class SessionRuntime:
         *,
         backend: BackendLike,
         rpc_table: dict[str, Any],
-        queue: list[str],
+        queue: MutableSequence[str],
         transport: TransportLike,
         known_ids: set[str] | None = None,
         last_used_at: float = 0.0,

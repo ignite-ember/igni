@@ -17,6 +17,7 @@ Extracting to :class:`TeamWiring` gives us:
 
 from __future__ import annotations
 
+from collections.abc import MutableSequence
 from typing import TYPE_CHECKING
 
 from ember_code.core.hooks.queue import QueueBridge
@@ -40,7 +41,7 @@ class TeamWiring:
     def __init__(self, session: Session) -> None:
         self._session = session
 
-    def wire_queue_hook(self, queue: list) -> None:
+    def wire_queue_hook(self, queue: MutableSequence[str]) -> None:
         """Wire queue hooks onto the team.
 
         - Tool-hook (injector) drains the queue after each tool call

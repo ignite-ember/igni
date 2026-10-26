@@ -767,7 +767,16 @@ class ChatMembers(Members):
 class ApprovalMembers(Members):
     @get("chat.approvals.waiting")
     async def waiting(self, c: Call) -> Any:
-        return list(self.model.state.approvals.get(c.session_id, {}).values())
+        return list(self._waiting(c.session_id).values())
+
+    def _waiting(self, session_id: str) -> dict[str, dict[str, Any]]:
+        """The session's approvals; read from the backend's database the
+        first time — after a restart nothing has been broadcast yet."""
+        if session_id not in self.model.state.approvals:
+            self.model.broadcasts.restore_approvals(
+                session_id, self.backend.waiting_approvals(session_id)
+            )
+        return self.model.state.approvals.get(session_id, {})
 
     @call("chat.approvals.answer")
     async def answer(self, c: Call) -> Any:
@@ -801,7 +810,7 @@ class ApprovalMembers(Members):
             raise HostModelError(
                 ErrorCode.INVALID, f"action is 'confirm' or 'reject', not {action!r}"
             )
-        if requirement_id not in self.model.state.approvals.get(c.session_id, {}):
+        if requirement_id not in self._waiting(c.session_id):
             raise HostModelError(
                 ErrorCode.NOT_FOUND,
                 f"no request {requirement_id!r} is waiting in session {c.session_id}",

@@ -83,6 +83,11 @@ class HostBackend(Protocol):
 
     def project_dir_of(self, session_id: str) -> Path: ...
 
+    def waiting_approvals(self, session_id: str) -> list[Message]:
+        """The ``RunPaused`` of every approval the session has waiting —
+        what the host knows after a restart, before any window asked."""
+        ...
+
     def broadcast(self, message: Message) -> None:
         """Send to every window, now (scheduled on the loop)."""
         ...

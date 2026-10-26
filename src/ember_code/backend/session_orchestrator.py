@@ -24,6 +24,7 @@ import contextlib
 import logging
 import os
 import uuid
+from collections.abc import MutableSequence
 from pathlib import Path
 from typing import Any
 
@@ -82,7 +83,7 @@ class SessionOrchestrator:
         extensions: ExtensionRpc | None = None,
         origins: Any = None,
         notifications: Any = None,
-        queue: list[str],
+        queue: MutableSequence[str],
     ) -> None:
         self._backend = backend
         self._transport = transport
@@ -241,7 +242,7 @@ class SessionOrchestrator:
             additional_dirs=self._additional_dirs,
         )
         await rt_backend.startup()
-        rt_queue: list[str] = []
+        rt_queue = rt_backend.message_queue
         rt_backend.wire_queue_hook(rt_queue)
         stamped = SessionStampingTransport(self._transport, rt_backend)
         # The runtime's own queue, not the boot bridge's — anything a
@@ -341,6 +342,20 @@ class SessionOrchestrator:
             await self._transport.send(msg.RPCResponse(id=message.id or "", error=str(exc)))
             return
         await self._transport.send(msg.RPCResponse(id=message.id or "", result=result.model_dump()))
+        await self._show_waiting_approvals(result.session_id)
+
+    async def _show_waiting_approvals(self, session_id: str) -> None:
+        """Show an attaching window the session's approvals still waiting.
+
+        After a reload the window has lost its dialog; after a backend
+        restart the approvals were read back from the database. Either
+        way the person sees the question again, and answering it
+        resumes the run.
+        """
+        assert self._pool is not None
+        rt = await self._pool.get_or_create(session_id)
+        for paused in rt.backend.hitl.waiting_messages():
+            await rt.transport.send(paused)
 
     async def _handle_window_model(self, message: Any) -> None:
         """``window_model``: a window reading or writing its own model.

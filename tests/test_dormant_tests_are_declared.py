@@ -109,7 +109,8 @@ def _gating_variables() -> set[str]:
     of this scanner reported ``HF_HOME`` as a gate.
     """
     found: set[str] = set()
-    for path in sorted(TESTS_DIR.rglob("test_*.py")):
+    # ``conftest.py`` too: a fixture that skips gates every test using it.
+    for path in sorted([*TESTS_DIR.rglob("test_*.py"), *TESTS_DIR.rglob("conftest.py")]):
         if path.name == Path(__file__).name:
             continue
         source = path.read_text(encoding="utf-8")

@@ -73,6 +73,9 @@ class PendingRequirement(BaseModel):
 
     req: Any
     run_id: str | None = None
+    #: What the window was shown for it — kept so a backend that
+    #: restarted can show it again.
+    request: msg.HITLRequest | None = None
 
 
 class ApplyDecisionResult(BaseModel):

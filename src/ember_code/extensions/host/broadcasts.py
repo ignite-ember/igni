@@ -133,6 +133,23 @@ class BroadcastSignals:
         self.state.approvals.setdefault(session_id, {})[r.requirement_id] = approval
         return approval
 
+    def restore_approvals(self, session_id: str, waiting: list[msg.Message]) -> None:
+        """Take the session's waiting approvals from the backend, quietly.
+
+        The backend keeps them in the database
+        (:class:`~ember_code.core.session.approval_journal.ApprovalJournal`);
+        after a restart this is how the host learns of them before any
+        window attaches and has them shown again. Nothing is emitted:
+        they were requested before, and an extension that listened then
+        heard it.
+        """
+        approvals = self.state.approvals.setdefault(session_id, {})
+        for paused in waiting:
+            if isinstance(paused, msg.RunPaused):
+                for request in paused.requirements:
+                    if request.requirement_id not in approvals:
+                        self._approval(session_id, request)
+
     def _on_run_paused(self, m: msg.RunPaused) -> None:
         approvals = [self._approval(m.session_id, r) for r in m.requirements]
         self.model.emit(

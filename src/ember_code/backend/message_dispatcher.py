@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from collections.abc import MutableSequence
 from typing import Any
 
 from ember_code.backend.login_coordinator import LoginCoordinator
@@ -72,7 +73,7 @@ class MessageDispatcher:
         backend: Any,
         transport: Any,
         rpc_table: dict,
-        queue: list[str],
+        queue: MutableSequence[str],
         login: LoginCoordinator | None,
         extensions: ExtensionRpc | None = None,
     ) -> None:

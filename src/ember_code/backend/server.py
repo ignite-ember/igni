@@ -30,7 +30,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, MutableSequence
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -157,6 +157,8 @@ class BackendServer:
         self._settings = bootstrap.settings
         self._session_prefs = bootstrap.session_prefs
         self._hitl_store = bootstrap.hitl_store
+        #: Messages typed during a run, durable — the runtime's queue.
+        self.message_queue = bootstrap.message_queue
         self._hitl_tracer = bootstrap.hitl_tracer
         self._pending_store = bootstrap.pending_store
 
@@ -953,7 +955,7 @@ class BackendServer:
 
     # ── Team-wiring ───────────────────────────────────────────────
 
-    def wire_queue_hook(self, queue: list) -> None:
+    def wire_queue_hook(self, queue: MutableSequence[str]) -> None:
         """See :meth:`TeamWiring.wire_queue_hook`."""
         self.team_wiring.wire_queue_hook(queue)
 

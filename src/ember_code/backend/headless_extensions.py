@@ -115,6 +115,10 @@ class HeadlessHostBackend:
     def views(self, session_id: str) -> list[dict[str, Any]]:
         return []
 
+    def waiting_approvals(self, session_id: str) -> list[Message]:
+        # Headless runs ask nobody: nothing waits on a person.
+        return []
+
     def project_dir_of(self, session_id: str) -> Path:
         return self.project_dir
 

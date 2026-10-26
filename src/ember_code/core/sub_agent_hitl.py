@@ -16,6 +16,15 @@ then resumes the sub-agent via ``acontinue_run``.
 Scope: per-Session. One instance lives on ``Session`` and is injected
 into ``OrchestrateTools``. Threading: every shared field is touched only
 from the asyncio event loop; no locks needed.
+
+Durable when given an :class:`ApprovalJournal` (:meth:`attach_journal`;
+the backend always does): each request is a row from the moment it is
+pushed until it is answered. After a restart :meth:`restore` brings the
+requests back with fresh events, so they are shown again and can be
+answered. The ``spawn_agent`` call that was waiting on one died with the
+backend, so nothing resumes on the answer — its parent run is surfaced
+as interrupted, like any run a restart cut off — but the person is not
+left with a question nobody can take.
 """
 
 from __future__ import annotations
@@ -25,12 +34,16 @@ import logging
 import os
 import time
 import uuid
+from collections.abc import Callable
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
 from ember_code.core.paths import DEFAULT_DATA_DIR
+from ember_code.core.session.approval_journal import ApprovalJournal, ApprovalOrigin
+from ember_code.protocol import messages as msg
+from ember_code.protocol.agno_tool_formatter import default_registry
 
 if TYPE_CHECKING:
     from agno.run.base import RunRequirement
@@ -79,6 +92,86 @@ class SubAgentHITLCoordinator:
         #: means a requirement pushed now would wait for ever — headless
         #: ``-p``, CI — so a caller that needs a yes must refuse instead.
         self.listeners = 0
+        self._journal: ApprovalJournal | None = None
+        self._session_id: Callable[[], str] = lambda: ""
+        #: Requests read back after a restart: nothing waits on them.
+        self._restored: set[str] = set()
+
+    # ── Durability ────────────────────────────────────────────────
+
+    def attach_journal(self, journal: ApprovalJournal, session_id: Callable[[], str]) -> None:
+        """Write requests through to ``journal`` from now on."""
+        self._journal = journal
+        self._session_id = session_id
+
+    def restore(self, session_id: str) -> int:
+        """Bring back what ``session_id`` left waiting; returns how many."""
+        if self._journal is None:
+            return 0
+        restored = 0
+        for stored in self._journal.waiting(session_id):
+            if stored.origin is not ApprovalOrigin.SUB_AGENT:
+                continue
+            if stored.request is not None and stored.request.details:
+                stored.requirement.details = stored.request.details  # type: ignore[attr-defined]
+            # Already "surfaced": it reaches a window by
+            # :meth:`waiting_requests`, when one attaches.
+            self._pending[stored.requirement_id] = _PendingEntry(
+                requirement=stored.requirement,
+                run_id=stored.run_id,
+                agent_path=stored.agent_path,
+                surfaced=True,
+            )
+            self._restored.add(stored.requirement_id)
+            restored += 1
+        return restored
+
+    def request_for(self, req_id: str) -> msg.HITLRequest | None:
+        """The request a window is shown for ``req_id``."""
+        entry = self._pending.get(req_id)
+        if entry is None:
+            return None
+        req = entry.requirement
+        tool_exec = getattr(req, "tool_execution", None)
+        raw_name = str(getattr(tool_exec, "tool_name", "") if tool_exec else "")
+        return msg.HITLRequest(
+            requirement_id=req_id,
+            tool_name=raw_name,
+            friendly_name=default_registry().friendly_name(raw_name),
+            tool_args=dict(getattr(tool_exec, "tool_args", {}) if tool_exec else {}),
+            agent_path=list(entry.agent_path),
+            details=str(getattr(req, "details", "") or ""),
+            details_pending=bool(getattr(req, "details_pending", False)),
+        )
+
+    def waiting_requests(self) -> list[msg.RunPaused]:
+        """One ``RunPaused`` per sub-agent run with requests not yet
+        answered — what a window attaching to the session is shown."""
+        by_run: dict[str, list[msg.HITLRequest]] = {}
+        for req_id, entry in self._pending.items():
+            if entry.event.is_set():
+                continue
+            request = self.request_for(req_id)
+            if request is not None:
+                by_run.setdefault(entry.run_id, []).append(request)
+        return [msg.RunPaused(run_id=run_id, requirements=reqs) for run_id, reqs in by_run.items()]
+
+    def _write(self, req_id: str) -> None:
+        if self._journal is None:
+            return
+        entry = self._pending[req_id]
+        self._journal.record(
+            requirement_id=req_id,
+            session_id=self._session_id(),
+            run_id=entry.run_id,
+            origin=ApprovalOrigin.SUB_AGENT,
+            requirement=entry.requirement,
+            request=self.request_for(req_id),
+        )
+
+    def _forget(self, req_id: str) -> None:
+        if self._journal is not None:
+            self._journal.forget(req_id)
 
     async def push_requirement(
         self,
@@ -110,6 +203,7 @@ class SubAgentHITLCoordinator:
             run_id=run_id,
             agent_path=list(agent_path or []),
         )
+        self._write(req_id)
         self.new_arrival.set()
         return req_id
 
@@ -141,6 +235,10 @@ class SubAgentHITLCoordinator:
         entry.requirement.details = details
         if hasattr(entry.requirement, "details_pending"):
             entry.requirement.details_pending = False
+        if self._journal is not None:
+            request = self.request_for(req_id)
+            if request is not None:
+                self._journal.update_request(req_id, request)
         if entry.surfaced:
             self._detail_updates.append((req_id, details))
             self.new_arrival.set()
@@ -169,6 +267,12 @@ class SubAgentHITLCoordinator:
         else:
             entry.requirement.reject(note="User denied")
         entry.event.set()
+        # Answered: a restart from here on must not ask again.
+        self._forget(req_id)
+        if req_id in self._restored:
+            # Nothing waits on a restored request to clean it up.
+            self._restored.discard(req_id)
+            self._pending.pop(req_id, None)
         return True
 
     async def wait_resolved(self, req_id: str) -> RunRequirement:
@@ -180,3 +284,4 @@ class SubAgentHITLCoordinator:
     def cleanup(self, req_id: str) -> None:
         """Drop the entry once spawn_agent has resumed past it."""
         self._pending.pop(req_id, None)
+        self._forget(req_id)

@@ -20,6 +20,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+from collections.abc import MutableSequence
 from pathlib import Path
 from typing import Any
 
@@ -149,7 +150,7 @@ class BackendApp:
         self._login: LoginCoordinator | None = None
         self._rpc_router: RpcRouter | None = None
         self._orchestrator: SessionOrchestrator | None = None
-        self._queue: list[str] = []
+        self._queue: MutableSequence[str] = []
         # Built in ``_start_extensions``, once there is an MCP manager
         # to start extensions with.
         self._distribution: ExtensionDistribution | None = None
@@ -214,6 +215,10 @@ class BackendApp:
         # Async post-construction wiring (hydrate any persisted
         # ``/loop`` state from the project's ``state.db``).
         await self._backend.startup()
+        # The boot session's queue of messages typed during a run is
+        # the backend's durable one: what a previous backend left
+        # waiting is in it already.
+        self._queue = self._backend.message_queue
 
         loop = asyncio.get_running_loop()
         self._supervisor = BackendSupervisor(

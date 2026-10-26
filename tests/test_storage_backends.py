@@ -6,13 +6,7 @@
   cloud takes (``IGNI_DATABASE_URL`` set, rows scoped by org, producer
   and project), on the dialect the desktop uses;
 * ``postgresql`` — when ``IGNI_TEST_DATABASE_URL`` names a server the
-  tests may create and drop databases on, e.g.::
-
-      docker run --rm -d --name igni-pg-test -e POSTGRES_PASSWORD=pw \\
-          -p 55432:5432 postgres:17
-      IGNI_TEST_DATABASE_URL=postgresql://postgres:pw@localhost:55432/postgres \\
-          pytest tests/test_storage_backends.py -rs
-
+  tests may create and drop databases on (``tests/storage_backends.py``).
   Unset, those cases skip and say so (``-rs`` prints why). Each run
   creates a database of its own and drops it afterwards.
 
@@ -37,7 +31,7 @@ from agno.session import AgentSession
 from alembic.autogenerate import compare_metadata
 from alembic.migration import MigrationContext
 from click.testing import CliRunner
-from sqlalchemy import create_engine, text
+from sqlalchemy import text
 from sqlalchemy.engine import make_url
 
 from ember_code.cli.migrate import migrate
@@ -47,12 +41,13 @@ from ember_code.core.db.engine import cache
 from ember_code.core.db.locator import StorageLocator
 from ember_code.core.db.schema import HEAD_REVISION, SchemaRevision
 from ember_code.core.db.scope import NoTenantError, StorageScope, Tenant, tenancy
-from ember_code.core.db.urls import DatabaseUrl, Dialect
+from ember_code.core.db.urls import DatabaseUrl
 from ember_code.core.loop.models import LoopState
 from ember_code.core.loop.store import LoopProgressStore, LoopStore
 from ember_code.core.memory.scoped_postgres import ScopedAsyncPostgresDb
 from ember_code.core.scheduler.models import ScheduledTask
 from ember_code.core.scheduler.store import TaskStore
+from ember_code.core.session import approval_journal, queued_messages  # noqa: F401 — their tables
 from ember_code.core.session.client_state import ClientStateStore
 from ember_code.core.session.pending_messages import PendingMessageStore
 from ember_code.core.session.session_directories import SessionDirectoryStore
@@ -69,75 +64,7 @@ from ember_code.core.utils.context_memory import ProjectMemoryBank
 from ember_code.core.utils.memory_files import DatabaseMemoryFiles, MemoryFiles
 from ember_code.notifications.local_store import LocalNotificationStore
 from ember_code.notifications.schemas import ExtensionNotice, NotificationTarget
-
-#: Names a PostgreSQL server the tests may create databases on.
-POSTGRES_ENV = "IGNI_TEST_DATABASE_URL"
-
-_POSTGRES_SKIP = (
-    f"{POSTGRES_ENV} is unset: the PostgreSQL storage tests need a server they may "
-    "create and drop databases on (see this module's docstring for a docker one-liner)"
-)
-
-
-class ThrowawayPostgres:
-    """A database of the run's own on the server ``IGNI_TEST_DATABASE_URL`` names."""
-
-    def __init__(self, server_url: str) -> None:
-        self._server = make_url(server_url).set(drivername="postgresql+psycopg")
-        self._name = f"igni_test_{uuid.uuid4().hex[:12]}"
-
-    def _admin(self):  # noqa: ANN202 — a short-lived engine
-        return create_engine(self._server, isolation_level="AUTOCOMMIT")
-
-    def create(self) -> str:
-        admin = self._admin()
-        with admin.connect() as connection:
-            connection.execute(text(f'CREATE DATABASE "{self._name}"'))
-        admin.dispose()
-        return self._server.set(database=self._name).render_as_string(hide_password=False)
-
-    def drop(self) -> None:
-        cache.dispose_all()
-        admin = self._admin()
-        with admin.connect() as connection:
-            connection.execute(text(f'DROP DATABASE IF EXISTS "{self._name}" WITH (FORCE)'))
-        admin.dispose()
-
-
-@pytest.fixture(scope="module")
-def _postgres_url() -> Iterator[str]:
-    server = os.environ.get(POSTGRES_ENV, "").strip()
-    if not server:
-        pytest.skip(_POSTGRES_SKIP)
-    database = ThrowawayPostgres(server)
-    url = database.create()
-    try:
-        yield url
-    finally:
-        database.drop()
-
-
-@pytest.fixture(params=[Dialect.SQLITE, Dialect.POSTGRESQL], ids=lambda d: d.value)
-def database_url(request, tmp_path: Path) -> DatabaseUrl:
-    """The shared database under test, on each dialect."""
-    if request.param is Dialect.POSTGRESQL:
-        return DatabaseUrl.parse(request.getfixturevalue("_postgres_url"))
-    return DatabaseUrl.for_file(tmp_path / "shared.db")
-
-
-def _scope(project: str = "project") -> StorageScope:
-    """A scope nobody else in the run uses."""
-    return StorageScope.for_tenant(
-        Tenant(org=f"org-{uuid.uuid4().hex[:8]}", producer=f"person:{uuid.uuid4().hex[:8]}"),
-        project=project,
-    )
-
-
-def _pair(url: DatabaseUrl) -> tuple[Database, Database]:
-    """Two handles on one database, for two producers."""
-    first = Database(url, scope=_scope())
-    return first, first.in_scope(_scope())
-
+from tests.storage_backends import Scopes
 
 # ── The schema ────────────────────────────────────────────────────
 
@@ -167,7 +94,7 @@ def test_igni_migrate_prepares_the_named_database(database_url: DatabaseUrl, tmp
 
 
 async def test_scheduled_tasks_are_scoped(database_url: DatabaseUrl):
-    mine, theirs = _pair(database_url)
+    mine, theirs = Scopes.pair(database_url)
     task = ScheduledTask(
         id=uuid.uuid4().hex[:8],
         description="nightly",
@@ -182,7 +109,7 @@ async def test_scheduled_tasks_are_scoped(database_url: DatabaseUrl):
 
 
 async def test_the_active_loop_is_one_row_per_scope(database_url: DatabaseUrl):
-    mine, theirs = _pair(database_url)
+    mine, theirs = Scopes.pair(database_url)
     await LoopStore(db=mine).save(
         LoopState(run_id="a", prompt="mine", iteration_index=0, iterations_remaining=3)
     )
@@ -196,7 +123,7 @@ async def test_the_active_loop_is_one_row_per_scope(database_url: DatabaseUrl):
 
 
 async def test_loop_progress_is_scoped(database_url: DatabaseUrl):
-    mine, theirs = _pair(database_url)
+    mine, theirs = Scopes.pair(database_url)
     await LoopProgressStore(db=mine).set("run", "step", "done")
     await LoopProgressStore(db=theirs).set("run", "step", "other")
     assert await LoopProgressStore(db=mine).list("run") == [("step", "done")]
@@ -207,7 +134,7 @@ async def test_loop_progress_is_scoped(database_url: DatabaseUrl):
 
 async def test_background_processes_upsert_per_scope(database_url: DatabaseUrl):
     """A pid is per machine: two producers' VMs may both have pid 42."""
-    mine, theirs = _pair(database_url)
+    mine, theirs = Scopes.pair(database_url)
     for db, cmd in ((mine, "npm run dev"), (theirs, "make serve")):
         result = await BackgroundProcessStore(db=db).upsert(
             BackgroundProcessRow(pid=42, cmd=cmd, pgid=42, started_at=1)
@@ -226,7 +153,7 @@ async def test_background_processes_upsert_per_scope(database_url: DatabaseUrl):
 
 
 def test_received_messages_are_scoped(database_url: DatabaseUrl):
-    mine, theirs = _pair(database_url)
+    mine, theirs = Scopes.pair(database_url)
     message_id = PendingMessageStore(mine).record_received("s1", "hello")
     PendingMessageStore(theirs).record_received("s1", "theirs")
     PendingMessageStore(theirs).mark_completed(message_id)
@@ -241,7 +168,7 @@ def test_received_messages_are_scoped(database_url: DatabaseUrl):
 
 
 def test_session_preferences_are_scoped(database_url: DatabaseUrl):
-    mine, theirs = _pair(database_url)
+    mine, theirs = Scopes.pair(database_url)
     SessionPreferencesStore(mine).set_model("s1", "model-a")
     SessionPreferencesStore(mine).set_model("s1", "model-b")
     assert SessionPreferencesStore(mine).get_model("s1") == "model-b"
@@ -253,8 +180,8 @@ def test_session_directories_are_found_without_knowing_the_project(
 ):
     """Which folder a session is in is asked before the project is known,
     so the lookup filters by org and producer — and only by them."""
-    mine = Database(database_url, scope=_scope().without_project())
-    theirs = mine.in_scope(_scope().without_project())
+    mine = Database(database_url, scope=Scopes.fresh().without_project())
+    theirs = mine.in_scope(Scopes.fresh().without_project())
     SessionDirectoryStore(mine).set_dir("s1", tmp_path / "a")
     SessionDirectoryStore(mine).set_dir("s1", tmp_path / "b")
     assert SessionDirectoryStore(mine).get_dir("s1") == str(tmp_path / "b")
@@ -262,7 +189,7 @@ def test_session_directories_are_found_without_knowing_the_project(
 
 
 def test_client_state_is_scoped(database_url: DatabaseUrl):
-    mine, theirs = _pair(database_url)
+    mine, theirs = Scopes.pair(database_url)
     ClientStateStore(mine).set_value("window", "draft", "one")
     ClientStateStore(mine).set_value("window", "draft", "two")
     ClientStateStore(theirs).set_value("window", "draft", "theirs")
@@ -272,7 +199,7 @@ def test_client_state_is_scoped(database_url: DatabaseUrl):
 
 
 def test_local_notifications_are_scoped_and_once_per_event(database_url: DatabaseUrl):
-    mine, theirs = _pair(database_url)
+    mine, theirs = Scopes.pair(database_url)
     notice = ExtensionNotice(
         kind="export",
         title="Export ready",
@@ -290,7 +217,7 @@ def test_local_notifications_are_scoped_and_once_per_event(database_url: Databas
 
 
 def test_local_notifications_keep_the_newest(database_url: DatabaseUrl, monkeypatch):
-    db = Database(database_url, scope=_scope())
+    db = Database(database_url, scope=Scopes.fresh())
     store = LocalNotificationStore(db)
     monkeypatch.setattr(LocalNotificationStore, "KEEP", 3)
     for n in range(5):
@@ -308,7 +235,7 @@ def test_local_notifications_keep_the_newest(database_url: DatabaseUrl, monkeypa
 
 
 def test_memory_files_are_scoped(database_url: DatabaseUrl, tmp_path: Path):
-    mine, theirs = _pair(database_url)
+    mine, theirs = Scopes.pair(database_url)
     DatabaseMemoryFiles(mine).write("MEMORY.md", "- [a](a.md)\n")
     DatabaseMemoryFiles(mine).write("MEMORY.md", "- [b](b.md)\n")
     DatabaseMemoryFiles(mine).write("b.md", "remember b")
@@ -359,9 +286,9 @@ def test_the_desktop_keeps_its_files(tmp_path: Path):
 
 
 def test_attachments_are_large_objects_written_and_read_in_chunks(
-    _postgres_url: str, tmp_path: Path
+    postgres_url: str, tmp_path: Path
 ):
-    url = DatabaseUrl.parse(_postgres_url)
+    url = DatabaseUrl.parse(postgres_url)
     tenancy.use(lambda: Tenant(org="acme", producer="person:ada"))
     locator = StorageLocator(database_url=url.url, data_dir=tmp_path)
     store = Attachments.for_project(tmp_path, locator)
@@ -383,16 +310,16 @@ def test_attachments_are_large_objects_written_and_read_in_chunks(
     assert max(len(p) for p in pieces) <= LargeObjectAttachments.CHUNK
     assert len(written) > 1
 
-    other = LargeObjectAttachments(Database(url, scope=_scope()))
+    other = LargeObjectAttachments(Database(url, scope=Scopes.fresh()))
     with pytest.raises(FileNotFoundError):
         list(other.open(stored.ref))
     assert other.delete(stored.ref) is False
     assert store.delete(stored.ref) is True  # type: ignore[attr-defined]
 
 
-def test_a_failed_upload_leaves_no_large_object(_postgres_url: str):
-    url = DatabaseUrl.parse(_postgres_url)
-    store = LargeObjectAttachments(Database(url, scope=_scope()))
+def test_a_failed_upload_leaves_no_large_object(postgres_url: str):
+    url = DatabaseUrl.parse(postgres_url)
+    store = LargeObjectAttachments(Database(url, scope=Scopes.fresh()))
     with cache.get_engine(url).connect() as connection:
         before = connection.scalar(text("SELECT count(*) FROM pg_largeobject_metadata"))
     with pytest.raises(ValueError):
@@ -412,9 +339,9 @@ def test_base64_chunks_decode_like_the_whole(tmp_path: Path):
     assert Path(stored.ref).read_bytes() == payload
 
 
-async def test_agno_rows_are_kept_to_their_scope(_postgres_url: str):
-    url = DatabaseUrl.parse(_postgres_url)
-    first, second = _scope(), _scope()
+async def test_agno_rows_are_kept_to_their_scope(postgres_url: str):
+    url = DatabaseUrl.parse(postgres_url)
+    first, second = Scopes.fresh(), Scopes.fresh()
     engine = cache.get_async_engine(url)
 
     def agno_db(scope: StorageScope) -> ScopedAsyncPostgresDb:

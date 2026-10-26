@@ -17,7 +17,7 @@ each call:
 from __future__ import annotations
 
 import inspect
-from collections.abc import Callable
+from collections.abc import Callable, MutableSequence
 from typing import Any
 
 from .agno_adapter import AgnoCallableAdapter
@@ -46,7 +46,7 @@ class QueueInjectorHook(AgnoCallableAdapter):
     def __init__(
         self,
         buffer: InjectedRunBuffer,
-        queue: list[str],
+        queue: MutableSequence[str],
         callbacks: QueueCallbacks | None = None,
     ) -> None:
         self._mark_as_coroutine()

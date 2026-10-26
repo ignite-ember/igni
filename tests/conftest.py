@@ -1,5 +1,7 @@
 """Shared test fixtures."""
 
+import os
+from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
@@ -8,11 +10,13 @@ from dotenv import load_dotenv
 from ember_code.core.config.schemas.storage_and_paths import StorageConfig
 from ember_code.core.config.settings import load_settings
 from ember_code.core.db.scope import tenancy
+from ember_code.core.db.urls import DatabaseUrl, Dialect
 from ember_code.core.hooks.extension_gate import ExtensionHookGate
 from ember_code.core.paths import CONFIG_DIR
 from ember_code.extensions.faults import ExtensionFaults
 from ember_code.extensions.host.hooks import ExtensionHooks
 from ember_code.extensions.host.processes import ExtensionProcesses
+from tests.storage_backends import ThrowawayPostgres
 
 # Load environment variables from .env at the repo root before any test
 # runs. This lets developers keep credentials for live tests
@@ -56,6 +60,36 @@ def _desktop_storage(monkeypatch):
     monkeypatch.delenv(StorageConfig.DATABASE_URL_ENV, raising=False)
     yield
     tenancy.use(None)
+
+
+#: Names a PostgreSQL server the storage tests may create and drop databases on.
+POSTGRES_TEST_URL_ENV = "IGNI_TEST_DATABASE_URL"
+
+
+@pytest.fixture(scope="session")
+def postgres_url() -> Iterator[str]:
+    """A throwaway PostgreSQL database for the run, or a skip saying why not."""
+    server = os.environ.get(POSTGRES_TEST_URL_ENV, "").strip()
+    if not server:
+        pytest.skip(
+            f"{POSTGRES_TEST_URL_ENV} is unset: the PostgreSQL storage tests need a server "
+            "they may create and drop databases on (tests/storage_backends.py has a "
+            "docker one-liner)"
+        )
+    database = ThrowawayPostgres(server)
+    url = database.create()
+    try:
+        yield url
+    finally:
+        database.drop()
+
+
+@pytest.fixture(params=[Dialect.SQLITE, Dialect.POSTGRESQL], ids=lambda d: d.value)
+def database_url(request, tmp_path: Path) -> DatabaseUrl:
+    """A shared database, on each dialect (``tests/storage_backends.py``)."""
+    if request.param is Dialect.POSTGRESQL:
+        return DatabaseUrl.parse(request.getfixturevalue("postgres_url"))
+    return DatabaseUrl.for_file(tmp_path / "shared.db")
 
 
 @pytest.fixture(autouse=True)
