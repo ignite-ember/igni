@@ -107,6 +107,22 @@ class WaitingSpawnModel(ScopedColumns, Base):
     created_at: Mapped[int] = mapped_column(Integer, nullable=False)
 
 
+class TurnResultModel(ScopedColumns, Base):
+    """A finished call's result, in a turn whose spawn waits on a person."""
+
+    __tablename__ = "turn_results"
+    __table_args__ = (
+        PrimaryKeyConstraint(
+            "org", "producer", "project", "run_id", "tool_call_id", name="pk_turn_results"
+        ),
+    )
+
+    run_id: Mapped[str] = mapped_column(String, nullable=False)
+    tool_call_id: Mapped[str] = mapped_column(String, nullable=False)
+    result: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[int] = mapped_column(Integer, nullable=False)
+
+
 class SpawnLink(BaseModel):
     """What continuing a paused sub-agent run cold needs."""
 
@@ -251,6 +267,53 @@ class ApprovalJournal:
         except Exception as exc:
             logger.debug("approval journal: record spawn %s failed: %s", link.run_id, exc)
 
+    def record_turn_result(self, run_id: str, tool_call_id: str, result: str) -> None:
+        try:
+            with self._db.sync_session() as session, session.begin():
+                session.execute(
+                    delete(TurnResultModel).where(
+                        self._db.scope.where(TurnResultModel),
+                        TurnResultModel.run_id == run_id,
+                        TurnResultModel.tool_call_id == tool_call_id,
+                    )
+                )
+                session.add(
+                    TurnResultModel(
+                        **self._db.scope.stamp(),
+                        run_id=run_id,
+                        tool_call_id=tool_call_id,
+                        result=result,
+                        created_at=int(time.time()),
+                    )
+                )
+        except Exception as exc:
+            logger.debug("approval journal: turn result %s failed: %s", tool_call_id, exc)
+
+    def turn_results(self, run_id: str) -> dict[str, str]:
+        """``tool_call_id → result`` of the calls of ``run_id`` that finished."""
+        try:
+            with self._db.sync_session() as session:
+                rows = session.execute(
+                    select(TurnResultModel.tool_call_id, TurnResultModel.result).where(
+                        self._db.scope.where(TurnResultModel), TurnResultModel.run_id == run_id
+                    )
+                ).all()
+        except Exception as exc:
+            logger.debug("approval journal: read turn %s failed: %s", run_id, exc)
+            return {}
+        return {call_id: result for call_id, result in rows}
+
+    def forget_turn(self, run_id: str) -> None:
+        try:
+            with self._db.sync_session() as session, session.begin():
+                session.execute(
+                    delete(TurnResultModel).where(
+                        self._db.scope.where(TurnResultModel), TurnResultModel.run_id == run_id
+                    )
+                )
+        except Exception as exc:
+            logger.debug("approval journal: forget turn %s failed: %s", run_id, exc)
+
     def spawn(self, run_id: str) -> SpawnLink | None:
         try:
             with self._db.sync_session() as session:
@@ -355,6 +418,7 @@ __all__ = [
     "ApprovalOrigin",
     "SpawnLink",
     "StoredApproval",
+    "TurnResultModel",
     "WaitingApprovalModel",
     "WaitingSpawnModel",
 ]

@@ -39,6 +39,7 @@ from agno.run.base import RunStatus
 from agno.tools import tool
 
 from ember_code.backend.activity import Activity, ActivityState, SessionActivity
+from ember_code.backend.cold_spawn_resume import ColdSpawnResume
 from ember_code.backend.hitl_controller import HitlController
 from ember_code.backend.pause_handler import PauseHandler
 from ember_code.backend.pending_requirements_store import PendingRequirementsStore
@@ -47,6 +48,7 @@ from ember_code.core.config.settings import Settings
 from ember_code.core.db.database import Database
 from ember_code.core.db.engine import cache
 from ember_code.core.db.urls import DatabaseUrl
+from ember_code.core.hooks.turn_results import TurnResultHook
 from ember_code.core.memory.scoped_postgres import ScopedAsyncPostgresDb
 from ember_code.core.sub_agent_hitl import SubAgentHITLCoordinator
 from ember_code.core.tools.orchestrate import OrchestrateTools
@@ -255,6 +257,7 @@ class Backend:
         with_spawn: bool,
         spawn_timeout: int | None = None,
         thorough: bool = False,
+        extra_tools: list[Any] | None = None,
     ) -> None:
         self.agno_db = store.agno()
         state = store.state()
@@ -278,7 +281,8 @@ class Backend:
                     settings=settings,
                     session_id=SESSION,
                     hitl_coordinator=self.coordinator,
-                )
+                ),
+                *(extra_tools or []),
             ]
         self.main = Agent(
             name=MAIN,
@@ -286,6 +290,9 @@ class Backend:
             tools=tools,
             db=self.agno_db,
             session_id=SESSION,
+            # What the session gives its main agent: finished calls'
+            # results kept for a turn a restart may cut.
+            tool_hooks=[TurnResultHook(self.coordinator)],
         )
         self.collect = Collect()
         self.session = SimpleNamespace(
@@ -607,6 +614,96 @@ async def test_a_nested_chain_continued_after_a_restart_asks_again_and_finishes(
     assert "planner done: published release" in final
     assert "cleaner says build removed and cache removed" in final
     assert after.hitl.waiting_messages() == []
+
+    running.cancel()
+    del dead
+
+
+def _turn_tools(side: Side) -> list[Any]:
+    def note(text: str) -> str:
+        """Write a note."""
+        side.calls.append(f"note {text}")
+        return f"noted {text}"
+
+    async def stall() -> str:
+        """Wait on something that never comes."""
+        side.calls.append("stall started")
+        await asyncio.Event().wait()
+        return "never"
+
+    return [note, stall]
+
+
+def _main_turn_of_three(messages: list[Message]) -> ModelResponse:
+    results = _tool_results(messages)
+    if not results:
+        return ModelResponse(
+            tool_calls=[
+                {
+                    "id": "call-spawn",
+                    "type": "function",
+                    "function": {
+                        "name": "spawn_agent",
+                        "arguments": json.dumps(
+                            {"task": "clean the build", "agent_name": "cleaner"}
+                        ),
+                    },
+                },
+                {
+                    "id": "call-note",
+                    "type": "function",
+                    "function": {"name": "note", "arguments": json.dumps({"text": "hi"})},
+                },
+                {
+                    "id": "call-stall",
+                    "type": "function",
+                    "function": {"name": "stall", "arguments": "{}"},
+                },
+            ]
+        )
+    return ModelResponse(content=" || ".join(results))
+
+
+async def test_a_turn_shared_with_other_calls_continues_complete_after_a_restart(
+    database_url: DatabaseUrl, tmp_path: Path
+):
+    """The main agent spawns the cleaner, writes a note and starts a call
+    that never finishes, in one turn. The cleaner waits on a person; the
+    backend dies. After the restart the turn continues with the note's
+    stored result, the cleaner's answer, and the stalled call reported as
+    interrupted — not run again."""
+    side = Side()
+    store = Store(database_url, tmp_path)
+    before = Backend(
+        store, side, main_script=_main_turn_of_three, with_spawn=True, extra_tools=_turn_tools(side)
+    )
+
+    async def run_main() -> None:
+        async for _ in before.main.arun("tidy up", stream=True, stream_events=True):
+            pass
+
+    running = asyncio.create_task(run_main())
+    [request] = await _until_waiting(before.coordinator)
+    for _ in range(200):
+        if "note hi" in side.calls and "stall started" in side.calls:
+            break
+        await asyncio.sleep(0.01)
+    dead = before
+
+    after = Backend(
+        store, side, main_script=_main_turn_of_three, with_spawn=True, extra_tools=_turn_tools(side)
+    )
+    replies = await after.answer(request.requirement_id)
+    assert not [r for r in replies if isinstance(r, msg.Error)], replies
+
+    results = after.collect.completed_content().split(" || ")
+    assert results[0].startswith("[Agent: cleaner]") and "cleaner says build removed" in results[0]
+    assert results[1] == "noted hi"
+    assert results[2] == ColdSpawnResume.INTERRUPTED
+    assert side.calls.count("stall started") == 1, "the interrupted call is not run again"
+    assert side.calls.count("note hi") == 1
+    main_run_id = after.collect.events[-1].run_id
+    assert ApprovalJournal(store.state()).turn_results(main_run_id) == {}, "forgotten once used"
 
     running.cancel()
     del dead

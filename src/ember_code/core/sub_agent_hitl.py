@@ -110,6 +110,11 @@ class SubAgentHITLCoordinator:
         self._restored: set[str] = set()
         #: Requests a stream handler is blocked on right now.
         self._awaited: set[str] = set()
+        #: Finished calls' results by run, for the runs a spawn of theirs
+        #: may yet wait under (:meth:`tool_finished`); bounded.
+        self._turns: dict[str, dict[str, str]] = {}
+        #: Runs with a spawn waiting under them: their results are written.
+        self._linked_runs: set[str] = set()
 
     # ── Durability ────────────────────────────────────────────────
 
@@ -224,10 +229,42 @@ class SubAgentHITLCoordinator:
             request=self.request_for(req_id),
         )
 
+    #: Runs whose finished calls are remembered in memory at once.
+    TURNS_KEPT = 64
+
+    def tool_finished(self, run_id: str, tool_call_id: str, result: str) -> None:
+        """A call of ``run_id`` finished (``core/hooks/turn_results.py``).
+
+        Kept for the turn a spawn of that run may be waiting in; written
+        to the journal once a spawn of the run waits on a person, so a
+        restart can continue the turn with every call's result.
+        """
+        turn = self._turns.setdefault(run_id, {})
+        turn[tool_call_id] = result
+        while len(self._turns) > self.TURNS_KEPT:
+            self._turns.pop(next(iter(self._turns)))
+        if self._journal is not None and run_id in self._linked_runs:
+            self._journal.record_turn_result(run_id, tool_call_id, result)
+
+    def turn_results(self, run_id: str) -> dict[str, str]:
+        return self._journal.turn_results(run_id) if self._journal is not None else {}
+
+    def forget_turn(self, run_id: str) -> None:
+        self._linked_runs.discard(run_id)
+        self._turns.pop(run_id, None)
+        if self._journal is not None:
+            self._journal.forget_turn(run_id)
+
     def _link(self, run_id: str, session_id: str, agent_path: list[str]) -> None:
         parents = SpawnCalls.current()
         if self._journal is None or not parents or not session_id or not agent_path:
             return
+        for parent in parents:
+            if parent.run_id in self._linked_runs:
+                continue
+            self._linked_runs.add(parent.run_id)
+            for call_id, result in self._turns.get(parent.run_id, {}).items():
+                self._journal.record_turn_result(parent.run_id, call_id, result)
         self._journal.record_spawn(
             SpawnLink(
                 run_id=run_id,

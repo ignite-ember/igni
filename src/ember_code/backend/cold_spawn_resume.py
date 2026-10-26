@@ -25,6 +25,7 @@ The same happens on the desktop after igni is quit and started again.
 from __future__ import annotations
 
 import copy
+import json
 import logging
 from collections.abc import AsyncIterator
 from typing import TYPE_CHECKING, Any
@@ -78,8 +79,10 @@ class ColdSpawnResume:
         )
         self._session.sub_agent_hitl.forget_spawn(ready.run_id)
         answer = self.tool_result(link.agent_name, link.parents[0], result)
+        coordinator = self._session.sub_agent_hitl
         for depth, parent in enumerate(link.parents):
-            run_output = self.paused_run(parent, answer)
+            run_output = self.paused_run(parent, answer, coordinator.turn_results(parent.run_id))
+            coordinator.forget_turn(parent.run_id)
             if self._is_main(parent):
                 main = self._session.main_team
                 async for proto in self._stream_factory(
@@ -150,28 +153,75 @@ class ColdSpawnResume:
         task = str(parent.tool_args.get("task", ""))
         return f"[Agent: {agent_name}]\n[Task: {task}]\n\nResponse:\n{result}"
 
-    @staticmethod
-    def paused_run(parent: ParentCall, answer: str) -> RunOutput:
-        """``parent``'s run as Agno pauses one on a tool executed outside it,
-        with ``answer`` as that tool's result."""
-        execution = ToolExecution(
-            tool_call_id=parent.tool_call_id,
-            tool_name=parent.tool_name,
-            tool_args=dict(parent.tool_args),
-            external_execution_required=True,
-        )
-        requirement = RunRequirement(tool_execution=execution)
-        requirement.set_external_execution_result(answer)
+    #: The result a call gets when the restart cut it off.
+    INTERRUPTED = (
+        "Not run to completion: igni restarted while this call was running, and its "
+        "result was lost. It may or may not have taken effect — check before relying "
+        "on it, or run it again."
+    )
+
+    @classmethod
+    def paused_run(
+        cls, parent: ParentCall, answer: str, finished: dict[str, str] | None = None
+    ) -> RunOutput:
+        """``parent``'s run as Agno pauses one on tools executed outside it.
+
+        The waiting call's result is ``answer``. Every other call of the
+        same assistant turn gets its stored result when it finished, and
+        :attr:`INTERRUPTED` when it was still running at the restart — it
+        is not run again: a call cut off may already have done what it
+        does (a deploy, a write), and doing it twice is worse than the
+        model knowing it was interrupted. So the continued run sees a
+        complete turn.
+        """
+        done = finished or {}
+        executions: list[ToolExecution] = []
+        requirements: list[RunRequirement] = []
+        calls = parent.turn() or [
+            {
+                "id": parent.tool_call_id,
+                "function": {"name": parent.tool_name, "arguments": "{}"},
+            }
+        ]
+        for call in calls:
+            call_id = str(call.get("id") or "")
+            function = call.get("function") or {}
+            if call_id == parent.tool_call_id:
+                name, args, result = parent.tool_name, dict(parent.tool_args), answer
+            else:
+                name = str(function.get("name") or "")
+                args = cls._arguments(function.get("arguments"))
+                result = done.get(call_id, cls.INTERRUPTED)
+            execution = ToolExecution(
+                tool_call_id=call_id,
+                tool_name=name,
+                tool_args=args,
+                external_execution_required=True,
+            )
+            requirement = RunRequirement(tool_execution=execution)
+            requirement.set_external_execution_result(result)
+            executions.append(execution)
+            requirements.append(requirement)
         return RunOutput(
             run_id=parent.run_id,
             session_id=parent.session_id,
             agent_id=parent.agent_id or parent.agent_name,
             agent_name=parent.agent_name,
             messages=[Message.from_dict(m) for m in parent.messages],
-            tools=[execution],
-            requirements=[requirement],
+            tools=executions,
+            requirements=requirements,
             status=RunStatus.paused,
         )
+
+    @staticmethod
+    def _arguments(raw: Any) -> dict[str, Any]:
+        if isinstance(raw, dict):
+            return dict(raw)
+        try:
+            parsed = json.loads(raw or "{}")
+        except (TypeError, ValueError):
+            return {}
+        return parsed if isinstance(parsed, dict) else {}
 
     def _is_main(self, parent: ParentCall) -> bool:
         main = getattr(self._session, "main_team", None)

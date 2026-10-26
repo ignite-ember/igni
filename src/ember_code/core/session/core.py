@@ -70,6 +70,7 @@ from ember_code.core.hooks.executor import HookExecutor
 from ember_code.core.hooks.loader import HookLoader
 from ember_code.core.hooks.memory_sync import MemorySyncHook
 from ember_code.core.hooks.tool_hook import ToolEventHook
+from ember_code.core.hooks.turn_results import TurnResultHook
 from ember_code.core.init import ProjectInitializer
 from ember_code.core.learn import create_learning_machine  # noqa: F401 — test-patch target
 from ember_code.core.loop import LoopProgressStore, LoopStore, LoopToolResult
@@ -1339,10 +1340,15 @@ class Session:
             self._mcp_resolver_obj = resolver
         return resolver.resolve(server, tool)
 
-    def memory_sync_hooks(self) -> list[MemorySyncHook]:
-        """The tool hook that stores memory-file writes, in the cloud."""
+    def memory_sync_hooks(self) -> list[Any]:
+        """The main agent's durability hooks: memory-file writes stored (in
+        the cloud), and finished calls' results kept for a turn a restart
+        may cut (``core/hooks/turn_results.py``)."""
+        hooks: list[Any] = [TurnResultHook(self.sub_agent_hitl)]
         mirror = getattr(self, "memory_mirror", None)
-        return [MemorySyncHook(mirror)] if mirror is not None else []
+        if mirror is not None:
+            hooks.append(MemorySyncHook(mirror))
+        return hooks
 
     def _create_tool_event_hook(self) -> ToolEventHook:
         """Delegate to :meth:`ToolEventHookFactory.create`.

@@ -65,7 +65,7 @@ class ParentCall(BaseModel):
         if run_context is None or agent is None:
             return None
         messages = list(getattr(run_context, "messages", None) or [])
-        call_id = cls._find_call(messages, tool_name, tool_args)
+        call_id = cls.find_call(messages, tool_name, tool_args)
         if call_id is None:
             return None
         return cls(
@@ -79,8 +79,19 @@ class ParentCall(BaseModel):
             messages=[m.to_dict() for m in messages],
         )
 
+    def turn(self) -> list[dict[str, Any]]:
+        """The tool calls of the assistant turn that made this call, in order."""
+        for message in reversed(self.messages):
+            calls = message.get("tool_calls") or []
+            if message.get("role") == "assistant" and any(
+                c.get("id") == self.tool_call_id for c in calls
+            ):
+                return list(calls)
+        return []
+
     @staticmethod
-    def _find_call(messages: list[Any], tool_name: str, tool_args: dict[str, Any]) -> str | None:
+    def find_call(messages: list[Any], tool_name: str, tool_args: dict[str, Any]) -> str | None:
+        """The id of the newest assistant tool call to ``tool_name`` with these arguments."""
         for message in reversed(messages):
             if getattr(message, "role", None) != "assistant":
                 continue

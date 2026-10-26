@@ -44,6 +44,7 @@ import time
 import uuid
 from typing import TYPE_CHECKING, Any
 
+from ember_code.core.hooks.turn_results import TurnResultHook, TurnResultSink
 from ember_code.core.tools.orchestrate_events import (
     VIS_SPEC_PREFIX,
     AgentBuildResult,
@@ -433,6 +434,13 @@ class AgentSpawn(SpawnRunner):
         # every caller. Concurrent spawns of the same specialist race
         # on that state without a per-spawn copy.
         agent = copy.copy(shared)
+        # Its own list: the copy is shallow, and the pool's instance must
+        # not collect a hook per spawn.
+        if isinstance(self._hitl_coordinator, TurnResultSink):
+            agent.tool_hooks = [
+                *(agent.tool_hooks or []),
+                TurnResultHook(self._hitl_coordinator),
+            ]
 
         defn = self._pool.get_definition(self._agent_name)
         self._grant_nested_orchestration(agent, defn)
