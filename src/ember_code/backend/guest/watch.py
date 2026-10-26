@@ -77,8 +77,8 @@ class DirectoryWatch:
                 pass
         self._woken.set()
 
-    async def wait(self, timeout: float) -> bool:
-        """Until something changed in the directory, or ``timeout``. True when woken."""
+    async def wait(self, timeout: float | None) -> bool:
+        """Until something changed in the directory, or ``timeout`` (``None``: no limit). True when woken."""
         try:
             await asyncio.wait_for(self._woken.wait(), timeout)
         except TimeoutError:

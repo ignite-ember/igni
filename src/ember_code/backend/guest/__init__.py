@@ -12,7 +12,7 @@ from ember_code.backend.guest.contract import CloudGuest
 from ember_code.backend.guest.entropy import ProcessEntropy
 from ember_code.backend.guest.files import AtomicFile, ReadyFile
 from ember_code.backend.guest.paths import GuestPaths
-from ember_code.backend.guest.resume import ResumeWatch
+from ember_code.backend.guest.resume import Restored, RestoreWatch
 from ember_code.backend.guest.warm import WarmImports
 
 __all__ = [
@@ -26,7 +26,8 @@ __all__ = [
     "ProducerBinding",
     "ProducerEnv",
     "ReadyFile",
-    "ResumeWatch",
+    "RestoreWatch",
+    "Restored",
     "TokenTenant",
     "UnboundRefusal",
     "WarmImports",

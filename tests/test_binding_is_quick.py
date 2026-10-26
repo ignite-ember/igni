@@ -25,8 +25,8 @@ from sqlalchemy import event
 from ember_code.backend.guest.binding import ProducerBinding
 from ember_code.backend.guest.watch import DirectoryWatch
 from ember_code.core.data_paths import ProjectIds
+from ember_code.core.db.agno_tables import AgnoTables
 from ember_code.core.db.engine import cache
-from ember_code.core.db.rls import AgnoTables
 from ember_code.core.db.scope import StorageScope, Tenant
 from ember_code.core.db.urls import DatabaseUrl
 from ember_code.core.memory.manager import StorageManager

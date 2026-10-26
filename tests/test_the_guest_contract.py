@@ -36,11 +36,12 @@ from ember_code.backend.guest import (
     ProducerBinding,
     ProducerEnv,
     ReadyFile,
-    ResumeWatch,
+    RestoreWatch,
     TokenTenant,
     UnboundRefusal,
     WarmImports,
 )
+from ember_code.core.activity import ActivityRegistry
 from ember_code.core.auth.credentials import EnvironmentCredentials
 from ember_code.core.config.schemas.storage_and_paths import StorageConfig
 from ember_code.core.config.settings import load_settings
@@ -361,7 +362,7 @@ async def test_a_changed_producer_is_reported_after_binding(cloud, tmp_path: Pat
     await asyncio.sleep(0.05)
     assert changed == []
     _hand_over(tmp_path, "sqlite:///other.db")
-    for _ in range(100):
+    for _ in range(300):  # watched at once; polled every second without inotify
         if changed:
             break
         await asyncio.sleep(0.01)
@@ -476,52 +477,87 @@ async def test_the_backend_loads_nothing_of_a_producer_before_it_is_bound(
 # ── After a restore ───────────────────────────────────────────────
 
 
-class Clocks:
-    def __init__(self) -> None:
-        self.wall = 1_000.0
-        self.monotonic = 50.0
+class GuestAgent:
+    """Writes ``restored`` as ``post_restore`` does."""
+
+    def __init__(self, path: Path) -> None:
+        self.path = path
+        self.generation = 0
+
+    def restore(self, clock_step_ms: float = 120.0) -> None:
+        self.generation += 1
+        AtomicFile(self.path).write(
+            json.dumps(
+                {"generation": self.generation, "at_ms": 1, "clock_step_ms": clock_step_ms}
+            ).encode()
+        )
 
 
-async def test_a_wall_clock_jump_is_a_restore():
-    clocks = Clocks()
-    watch = ResumeWatch(wall=lambda: clocks.wall, monotonic=lambda: clocks.monotonic)
-    told: list[float] = []
+async def test_each_new_generation_is_one_restore(tmp_path: Path):
+    agent = GuestAgent(tmp_path / "restored")
+    agent.restore()  # before igni bound: nothing of this igni's to repair
+    watch = RestoreWatch(agent.path, watch=False)
+    told: list[int] = []
 
-    async def heard(away: float) -> None:
-        told.append(away)
+    async def heard(restored: Any) -> None:
+        told.append(restored.generation)
 
-    watch.on_resume(heard)
-    clocks.wall += 1
-    clocks.monotonic += 1
-    assert not await watch.check(), "both clocks moved together"
-    clocks.wall += 2
-    clocks.monotonic += 0.5
-    assert not await watch.check(), "a slow loop, not a restore"
-    clocks.wall += 3601  # post_restore stepped the wall clock
-    clocks.monotonic += 1
-    assert await watch.check()
-    assert told == [3600.0]
+    watch.on_restore(heard)
+    watch.start()
+    try:
+        assert await watch.check() is None, "the generation it started with"
+        agent.restore(clock_step_ms=0.4)  # a quick come-back: no clock jump to speak of
+        assert (await watch.check()).clock_step_ms == 0.4  # type: ignore[union-attr]
+        assert await watch.check() is None, "once per restore"
+        agent.restore()
+        await watch.check()
+        assert told == [2, 3]
+    finally:
+        await watch.stop()
 
 
-async def test_a_failing_step_does_not_stop_the_others():
-    clocks = Clocks()
-    watch = ResumeWatch(wall=lambda: clocks.wall, monotonic=lambda: clocks.monotonic)
+async def test_a_failing_step_does_not_stop_the_others(tmp_path: Path):
+    agent = GuestAgent(tmp_path / "restored")
+    watch = RestoreWatch(agent.path, watch=False)
     ran: list[str] = []
 
-    async def broken(_away: float) -> None:
+    async def broken(_restored: Any) -> None:
         raise RuntimeError("boom")
 
-    async def fine(_away: float) -> None:
+    async def fine(_restored: Any) -> None:
         ran.append("fine")
 
-    watch.on_resume(broken)
-    watch.on_resume(fine)
-    clocks.wall += 60
-    assert await watch.check()
-    assert ran == ["fine"]
+    watch.on_restore(broken)
+    watch.on_restore(fine)
+    watch.start()
+    try:
+        agent.restore()
+        assert await watch.check()
+        assert ran == ["fine"]
+    finally:
+        await watch.stop()
 
 
-class Restored:
+@pytest.mark.skipif(not sys.platform.startswith("linux"), reason="inotify is Linux's")
+async def test_a_restore_is_noticed_without_a_timer(tmp_path: Path):
+    agent = GuestAgent(tmp_path / "restored")
+    watch = RestoreWatch(agent.path)
+    noticed = asyncio.Event()
+
+    async def heard(_restored: Any) -> None:
+        noticed.set()
+
+    watch.on_restore(heard)
+    watch.start()
+    try:
+        await asyncio.sleep(0.05)
+        agent.restore()
+        await asyncio.wait_for(noticed.wait(), timeout=2)
+    finally:
+        await watch.stop()
+
+
+class SharedSnapshot:
     """Two VMs restored from one snapshot: the same generator state, twice."""
 
     def __init__(self) -> None:
@@ -535,7 +571,7 @@ class Restored:
 
 
 def test_restored_vms_draw_alike_until_reseeded():
-    vms = Restored()
+    vms = SharedSnapshot()
     assert vms.draw(reseed=False) == vms.draw(reseed=False), "the problem: shared state"
     assert vms.draw(reseed=True) != vms.draw(reseed=True)
 
@@ -612,11 +648,9 @@ async def test_the_notification_stream_reconnects_keeping_its_cursor():
 
 
 async def test_serving_keeps_the_file_and_reconnects_after_a_restore(run_dir: Path, monkeypatch):
-    clocks = Clocks()
-    guest = CloudGuest(
-        GuestPaths.from_env(),
-        resume=ResumeWatch(wall=lambda: clocks.wall, monotonic=lambda: clocks.monotonic),
-    )
+    paths = GuestPaths.from_env()
+    agent = GuestAgent(paths.restored)
+    guest = CloudGuest(paths, restores=RestoreWatch(paths.restored, watch=False), gc_freeze=False)
     calls: list[str] = []
 
     async def reset_pools() -> None:
@@ -624,13 +658,13 @@ async def test_serving_keeps_the_file_and_reconnects_after_a_restore(run_dir: Pa
 
     monkeypatch.setattr(cache, "reset_pools", reset_pools)
 
-    async def reseeded(_self: ProcessEntropy, _away: float) -> None:
+    async def reseeded(_self: ProcessEntropy, _restored: Any) -> None:
         calls.append("entropy")
 
     monkeypatch.setattr(ProcessEntropy, "after_restore", reseeded)
 
     class Notifications:
-        async def resumed(self, _away: float) -> None:
+        async def resumed(self, _restored: Any) -> None:
             calls.append("notifications")
 
     class Model:
@@ -654,9 +688,10 @@ async def test_serving_keeps_the_file_and_reconnects_after_a_restore(run_dir: Pa
         written = json.loads((run_dir / "activity.json").read_text())
         assert (written["state"], written["suspendable"], written["clients"]) == ("idle", True, 3)
         assert model.listeners == [guest.activity.changed]  # type: ignore[union-attr]
-        clocks.wall += 600
-        assert await guest.resume.check()
-        assert calls == ["entropy", "pools", "notifications"]
+        ActivityRegistry.shared().on_rearm(lambda: calls.append("timers"))
+        agent.restore()
+        assert await guest.restores.check()
+        assert calls == ["entropy", "pools", "notifications", "timers"]
     finally:
         await guest.stop()
     assert not (run_dir / "activity.json").exists()

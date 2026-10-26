@@ -52,7 +52,7 @@ class ProcessEntropy:
         logger.debug("reseeded %d generators", count)
         return count
 
-    async def after_restore(self, _away: float) -> None:
+    async def after_restore(self, _restored: object) -> None:
         self.reseed()
 
     @staticmethod

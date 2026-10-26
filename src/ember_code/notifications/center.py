@@ -124,7 +124,7 @@ class NotificationCenter:
         """:meth:`signed_in`, for a synchronous sign-in listener."""
         background.start(self.signed_in(), holder="notifications", reason="a sign-in")
 
-    async def resumed(self, _away: float = 0.0) -> None:
+    async def resumed(self, _restored: object = None) -> None:
         """The VM was restored from a snapshot: catch up, on a fresh connection."""
         self.wake()
         await self._follower.reconnect()

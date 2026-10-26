@@ -128,6 +128,7 @@ class ActivityRegistry:
         self._wakes: dict[str, Wake] = {}
         self._ids = itertools.count(1)
         self._watchers: list[Callable[[], None]] = []
+        self._timers: list[Callable[[], None]] = []
         self._clock = clock or (lambda: datetime.now(UTC))
 
     @classmethod
@@ -223,6 +224,30 @@ class ActivityRegistry:
         """The earliest wake, or ``None``."""
         wakes = self.wakes()
         return wakes[0].at if wakes else None
+
+    # ── Timers ────────────────────────────────────────────────────
+
+    def on_rearm(self, timer: Callable[[], None]) -> None:
+        """Be called when timers must be looked at again.
+
+        After a suspended process comes back its monotonic clock has not
+        moved, so a timer armed with ``asyncio.sleep`` before is late by
+        the whole suspension: whoever times work re-arms from the wall
+        clock here. Also called when work is scheduled, so a timer
+        sleeping until the old earliest time sees the new one.
+        """
+        self._timers.append(timer)
+
+    def off_rearm(self, timer: Callable[[], None]) -> None:
+        if timer in self._timers:
+            self._timers.remove(timer)
+
+    def rearm(self) -> None:
+        for timer in list(self._timers):
+            try:
+                timer()
+            except Exception:
+                logger.exception("re-arming a timer failed")
 
     # ── Watching ──────────────────────────────────────────────────
 

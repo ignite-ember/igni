@@ -455,14 +455,18 @@ igni inside a VM is buggy or compromised:
 **Provisioning contract** (for the node agent and igni server, build
 plan steps 3 and 5). With the org database's admin URL:
 
-- `igni db grant-producer --org <org> --producer person:<id>|app:<id>`
+- `python -m ember_code.core.db.admin_cli grant-producer --org <org>
+  --producer person:<id>|app:<id>` (also `igni db grant-producer …`; the
+  module imports the role code and SQLAlchemy only — 0.15 s to its help
+  where the full CLI took 0.83 s — since the node agent runs it on a new
+  producer's first start; it becomes the cloud package's own command)
   creates the producer's role, or rotates its password when it exists,
   and prints JSON: `role`, `password`, `database_url`. The platform hands
   `database_url` to the producer's VM as `IGNI_DATABASE_URL`, the way it
   hands the token. The org and producer must be the ones the producer's
   token names: the application's filter and the policy then agree, and a
   write in any other scope is refused by the database.
-- `igni db revoke-producer --org <org> --producer <id>` drops the role.
+- `… revoke-producer --org <org> --producer <id>` drops the role.
   What it owned (its uploads' large objects) passes to the admin role;
   its rows stay, unreachable until a role is granted again.
 
@@ -579,19 +583,40 @@ binds and after every restore it notices (`ProcessEntropy`). The string
 hash salt (`PYTHONHASHSEED`) is fixed at interpreter start and stays
 shared; it only matters for hash flooding.
 
-**After a restore** igni notices the wall clock jump ahead of the
-monotonic one (the guest agent's `post_restore` steps it): it reseeds
-(above), the database
-pools are emptied, engines kept, so no query waits on a connection
-dropped while the VM slept, and the notification stream reconnects
-keeping its cursor. Every PostgreSQL connection also has TCP keepalives,
-a 30 s user timeout and a 10 s connect timeout, so a dead one the pool's
-pre-ping meets fails in seconds and is replaced. igni's timers (the
-asyncio loop, the session pool's idle sweep) are monotonic and do not
-fire in a burst; scheduled tasks are on the wall clock and run once each
-when due, a recurring one resuming at its next occurrence. The model's
+**After a restore** the guest agent's `post_restore` steps the wall
+clock and then writes `/run/igni/restored` (`{generation, at_ms,
+clock_step_ms}`; `IGNI_RESTORED_FILE`). igni watches the run directory
+with inotify and, on each new generation, reseeds (above), empties the
+database pools (engines kept, so no query waits on a connection dropped
+while the VM slept), reopens the notification stream keeping its cursor,
+re-arms its timers and rewrites `activity.json`. Not from a clock jump: a
+quick come-back steps the clock by too little to tell. Every PostgreSQL
+connection also has TCP keepalives, a 30 s user timeout and a 10 s
+connect timeout, so a dead one the pool's pre-ping meets fails in seconds
+and is replaced. **Timers** go by the wall clock where it matters: the
+monotonic clock does not move while a VM is suspended, so an
+`asyncio.sleep` armed before is late by the whole suspension. The
+scheduler sleeps until its next task is due by the wall clock (at most
+`poll_interval`; 300 s with nothing pending), publishes that time as a
+wake (`wake_at`), and is re-armed — looks again at once — on a restore
+and whenever a task is stored (`ActivityRegistry.rearm`). The model's
 HTTP client is rebuilt after every run, and a run in progress keeps the
 VM awake (`suspendable: false`).
+
+**Idle is idle.** Every wake-up of an idle igni dirties memory the next
+suspend must write. Once bound, igni has no periodic work of its own in
+the cloud: `activity.json` is written when something moves (a heartbeat
+runs only while not suspendable), the run directory (`producer.env`,
+`restored`) is watched with inotify, the workspace poll sleeps 60 s
+while no extension listens, the scheduler sleeps as above, and once the
+backend has started the collector's view of everything built so far is
+frozen (`gc.freeze()`), so collections while idle do not walk — and write
+to — it. Left on timers: the extension health probe (30 s, when
+extensions are installed), the session pool's idle sweep (5 min), and
+the notification stream's read timeout while somebody is signed in.
+Measured on macOS (no inotify there, so the run-directory watches poll):
+60 s idle after a turn, 1,463 event-loop iterations, of which 655 were
+those two polls and 58 the session's naming finishing.
 
 **Agno's tables** keep Agno's schema; `ScopedAsyncPostgresDb` is a
 wrapper. A session is stored under `<org>/<producer>/<project>#<id>` and

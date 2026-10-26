@@ -1,92 +1,102 @@
-"""Noticing a snapshot restore from inside the VM.
+"""Noticing a snapshot restore from inside the VM: ``/run/igni/restored``.
 
 ``docs/CLOUD.md`` §9. A suspended VM is frozen whole: igni's coroutines,
 its timers, its open sockets. On restore every one of them carries on
 where it was, but the world did not wait. The guest agent's
-``post_restore`` steps the wall clock to the host's (``CLOCK_REALTIME``)
-while the monotonic clock carries on from where it froze — so a wall
-clock that ran ahead of the monotonic one by more than a few seconds is
-a restore, as seen from in here.
+``post_restore`` steps the wall clock, reseeds the kernel and then
+writes ``restored`` (``{"generation", "at_ms", "clock_step_ms"}``,
+atomically; the generation grows with every restore). igni watches the
+run directory (inotify, as for ``producer.env``) and, on a new
+generation, runs its after-restore steps: pseudo-random state reseeded,
+database pools emptied, the notification stream reopened, timers
+re-armed from the wall clock (the monotonic clock did not move while the
+VM slept, so an ``asyncio.sleep`` armed before is late by the whole
+suspension), the activity file rewritten.
 
-What igni does about it is the backend's (:class:`ResumeWatch` takes the
-callbacks): the database pools are emptied, so no request waits on a
-connection the server or the network dropped while the VM slept, and
-the notification stream reconnects instead of sitting out its read
-timeout on a dead socket. Everything igni times — the asyncio loop, the
-session pool's idle sweep — runs on the monotonic clock, which a restore
-does not move, so no timer fires early or in a burst; the scheduler's
-due tasks are on the wall clock and run once each when the clock says
-they are due, a recurring one resuming at its next occurrence rather
-than replaying the ones it slept through.
+Not from a clock jump: a quick come-back steps the clock by less than any
+threshold worth having. And no timer of its own: where inotify works the
+watch sleeps until the directory changes, so an idle igni does no work
+(every wake-up dirties memory the next suspend must write).
 """
 
 from __future__ import annotations
 
 import asyncio
 import contextlib
+import json
 import logging
-import time
 from collections.abc import Awaitable, Callable
+from pathlib import Path
 
+from pydantic import BaseModel, ValidationError
+
+from ember_code.backend.guest.watch import DirectoryWatch
 from ember_code.core.activity import background
 
 logger = logging.getLogger(__name__)
 
-#: Told how many seconds the VM was away.
-ResumeCallback = Callable[[float], Awaitable[None]]
+#: Told the restore it follows.
+RestoreCallback = Callable[["Restored"], Awaitable[None]]
 
 
-class ResumeWatch:
-    """Calls its callbacks when the wall clock jumps ahead of the monotonic one."""
+class Restored(BaseModel):
+    """What the guest agent writes after a restore."""
 
-    #: How often the two clocks are compared.
-    INTERVAL_SECONDS = 1.0
-    #: A jump smaller than this is NTP slewing or a slow loop, not a restore.
-    THRESHOLD_SECONDS = 5.0
+    generation: int
+    at_ms: int = 0
+    clock_step_ms: float = 0.0
 
-    def __init__(
-        self,
-        *,
-        wall: Callable[[], float] = time.time,
-        monotonic: Callable[[], float] = time.monotonic,
-        interval: float | None = None,
-        threshold: float | None = None,
-    ) -> None:
-        self._wall = wall
-        self._monotonic = monotonic
-        self._interval = self.INTERVAL_SECONDS if interval is None else interval
-        self._threshold = self.THRESHOLD_SECONDS if threshold is None else threshold
-        self._callbacks: list[ResumeCallback] = []
-        self._last = (wall(), monotonic())
-        self._task: asyncio.Task[None] | None = None
 
-    def on_resume(self, callback: ResumeCallback) -> None:
+class RestoreWatch:
+    """Runs its callbacks once per restore the guest agent reports."""
+
+    #: Between looks where the directory cannot be watched (development).
+    POLL_SECONDS = 1.0
+
+    def __init__(self, path: Path, *, watch: bool = True) -> None:
+        self.path = path
+        self._directory = DirectoryWatch(path.parent) if watch else None
+        self._callbacks: list[RestoreCallback] = []
+        self._generation: int | None = None
+        self._task: asyncio.Future[None] | None = None
+
+    def on_restore(self, callback: RestoreCallback) -> None:
         self._callbacks.append(callback)
 
-    def jump(self) -> float:
-        """Seconds the wall clock moved beyond the monotonic one since the last look."""
-        wall, monotonic = self._wall(), self._monotonic()
-        last_wall, last_monotonic = self._last
-        self._last = (wall, monotonic)
-        return (wall - last_wall) - (monotonic - last_monotonic)
+    def read(self) -> Restored | None:
+        try:
+            return Restored.model_validate(json.loads(self.path.read_text(encoding="utf-8")))
+        except (OSError, ValueError, ValidationError):
+            return None
 
-    async def check(self) -> bool:
-        """Look once; run the callbacks if the VM was away. True when it was."""
-        away = self.jump()
-        if away < self._threshold:
-            return False
-        logger.info("resumed after %.1f s away; reconnecting", away)
+    async def check(self) -> Restored | None:
+        """Look once; run the callbacks for a generation not seen yet."""
+        restored = self.read()
+        if restored is None or restored.generation == self._generation:
+            return None
+        first_look = self._generation is None
+        self._generation = restored.generation
+        if first_look:
+            # What was there when igni started watching: a restore before
+            # it bound, which nothing of this igni's outlived.
+            return None
+        logger.info(
+            "restored (generation %d, clock stepped %.0f ms)",
+            restored.generation,
+            restored.clock_step_ms,
+        )
         for callback in list(self._callbacks):
             try:
-                await callback(away)
+                await callback(restored)
             except Exception:
-                logger.exception("an after-resume step failed")
-        return True
+                logger.exception("an after-restore step failed")
+        return restored
 
     def start(self) -> None:
         if self._task is None:
-            self._last = (self._wall(), self._monotonic())
-            self._task = background.daemon(self._run(), name="resume-watch")
+            restored = self.read()
+            self._generation = restored.generation if restored is not None else -1
+            self._task = background.daemon(self._run(), name="restore-watch")
 
     async def stop(self) -> None:
         task, self._task = self._task, None
@@ -94,11 +104,17 @@ class ResumeWatch:
             task.cancel()
             with contextlib.suppress(asyncio.CancelledError):
                 await task
+        if self._directory is not None:
+            self._directory.close()
 
     async def _run(self) -> None:
         while True:
-            await asyncio.sleep(self._interval)
+            directory = self._directory
+            if directory is not None and (directory.watching or directory.start()):
+                await directory.wait(None)
+            else:
+                await asyncio.sleep(self.POLL_SECONDS)
             await self.check()
 
 
-__all__ = ["ResumeCallback", "ResumeWatch"]
+__all__ = ["RestoreCallback", "RestoreWatch", "Restored"]

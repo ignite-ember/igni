@@ -2,7 +2,7 @@
 
 ``docs/CLOUD.md`` §9. In a producer's VM igni and the guest agent
 (``igni__cloudvm``, ``docs/guest-protocol.md``) talk through three files
-on the tmpfs ``/run/igni``. Each has its own variable, so a test or an
+on the tmpfs ``/run/igni``, and the guest agent's ``restored``. Each has its own variable, so a test or an
 image with another layout can move one without moving the others; the
 run directory moves all three at once.
 """
@@ -26,6 +26,7 @@ class GuestPaths(BaseModel):
     ACTIVITY_ENV: ClassVar[str] = "IGNI_ACTIVITY_FILE"
     READY_ENV: ClassVar[str] = "IGNI_READY_FILE"
     PRODUCER_ENV_ENV: ClassVar[str] = "IGNI_PRODUCER_ENV_FILE"
+    RESTORED_ENV: ClassVar[str] = "IGNI_RESTORED_FILE"
     DEFAULT_RUN_DIR: ClassVar[str] = "/run/igni"
 
     #: igni's ``app.activity``, written by igni, read by the guest agent's ``status``.
@@ -34,6 +35,8 @@ class GuestPaths(BaseModel):
     ready: Path
     #: Who this VM is for, written by the node agent after every boot and restore.
     producer_env: Path
+    #: ``{generation, at_ms, clock_step_ms}``, rewritten by the guest agent after every restore.
+    restored: Path
 
     @classmethod
     def from_env(cls, environ: Mapping[str, str] | None = None) -> GuestPaths:
@@ -48,6 +51,7 @@ class GuestPaths(BaseModel):
             activity=named(cls.ACTIVITY_ENV, "activity.json"),
             ready=named(cls.READY_ENV, "ready"),
             producer_env=named(cls.PRODUCER_ENV_ENV, "producer.env"),
+            restored=named(cls.RESTORED_ENV, "restored"),
         )
 
 

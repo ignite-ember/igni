@@ -6,8 +6,8 @@ reads this file. The host channel that carries ``app.activity`` admits
 only extension processes, so the file is how it leaves igni.
 
 Written whole (:class:`AtomicFile`) when anything in it changes — told
-by the host model's ``app.activity_changed`` and checked every second
-for what moves without a signal, such as a window connecting — and at
+by the host model's ``app.activity_changed`` (which busy leases and wakes
+move too) and by windows connecting and leaving — and at
 least every :attr:`ActivityFile.HEARTBEAT_SECONDS` while it is not
 suspendable (a run going, or anything busy):
 the guest agent treats a file older than ten seconds that still says
@@ -112,8 +112,6 @@ class ActivityFile:
 
     #: The guest agent's staleness limit is ten seconds; the protocol asks for five at most.
     HEARTBEAT_SECONDS = 4.0
-    #: How often what moves without a signal (a client connecting) is looked at.
-    CHECK_SECONDS = 1.0
 
     def __init__(
         self,
@@ -130,7 +128,8 @@ class ActivityFile:
         self._written: GuestActivity | None = None
         self._written_at = 0.0
         self._failing = False
-        self._task: asyncio.Task[None] | None = None
+        self._started = False
+        self._heartbeat: asyncio.Future[None] | None = None
 
     @property
     def path(self) -> Path:
@@ -161,6 +160,7 @@ class ActivityFile:
         self._failing = False
         self._written = current
         self._written_at = now
+        self._keep_beating(not current.suspendable)
         return True
 
     def changed(self, *_: object) -> None:
@@ -168,27 +168,42 @@ class ActivityFile:
         self.refresh()
 
     def start(self) -> None:
-        if self._task is not None:
-            return
+        """Write it now; from then on it is written when told something moved.
+
+        No timer while igni is suspendable: an idle igni wakes for
+        nothing, since every wake-up dirties memory the next suspend
+        must write. While it is not suspendable a heartbeat rewrites it
+        every :attr:`HEARTBEAT_SECONDS`, and that also lets a busy lease
+        that expired stop counting.
+        """
+        self._started = True
         self.refresh(force=True)
-        # Not busy: it reports busyness, it is not any.
-        self._task = background.daemon(self._run(), name="activity-file")
 
     async def stop(self) -> None:
-        task, self._task = self._task, None
-        if task is not None:
-            task.cancel()
+        self._started = False
+        beat, self._heartbeat = self._heartbeat, None
+        if beat is not None:
+            beat.cancel()
             with contextlib.suppress(asyncio.CancelledError):
-                await task
+                await beat
         # Nobody keeps it true any more: no file is "unknown", which
         # leaves the VM to the node agent's idle timer.
         with contextlib.suppress(OSError):
             self._file.remove()
         self._written = None
 
-    async def _run(self) -> None:
-        while True:
-            await asyncio.sleep(self.CHECK_SECONDS)
+    def _keep_beating(self, needed: bool) -> None:
+        if not needed or not self._started:
+            return
+        if self._heartbeat is not None and not self._heartbeat.done():
+            return
+        with contextlib.suppress(RuntimeError):
+            # Not busy: it reports busyness, it is not any.
+            self._heartbeat = background.daemon(self._beat(), name="activity-heartbeat")
+
+    async def _beat(self) -> None:
+        while self._written is not None and not self._written.suspendable:
+            await asyncio.sleep(self.HEARTBEAT_SECONDS)
             self.refresh()
 
 

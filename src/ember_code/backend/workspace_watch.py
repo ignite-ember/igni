@@ -244,10 +244,23 @@ class WorkspaceWatcher:
             return
         self._on_files(changed)
 
+    #: Between looks while nobody is listening at all. The first look
+    #: after somebody subscribes only learns where things are, so a long
+    #: sleep loses nothing — and an idle process that wakes every second
+    #: for nothing dirties memory its next suspend must write.
+    IDLE_INTERVAL_SECONDS = 60.0
+
+    def _listened_to(self) -> bool:
+        return self._wants(HostTopic.WORKSPACE_HEAD_CHANGED) or self._wants(
+            HostTopic.WORKSPACE_FILES_CHANGED
+        )
+
     async def _loop(self) -> None:
         while True:
             try:
-                await asyncio.sleep(self._head_interval)
+                await asyncio.sleep(
+                    self._head_interval if self._listened_to() else self.IDLE_INTERVAL_SECONDS
+                )
                 await self.poll_once()
             except asyncio.CancelledError:
                 raise

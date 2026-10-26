@@ -22,8 +22,9 @@ import click
 
 from ember_code.core.config.settings import Settings
 from ember_code.core.data_paths import canonical_project_dir
+from ember_code.core.db.agno_tables import AgnoTables
 from ember_code.core.db.locator import StorageLocator
-from ember_code.core.db.rls import AgnoTables, RowLevelSecurity
+from ember_code.core.db.rls import RowLevelSecurity
 from ember_code.core.db.schema import HEAD_REVISION, SchemaRevision, keeper
 from ember_code.core.db.urls import DatabaseUrl, Dialect
 from ember_code.core.memory.manager import StorageManager

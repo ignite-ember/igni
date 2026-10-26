@@ -195,6 +195,7 @@ class WebSocketServerTransport(ListeningTransport):
         self._conns[client_id] = client
         self._connected.set()
         logger.info("FE client %s attached (%d total)", client_id, len(self._conns))
+        self._tell_watchers("attached", client_id)
         try:
             # Tell the client who it is so it can recognise its own
             # broadcast echoes.

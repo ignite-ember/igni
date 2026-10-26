@@ -16,13 +16,15 @@ Cloud profile only; the desktop never builds one. In boot order:
    and the process's pseudo-random state is reseeded
    (:class:`~ember_code.backend.guest.entropy.ProcessEntropy`);
 4. :meth:`CloudGuest.serving` — the activity file is kept true, a
-   restore is noticed, reseeded and reconnected after, and a ``producer.env``
+   restore (``/run/igni/restored``) is reseeded, reconnected and re-timed
+   after, what igni built is frozen for the collector, and a ``producer.env``
    that comes to name another producer shuts igni down;
 5. :meth:`CloudGuest.stop` — the files igni keeps are removed.
 """
 
 from __future__ import annotations
 
+import gc
 import logging
 from collections.abc import Callable
 from typing import Any
@@ -33,8 +35,9 @@ from ember_code.backend.guest.binding import ProducerBinding, ProducerEnv
 from ember_code.backend.guest.entropy import ProcessEntropy
 from ember_code.backend.guest.files import ReadyFile
 from ember_code.backend.guest.paths import GuestPaths
-from ember_code.backend.guest.resume import ResumeWatch
+from ember_code.backend.guest.resume import Restored, RestoreWatch
 from ember_code.backend.guest.warm import WarmImports
+from ember_code.core.activity import ActivityRegistry
 from ember_code.core.db.engine import cache
 from ember_code.core.profile import RuntimeProfile
 
@@ -42,22 +45,24 @@ logger = logging.getLogger(__name__)
 
 
 class CloudGuest:
-    """The ready file, the late binding, the activity file and the resume watch."""
+    """The ready file, the late binding, the activity file and the restore watch."""
 
     def __init__(
         self,
         paths: GuestPaths,
         *,
         binding: ProducerBinding | None = None,
-        resume: ResumeWatch | None = None,
+        restores: RestoreWatch | None = None,
         warm: WarmImports | None = None,
+        gc_freeze: bool = True,
     ) -> None:
         self.paths = paths
         self.ready = ReadyFile(paths.ready)
         self.binding = binding if binding is not None else ProducerBinding(paths.producer_env)
-        self.resume = resume if resume is not None else ResumeWatch()
+        self.restores = restores if restores is not None else RestoreWatch(paths.restored)
         self.warm = warm if warm is not None else WarmImports()
         self.entropy = ProcessEntropy()
+        self._gc_freeze = gc_freeze
         self.activity: ActivityFile | None = None
         self._model: Any = None
         self._transport: Any = None
@@ -109,18 +114,30 @@ class CloudGuest:
             self.paths.activity, activity=self._current_activity, clients=self._clients
         )
         model.broadcasts.on_activity(self.activity.changed)
+        # A window coming or going changes ``clients``.
+        watch_connections = getattr(
+            getattr(transport, "inner", transport), "watch_connections", None
+        )
+        if watch_connections is not None:
+            watch_connections(lambda _event, _client: self._rewrite_now())
         self.activity.start()
-        self.resume.on_resume(self.entropy.after_restore)
-        self.resume.on_resume(self._reset_pools)
+        self.restores.on_restore(self.entropy.after_restore)
+        self.restores.on_restore(self._reset_pools)
         if notifications is not None:
-            self.resume.on_resume(notifications.resumed)
-        self.resume.on_resume(self._rewrite_activity)
-        self.resume.start()
+            self.restores.on_restore(notifications.resumed)
+        self.restores.on_restore(self._rearm_timers)
+        self.restores.on_restore(self._rewrite_activity)
+        self.restores.start()
         if self.binding.bound is not None and on_rebind is not None:
             self.binding.watch(lambda _env: on_rebind())
+        # Everything igni built to serve this producer stays: frozen, the
+        # collector no longer walks (and so writes to) it while igni idles.
+        if self._gc_freeze:
+            gc.collect()
+            gc.freeze()
 
     async def stop(self) -> None:
-        await self.resume.stop()
+        await self.restores.stop()
         await self.binding.stop()
         if self.activity is not None:
             await self.activity.stop()
@@ -136,10 +153,17 @@ class CloudGuest:
         inner = getattr(self._transport, "inner", self._transport)
         return int(getattr(inner, "client_count", 0) or 0)
 
-    async def _reset_pools(self, _away: float) -> None:
+    def _rewrite_now(self) -> None:
+        if self.activity is not None:
+            self.activity.refresh()
+
+    async def _reset_pools(self, _restored: Restored) -> None:
         await cache.reset_pools()
 
-    async def _rewrite_activity(self, _away: float) -> None:
+    async def _rearm_timers(self, _restored: Restored) -> None:
+        ActivityRegistry.shared().rearm()
+
+    async def _rewrite_activity(self, _restored: Restored) -> None:
         if self.activity is not None:
             self.activity.refresh(force=True)
 

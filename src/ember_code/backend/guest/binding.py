@@ -290,11 +290,18 @@ class ProducerBinding:
     def watching(self) -> bool:
         return self._directory is not None and self._directory.watching
 
-    async def _next(self) -> None:
-        """Until the run directory changes — or a poll interval, where it cannot be watched."""
+    async def _next(self, fallback: float | None = FALLBACK_SECONDS) -> None:
+        """Until the run directory changes — or a poll interval, where it cannot be watched.
+
+        ``fallback`` bounds the wait on a watched directory, in case an
+        event is missed; ``None`` waits for the event alone.
+        """
         directory = self._directory
         if directory is not None and (directory.watching or directory.start()):
-            await directory.wait(self.FALLBACK_SECONDS)
+            await directory.wait(fallback)
+        elif fallback is None:
+            # Bound and unwatchable (development): a slow look will do.
+            await asyncio.sleep(self.RELOOK_SECONDS)
         else:
             await asyncio.sleep(self._poll)
 
@@ -315,7 +322,8 @@ class ProducerBinding:
     async def _watch_loop(self, on_changed: Callable[[ProducerEnv], None]) -> None:
         assert self._bound is not None
         while True:
-            await self._next()
+            # Bound, igni idles: no timer of its own, only the directory's events.
+            await self._next(fallback=None)
             if not self._changed():
                 continue
             try:

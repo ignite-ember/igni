@@ -6,6 +6,7 @@ configurable. Each task has a timeout to prevent runaway executions.
 """
 
 import asyncio
+import contextlib
 import logging
 from collections.abc import Callable, Coroutine
 from datetime import UTC, datetime
@@ -68,6 +69,7 @@ class SchedulerRunner:
         self._poll_task: asyncio.Task | None = None
         self._active_tasks: set[asyncio.Task] = set()
         self._wake_holder = f"scheduler:{id(self):x}"
+        self._next_due: datetime | None = None
 
     def start(self) -> None:
         """Start the background polling loop."""
@@ -99,12 +101,38 @@ class SchedulerRunner:
         return self._running
 
     async def _poll_loop(self) -> None:
-        while self._running:
-            try:
-                await self._check_and_spawn()
-            except Exception:
-                logger.exception("Scheduler poll error")
-            await asyncio.sleep(self._poll_interval)
+        poked = asyncio.Event()
+        loop = asyncio.get_running_loop()
+
+        def poke() -> None:
+            loop.call_soon_threadsafe(poked.set)
+
+        registry = ActivityRegistry.shared()
+        registry.on_rearm(poke)
+        try:
+            while self._running:
+                try:
+                    await self._check_and_spawn()
+                except Exception:
+                    logger.exception("Scheduler poll error")
+                with contextlib.suppress(TimeoutError):
+                    await asyncio.wait_for(poked.wait(), self._next_delay())
+                poked.clear()
+        finally:
+            registry.off_rearm(poke)
+
+    #: How long the loop sleeps with nothing pending, unless poked: a task
+    #: added in this process pokes it (``TaskStore.add``), and so does a
+    #: restore (``ActivityRegistry.rearm``). Waking every ``poll_interval``
+    #: with nothing to do would only dirty an idle process's memory.
+    IDLE_POLL_SECONDS = 300.0
+
+    def _next_delay(self) -> float:
+        """Until the next task is due by the wall clock, at most ``poll_interval``."""
+        if self._next_due is None:
+            return max(self._poll_interval, self.IDLE_POLL_SECONDS)
+        until = (self._next_due - datetime.now(UTC)).total_seconds()
+        return min(self._poll_interval, max(0.0, until))
 
     async def _check_and_spawn(self) -> None:
         """Find due tasks and spawn them, respecting the concurrency limit."""
@@ -137,6 +165,7 @@ class SchedulerRunner:
             logger.debug("could not read the next scheduled task", exc_info=True)
             return
         at = due.astimezone(UTC) if due is not None else None
+        self._next_due = at
         ActivityRegistry.shared().wake(self._wake_holder, at, "a scheduled task")
 
     async def _run_with_semaphore(self, task_id: str, description: str) -> None:

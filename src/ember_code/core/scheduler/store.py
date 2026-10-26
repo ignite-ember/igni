@@ -15,6 +15,7 @@ from typing import Any
 
 from sqlalchemy import Select, delete, func, select
 
+from ember_code.core.activity import ActivityRegistry
 from ember_code.core.db.database import Database
 from ember_code.core.db.locator import StorageLocator
 from ember_code.core.scheduler.db_models import ScheduledTaskModel
@@ -45,6 +46,8 @@ class TaskStore:
             for column, value in self._db.scope.stamp().items():
                 setattr(row, column, value)
             session.add(row)
+        # A runner sleeping until the old earliest task looks again.
+        ActivityRegistry.shared().rearm()
 
     async def update_status(
         self,
