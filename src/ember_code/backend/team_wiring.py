@@ -67,6 +67,13 @@ class TeamWiring:
         for tool in self._orchestrate_tools():
             tool.event_appender = appender
 
+    def active_subagent_runs(self) -> int:
+        """Sub-agent runs the main agent has going (its spawns' registry)."""
+        registries = {
+            id(t.subagent_registry): t.subagent_registry for t in self._orchestrate_tools()
+        }
+        return sum(len(r) for r in registries.values())
+
     def _orchestrate_tools(self):
         """Iterate every :class:`OrchestrateTools` instance attached
         to the team (there's usually one, but be defensive for

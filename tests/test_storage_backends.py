@@ -38,6 +38,7 @@ from sqlalchemy.engine import make_url
 
 from ember_code.backend.server_files import FilesController
 from ember_code.cli.migrate import migrate
+from ember_code.core.approvals import journal as approval_journal  # noqa: F401 — its tables
 from ember_code.core.db.base import Base
 from ember_code.core.db.database import Database
 from ember_code.core.db.engine import cache
@@ -51,7 +52,7 @@ from ember_code.core.loop.store import LoopProgressStore, LoopStore
 from ember_code.core.memory.scoped_postgres import ScopedAsyncPostgresDb
 from ember_code.core.scheduler.models import ScheduledTask
 from ember_code.core.scheduler.store import TaskStore
-from ember_code.core.session import approval_journal, queued_messages  # noqa: F401 — their tables
+from ember_code.core.session import queued_messages  # noqa: F401 — its table
 from ember_code.core.session.client_state import ClientStateStore
 from ember_code.core.session.pending_messages import PendingMessageStore
 from ember_code.core.session.session_directories import SessionDirectoryStore

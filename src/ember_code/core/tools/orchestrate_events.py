@@ -246,7 +246,9 @@ class HitlCoordinatorProtocol(Protocol):
     :class:`ember_code.core.sub_agent_hitl.SubAgentHITLCoordinator`.
     """
 
-    async def push_requirement(self, req: Any, *, run_id: str, agent_path: list[str]) -> str: ...
+    async def push_requirement(
+        self, req: Any, *, run_id: str, agent_path: list[str], session_id: str = ""
+    ) -> str: ...
 
     async def wait_resolved(self, req_id: str) -> None: ...
 

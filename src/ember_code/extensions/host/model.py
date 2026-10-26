@@ -78,6 +78,8 @@ class HostState:
     view_owner: dict[str, str] = field(default_factory=dict)
     #: The last status seen, by session.
     status: dict[str, dict[str, Any]] = field(default_factory=dict)
+    #: The last ``app.activity`` signalled.
+    activity: dict[str, Any] | None = None
 
 
 class ExternalOpen(BaseModel):

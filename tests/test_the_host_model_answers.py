@@ -17,6 +17,8 @@ from typing import Any
 
 import pytest
 
+from ember_code.backend.activity import ActivityState, SessionActivity
+from ember_code.core.approvals.events import ApprovalChange, ApprovalState, approval_events
 from ember_code.extensions.host.definition import HOST_SCHEMA
 from ember_code.extensions.host.spec import PropertySpec
 from ember_code.extensions.registry import ExtensionState
@@ -331,6 +333,59 @@ class TestApprovals:
         )
         await rig.settle()
         assert rig.session.answers == [("q9", "reject", "")]
+
+    async def test_an_app_is_told_when_an_approval_appears_and_goes(self, rig: HostRig) -> None:
+        """``chat.approvals.changed`` comes from the backend's journal, so it
+        fires however the approval ends — here announced as the journal
+        announces it."""
+        ext = rig.install(host=["chat.approvals"])
+        assert rig.model is not None
+        sink = Sink()
+        rig.model.bus.subscribe(rig.model.bus.attach(ext, sink), ["chat.approvals.changed"])
+        for state in (ApprovalState.WAITING, ApprovalState.RESOLVED):
+            approval_events.announce(
+                ApprovalChange(
+                    session_id="boot",
+                    requirement_id="q5",
+                    run_id="r",
+                    state=state,
+                    origin="sub_agent",
+                    tool_name="shell" if state is ApprovalState.WAITING else "",
+                )
+            )
+        assert [
+            (v["requirement_id"], v["state"]) for v in sink.values("chat.approvals.changed")
+        ] == [
+            ("q5", "waiting"),
+            ("q5", "resolved"),
+        ]
+
+
+class TestActivity:
+    async def test_the_node_agent_reads_whether_igni_may_sleep(self, rig: HostRig) -> None:
+        ext = rig.install(host=["app"])
+        activity = ok(await rig.ask(ext, "get", "app.activity"))
+        assert activity["state"] == "idle" and activity["suspendable"] is True
+
+        assert rig.model is not None
+        sink = Sink()
+        rig.model.bus.subscribe(rig.model.bus.attach(ext, sink), ["app.activity_changed"])
+        rig.session.activity = lambda: SessionActivity(
+            session_id="boot", state=ActivityState.WAITING, waiting_approvals=1
+        )
+        await rig.transport.send(
+            msg.RunPaused(
+                session_id="boot",
+                run_id="r",
+                requirements=[msg.HITLRequest(requirement_id="q6", tool_name="shell")],
+            )
+        )
+        [changed] = sink.values("app.activity_changed")
+        assert (changed["state"], changed["suspendable"], changed["waiting_approvals"]) == (
+            "waiting",
+            True,
+            1,
+        )
 
 
 class TestCommands:

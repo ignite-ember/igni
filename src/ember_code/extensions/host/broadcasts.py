@@ -24,6 +24,7 @@ import logging
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from ember_code.core.approvals.events import ApprovalChange
 from ember_code.extensions.host.grants import HostGrants
 from ember_code.extensions.host.members import AppMembers
 from ember_code.protocol import messages as msg
@@ -52,10 +53,43 @@ class BroadcastSignals:
 
     # ── Outbound messages ─────────────────────────────────────────
 
+    #: Messages after which igni may have started or stopped doing something.
+    _ACTIVITY_MOVES = frozenset(
+        {
+            "run_started",
+            "run_completed",
+            "run_error",
+            "run_paused",
+            "hitl_request",
+            "requirement_resolved",
+            "stream_end",
+            "streaming_done",
+        }
+    )
+
     def observe(self, m: msg.Message) -> None:
         handler = getattr(self, f"_on_{m.type}", None)
         if handler is not None:
             handler(m)
+        if m.type in self._ACTIVITY_MOVES:
+            self.activity_moved()
+
+    def activity_moved(self) -> None:
+        """Tell ``app.activity_changed`` when the activity is not what it was."""
+        try:
+            activity = self.model.backend.activity()
+        except Exception as exc:
+            logger.debug("host model: activity unavailable: %s", exc)
+            return
+        if activity == self.state.activity:
+            return
+        self.state.activity = activity
+        self.model.emit("app.activity_changed", activity)
+
+    def approval_changed(self, change: ApprovalChange) -> None:
+        """An approval appeared or went away (``core/approvals/events.py``)."""
+        self.model.emit("chat.approvals.changed", change.model_dump(mode="json"))
+        self.activity_moved()
 
     def _on_user_message_received(self, m: msg.UserMessageReceived) -> None:
         self.model.windows.touch_connection(m.client_id)
@@ -137,7 +171,7 @@ class BroadcastSignals:
         """Take the session's waiting approvals from the backend, quietly.
 
         The backend keeps them in the database
-        (:class:`~ember_code.core.session.approval_journal.ApprovalJournal`);
+        (:class:`~ember_code.core.approvals.journal.ApprovalJournal`);
         after a restart this is how the host learns of them before any
         window attaches and has them shown again. Nothing is emitted:
         they were requested before, and an extension that listened then

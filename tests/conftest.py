@@ -7,6 +7,7 @@ from pathlib import Path
 import pytest
 from dotenv import load_dotenv
 
+from ember_code.core.approvals.events import approval_events
 from ember_code.core.config.schemas.storage_and_paths import StorageConfig
 from ember_code.core.config.settings import load_settings
 from ember_code.core.db.scope import tenancy
@@ -62,6 +63,7 @@ def _desktop_storage(monkeypatch):
     monkeypatch.delenv(PROFILE_ENV, raising=False)
     yield
     tenancy.use(None)
+    approval_events.clear()
 
 
 #: Names a PostgreSQL server the storage tests may create and drop databases on.

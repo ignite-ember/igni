@@ -11,10 +11,10 @@ from logging.config import fileConfig
 from alembic import context
 from sqlalchemy import engine_from_config, pool
 
+from ember_code.core.approvals import journal as _approval_journal  # noqa: F401
 from ember_code.core.db.base import Base
 from ember_code.core.loop import db_models as _loop_models  # noqa: F401
 from ember_code.core.scheduler import db_models as _scheduler_models  # noqa: F401
-from ember_code.core.session import approval_journal as _approval_journal  # noqa: F401
 from ember_code.core.session import client_state as _client_state  # noqa: F401
 from ember_code.core.session import pending_messages as _pending_messages  # noqa: F401
 from ember_code.core.session import queued_messages as _queued_messages  # noqa: F401

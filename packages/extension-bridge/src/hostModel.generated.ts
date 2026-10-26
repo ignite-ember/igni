@@ -1,11 +1,11 @@
-// GENERATED from the igni host schema 1.6.0 by ember_code.extensions.host.codegen — do not edit. Run `make host-sdks` after changing the schema.
+// GENERATED from the igni host schema 1.7.0 by ember_code.extensions.host.codegen — do not edit. Run `make host-sdks` after changing the schema.
 //
 // `bridge.host` as an extension's page sees it. Read
 // `docs/HOST_OBJECT_MODEL.md` in igni for what each object is.
 
 import { HostObject, Property, Signal, type HostLink, type JsonValue } from "./hostModel";
 
-export const SCHEMA_VERSION = "1.6.0";
+export const SCHEMA_VERSION = "1.7.0";
 
 /** One change anywhere in the model, as `host.changed` reports it. */
 export interface Change {
@@ -324,6 +324,37 @@ export interface RunPause {
 export interface ApprovalResolved {
   session_id: string;
   requirement_id: string;
+}
+
+/** An approval began or stopped waiting on a person — however it ended: answered in a window or through the API, after a restart, or dropped with its run. */
+export interface ApprovalChange {
+  session_id: string;
+  requirement_id: string;
+  run_id: string;
+  /** `waiting` or `resolved`. */
+  state: string;
+  /** `main` (the main agent) or `sub_agent`. */
+  origin: string;
+  /** The tool asked about; empty when resolved. */
+  tool_name: string;
+}
+
+/** One session's share of `Activity`. */
+export interface SessionActivity {
+  session_id: string;
+  /** `idle`, `waiting` or `running`. */
+  state: string;
+  waiting_approvals: number;
+}
+
+/** Whether igni is doing anything. A run waiting only on a person — on an approval, its own or a sub-agent's — is `waiting`, not `running`: nothing happens until the decision, so the process may be suspended and the decision wakes it. */
+export interface Activity {
+  /** `idle`, `waiting` or `running`. */
+  state: string;
+  /** Nothing is running. */
+  suspendable: boolean;
+  waiting_approvals: number;
+  sessions: SessionActivity[];
 }
 
 /** The reason for an approval, arriving after it. */
@@ -732,6 +763,8 @@ export class HostChatApprovals extends HostObject {
   readonly resolved: Signal<ApprovalResolved>;
   /** The reason arrived. */
   readonly details: Signal<ApprovalDetails>;
+  /** An approval appeared or went away, whoever answered and whenever — including after a restart. For an app following approvals through the API. */
+  readonly changed: Signal<ApprovalChange>;
 
   constructor(link: HostLink, window: string | null = null) {
     super(link, "chat.approvals", window);
@@ -739,6 +772,7 @@ export class HostChatApprovals extends HostObject {
     this.requested = new Signal("chat.approvals.requested");
     this.resolved = new Signal("chat.approvals.resolved");
     this.details = new Signal("chat.approvals.details");
+    this.changed = new Signal("chat.approvals.changed");
   }
 
   /** Answer one request, as the person's dialog does. */
@@ -787,12 +821,16 @@ export class HostApp extends HostObject {
   readonly update_available: Property<UpdateInfo | null>;
   /** Model and server reachability. */
   readonly connection: Property<Connection>;
+  /** Running, waiting on a person, or idle — what decides whether igni's process may be suspended. */
+  readonly activity: Property<Activity>;
   /** Verbosity or output style changed. */
   readonly display_changed: Signal<Display>;
   /** The connection changed. */
   readonly connection_changed: Signal<Connection>;
   /** An update check answered. */
   readonly update_changed: Signal<UpdateInfo | null>;
+  /** igni started or stopped doing something. */
+  readonly activity_changed: Signal<Activity>;
 
   constructor(link: HostLink, window: string | null = null) {
     super(link, "app", window);
@@ -801,9 +839,11 @@ export class HostApp extends HostObject {
     this.version = new Property(this, "version", false);
     this.update_available = new Property(this, "update_available", false);
     this.connection = new Property(this, "connection", false);
+    this.activity = new Property(this, "activity", false);
     this.display_changed = new Signal("app.display_changed");
     this.connection_changed = new Signal("app.connection_changed");
     this.update_changed = new Signal("app.update_changed");
+    this.activity_changed = new Signal("app.activity_changed");
   }
 
   /** Show or hide routing detail. */

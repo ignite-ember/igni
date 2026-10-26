@@ -26,9 +26,11 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
+from ember_code.backend.activity import Activity
 from ember_code.backend.message_dispatcher import _serialize
 from ember_code.backend.rpc_router import POOL_LEVEL_RPCS
 from ember_code.backend.session_orchestrator import SessionOrchestrator
+from ember_code.core.approvals.events import approval_events
 from ember_code.core.hooks.extension_gate import ExtensionHookGate
 from ember_code.extensions.host.broadcasts import BroadcastSignals
 from ember_code.extensions.host.hooks import ExtensionHooks
@@ -222,6 +224,14 @@ class OrchestratorHostBackend:
             latest[str(payload["spec_id"])] = BroadcastSignals.view(session_id, payload)
         return list(latest.values())
 
+    def activity(self) -> dict[str, Any]:
+        sessions = []
+        for runtime in self._orchestrator.pool.runtimes:
+            probe = getattr(runtime.backend, "activity", None)
+            if probe is not None:
+                sessions.append(probe())
+        return Activity.of(sessions).model_dump(mode="json")
+
     def waiting_approvals(self, session_id: str) -> list[msg.Message]:
         runtime = self._orchestrator.pool.find(session_id)
         hitl = getattr(runtime.backend, "hitl", None) if runtime is not None else None
@@ -286,6 +296,9 @@ class HostModelWiring:
         orchestrator.watch_inbound(watch.inbound)
         transport.observe(watch.outbound)
         registry.watch(model.extension_changed)
+        # An app following approvals through the API is told of every
+        # one that appears or goes away, wherever it was answered.
+        approval_events.watch(model.broadcasts.approval_changed)
         if workspace_signals is not None:
             workspace_signals.attach_model(model)
         watch_connections = getattr(transport.inner, "watch_connections", None)

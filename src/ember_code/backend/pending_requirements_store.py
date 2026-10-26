@@ -17,7 +17,7 @@ correctness seam because ``HitlController._merge_auto_resolved`` and
 in the right order.
 
 Both buckets are written through to an
-:class:`~ember_code.core.session.approval_journal.ApprovalJournal` when
+:class:`~ember_code.core.approvals.journal.ApprovalJournal` when
 the store is given one (the backend always does): an approval is a row
 in the project's database from the moment it is asked until it is
 answered or its run ends, and :meth:`restore` reads them back after a
@@ -32,7 +32,7 @@ from collections.abc import Callable
 from typing import Any
 
 from ember_code.backend.schemas_pause import PendingRequirement
-from ember_code.core.session.approval_journal import ApprovalJournal, ApprovalOrigin
+from ember_code.core.approvals.journal import ApprovalJournal, ApprovalOrigin
 from ember_code.protocol import messages as msg
 
 logger = logging.getLogger(__name__)

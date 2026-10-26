@@ -83,6 +83,10 @@ class HostBackend(Protocol):
 
     def project_dir_of(self, session_id: str) -> Path: ...
 
+    def activity(self) -> dict[str, Any]:
+        """``app.activity``: running, waiting on a person, or idle."""
+        ...
+
     def waiting_approvals(self, session_id: str) -> list[Message]:
         """The ``RunPaused`` of every approval the session has waiting —
         what the host knows after a restart, before any window asked."""

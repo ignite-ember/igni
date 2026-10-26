@@ -34,7 +34,7 @@ from ember_code.extensions.host.spec import (
 )
 
 #: The model's version. Semver; see the module docstring.
-SCHEMA_VERSION = "1.6.0"
+SCHEMA_VERSION = "1.7.0"
 
 # ── Permissions ───────────────────────────────────────────────────
 
@@ -432,6 +432,34 @@ TYPES = (
         "An approval was answered, by anyone.",
         field("session_id", "str"),
         field("requirement_id", "str"),
+    ),
+    typedef(
+        "ApprovalChange",
+        "An approval began or stopped waiting on a person — however it ended: answered "
+        "in a window or through the API, after a restart, or dropped with its run.",
+        field("session_id", "str"),
+        field("requirement_id", "str"),
+        field("run_id", "str"),
+        field("state", "str", "`waiting` or `resolved`."),
+        field("origin", "str", "`main` (the main agent) or `sub_agent`."),
+        field("tool_name", "str", "The tool asked about; empty when resolved."),
+    ),
+    typedef(
+        "SessionActivity",
+        "One session's share of `Activity`.",
+        field("session_id", "str"),
+        field("state", "str", "`idle`, `waiting` or `running`."),
+        field("waiting_approvals", "int"),
+    ),
+    typedef(
+        "Activity",
+        "Whether igni is doing anything. A run waiting only on a person — on an approval, "
+        "its own or a sub-agent's — is `waiting`, not `running`: nothing happens until the "
+        "decision, so the process may be suspended and the decision wakes it.",
+        field("state", "str", "`idle`, `waiting` or `running`."),
+        field("suspendable", "bool", "Nothing is running."),
+        field("waiting_approvals", "int"),
+        field("sessions", "list[SessionActivity]"),
     ),
     typedef(
         "ApprovalDetails",
@@ -887,11 +915,19 @@ OBJECTS = (
                 "Model and server reachability.",
                 changed_by=["connection_changed"],
             ),
+            prop(
+                "activity",
+                "Activity",
+                "Running, waiting on a person, or idle — what decides whether igni's "
+                "process may be suspended.",
+                changed_by=["activity_changed"],
+            ),
         ),
         signals=(
             signal("display_changed", "Display", "Verbosity or output style changed."),
             signal("connection_changed", "Connection", "The connection changed."),
             signal("update_changed", "UpdateInfo | None", "An update check answered."),
+            signal("activity_changed", "Activity", "igni started or stopped doing something."),
         ),
         methods=(
             method(
@@ -1353,13 +1389,19 @@ OBJECTS = (
                 "waiting",
                 "list[Approval]",
                 "Requests not yet answered.",
-                changed_by=["requested", "resolved"],
+                changed_by=["requested", "resolved", "changed"],
             ),
         ),
         signals=(
             signal("requested", "Approval", "The agent asked."),
             signal("resolved", "ApprovalResolved", "Somebody answered."),
             signal("details", "ApprovalDetails", "The reason arrived."),
+            signal(
+                "changed",
+                "ApprovalChange",
+                "An approval appeared or went away, whoever answered and whenever — "
+                "including after a restart. For an app following approvals through the API.",
+            ),
         ),
         methods=(
             method(

@@ -162,7 +162,7 @@ class SubAgentStreamHandler(BaseStreamHandler[SubAgentStreamState]):
         req_ids: list[str] = []
         for req in reqs:
             req_id = await self._hitl_coordinator.push_requirement(
-                req, run_id=run_id, agent_path=self._path
+                req, run_id=run_id, agent_path=self._path, session_id=session_id or ""
             )
             req_ids.append(req_id)
         # One concise activity line per pause batch — the user has
@@ -383,4 +383,39 @@ class SubAgentStreamHandler(BaseStreamHandler[SubAgentStreamState]):
                 agent_path=self.state.agent_path_id,
                 text=preview,
             )
+        )
+
+
+class ResumedSubAgentStreamHandler(SubAgentStreamHandler):
+    """A sub-agent's paused run, continued instead of started.
+
+    Used after a restart (``backend/cold_spawn_resume.py``): the run was
+    paused for approvals the person has now answered, and is continued
+    from Agno's stored copy with those decisions. Everything after the
+    first stream — another pause, the final answer — is the parent's.
+    """
+
+    def __init__(
+        self,
+        agent: Any,
+        *,
+        run_id: str,
+        session_id: str,
+        requirements: list[Any],
+        **kwargs: Any,
+    ) -> None:
+        super().__init__(agent, "", **kwargs)
+        self._resume_run_id = run_id
+        self._resume_session_id = session_id
+        self._requirements = requirements
+        # The run id latches from the continued run's events, which
+        # registers it for cancellation like any other.
+        self.state.current_session_id = session_id
+
+    def _first_stream(self) -> Any:
+        return self._runnable.acontinue_run(
+            run_id=self._resume_run_id,
+            session_id=self._resume_session_id,
+            requirements=self._requirements,
+            stream=True,
         )

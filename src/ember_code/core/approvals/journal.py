@@ -19,6 +19,13 @@ again and can be answered.
 The requirements the permission policy decided by itself while others
 in the same pause waited on the person (``auto_resolved``) are kept
 too: the run cannot be resumed without them.
+
+A sub-agent's approval has more to keep: the agent waiting on it runs
+inside a ``spawn_agent`` call of another run. ``waiting_spawns`` holds,
+per paused sub-agent run, which agent it is and the chain of calls
+waiting above it (:class:`~ember_code.core.tools.spawn_context.ParentCall`)
+— what a backend that starts cold needs to continue the sub-agent, hand
+its answer to the waiting call and continue the run that made it.
 """
 
 from __future__ import annotations
@@ -36,9 +43,15 @@ from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import Index, Integer, PrimaryKeyConstraint, String, Text, delete, select, update
 from sqlalchemy.orm import Mapped, mapped_column
 
+from ember_code.core.approvals.events import (
+    ApprovalChange,
+    ApprovalState,
+    approval_events,
+)
 from ember_code.core.db.base import Base
 from ember_code.core.db.database import Database
 from ember_code.core.db.scope import ScopedColumns
+from ember_code.core.tools.spawn_context import ParentCall
 from ember_code.protocol import messages as msg
 
 logger = logging.getLogger(__name__)
@@ -72,6 +85,36 @@ class WaitingApprovalModel(ScopedColumns, Base):
     #: for an auto-resolved requirement, which nobody is shown.
     request: Mapped[str] = mapped_column(Text, nullable=False, server_default="")
     created_at: Mapped[int] = mapped_column(Integer, nullable=False)
+
+
+class WaitingSpawnModel(ScopedColumns, Base):
+    """A paused sub-agent run, and the calls waiting above it."""
+
+    __tablename__ = "waiting_spawns"
+    __table_args__ = (
+        PrimaryKeyConstraint("org", "producer", "project", "run_id", name="pk_waiting_spawns"),
+    )
+
+    #: The sub-agent's paused run.
+    run_id: Mapped[str] = mapped_column(String, nullable=False)
+    #: The igni session the approval belongs to.
+    session_id: Mapped[str] = mapped_column(String, nullable=False)
+    #: The sub-agent run's own Agno session.
+    agent_session_id: Mapped[str] = mapped_column(String, nullable=False)
+    agent_name: Mapped[str] = mapped_column(String, nullable=False)
+    #: ``list[ParentCall]`` as JSON, nearest first.
+    parents: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[int] = mapped_column(Integer, nullable=False)
+
+
+class SpawnLink(BaseModel):
+    """What continuing a paused sub-agent run cold needs."""
+
+    run_id: str
+    session_id: str
+    agent_session_id: str
+    agent_name: str
+    parents: list[ParentCall] = Field(default_factory=list)
 
 
 class StoredApproval(BaseModel):
@@ -134,6 +177,17 @@ class ApprovalJournal:
                 )
         except Exception as exc:
             logger.debug("approval journal: record %s failed: %s", requirement_id, exc)
+        if origin is not ApprovalOrigin.AUTO_RESOLVED:
+            approval_events.announce(
+                ApprovalChange(
+                    session_id=session_id,
+                    requirement_id=requirement_id,
+                    run_id=run_id or "",
+                    state=ApprovalState.WAITING,
+                    origin=origin.value,
+                    tool_name=request.tool_name if request is not None else "",
+                )
+            )
 
     def record_auto_resolved(self, *, session_id: str, run_id: str, requirement: Any) -> None:
         self.record(
@@ -173,6 +227,64 @@ class ApprovalJournal:
                 WaitingApprovalModel.origin == origin.value,
             )
 
+    def record_spawn(self, link: SpawnLink) -> None:
+        """Remember a paused sub-agent run (once per run)."""
+        try:
+            with self._db.sync_session() as session, session.begin():
+                session.execute(
+                    delete(WaitingSpawnModel).where(
+                        self._db.scope.where(WaitingSpawnModel),
+                        WaitingSpawnModel.run_id == link.run_id,
+                    )
+                )
+                session.add(
+                    WaitingSpawnModel(
+                        **self._db.scope.stamp(),
+                        run_id=link.run_id,
+                        session_id=link.session_id,
+                        agent_session_id=link.agent_session_id,
+                        agent_name=link.agent_name,
+                        parents=json.dumps([p.model_dump(mode="json") for p in link.parents]),
+                        created_at=int(time.time()),
+                    )
+                )
+        except Exception as exc:
+            logger.debug("approval journal: record spawn %s failed: %s", link.run_id, exc)
+
+    def spawn(self, run_id: str) -> SpawnLink | None:
+        try:
+            with self._db.sync_session() as session:
+                row = session.scalar(
+                    select(WaitingSpawnModel).where(
+                        self._db.scope.where(WaitingSpawnModel),
+                        WaitingSpawnModel.run_id == run_id,
+                    )
+                )
+            if row is None:
+                return None
+            return SpawnLink(
+                run_id=row.run_id,
+                session_id=row.session_id,
+                agent_session_id=row.agent_session_id,
+                agent_name=row.agent_name,
+                parents=[ParentCall.model_validate(p) for p in json.loads(row.parents)],
+            )
+        except Exception as exc:
+            logger.debug("approval journal: read spawn %s failed: %s", run_id, exc)
+            return None
+
+    def forget_spawn(self, run_id: str) -> None:
+        try:
+            with self._db.sync_session() as session, session.begin():
+                session.execute(
+                    delete(WaitingSpawnModel).where(
+                        self._db.scope.where(WaitingSpawnModel),
+                        WaitingSpawnModel.run_id == run_id,
+                    )
+                )
+        except Exception as exc:
+            logger.debug("approval journal: forget spawn %s failed: %s", run_id, exc)
+
     def waiting(self, session_id: str) -> list[StoredApproval]:
         """Everything the session's approvals were, oldest first."""
         try:
@@ -191,15 +303,33 @@ class ApprovalJournal:
         return [stored for row in rows if (stored := self._stored(row)) is not None]
 
     def _delete(self, *conditions: Any) -> None:
+        mine = (self._db.scope.where(WaitingApprovalModel), *conditions)
         try:
             with self._db.sync_session() as session, session.begin():
-                session.execute(
-                    delete(WaitingApprovalModel).where(
-                        self._db.scope.where(WaitingApprovalModel), *conditions
-                    )
-                )
+                gone = session.execute(
+                    select(
+                        WaitingApprovalModel.requirement_id,
+                        WaitingApprovalModel.session_id,
+                        WaitingApprovalModel.run_id,
+                        WaitingApprovalModel.origin,
+                    ).where(*mine)
+                ).all()
+                session.execute(delete(WaitingApprovalModel).where(*mine))
         except Exception as exc:
             logger.debug("approval journal: delete failed: %s", exc)
+            return
+        for requirement_id, session_id, run_id, origin in gone:
+            if origin == ApprovalOrigin.AUTO_RESOLVED.value:
+                continue
+            approval_events.announce(
+                ApprovalChange(
+                    session_id=session_id,
+                    requirement_id=requirement_id,
+                    run_id=run_id,
+                    state=ApprovalState.RESOLVED,
+                    origin=origin,
+                )
+            )
 
     @staticmethod
     def _stored(row: WaitingApprovalModel) -> StoredApproval | None:
@@ -223,6 +353,8 @@ class ApprovalJournal:
 __all__ = [
     "ApprovalJournal",
     "ApprovalOrigin",
+    "SpawnLink",
     "StoredApproval",
     "WaitingApprovalModel",
+    "WaitingSpawnModel",
 ]

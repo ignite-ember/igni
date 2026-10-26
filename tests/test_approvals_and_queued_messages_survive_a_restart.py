@@ -27,10 +27,10 @@ from ember_code.backend.hitl_controller import HitlController
 from ember_code.backend.pause_handler import PauseHandler
 from ember_code.backend.pending_requirements_store import PendingRequirementsStore
 from ember_code.backend.session_orchestrator import SessionOrchestrator
+from ember_code.core.approvals.journal import ApprovalJournal
 from ember_code.core.db.database import Database
 from ember_code.core.db.urls import DatabaseUrl
 from ember_code.core.hooks.queue import QueueBridge
-from ember_code.core.session.approval_journal import ApprovalJournal
 from ember_code.core.session.queued_messages import DurableMessageQueue, QueuedMessageStore
 from ember_code.core.sub_agent_hitl import SubAgentHITLCoordinator
 from ember_code.protocol import messages as msg

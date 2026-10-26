@@ -36,6 +36,7 @@ import logging
 from collections.abc import AsyncIterator
 from typing import TYPE_CHECKING, Any
 
+from ember_code.backend.cold_spawn_resume import ColdSpawnResume
 from ember_code.backend.hitl_stream_mux import HITLStreamMultiplexer
 from ember_code.backend.hitl_tracer import HITLTracer
 from ember_code.backend.pause_handler import PauseHandler
@@ -223,6 +224,13 @@ class HitlController:
                 )
 
         self._merge_auto_resolved(main_resolved_reqs, run_id)
+
+        # Sub-agent approvals a previous backend left: once all of a
+        # run's are answered, nothing in this process waits on them —
+        # continue the sub-agent and the calls above it here.
+        for ready in self._session.sub_agent_hitl.take_ready_restored():
+            async for proto in ColdSpawnResume(self._session, self._stream_factory).resume(ready):
+                yield proto
 
         if not main_resolved_reqs:
             return  # everything was sub-agent or failed

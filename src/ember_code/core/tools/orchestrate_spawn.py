@@ -12,7 +12,7 @@ Hierarchy:
   and an injected :class:`SpawnDeps` bundle) and owns the real
   template :meth:`run` — reserve budget, run preflight, build
   the runnable, fire SubagentStart, emit ``agent_started``
-  progress, delegate the stream inside :func:`asyncio.wait_for`,
+  progress, delegate the stream inside a :class:`SpawnDeadline`,
   fire SubagentStop exactly once, and compose the parent-facing
   response via :meth:`format_result`.
 * :class:`AgentSpawn` — single-agent flavour. Owns a
@@ -61,6 +61,7 @@ from ember_code.core.tools.orchestrate_events import (
     TeamMode,
 )
 from ember_code.core.tools.orchestrate_sandbox import SpawnSandbox
+from ember_code.core.tools.spawn_context import SpawnDeadline
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -76,7 +77,7 @@ class SpawnRunner:
 
     Owns the template :meth:`run` skeleton — depth guard, budget
     reservation, sub-runnable build via :meth:`_build`, hook lifecycle,
-    ``agent_started`` emission, :func:`asyncio.wait_for` timeout, and
+    ``agent_started`` emission, :class:`SpawnDeadline` timeout, and
     the single ``SubagentStop`` fire site (guarded by
     ``_stop_fired`` so subclass overrides can't accidentally fire it
     twice — see the ``fires-exactly-once`` invariant).
@@ -191,10 +192,11 @@ class SpawnRunner:
 
         try:
             start = time.monotonic()
-            result, activity = await asyncio.wait_for(
-                self._execute(),
-                timeout=self._spawn_timeout,
-            )
+            # The timeout counts the spawn's own work, not the time a
+            # person takes over an approval it asked for: approvals do
+            # not expire (``SpawnDeadline``).
+            async with SpawnDeadline.running(self._spawn_timeout):
+                result, activity = await self._execute()
             elapsed = time.monotonic() - start
 
             await self._fire_stop_once(

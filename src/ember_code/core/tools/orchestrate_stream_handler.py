@@ -116,14 +116,20 @@ class BaseStreamHandler(Generic[_TState]):
         pick up the new implementation transparently.
         """
         try:
-            stream = self._runnable.arun(self._task, stream=True)
+            stream = self._first_stream()
             while stream is not None:
                 next_stream = None
                 async for event in stream:
+                    if next_stream is not None:
+                        # Let the paused run's stream end on its own.
+                        # Breaking out left Agno to close it later as a
+                        # cancelled run — which clears the pause on the
+                        # very run object the continuation reads, so the
+                        # agent asked for the same approval again.
+                        continue
                     follow_up = await self._handle(event)
                     if follow_up is not None:
                         next_stream = follow_up
-                        break
                 stream = next_stream
         finally:
             run_id = getattr(self.state, "current_run_id", None)
@@ -133,6 +139,10 @@ class BaseStreamHandler(Generic[_TState]):
         self._ensure_agent_completed_emitted()
         final = await self._fetch_final_content_with_fallback()
         return self._shape_final(final), self._log()
+
+    def _first_stream(self) -> Any:
+        """The stream the run starts with: a fresh run of the task."""
+        return self._runnable.arun(self._task, stream=True)
 
     # ── Shared helpers ─────────────────────────────────────────────
     def _log(self) -> list[str]:

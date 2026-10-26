@@ -130,6 +130,10 @@ class AppMembers(Members):
     async def update_available(self, c: Call) -> Any:
         return self.model.state.update
 
+    @get("app.activity")
+    async def activity(self, c: Call) -> Any:
+        return self.backend.activity()
+
     @get("app.connection")
     async def connection(self, c: Call) -> Any:
         status = await self.rpc(RpcMethod.GET_STATUS, c=c)

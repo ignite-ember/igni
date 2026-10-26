@@ -25,6 +25,7 @@ import logging
 from pathlib import Path
 from typing import Any
 
+from ember_code.backend.activity import Activity
 from ember_code.backend.command_handler import CommandHandler
 from ember_code.core.hooks.extension_gate import ExtensionHookGate
 from ember_code.core.plugins.installer import PluginInstaller
@@ -114,6 +115,10 @@ class HeadlessHostBackend:
 
     def views(self, session_id: str) -> list[dict[str, Any]]:
         return []
+
+    def activity(self) -> dict[str, Any]:
+        # A headless run is its own process; nothing here suspends it.
+        return Activity.of([]).model_dump(mode="json")
 
     def waiting_approvals(self, session_id: str) -> list[Message]:
         # Headless runs ask nobody: nothing waits on a person.

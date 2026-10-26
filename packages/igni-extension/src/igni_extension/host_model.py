@@ -1,4 +1,4 @@
-"""GENERATED from the igni host schema 1.6.0 by ember_code.extensions.host.codegen — do not edit. Run `make host-sdks` after changing the schema.
+"""GENERATED from the igni host schema 1.7.0 by ember_code.extensions.host.codegen — do not edit. Run `make host-sdks` after changing the schema.
 
 `ext.host` as an extension's process sees it. Read
 `docs/HOST_OBJECT_MODEL.md` in igni for what each object is.
@@ -22,7 +22,7 @@ from igni_extension.members import (
 )
 from igni_extension.notifications import LocalNotification, Target
 
-SCHEMA_VERSION = "1.6.0"
+SCHEMA_VERSION = "1.7.0"
 
 NotificationTarget = Target
 
@@ -460,6 +460,46 @@ class ApprovalResolved(BaseModel):
 
     session_id: str
     requirement_id: str
+
+
+class ApprovalChange(BaseModel):
+    """An approval began or stopped waiting on a person — however it ended: answered in a window or through the API, after a restart, or dropped with its run."""
+
+    model_config = ConfigDict(extra="allow")
+
+    session_id: str
+    requirement_id: str
+    run_id: str
+    state: str
+    """`waiting` or `resolved`."""
+    origin: str
+    """`main` (the main agent) or `sub_agent`."""
+    tool_name: str
+    """The tool asked about; empty when resolved."""
+
+
+class SessionActivity(BaseModel):
+    """One session's share of `Activity`."""
+
+    model_config = ConfigDict(extra="allow")
+
+    session_id: str
+    state: str
+    """`idle`, `waiting` or `running`."""
+    waiting_approvals: int
+
+
+class Activity(BaseModel):
+    """Whether igni is doing anything. A run waiting only on a person — on an approval, its own or a sub-agent's — is `waiting`, not `running`: nothing happens until the decision, so the process may be suspended and the decision wakes it."""
+
+    model_config = ConfigDict(extra="allow")
+
+    state: str
+    """`idle`, `waiting` or `running`."""
+    suspendable: bool
+    """Nothing is running."""
+    waiting_approvals: int
+    sessions: list[SessionActivity]
 
 
 class ApprovalDetails(BaseModel):
@@ -970,6 +1010,8 @@ class HostChatApprovals(HostObject):
         """Somebody answered."""
         self.details: Signal[ApprovalDetails] = Signal("chat.approvals.details", ApprovalDetails)
         """The reason arrived."""
+        self.changed: Signal[ApprovalChange] = Signal("chat.approvals.changed", ApprovalChange)
+        """An approval appeared or went away, whoever answered and whenever — including after a restart. For an app following approvals through the API."""
 
     async def answer(self, requirement_id: str, action: str, choice: str | None = None) -> None:
         """Answer one request, as the person's dialog does."""
@@ -1013,12 +1055,16 @@ class HostApp(HostObject):
         """A newer igni, as last checked; `None` when there is none or it was not checked yet."""
         self.connection: Property[Connection] = Property(self, "connection", Connection, writable=False)
         """Model and server reachability."""
+        self.activity: Property[Activity] = Property(self, "activity", Activity, writable=False)
+        """Running, waiting on a person, or idle — what decides whether igni's process may be suspended."""
         self.display_changed: Signal[Display] = Signal("app.display_changed", Display)
         """Verbosity or output style changed."""
         self.connection_changed: Signal[Connection] = Signal("app.connection_changed", Connection)
         """The connection changed."""
         self.update_changed: Signal[UpdateInfo | None] = Signal("app.update_changed", UpdateInfo | None)
         """An update check answered."""
+        self.activity_changed: Signal[Activity] = Signal("app.activity_changed", Activity)
+        """igni started or stopped doing something."""
 
     async def set_verbose(self, on: bool) -> Display:
         """Show or hide routing detail."""
@@ -1784,9 +1830,11 @@ class Host(HostObject):
 
 __all__ = [
     "Account",
+    "Activity",
     "AgentEvent",
     "Approval",
     "ApprovalAnswer",
+    "ApprovalChange",
     "ApprovalDetails",
     "ApprovalResolved",
     "Change",
@@ -1867,6 +1915,7 @@ __all__ = [
     "Scroll",
     "SelectionChange",
     "SelectionState",
+    "SessionActivity",
     "SessionAttached",
     "SessionChange",
     "SessionCleared",

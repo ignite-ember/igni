@@ -40,9 +40,10 @@ from typing import TYPE_CHECKING, Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from ember_code.core.approvals.journal import ApprovalJournal, ApprovalOrigin, SpawnLink
 from ember_code.core.paths import DEFAULT_DATA_DIR
 from ember_code.core.profile import RuntimeProfile
-from ember_code.core.session.approval_journal import ApprovalJournal, ApprovalOrigin
+from ember_code.core.tools.spawn_context import SpawnCalls, SpawnDeadline
 from ember_code.protocol import messages as msg
 from ember_code.protocol.agno_tool_formatter import default_registry
 
@@ -75,6 +76,16 @@ class _PendingEntry(BaseModel):
     event: asyncio.Event = Field(default_factory=asyncio.Event)
 
 
+class RestoredRun(BaseModel):
+    """A sub-agent run read back after a restart, all its approvals answered."""
+
+    model_config = ConfigDict(arbitrary_types_allowed=True)
+
+    run_id: str
+    requirements: list[Any]
+    link: SpawnLink | None = None
+
+
 class SubAgentHITLCoordinator:
     """Per-session registry of sub-agent HITL requirements.
 
@@ -97,6 +108,8 @@ class SubAgentHITLCoordinator:
         self._session_id: Callable[[], str] = lambda: ""
         #: Requests read back after a restart: nothing waits on them.
         self._restored: set[str] = set()
+        #: Requests a stream handler is blocked on right now.
+        self._awaited: set[str] = set()
 
     # ── Durability ────────────────────────────────────────────────
 
@@ -126,6 +139,35 @@ class SubAgentHITLCoordinator:
             self._restored.add(stored.requirement_id)
             restored += 1
         return restored
+
+    @property
+    def waiting_count(self) -> int:
+        """Sub-agent runs blocked on a person right now — each one's
+        spawn is doing nothing but wait (``BackendServer.activity``)."""
+        return sum(1 for req_id in self._awaited if not self._pending[req_id].event.is_set())
+
+    def take_ready_restored(self) -> list[RestoredRun]:
+        """Restored runs every one of whose approvals is now answered.
+
+        Each is returned once, with its requirements as decided and the
+        link the journal kept, for :class:`ColdSpawnResume` to continue.
+        """
+        by_run: dict[str, list[str]] = {}
+        for req_id in self._restored:
+            by_run.setdefault(self._pending[req_id].run_id, []).append(req_id)
+        ready: list[RestoredRun] = []
+        for run_id, req_ids in by_run.items():
+            if not all(self._pending[r].event.is_set() for r in req_ids):
+                continue
+            requirements = [self._pending.pop(r).requirement for r in req_ids]
+            self._restored.difference_update(req_ids)
+            link = self._journal.spawn(run_id) if self._journal is not None else None
+            ready.append(RestoredRun(run_id=run_id, requirements=requirements, link=link))
+        return ready
+
+    def forget_spawn(self, run_id: str) -> None:
+        if self._journal is not None:
+            self._journal.forget_spawn(run_id)
 
     def request_for(self, req_id: str) -> msg.HITLRequest | None:
         """The request a window is shown for ``req_id``."""
@@ -182,6 +224,20 @@ class SubAgentHITLCoordinator:
             request=self.request_for(req_id),
         )
 
+    def _link(self, run_id: str, session_id: str, agent_path: list[str]) -> None:
+        parents = SpawnCalls.current()
+        if self._journal is None or not parents or not session_id or not agent_path:
+            return
+        self._journal.record_spawn(
+            SpawnLink(
+                run_id=run_id,
+                session_id=self._session_id(),
+                agent_session_id=session_id,
+                agent_name=agent_path[-1],
+                parents=parents,
+            )
+        )
+
     def _forget(self, req_id: str) -> None:
         if self._journal is not None:
             self._journal.forget(req_id)
@@ -191,8 +247,14 @@ class SubAgentHITLCoordinator:
         req: RunRequirement,
         run_id: str,
         agent_path: list[str] | None = None,
+        session_id: str = "",
     ) -> str:
-        """Called from the sub-agent stream handler when its run pauses."""
+        """Called from the sub-agent stream handler when its run pauses.
+
+        ``session_id`` is the sub-agent run's own Agno session: with the
+        calls waiting above it (:class:`SpawnCalls`) it is what a backend
+        that starts cold needs to continue the run.
+        """
         logging.getLogger("ember_code.llm_calls").info(
             "coord.push_requirement: id_self=%s run_id=%s path=%s",
             id(self),
@@ -217,6 +279,7 @@ class SubAgentHITLCoordinator:
             agent_path=list(agent_path or []),
         )
         self._write(req_id)
+        self._link(run_id, session_id, list(agent_path or []))
         self.new_arrival.set()
         return req_id
 
@@ -280,21 +343,28 @@ class SubAgentHITLCoordinator:
         else:
             entry.requirement.reject(note="User denied")
         entry.event.set()
-        # Answered: a restart from here on must not ask again.
+        # Answered: a restart from here on must not ask again. A
+        # restored request stays until its run is continued
+        # (:meth:`take_ready_restored`): nothing in this process waits
+        # on it.
         self._forget(req_id)
-        if req_id in self._restored:
-            # Nothing waits on a restored request to clean it up.
-            self._restored.discard(req_id)
-            self._pending.pop(req_id, None)
         return True
 
     async def wait_resolved(self, req_id: str) -> RunRequirement:
         """Called from the sub-agent stream handler. Blocks until user resolves."""
         entry = self._pending[req_id]
-        await entry.event.wait()
+        self._awaited.add(req_id)
+        try:
+            # However long the person takes: approvals do not expire.
+            with SpawnDeadline.waiting_on_person():
+                await entry.event.wait()
+        finally:
+            self._awaited.discard(req_id)
         return entry.requirement
 
     def cleanup(self, req_id: str) -> None:
         """Drop the entry once spawn_agent has resumed past it."""
-        self._pending.pop(req_id, None)
+        entry = self._pending.pop(req_id, None)
         self._forget(req_id)
+        if entry is not None and not any(e.run_id == entry.run_id for e in self._pending.values()):
+            self.forget_spawn(entry.run_id)

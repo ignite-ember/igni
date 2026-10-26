@@ -36,6 +36,7 @@ from typing import TYPE_CHECKING, Any
 
 from agno.agent import Agent  # noqa: F401 — test-patch target
 
+from ember_code.backend.activity import SessionActivity
 from ember_code.backend.backend_bootstrap import BackendBootstrap
 from ember_code.backend.controller_registry import ControllerRegistry, Controllers
 from ember_code.backend.hitl_controller import HitlController
@@ -1074,6 +1075,18 @@ class BackendServer:
     @property
     def session_id(self) -> str:
         return self._session.session_id
+
+    def activity(self) -> SessionActivity:
+        """Running, waiting on a person, or idle (``backend/activity.py``)."""
+        coordinator = self._session.sub_agent_hitl
+        waiting = sum(len(m.requirements) for m in self.hitl.waiting_messages())
+        return SessionActivity.of(
+            self.session_id,
+            run_in_progress=self.processing,
+            waiting_approvals=waiting,
+            blocked_spawns=coordinator.waiting_count,
+            active_subagent_runs=self.team_wiring.active_subagent_runs(),
+        )
 
     @property
     def settings(self) -> Settings:
