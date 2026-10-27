@@ -40,6 +40,13 @@ image with node state on local SSD:
 | Hot (pages still in host memory) | under 25 ms | 50 ms | 44 ms |
 | Cold (working set read from disk) | — | 150 ms | 195 ms |
 
+Every number that counts against these targets comes from the real igni
+image doing real work: a real model, real agent runs on a real repository
+(reading and editing files, running shell commands and tests, git),
+suspended between turns and resumed for the next. Test guests, fake
+models and simulated runs are only for finding where time goes, never
+for the result.
+
 - Hot under 25 ms means igni's own part stays a few milliseconds and the
   restore path itself (Firecracker, UFFD, the node's stream, the gateway)
   is cut too; a per-phase timeline shows where the 44 ms goes.
