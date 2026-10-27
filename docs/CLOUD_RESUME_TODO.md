@@ -142,17 +142,33 @@ and cold, before and after.
       0.5 s at most), which the image must install in
       `hooks/before-suspend.d/`; pages the kernel then reports free
       leave the snapshot.
-- [ ] igni: memory during a real agent run, and with several chats at once
-      in one VM; confirm or change the 1 GiB default. The probe is ready:
-      `scripts/measure_resume.py --model-url … --model-id … --model-key-env
-      <variable> --repo-url <repository> --task "<a real task>" --chats 1
-      --chats 3` clones the repository as igni's project, runs the task in
-      that many sessions at once with edits and commands allowed, and
-      samples igni's RSS and its whole process tree's (the commands the
-      agent runs) every 200 ms, then the pages changed since the warm base.
-      Not run yet: an agent running commands from a cloned external
-      repository needs the person's approval here, and the counted run is
-      the node agent's on the image anyway.
+- [x] igni: memory during a real agent run, and with several chats at once
+      in one VM; confirm or change the 1 GiB default. Diagnostic (Linux
+      container on Apple Silicon, MiniMax-M2.7, PostgreSQL; the counted
+      run is the node agent's on the image): `scripts/measure_resume.py
+      --model-url … --model-key-env … --repo-url
+      https://github.com/ignite-ember/igni --task … --chats 1 --chats 3`.
+      The task: edit a file, make a virtualenv, `pip install -e .`, run a
+      test module. All runs ended (`stream_end`).
+
+      | | 1 chat | 3 chats at once |
+      |---|---|---|
+      | took | 138 s | 85 s |
+      | igni's RSS, peak | 205 MB | 219 MB |
+      | igni and every process it ran, peak (RSS summed) | 1,912 MB | 753 MB |
+
+      igni itself stays near 220 MB (181 MB at `ready`); its changed pages
+      since the warm base after both runs were 63 MB (28 MB base pages
+      written, 35 MB new). **1 GiB holds for igni and ordinary commands,
+      not for every command an agent runs**: the 1.9 GB peak was the first
+      `pip install -e .` building a dependency from source (ripgrep has no
+      wheel for aarch64 Linux, so cargo and rustc ran); the later runs
+      reused the built wheel and peaked at 0.75 GB with three chats. RSS
+      summed over processes counts shared pages more than once, so the
+      true peak is lower — but a build like that in a 1 GiB VM would meet
+      the OOM killer. Keep 1 GiB as the default; the profile's ceiling is
+      the knob for producers that build native code, and the counted run
+      on x86_64 (where that wheel exists) says how often it matters.
 - [x] igni: what is imported at `ready` (~169 MB) that a producer may never
       use; weigh it against loading on the first request. Diagnostic
       (container, `PYTHONTRACEMALLOC`, `-X importtime`): 2,706 modules at
