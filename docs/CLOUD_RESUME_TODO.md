@@ -1,6 +1,6 @@
 # igni cloud — faster resume, TODO
 
-Status: target 50 ms. igni's part of 1 and the idle-memory part of 2 done
+Status: targets hot under 25 ms (50 ms at most), cold under 150 ms. igni's part of 1 and the idle-memory part of 2 done
 and measured in a Linux container; on the image, still to measure. 3
 done. Design: `docs/CLOUD.md`. Build plan:
 `docs/CLOUD_BUILD_PLAN.md`. Measurements so far: `igni__cloudvm`
@@ -32,15 +32,20 @@ is simpler at +85 ms cold); pd-balanced not for node state.
 
 ## Target
 
-Wake plus first answer under **50 ms** at p50, measured at the gateway on
-the real igni image with node state on local SSD.
+Wake plus first answer at p50, measured at the gateway on the real igni
+image with node state on local SSD:
 
-- Hot (pages still in host memory): 44 ms with the test guest today, so
-  igni's own part must stay a few milliseconds.
-- Cold (working set read from disk): 195 ms with the test guest today.
-  Under 50 ms needs a small working set read compressed and in parallel
-  (items 2, 5), and most resumes made hot by keeping pages in memory
-  (item 4). Each item reports how far it moved this.
+| | Goal | Must not exceed | Today (test guest) |
+|---|---|---|---|
+| Hot (pages still in host memory) | under 25 ms | 50 ms | 44 ms |
+| Cold (working set read from disk) | — | 150 ms | 195 ms |
+
+- Hot under 25 ms means igni's own part stays a few milliseconds and the
+  restore path itself (Firecracker, UFFD, the node's stream, the gateway)
+  is cut too; a per-phase timeline shows where the 44 ms goes.
+- Cold under 150 ms needs a small working set read compressed and in
+  parallel (items 2, 5); keeping pages in memory (item 4) makes more
+  resumes hot. Each item reports how far it moved these.
 - Out of scope for 50 ms: resumes from network disks or object storage
   (offload), and a producer's first start; they get their own numbers.
 
@@ -118,6 +123,12 @@ and cold, before and after.
       for when the signing keys must be fetched (first RPC 101.6 → 69.9 ms
       with a 30 ms key fetch), bounded (wake only, no bytes before the
       check, 30/min per address).
+
+### 3b. The hot path itself — node agent and gateway
+
+- [ ] Break the hot 44 ms into phases (gateway, node stream, Firecracker
+      restore, UFFD faults, guest wake, igni) on the real image and cut the
+      largest toward 25 ms.
 
 ### 4. Keep recently suspended producers in memory longer — node agent
 
