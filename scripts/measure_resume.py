@@ -244,6 +244,102 @@ class ProcessPages:
         return path
 
 
+class ModelChoice:
+    """The model igni is given: the fake one here, or a real one by URL.
+
+    A real model's key is read by igni from the variable ``key_env``
+    names (``api_key_env``), so it never appears in a file, an argument
+    or this script's output.
+    """
+
+    def __init__(
+        self,
+        *,
+        fake_url: str,
+        url: str | None = None,
+        model_id: str | None = None,
+        key_env: str | None = None,
+        context_window: int = 200000,
+        repo_url: str | None = None,
+    ) -> None:
+        self.fake_url = fake_url
+        self.url = url
+        self.model_id = model_id
+        self.key_env = key_env
+        self.context_window = context_window
+        self.repo_url = repo_url
+
+    @property
+    def real(self) -> bool:
+        return bool(self.url and self.model_id)
+
+    def managed_settings(self) -> dict[str, Any]:
+        if self.real:
+            entry: dict[str, Any] = {
+                "provider": "openai_like",
+                "model_id": self.model_id,
+                "url": self.url,
+                "api_key_env": self.key_env,
+                "context_window": self.context_window,
+            }
+        else:
+            entry = {
+                "provider": "openai_like",
+                "model_id": "fake",
+                "url": self.fake_url,
+                "api_key": "x",
+                "context_window": 32000,
+            }
+        return {
+            "models": {"default": "probe", "registry": {"probe": entry}},
+            # Nobody is there to approve: a run edits files and runs
+            # commands as it would with the person saying yes.
+            "permissions": {
+                "file_write": "allow",
+                "shell_execute": "allow",
+                "git_push": "deny",
+                "git_destructive": "deny",
+            },
+        }
+
+
+class ProcessTree:
+    """igni and everything it started: the memory the VM holds for them."""
+
+    def __init__(self, pid: int) -> None:
+        self.pid = pid
+
+    def pids(self) -> list[int]:
+        children: dict[int, list[int]] = {}
+        for stat in Path("/proc").glob("[0-9]*/stat"):
+            try:
+                fields = stat.read_text().rsplit(")", 1)[1].split()
+            except OSError:
+                continue
+            children.setdefault(int(fields[1]), []).append(int(stat.parent.name))
+        found, stack = [], [self.pid]
+        while stack:
+            pid = stack.pop()
+            found.append(pid)
+            stack.extend(children.get(pid, []))
+        return found
+
+    @staticmethod
+    def rss_kb(pid: int) -> int:
+        try:
+            for line in Path(f"/proc/{pid}/status").read_text().splitlines():
+                if line.startswith("VmRSS:"):
+                    return int(line.split()[1])
+        except OSError:
+            pass
+        return 0
+
+    def sample(self) -> tuple[int, int]:
+        """igni's RSS, and the whole tree's."""
+        pids = self.pids()
+        return self.rss_kb(self.pid), sum(self.rss_kb(pid) for pid in pids)
+
+
 class Igni:
     """An igni backend started here, in the cloud profile, as a warm base starts."""
 
@@ -261,25 +357,15 @@ class Igni:
         self.log = self.tmp / "igni.log"
         self.process: subprocess.Popen[bytes] | None = None
 
-    def start(self, model_url: str) -> None:
-        (self.run_dir / "managed-settings.yaml").write_text(
-            json.dumps(
-                {
-                    "models": {
-                        "default": "fake",
-                        "registry": {
-                            "fake": {
-                                "provider": "openai_like",
-                                "model_id": "fake",
-                                "url": model_url,
-                                "api_key": "x",
-                                "context_window": 32000,
-                            }
-                        },
-                    }
-                }
+    def start(self, model: ModelChoice) -> None:
+        (self.run_dir / "managed-settings.yaml").write_text(json.dumps(model.managed_settings()))
+        if model.repo_url:
+            # The project igni works in: a real repository, cloned fresh.
+            subprocess.run(
+                ["git", "clone", "--quiet", "--depth", "50", model.repo_url, str(self.project)],
+                check=True,
+                env={**os.environ, "GIT_TERMINAL_PROMPT": "0"},
             )
-        )
         env = {
             k: v
             for k, v in os.environ.items()
@@ -363,6 +449,71 @@ class Window:
         while last not in ("stream_end", "run_error"):
             last = json.loads(await asyncio.wait_for(self.ws.recv(), timeout=60)).get("type")
         return last
+
+    async def chats(self, task: str, sessions: list[str], timeout: float) -> dict[str, str]:
+        """The same task in each session at once; each session's last event type."""
+        for number, session in enumerate(sessions):
+            await self.ws.send(
+                json.dumps(
+                    {
+                        "type": "user_message",
+                        "id": f"chat-{number}",
+                        "session_id": session,
+                        "text": task,
+                    }
+                )
+            )
+        ended: dict[str, str] = {}
+        deadline = time.monotonic() + timeout
+        while len(ended) < len(sessions):
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                break
+            message = json.loads(await asyncio.wait_for(self.ws.recv(), timeout=remaining))
+            kind, session = message.get("type"), message.get("session_id", "")
+            if session in sessions and kind in ("stream_end", "run_error"):
+                ended[session] = kind
+        return {session: ended.get(session, "timed out") for session in sessions}
+
+
+class AgentRunProbe:
+    """A real agent run — or several at once — and the memory it takes."""
+
+    def __init__(self, *, pid: int, url: str) -> None:
+        self.tree = ProcessTree(pid)
+        self.pages = ProcessPages(pid)
+        self.url = url
+
+    async def run(self, task: str, chats: int, timeout: float) -> dict[str, Any]:
+        sessions = [f"probe-chat-{n}" for n in range(chats)]
+        peak_igni = peak_tree = 0
+        done = asyncio.Event()
+
+        async def sample() -> None:
+            nonlocal peak_igni, peak_tree
+            while not done.is_set():
+                igni, tree = await asyncio.to_thread(self.tree.sample)
+                peak_igni, peak_tree = max(peak_igni, igni), max(peak_tree, tree)
+                await asyncio.sleep(0.2)
+
+        before = self.pages.rss_kb()
+        sampler = asyncio.create_task(sample())
+        started = time.perf_counter()
+        async with connect(self.url, max_size=None) as ws:
+            await ws.recv()
+            ended = await Window(ws).chats(task, sessions, timeout)
+        took = time.perf_counter() - started
+        done.set()
+        await sampler
+        return {
+            "chats": chats,
+            "seconds": round(took, 1),
+            "ended": ended,
+            "igni_rss_before_kb": before,
+            "igni_rss_peak_kb": peak_igni,
+            "tree_rss_peak_kb": peak_tree,
+            "igni_rss_after_kb": self.pages.rss_kb(),
+        }
 
 
 class ResumeProbe:
@@ -499,6 +650,17 @@ class Summary:
 @click.option("--idle", "idle_seconds", default=60.0, help="Seconds of idle to measure")
 @click.option("--settle", default=3.0, help="Seconds between the session and the idle window")
 @click.option("--resumes", default=10, help="Simulated restores")
+@click.option("--model-url", default=None, help="A real model's OpenAI-compatible URL")
+@click.option("--model-id", default=None)
+@click.option(
+    "--model-key-env", default=None, help="The variable holding its key (never the key itself)"
+)
+@click.option("--repo-url", default=None, help="A repository cloned as igni's project")
+@click.option("--task", default=None, help="A task for real agent runs, after the session")
+@click.option(
+    "--chats", type=int, multiple=True, default=(1, 3), help="Chats at once, per agent run"
+)
+@click.option("--task-timeout", default=900.0)
 @click.option(
     "--base-settle", default=2.0, help="Seconds after ready at which the warm base is taken"
 )
@@ -530,6 +692,13 @@ def main(
     idle_seconds: float,
     settle: float,
     resumes: int,
+    model_url: str | None,
+    model_id: str | None,
+    model_key_env: str | None,
+    repo_url: str | None,
+    task: str | None,
+    chats: tuple[int, ...],
+    task_timeout: float,
     base_settle: float,
     save_pages: Path | None,
     igni_env: tuple[str, ...],
@@ -551,7 +720,14 @@ def main(
                 port=port,
                 env=dict(item.split("=", 1) for item in igni_env),
             )
-            igni.start(f"http://127.0.0.1:{server.server_address[1]}/v1")
+            model = ModelChoice(
+                fake_url=f"http://127.0.0.1:{server.server_address[1]}/v1",
+                url=model_url,
+                model_id=model_id,
+                key_env=model_key_env,
+                repo_url=repo_url,
+            )
+            igni.start(model)
             igni.wait_ready()
             assert igni.process is not None
             probe = ResumeProbe(
@@ -576,6 +752,16 @@ def main(
             result["after_a_run"] = ProcessPages.compare(base, ran) | {
                 "rss_kb": probe.pages.rss_kb()
             }
+            if task:
+                agent = AgentRunProbe(pid=igni.process.pid, url=f"ws://127.0.0.1:{port}")
+                result["agent_runs"] = []
+                for count in chats:
+                    result["agent_runs"].append(await agent.run(task, count, task_timeout))
+                    await asyncio.sleep(settle)
+                after = await asyncio.to_thread(probe.pages.contents)
+                result["after_agent_runs"] = ProcessPages.compare(base, after) | {
+                    "rss_kb": probe.pages.rss_kb()
+                }
             if save_pages is not None:
                 save_pages.mkdir(parents=True, exist_ok=True)
                 for name, pages in (("base", base), ("bound", bound), ("ran", ran)):

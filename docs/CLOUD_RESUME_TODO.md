@@ -143,9 +143,38 @@ and cold, before and after.
       `hooks/before-suspend.d/`; pages the kernel then reports free
       leave the snapshot.
 - [ ] igni: memory during a real agent run, and with several chats at once
-      in one VM; confirm or change the 1 GiB default.
-- [ ] igni: what is imported at `ready` (~169 MB) that a producer may never
-      use; weigh it against loading on the first request.
+      in one VM; confirm or change the 1 GiB default. The probe is ready:
+      `scripts/measure_resume.py --model-url … --model-id … --model-key-env
+      <variable> --repo-url <repository> --task "<a real task>" --chats 1
+      --chats 3` clones the repository as igni's project, runs the task in
+      that many sessions at once with edits and commands allowed, and
+      samples igni's RSS and its whole process tree's (the commands the
+      agent runs) every 200 ms, then the pages changed since the warm base.
+      Not run yet: an agent running commands from a cloned external
+      repository needs the person's approval here, and the counted run is
+      the node agent's on the image anyway.
+- [x] igni: what is imported at `ready` (~169 MB) that a producer may never
+      use; weigh it against loading on the first request. Diagnostic
+      (container, `PYTHONTRACEMALLOC`, `-X importtime`): 2,706 modules at
+      `ready`; of 129 MB traced, 53 MB is module code (every module's code
+      objects), then pydantic 14.5 MB, sqlalchemy 7.8, typing/dataclasses/
+      enum 8.7, regex 3.4, pygments 2.4. Imported and rarely or never used
+      by a producer: the whole `openai` SDK (537 modules, through
+      `agno.models.openai` importing `openai.types`), `mcp.server` with
+      uvicorn, sse-starlette, opentelemetry and multiprocessing (agno's MCP
+      client imports the server side), rich, markdown-it and pygments
+      (agno's logging and printing), `dns` (igni's sign-in discovery — never
+      used in a VM) and `dateparser` with `regex`, pytz, dateutil and tzlocal
+      (the scheduler's parser, through its models). Weighed: kept in the
+      base. What the base imports is mapped by every VM from the same pages
+      — host memory once per node, and nothing in a producer's snapshot or
+      working set unless touched — while a module loaded on a first request
+      becomes that producer's own pages and the request's latency. Loading
+      later pays only for what almost no producer touches and would cost a
+      lot to import: none of these, measured, beats keeping it shared. What
+      would shrink the base is upstream: agno importing only the OpenAI
+      chat client and not the MCP server, and igni's scheduler models not
+      importing its parser.
 
 ### 3. Start reading earlier — gateway
 
