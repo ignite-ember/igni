@@ -1,10 +1,12 @@
 """A person removed from an organisation can do nothing from that moment.
 
-Not for the ten minutes their access token would otherwise live: the
-service keeps igni's revocation list (``GET /v1/platform/revocations``)
-and refuses any token whose session, producer or incarnation it names.
-The list fails closed: once it cannot be refreshed within its bound,
-nothing is accepted until it can be again.
+igni's service-identity §21. Not for the ten minutes their access token
+would otherwise live: while the service runs it follows each
+organisation's revocations (``GET /v1/revocations``) and refuses a token
+whose subject, kind and organisation a watermark names and whose ``iat``
+is at or before it. The check fails closed: an organisation's tokens are
+refused until its revocations have been read, and whenever they go
+unrefreshed past the bound.
 """
 
 from __future__ import annotations
@@ -24,7 +26,7 @@ from .conftest import ORG, OTHER_ORG, bearer
 
 
 class Feed:
-    """The service's feed, run until a test is done, polling without waiting."""
+    """The service's feed, running, with polls that do not wait."""
 
     def __init__(self, igni: IgniService) -> None:
         self.igni = igni
@@ -32,21 +34,17 @@ class Feed:
         self.stop = asyncio.Event()
 
         async def sleep(seconds: float) -> None:
-            assert seconds == RevocationFeed.POLL_SECONDS, "igni answered at once: poll"
+            assert seconds == RevocationFeed.POLL_SECONDS
             self.polls += 1
             await asyncio.sleep(0.001)
 
-        igni.revocation_feed = RevocationFeed(
-            igni.server,
-            igni.revocation_feed._endpoint,
-            igni.revocations,
-            sleep=sleep,
-        )
+        igni.revocation_feed = RevocationFeed(igni.tokens, igni.revocations, sleep=sleep)
+        igni.verifier.revocations = igni.revocation_feed
 
     async def settle(self) -> None:
-        """Until the feed has asked igni again since now."""
+        """Until the feed has asked igni twice more since now."""
         start = self.polls
-        for _ in range(500):
+        for _ in range(1000):
             if self.polls > start + 1:
                 return
             await asyncio.sleep(0.002)
@@ -58,7 +56,7 @@ async def feed(igni: IgniService) -> AsyncIterator[Feed]:
     await igni.registration.start()
     running = Feed(igni)
     task = asyncio.create_task(igni.revocation_feed.run(running.stop))
-    await running.settle()
+    await asyncio.sleep(0)
     yield running
     running.stop.set()
     await task
@@ -79,77 +77,80 @@ async def http(igni: IgniService) -> AsyncIterator[httpx.AsyncClient]:
 
 
 async def test_a_removed_member_is_refused_at_once(
-    feed: Feed, fake: FakeIgni, http: httpx.AsyncClient
+    feed: Feed, fake: FakeIgni, http: httpx.AsyncClient, clock: ManualClock
 ) -> None:
     ada = fake.person_token("u-ada", org_id=ORG)
     assert (await http.get("/me", headers=bearer(ada))).status_code == 200
 
-    fake.remove_producer("person:u-ada", org_id=ORG)
+    clock.advance(5)
+    fake.publish_revocation("u-ada", org_id=ORG)
     await feed.settle()
 
     assert (await http.get("/me", headers=bearer(ada))).status_code == 401
-    other = fake.person_token("u-max", org_id=ORG)
-    assert (await http.get("/me", headers=bearer(other))).status_code == 200
+    max_ = fake.person_token("u-max", org_id=ORG)
+    assert (await http.get("/me", headers=bearer(max_))).status_code == 200
+
+    clock.advance(5)
+    added_back = fake.person_token("u-ada", org_id=ORG)
+    assert (await http.get("/me", headers=bearer(added_back))).status_code == 200, (
+        "signed in again, after the watermark"
+    )
 
 
-async def test_only_in_the_organisation_they_were_removed_from(
+async def test_only_in_its_organisation_unless_every_one(
+    feed: Feed, fake: FakeIgni, igni: IgniService, clock: ManualClock
+) -> None:
+    eve_here = fake.person_token("u-eve", org_id=ORG)
+    eve_there = fake.person_token("u-eve", org_id=OTHER_ORG)
+    fake.publish_revocation("u-eve", org_id=OTHER_ORG)
+    await igni.verifier.person(eve_here)  # follows ORG
+    with pytest.raises(Revoked):
+        await igni.verifier.person(eve_there)
+    assert (await igni.verifier.person(eve_here)).user_id == "u-eve"
+
+    fake.publish_revocation("u-eve", org_id=None, reason="sessions_withdrawn")
+    await feed.settle()
+    with pytest.raises(Revoked):
+        await igni.verifier.person(eve_here)
+
+
+async def test_an_app_and_a_space_are_revoked_by_kind(
     feed: Feed, fake: FakeIgni, igni: IgniService
 ) -> None:
-    fake.remove_producer("person:u-eve", org_id=ORG)
+    app = fake.app_token("reporter", org_id=ORG, name="Reporter")
+    space = fake.space_token("s-42", org_id=ORG, app_id="reporter", external_id="cust-9")
+    fake.publish_revocation("reporter", org_id=ORG, kind="app", reason="removed")
+    await igni.verifier.claims(space, use="space")  # follows ORG
     await feed.settle()
-    eve_elsewhere = fake.person_token("u-eve", org_id=OTHER_ORG)
-    assert (await igni.verifier.person(eve_elsewhere)).user_id == "u-eve"
-
-
-async def test_a_revoked_session_and_incarnation(
-    feed: Feed, fake: FakeIgni, igni: IgniService
-) -> None:
-    signed_in = fake.person_token("u-max", org_id=ORG, sid="s-1")
-    again = fake.person_token("u-max", org_id=ORG, sid="s-2")
-    old_life = fake.app_token("reporter", org_id=ORG, incarnation="i-1")
-    fake.revoke_session("s-1")
-    fake.revoke_incarnation("i-1")
-    await feed.settle()
-
     with pytest.raises(Revoked):
-        await igni.verifier.person(signed_in)
-    assert (await igni.verifier.person(again)).user_id == "u-max", "another sign-in is untouched"
-    with pytest.raises(Revoked):
-        await igni.verifier.claims(old_life, use="app")
+        await igni.verifier.claims(app, use="app")
+    assert (await igni.verifier.claims(space, use="space"))["sub"] == "s-42"
 
 
-async def test_it_fails_closed_when_it_cannot_be_refreshed(
-    fake: FakeIgni, igni: IgniService, clock: ManualClock, http: httpx.AsyncClient
+async def test_it_fails_closed_until_read_and_when_stale(
+    feed: Feed, fake: FakeIgni, igni: IgniService, clock: ManualClock
 ) -> None:
     ada = fake.person_token("u-ada", org_id=ORG)
-    igni.revocations.arm()  # a feed keeps it — and igni has not answered since
-    assert (await http.get("/me", headers=bearer(ada))).status_code == 200, "within its bound"
+    fake.failing["/v1/revocations"] = 503
+    igni.revocations.max_staleness = 0.05
+    with pytest.raises(RevocationsStale):
+        await igni.verifier.person(ada)  # never read: refused
 
-    clock.advance(igni.revocations.max_staleness + 1)
+    fake.failing.clear()
+    await feed.settle()
+    assert (await igni.verifier.person(ada)).user_id == "u-ada"
+
+    fake.failing["/v1/revocations"] = 503
+    clock.advance(1)  # past the bound with nothing heard
+    await feed.settle()
     with pytest.raises(RevocationsStale):
         await igni.verifier.person(ada)
-    assert (await http.get("/me", headers=bearer(ada))).status_code == 503
-
-    await igni.registration.start()
-    igni.revocations.heard(await igni.revocation_feed.pull())
-    assert (await http.get("/me", headers=bearer(ada))).status_code == 200, "fresh again"
 
 
-async def test_while_igni_fails_it_keeps_polling(feed: Feed, fake: FakeIgni) -> None:
-    fake.failing["/v1/platform/revocations"] = 503
-    before = feed.polls
-    await feed.settle()
-    assert feed.polls > before, "every two seconds, while igni fails"
-    fake.failing.clear()
-    fake.remove_producer("person:u-sam", org_id=ORG)
-    await feed.settle()
-    assert len(feed.igni.revocations) == 1
-
-
-async def test_a_service_that_does_not_keep_the_list_checks_nothing(
-    fake: FakeIgni, igni: IgniService, clock: ManualClock
+async def test_a_service_that_does_not_run_the_feed_checks_nothing(
+    fake: FakeIgni, igni: IgniService
 ) -> None:
-    clock.advance(3600)
+    fake.publish_revocation("u-ada", org_id=ORG)
     ada = fake.person_token("u-ada", org_id=ORG)
     assert (await igni.verifier.person(ada)).user_id == "u-ada"
 

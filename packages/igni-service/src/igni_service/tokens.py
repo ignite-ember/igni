@@ -36,7 +36,7 @@ from igni_service.jwks import IgniKeys
 from igni_service.server import IgniServer
 
 if TYPE_CHECKING:
-    from igni_service.revocations import RevocationList
+    from igni_service.revocations import RevocationFeed
 
 
 class TokenUse:
@@ -180,7 +180,7 @@ class TokenVerifier:
         keys: IgniKeys,
         *,
         clock: Clock | None = None,
-        revocations: RevocationList | None = None,
+        revocations: RevocationFeed | None = None,
     ) -> None:
         self._igni = igni
         self._keys = keys
@@ -238,7 +238,7 @@ class TokenVerifier:
         if self.revocations is not None and claims.get("token_use") != TokenUse.IGNI:
             # A removed person is refused at once, not when their token
             # expires; igni's own calls are not anybody's session.
-            self.revocations.check(claims)
+            await self.revocations.check(claims)
         return claims
 
     async def person(self, token: str) -> Person:

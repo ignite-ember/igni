@@ -55,7 +55,6 @@ from igni_service.subjects import (
     SubjectHandlers,
     SubjectRoutes,
 )
-from igni_service.token_endpoint import TokenEndpoint
 from igni_service.tokens import (
     PEOPLE_ONLY,
     Caller,
@@ -121,9 +120,7 @@ class IgniService:
         self.revocations = RevocationList(
             max_staleness=settings.revocations_max_staleness, clock=self.clock
         )
-        self.verifier = TokenVerifier(
-            self.server, self.keys, clock=self.clock, revocations=self.revocations
-        )
+        self.verifier = TokenVerifier(self.server, self.keys, clock=self.clock)
         #: Who `caller` lets in: people only unless the service says more
         #: (an app, an app's spaces — igni's service-identity §9.2, §17).
         self.accepted_callers: frozenset[CallerKind] = frozenset(
@@ -143,9 +140,8 @@ class IgniService:
             retry_min=retry_min,
         )
         self.tokens = ServiceTokens(self.server, self.registration, self.key, clock=self.clock)
-        self.revocation_feed = RevocationFeed(
-            self.server, TokenEndpoint(self.server, self.registration, self.key), self.revocations
-        )
+        self.revocation_feed = RevocationFeed(self.tokens, self.revocations)
+        self.verifier.revocations = self.revocation_feed
         self.directory = DirectoryClient(self.tokens, clock=self.clock)
         self.notifier = Notifier(self.tokens)
         self.web = WebSignIn(

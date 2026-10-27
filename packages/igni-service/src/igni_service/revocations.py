@@ -1,69 +1,77 @@
-"""Who may do nothing any more: igni's revocation list, kept fresh.
+"""Who may do nothing any more: igni's revocations, kept fresh per organisation.
 
-A person removed from an organisation can do nothing from that moment —
-not for the ten minutes their access token would otherwise still live.
-igni server publishes what it has revoked (``GET /v1/platform/revocations
-?since=<cursor>&wait=<s>``); this service keeps the list in memory and
-refuses any token it names:
+igni's service-identity §21. A person removed from an organisation —
+deactivated, erased, their sessions withdrawn — an app or a space
+deleted: nothing they hold works from that moment, not for the ten
+minutes their access token would otherwise live. igni publishes
+revocations to each organisation's services::
 
-* a **session** — the sign-in a token came from (its ``sid`` claim, or the
-  ``grant`` a refresh token names);
-* a **producer** in one organisation — ``person:<sub>``, ``app:<sub>`` or
-  ``space:<sub>`` with ``org``;
-* an **incarnation** — one life of a producer (its ``incarnation`` claim).
+    GET /v1/revocations?since=<cursor>&limit=500&wait=25     (the service's own token)
+    → {"revocations": [{"kind", "org_id" | null, "subject_id", "incarnation" | null,
+                        "not_before", "reason"}], "cursor"}
 
-:class:`RevocationFeed` long-polls the list, and polls every
-:attr:`RevocationFeed.POLL_SECONDS` where igni answers at once or not at
-all. While it runs the list **fails closed**: once it has not heard from
-igni for :attr:`RevocationList.max_staleness` seconds, every token is
-refused (:class:`RevocationsStale`) until it has again — a list that
-cannot be refreshed cannot say who was removed meanwhile. A verifier
-whose service never started the feed checks nothing.
+A revocation is a **watermark**: a token whose `sub` is `subject_id`, of
+that kind, in organisation `org_id` (any, when it is null) and issued at
+or before `not_before` is refused. A person added back signs in again,
+after the watermark.
 
-The wire format is igni server's (``docs/service-identity.md``):
-``{"revocations": [{"kind", "id", "org_id"?, "expires_at"?}], "cursor"}``;
-an entry is dropped once ``expires_at`` (Unix seconds) has passed, when no
-token it could stop is still alive.
+:class:`RevocationFeed` follows one organisation's revocations per
+organisation this service sees a token for — long-polled (`wait=25`),
+asked again at once while pages come back full, and every
+:attr:`RevocationFeed.POLL_SECONDS` while igni fails. While it runs the
+check **fails closed**: an organisation's token is refused
+(:class:`RevocationsStale`, a 503) until its revocations have been read
+once, and whenever they have not been refreshed for
+:attr:`RevocationList.max_staleness` seconds. A verifier whose service
+never started the feed checks nothing.
 """
 
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 import time
-from collections.abc import Awaitable, Callable
 from enum import StrEnum
-from typing import Any, ClassVar
+from typing import TYPE_CHECKING, Any, ClassVar
 
-import httpx
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from igni_service.clock import Clock
 from igni_service.errors import IgniUnavailable
-from igni_service.server import IgniServer
-from igni_service.token_endpoint import GrantRefused, TokenEndpoint
 from igni_service.tokens import TokenRefused
 from igni_service.urls import IgniPaths
+
+if TYPE_CHECKING:
+    from collections.abc import Awaitable, Callable
+
+    from igni_service.service_tokens import ServiceTokens
 
 logger = logging.getLogger(__name__)
 
 
-class RevocationKind(StrEnum):
-    SESSION = "session"
-    PRODUCER = "producer"
-    INCARNATION = "incarnation"
+class RevokedKind(StrEnum):
+    PERSON = "person"
+    APP = "app"
+    SPACE = "space"
 
 
 class Revocation(BaseModel):
+    """One watermark, as igni publishes it."""
+
     model_config = ConfigDict(frozen=True)
 
-    kind: RevocationKind
-    #: The session's id, ``<kind>:<id>`` of the producer, or the incarnation's id.
-    id: str
-    #: A producer is revoked in one organisation.
+    kind: RevokedKind
+    #: Its organisation; ``None`` for every organisation (sessions withdrawn).
     org_id: str | None = None
-    #: When no token it could stop is alive any more (Unix seconds).
-    expires_at: float | None = None
+    #: The token's ``sub``: a person's user id, an app's or a space's id.
+    subject_id: str
+    #: A person's membership revoked (§11.3); informational here.
+    incarnation: str | None = None
+    #: Unix seconds: a token issued at or before it is refused.
+    not_before: float
+    #: ``removed``, ``inactive``, ``erased``, ``sessions_withdrawn``.
+    reason: str = ""
 
 
 class RevocationPage(BaseModel):
@@ -76,186 +84,185 @@ class Revoked(TokenRefused):
 
 
 class RevocationsStale(IgniUnavailable):
-    """The revocation list has not been refreshed within its bound: nothing is accepted."""
+    """An organisation's revocations cannot be trusted now: nothing of it is accepted."""
 
 
 class RevocationList:
-    """The revocations igni has published, and whether they are fresh enough to trust."""
+    """The watermarks, and how fresh each organisation's are."""
 
-    #: Producer kinds by ``token_use``.
-    _PRODUCER: ClassVar[dict[str, str]] = {"user": "person", "app": "app", "space": "space"}
+    #: The kind a token's ``token_use`` names.
+    _KIND: ClassVar[dict[str, RevokedKind]] = {
+        "user": RevokedKind.PERSON,
+        "app": RevokedKind.APP,
+        "space": RevokedKind.SPACE,
+    }
+    #: igni keeps a revocation 31 days, past the longest a token lives.
+    KEPT_SECONDS: ClassVar[float] = 31 * 86400.0
 
     def __init__(self, *, max_staleness: float = 30.0, clock: Clock | None = None) -> None:
         self.max_staleness = max_staleness
         self._clock = clock or Clock()
-        self._sessions: dict[str, Revocation] = {}
-        self._producers: dict[tuple[str, str | None], Revocation] = {}
-        self._incarnations: dict[str, Revocation] = {}
-        #: Set while a feed keeps the list: from then on it fails closed.
-        self._armed_at: float | None = None
-        self._heard_at: float | None = None
-        self.cursor: str | None = None
+        #: ``(kind, org or None, subject)`` → the latest ``not_before``.
+        self._watermarks: dict[tuple[RevokedKind, str | None, str], float] = {}
+        #: Per organisation: the cursor to ask from, and when igni last answered.
+        self.cursors: dict[str, str] = {}
+        self._heard_at: dict[str, float] = {}
 
-    def arm(self) -> None:
-        """A feed keeps this list now: it must stay fresh, or nothing passes."""
-        self._armed_at = self._clock.monotonic()
-
-    def disarm(self) -> None:
-        self._armed_at = None
-
-    def heard(self, page: RevocationPage) -> None:
-        """igni answered: take what is new, and note that the list is fresh."""
+    def heard(self, org_id: str, page: RevocationPage) -> None:
+        """igni answered for ``org_id``: take what is new, and note it is fresh."""
         for revocation in page.revocations:
-            self._add(revocation)
+            key = (revocation.kind, revocation.org_id, revocation.subject_id)
+            if revocation.not_before > self._watermarks.get(key, float("-inf")):
+                self._watermarks[key] = revocation.not_before
         if page.cursor is not None:
-            self.cursor = page.cursor
-        self._heard_at = self._clock.monotonic()
+            self.cursors[org_id] = page.cursor
+        self._heard_at[org_id] = self._clock.monotonic()
         self._prune()
 
-    def _add(self, revocation: Revocation) -> None:
-        if revocation.kind is RevocationKind.SESSION:
-            self._sessions[revocation.id] = revocation
-        elif revocation.kind is RevocationKind.PRODUCER:
-            self._producers[(revocation.id, revocation.org_id)] = revocation
-        else:
-            self._incarnations[revocation.id] = revocation
-
     def _prune(self) -> None:
-        now = self._clock.wall()
-        for held in (self._sessions, self._producers, self._incarnations):
-            for key in [
-                k for k, r in held.items() if r.expires_at is not None and r.expires_at <= now
-            ]:
-                del held[key]  # type: ignore[arg-type]
+        oldest = self._clock.wall() - self.KEPT_SECONDS
+        for key in [k for k, at in self._watermarks.items() if at < oldest]:
+            del self._watermarks[key]
 
-    @property
-    def stale(self) -> bool:
-        if self._armed_at is None:
-            return False
-        since = self._heard_at if self._heard_at is not None else self._armed_at
-        return self._clock.monotonic() - since > self.max_staleness
+    def has_heard(self, org_id: str) -> bool:
+        return org_id in self._heard_at
+
+    def stale(self, org_id: str) -> bool:
+        heard = self._heard_at.get(org_id)
+        return heard is None or self._clock.monotonic() - heard > self.max_staleness
 
     def check(self, claims: dict[str, Any]) -> None:
-        """Raise unless the token these claims are from may still be used.
-
-        `RevocationsStale` while the list cannot be trusted; `Revoked` for
-        a token it names.
-        """
-        if self.stale:
+        """Raise `Revoked` for a token a watermark covers, `RevocationsStale`
+        when its organisation's revocations are not fresh."""
+        org = str(claims.get("org") or "")
+        if org and self.stale(org):
             raise RevocationsStale(
-                f"igni's revocation list is more than {self.max_staleness:g}s old"
+                f"igni's revocations for {org} are not fresh (bound {self.max_staleness:g}s)"
             )
-        for session in (claims.get("sid"), claims.get("grant")):
-            if session and str(session) in self._sessions:
-                raise Revoked()
-        incarnation = claims.get("incarnation")
-        if incarnation and str(incarnation) in self._incarnations:
-            raise Revoked()
-        kind = self._PRODUCER.get(str(claims.get("token_use") or ""))
-        if kind is not None and claims.get("sub"):
-            producer = f"{kind}:{claims['sub']}"
-            org = str(claims.get("org") or "") or None
-            if (producer, org) in self._producers or (producer, None) in self._producers:
+        kind = self._KIND.get(str(claims.get("token_use") or ""))
+        subject = str(claims.get("sub") or "")
+        if kind is None or not subject:
+            return
+        try:
+            issued = float(claims["iat"])
+        except (KeyError, TypeError, ValueError):
+            raise TokenRefused() from None
+        for scope in ((org or None), None):
+            watermark = self._watermarks.get((kind, scope, subject))
+            if watermark is not None and issued <= watermark:
                 raise Revoked()
 
     def __len__(self) -> int:
-        return len(self._sessions) + len(self._producers) + len(self._incarnations)
+        return len(self._watermarks)
 
 
 class RevocationFeed:
-    """Keeps a :class:`RevocationList` fresh: a long poll, else a poll every two seconds."""
+    """Follows each organisation's revocations for as long as it runs."""
 
-    #: How long igni is asked to hold a request with nothing new.
-    LONG_POLL_SECONDS: ClassVar[float] = 20.0
-    #: Between polls when igni answers at once (no long poll) or fails.
+    #: How long igni is asked to hold a request with nothing new (0–30).
+    WAIT_SECONDS: ClassVar[float] = 25.0
+    #: Between tries while igni fails.
     POLL_SECONDS: ClassVar[float] = 2.0
-    #: The scope of the token the list is read with: it is no one organisation's.
-    SCOPE: ClassVar[str] = "revocations"
+    #: Revocations per page; a full page is followed at once by the next.
+    LIMIT: ClassVar[int] = 500
 
     def __init__(
         self,
-        igni: IgniServer,
-        endpoint: TokenEndpoint,
+        tokens: ServiceTokens,
         revocations: RevocationList,
         *,
         sleep: Callable[[float], Awaitable[None]] | None = None,
     ) -> None:
-        self._igni = igni
-        self._endpoint = endpoint
+        self._tokens = tokens
         self.revocations = revocations
         self._sleep = sleep or asyncio.sleep
-        self._token: str | None = None
+        self._following: dict[str, asyncio.Task[None]] = {}
+        self._first: dict[str, asyncio.Event] = {}
+        self._stop: asyncio.Event | None = None
+
+    @property
+    def running(self) -> bool:
+        return self._stop is not None and not self._stop.is_set()
 
     async def run(self, stop: asyncio.Event) -> None:
-        """Until ``stop``: pull, and pull again — at once after a held answer."""
-        self.revocations.arm()
+        """From now until ``stop``, every organisation seen is followed."""
+        self._stop = stop
         try:
-            while not stop.is_set():
-                started = time.monotonic()
-                try:
-                    page = await self.pull(wait=self.LONG_POLL_SECONDS)
-                except IgniUnavailable as exc:
-                    logger.info("revocation list not refreshed: %s", exc)
-                    await self._sleep(self.POLL_SECONDS)
-                    continue
-                self.revocations.heard(page)
-                held = time.monotonic() - started >= self.LONG_POLL_SECONDS / 2
-                if not page.revocations and not held:
-                    # igni answered at once with nothing: it does not hold
-                    # requests, so ask again on the polling interval.
-                    await self._sleep(self.POLL_SECONDS)
+            await stop.wait()
         finally:
-            self.revocations.disarm()
+            self._stop = None
+            tasks = list(self._following.values())
+            self._following.clear()
+            self._first.clear()
+            for task in tasks:
+                task.cancel()
+            for task in tasks:
+                with contextlib.suppress(asyncio.CancelledError):
+                    await task
 
-    async def pull(self, *, wait: float = 0.0) -> RevocationPage:
-        """One read of the list since its cursor. Raises `IgniUnavailable`."""
-        params: dict[str, str] = {"wait": f"{wait:g}"}
-        if self.revocations.cursor is not None:
-            params["since"] = self.revocations.cursor
-        for attempt in (1, 2):
-            token = await self._read_token()
+    async def check(self, claims: dict[str, Any]) -> None:
+        """The verifier's check: follow the token's organisation, then ask the list."""
+        if not self.running:
+            return
+        org = str(claims.get("org") or "")
+        if org and not self.revocations.has_heard(org):
+            first = self._follow(org)
+            with contextlib.suppress(TimeoutError):
+                await asyncio.wait_for(first.wait(), self.revocations.max_staleness)
+        self.revocations.check(claims)
+
+    def _follow(self, org_id: str) -> asyncio.Event:
+        first = self._first.setdefault(org_id, asyncio.Event())
+        if org_id not in self._following:
+            self._following[org_id] = asyncio.create_task(self._loop(org_id, first))
+        return first
+
+    async def _loop(self, org_id: str, first: asyncio.Event) -> None:
+        while self.running:
+            wait = self.WAIT_SECONDS if first.is_set() else 0.0
+            started = time.monotonic()
             try:
-                response = await self._igni.http.get(
-                    self._igni.url(IgniPaths.REVOCATIONS),
-                    params=params,
-                    headers={"Authorization": f"Bearer {token}"},
-                    timeout=wait + self._igni_timeout(),
-                )
-            except httpx.HTTPError as exc:
-                raise IgniUnavailable(f"could not reach igni server: {type(exc).__name__}") from exc
-            if response.status_code == 401 and attempt == 1:
-                self._token = None
+                page = await self.pull(org_id, wait=wait)
+            except IgniUnavailable as exc:
+                logger.info("revocations of %s not refreshed: %s", org_id, exc)
+                await self._sleep(self.POLL_SECONDS)
                 continue
-            if response.status_code != 200:
-                raise IgniUnavailable(f"igni server answered {response.status_code}")
-            try:
-                return RevocationPage.model_validate(response.json())
-            except (ValueError, ValidationError) as exc:
-                raise IgniUnavailable("igni server's revocation list is unreadable") from exc
-        raise IgniUnavailable("igni server refused this service the revocation list")
+            self.revocations.heard(org_id, page)
+            first.set()
+            if wait and not page.revocations and time.monotonic() - started < wait / 2:
+                # Answered at once with nothing: igni did not hold the
+                # request, so ask again on the polling interval.
+                await self._sleep(self.POLL_SECONDS)
 
-    def _igni_timeout(self) -> float:
-        timeout = self._igni.http.timeout.read
-        return float(timeout) if timeout is not None else 10.0
-
-    async def _read_token(self) -> str:
-        if self._token is None:
-            try:
-                issued = await self._endpoint.grant(
-                    {"grant_type": "client_credentials", "scope": self.SCOPE}
-                )
-            except GrantRefused as exc:
-                raise IgniUnavailable(f"igni server refused a token for the list: {exc}") from exc
-            self._token = issued.access_token
-        return self._token
+    async def pull(self, org_id: str, *, wait: float = 0.0) -> RevocationPage:
+        """One read of ``org_id``'s revocations since its cursor. Raises `IgniUnavailable`."""
+        params: dict[str, str] = {"limit": str(self.LIMIT), "wait": f"{wait:g}"}
+        cursor = self.revocations.cursors.get(org_id)
+        if cursor is not None:
+            params["since"] = cursor
+        response = await self._tokens.request(
+            "GET",
+            IgniPaths.REVOCATIONS,
+            org_id=org_id,
+            params=params,
+            timeout=wait + 10.0,
+        )
+        if response.status_code == 304:
+            return RevocationPage(cursor=cursor)
+        if response.status_code != 200:
+            raise IgniUnavailable(f"igni server answered {response.status_code}")
+        try:
+            return RevocationPage.model_validate(response.json())
+        except (ValueError, ValidationError) as exc:
+            raise IgniUnavailable("igni server's revocations are unreadable") from exc
 
 
 __all__ = [
     "Revocation",
     "RevocationFeed",
-    "RevocationKind",
     "RevocationList",
     "RevocationPage",
     "RevocationsStale",
     "Revoked",
+    "RevokedKind",
 ]
