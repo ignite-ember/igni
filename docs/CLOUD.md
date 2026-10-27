@@ -568,6 +568,15 @@ and `activity.json` with `credential: ready`, and answers a client, 3.3 s
 after start including a cold interpreter; the cloud package's tests pass
 there too, inotify included.
 
+**An app's or a space's services.** In an app's or a space's VM the
+token an extension gets for its service (the loopback, igni server's
+service-identity §9) comes from the same exchange a person's session goes
+through, with the VM's own token as `subject_token` (§9.2): the result is
+an `app` or `space` token for the service's URL, cached and renewed as a
+person's. The caller igni names to its extensions (`igni/principal`) is
+the app or the space the token's `kind` says — a space with its `app` and
+`external_id` — never a person.
+
 **Bound before anybody signed in.** igni binds with `producer.env`'s
 database, org and producer alone — automatic provisioning boots a
 producer's VM before the person ever signs in. Its rows are that

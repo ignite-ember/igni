@@ -28,6 +28,8 @@ from ember_code.extensions.store import ExtensionStore
 class PrincipalKind(StrEnum):
     PERSON = "person"
     APP = "app"
+    #: One end user of an app, a producer of its own (igni server's service-identity §17).
+    SPACE = "space"
 
 
 class Principal(BaseModel):
@@ -47,18 +49,29 @@ class Principal(BaseModel):
     group: str | None = None
     #: The igni session the call comes from, when there is one.
     session: str | None = None
+    #: A space's app (its id); ``None`` for a person or an app.
+    app: str | None = None
+    #: The app's own name for a space's end user.
+    external_id: str | None = None
 
     @property
     def ref(self) -> str:
         """``person:<id>`` — how the token endpoint is told whom a token is for."""
         return f"{self.kind.value}:{self.id}"
 
+    #: Carried only when set: a space's, and nobody else's.
+    _SPACE_FIELDS: ClassVar[frozenset[str]] = frozenset({"app", "external_id"})
+
     def as_meta(self) -> dict[str, Any]:
-        return {self.META_KEY: self.model_dump(mode="json")}
+        unset = {name for name in self._SPACE_FIELDS if getattr(self, name) is None}
+        return {self.META_KEY: self.model_dump(mode="json", exclude=unset)}
 
 
 class SignedInPerson:
-    """The principal on a single-person backend: whoever is signed in here.
+    """The principal on a single-producer backend: whoever is signed in here.
+
+    A person on the desktop; in an app's or a space's VM, the app or the
+    space its token names (``kind``).
 
     Read fresh on every call, as the session is: signing in and out
     rewrites the credentials, and a principal remembered from before
@@ -76,6 +89,17 @@ class SignedInPerson:
         user_id = credentials.user_id
         if not credentials.is_authenticated or not user_id:
             return None
+        claims = credentials.claims
+        kind = self._kind_of(claims.kind if claims is not None else None)
+        if kind is not PrincipalKind.PERSON:
+            # An app's or a space's own token (a VM it runs in): no group.
+            return Principal(
+                kind=kind,
+                id=user_id,
+                org=credentials.org_id,
+                app=claims.app if claims is not None else None,
+                external_id=claims.external_id if claims is not None else None,
+            )
         listed = self._store.group()
         return Principal(
             kind=PrincipalKind.PERSON,
@@ -83,6 +107,14 @@ class SignedInPerson:
             org=credentials.org_id,
             group=listed.group if listed is not None else credentials.group,
         )
+
+    @staticmethod
+    def _kind_of(claimed: str | None) -> PrincipalKind:
+        """What the token says it is; a session that says nothing is a person's."""
+        try:
+            return PrincipalKind(claimed) if claimed else PrincipalKind.PERSON
+        except ValueError:
+            return PrincipalKind.PERSON
 
     def tenant(self) -> Tenant | None:
         """Whose rows a shared database holds for this backend (``docs/CLOUD.md`` §9).

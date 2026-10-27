@@ -38,6 +38,8 @@ from pydantic import BaseModel, ConfigDict, ValidationError
 class CallerKind(StrEnum):
     PERSON = "person"
     APP = "app"
+    #: One end user of an app, a producer of its own.
+    SPACE = "space"
 
 
 class NoCaller(LookupError):
@@ -63,6 +65,10 @@ class Caller(BaseModel):
     group: str | None = None
     #: The igni session the call comes from, when there is one.
     session: str | None = None
+    #: A space's app (its id); `None` for a person or an app.
+    app: str | None = None
+    #: The app's own name for a space's end user.
+    external_id: str | None = None
 
     @property
     def ref(self) -> str:

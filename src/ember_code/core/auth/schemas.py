@@ -152,6 +152,10 @@ class JwtClaims(BaseModel):
     sub: str | None = None
     #: What ``sub`` is: ``person`` (a session), ``app`` or ``space``.
     kind: str | None = None
+    #: A space's app (its id), on a space's token.
+    app: str | None = None
+    #: The app's own name for a space's end user, on a space's token.
+    external_id: str | None = None
     email: str | None = None
     exp: int | None = None
     org: str | None = None

@@ -141,7 +141,7 @@ class TestAToolCallCarriesIt:
                 result = await session.call_tool("whoami", {})
             tasks.cancel_scope.cancel()
 
-        assert json.loads(result.content[0].text) == ADA.model_dump(mode="json")  # type: ignore[union-attr]
+        assert json.loads(result.content[0].text) == ADA.as_meta()[Principal.META_KEY]  # type: ignore[union-attr]
 
     async def test_only_an_extensions_server_is_given_it(self, tmp_path: Path) -> None:
         opened: list[tuple[str, Any]] = []

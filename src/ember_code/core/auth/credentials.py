@@ -312,6 +312,12 @@ class CloudCredentials:
         return self._claims.sub
 
     @property
+    def claims(self) -> JwtClaims | None:
+        """The token's claims, unverified (the server checks the signature)."""
+        self._load()
+        return self._claims
+
+    @property
     def kind(self) -> str | None:
         """What the token's subject is — ``person``, ``app`` or ``space`` — if it says."""
         self._load()
