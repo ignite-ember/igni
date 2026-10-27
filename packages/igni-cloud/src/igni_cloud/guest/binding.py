@@ -15,7 +15,7 @@ nothing producer-specific — and waits for the node agent to write
 The file is written atomically (temporary file, rename), after the
 producer's volume is mounted, and the protocol has no
 "look now" call. On Linux igni watches the run directory with inotify
-(:class:`~ember_code.backend.guest.watch.DirectoryWatch`): the rename is
+(:class:`~igni_cloud.guest.watch.DirectoryWatch`): the rename is
 an ``IN_MOVED_TO``, and igni looks at once. It still looks every
 :attr:`ProducerBinding.FALLBACK_SECONDS` in case an event is missed;
 where inotify is missing it polls every :attr:`ProducerBinding.POLL_SECONDS`
@@ -46,13 +46,14 @@ from typing import Any, ClassVar
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from ember_code.backend.guest.watch import DirectoryWatch
 from ember_code.core.activity import background
-from ember_code.core.auth.credentials import CloudCredentials, EnvironmentCredentials
+from ember_code.core.auth.credentials import CloudCredentials
 from ember_code.core.config.schemas.storage_and_paths import StorageConfig
 from ember_code.core.db.scope import Tenant
 from ember_code.extensions.principal import Principal, PrincipalKind
 from ember_code.protocol import messages as msg
+from igni_cloud.credentials import EnvironmentCredentials
+from igni_cloud.guest.watch import DirectoryWatch
 
 logger = logging.getLogger(__name__)
 

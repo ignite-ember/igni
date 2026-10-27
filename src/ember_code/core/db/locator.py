@@ -25,17 +25,18 @@ from ember_code.core.data_paths import global_db_path, state_db_path
 from ember_code.core.db.database import Database
 from ember_code.core.db.scope import StorageScope, tenancy
 from ember_code.core.db.urls import DatabaseUrl
+from ember_code.core.layer import Layers
 from ember_code.core.paths import DEFAULT_DATA_DIR
-from ember_code.core.profile import RuntimeProfile
 
 
 class StorageLocator:
     """Turns ``storage.database_url`` and ``storage.data_dir`` into databases."""
 
     def __init__(self, *, database_url: str | None, data_dir: str | Path) -> None:
-        if not database_url and RuntimeProfile.current().is_cloud:
+        if not database_url and Layers.current().requires_database():
             raise RuntimeError(
-                "the cloud profile keeps igni's state in a database: set IGNI_DATABASE_URL"
+                f"the {Layers.current().name} layer keeps igni's state in a database: "
+                "set IGNI_DATABASE_URL"
             )
         self._database_url = DatabaseUrl.parse(database_url) if database_url else None
         self._data_dir = data_dir

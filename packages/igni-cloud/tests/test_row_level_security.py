@@ -20,6 +20,9 @@ from typing import Any
 import pytest
 from agno.db.base import SessionType
 from agno.session import AgentSession
+from igni_cloud.db.rls import AGNO_SCHEMA, ProducerCredentials, ProducerRoles
+from igni_cloud.storage.attachments import LargeObjectAttachments
+from igni_cloud.storage.scoped_agno import ScopedAsyncPostgresDb
 from sqlalchemy import BigInteger, Boolean, DateTime, Integer, create_engine, text
 from sqlalchemy.engine import Engine
 from sqlalchemy.exc import DBAPIError
@@ -30,17 +33,14 @@ from ember_code.core.db.base import Base
 from ember_code.core.db.database import Database
 from ember_code.core.db.engine import cache
 from ember_code.core.db.locator import StorageLocator
-from ember_code.core.db.rls import AGNO_SCHEMA, ProducerCredentials, ProducerRoles
 from ember_code.core.db.scope import StorageScope, Tenant
 from ember_code.core.db.urls import DatabaseUrl
 from ember_code.core.memory.manager import StorageManager
-from ember_code.core.memory.scoped_postgres import ScopedAsyncPostgresDb
 from ember_code.core.scheduler.models import ScheduledTask
 from ember_code.core.scheduler.store import TaskStore
 from ember_code.core.session import queued_messages as _queued  # noqa: F401 — its table
 from ember_code.core.session.client_state import ClientStateStore
 from ember_code.core.session.pending_messages import PendingMessageStore
-from ember_code.core.utils.attachment_store import LargeObjectAttachments
 from ember_code.extensions import settings_values as _settings  # noqa: F401 — its table
 from tests.storage_backends import ThrowawayPostgres
 

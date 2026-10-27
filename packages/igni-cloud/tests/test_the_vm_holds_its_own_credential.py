@@ -1,6 +1,6 @@
 """A producer's VM holds its own credential and keeps a token from it.
 
-igni server's service-identity §16, ``backend/guest/credential.py``.
+igni server's service-identity §16, ``igni_cloud/guest/credential.py``.
 Against a fake igni server that rotates the credential on every exchange
 and revokes the family when a rotated-away one comes back.
 """
@@ -15,15 +15,15 @@ from urllib.parse import parse_qs
 
 import httpx
 import pytest
-
-from ember_code.backend.guest.credential import (
+from igni_cloud.guest.credential import (
     CredentialFile,
     CredentialState,
     StateChange,
     VmCredentialExchange,
     VmCredentials,
 )
-from ember_code.backend.guest.files import AtomicFile
+from igni_cloud.guest.files import AtomicFile
+
 from ember_code.protocol import messages as msg
 from tests.host_model_helpers import HostRig
 

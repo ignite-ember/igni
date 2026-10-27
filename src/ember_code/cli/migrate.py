@@ -9,9 +9,10 @@ backend starts with a current schema and never imports alembic
 
 With ``storage.database_url`` set (``IGNI_DATABASE_URL``, or
 ``--database-url``) that is the one database migrated. Without it, the
-project's ``state.db`` and the global ``ember.db`` are. A PostgreSQL
-database is migrated with its admin role's URL: the run also makes
-Agno's tables and applies row-level security (``core/db/rls.py``).
+project's ``state.db`` and the global ``ember.db`` are. A shared database
+is migrated with its admin role's URL, and its dialect's storage prepares
+the rest (:mod:`ember_code.core.db.providers`; PostgreSQL's makes Agno's
+tables and applies row-level security).
 """
 
 from __future__ import annotations
@@ -22,12 +23,10 @@ import click
 
 from ember_code.core.config.settings import Settings
 from ember_code.core.data_paths import canonical_project_dir
-from ember_code.core.db.agno_tables import AgnoTables
 from ember_code.core.db.locator import StorageLocator
-from ember_code.core.db.rls import RowLevelSecurity
+from ember_code.core.db.providers import SharedStorages
 from ember_code.core.db.schema import HEAD_REVISION, SchemaRevision, keeper
-from ember_code.core.db.urls import DatabaseUrl, Dialect
-from ember_code.core.memory.manager import StorageManager
+from ember_code.core.db.urls import DatabaseUrl
 
 
 class SchemaMigration:
@@ -46,17 +45,12 @@ class SchemaMigration:
     def migrate(url: DatabaseUrl) -> str:
         before = SchemaRevision.of(url)
         keeper.ensure_current(url)
-        if url.dialect is Dialect.POSTGRESQL:
-            # The cloud's database: Agno's tables are made here, as the
-            # admin role, and every table gets its row-level security
-            # (``core/db/rls.py``) — again on every run, so a table a
+        if url.file is None:
+            # A shared database: whatever its dialect's storage prepares as
+            # the admin role (PostgreSQL's, in ``igni-cloud``: Agno's tables
+            # and row-level security) — again on every run, so a table a
             # migration added is covered.
-            AgnoTables(
-                url,
-                session_table=StorageManager.SESSION_TABLE,
-                memory_table=StorageManager.MEMORY_TABLE,
-            ).prepare()
-            RowLevelSecurity(url).apply()
+            SharedStorages.for_url(url).prepare(url)
         name = url.file if url.file is not None else url.redacted
         if before == HEAD_REVISION:
             return f"{name}: already at {HEAD_REVISION}"

@@ -94,6 +94,10 @@ make install
 # after it was removed; pip only warns about an extra that does not
 # exist, so the line kept working and kept installing nothing.
 
+# The cloud layer (igni in a producer's VM, PostgreSQL storage) is its
+# own package on top of the core; install it to work on the cloud:
+# uv pip install -e packages/igni-cloud   (tests: packages/igni-cloud/tests)
+
 # Verify
 ignite-ember --version
 make check

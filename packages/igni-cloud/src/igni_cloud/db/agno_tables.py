@@ -1,7 +1,7 @@
 """Agno's tables, made by the admin role (``igni migrate``).
 
-Apart from :mod:`ember_code.core.db.rls` so that granting a producer its
-role (``python -m ember_code.core.db.admin_cli grant-producer``) does not import Agno.
+Apart from :mod:`igni_cloud.db.rls` so that granting a producer its
+role (``python -m igni_cloud.db.admin_cli grant-producer``) does not import Agno.
 """
 
 from __future__ import annotations

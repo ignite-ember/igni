@@ -1,19 +1,19 @@
 """igni's side of the producer VM's guest contract (``docs/CLOUD.md`` §9)."""
 
-from ember_code.backend.guest.activity_file import ActivityFile, GuestActivity
-from ember_code.backend.guest.binding import (
+from igni_cloud.guest.activity_file import ActivityFile, GuestActivity
+from igni_cloud.guest.binding import (
     BindingAttempt,
     ProducerBinding,
     ProducerEnv,
     TokenTenant,
     UnboundRefusal,
 )
-from ember_code.backend.guest.contract import CloudGuest
-from ember_code.backend.guest.entropy import ProcessEntropy
-from ember_code.backend.guest.files import AtomicFile, ReadyFile
-from ember_code.backend.guest.paths import GuestPaths
-from ember_code.backend.guest.resume import Restored, RestoreWatch
-from ember_code.backend.guest.warm import WarmImports
+from igni_cloud.guest.contract import CloudGuest
+from igni_cloud.guest.entropy import ProcessEntropy
+from igni_cloud.guest.files import AtomicFile, ReadyFile
+from igni_cloud.guest.paths import GuestPaths
+from igni_cloud.guest.resume import Restored, RestoreWatch
+from igni_cloud.guest.warm import WarmImports
 
 __all__ = [
     "ActivityFile",

@@ -4,7 +4,7 @@ In the cloud igni in a person's VM keeps no approvals file: the approvals
 are the person's, on igni server, under the desktop's key — a server's
 name and the configuration it came from — so approving once holds in
 every VM of theirs and survives the VM. Group policy still decides which
-servers are offered at all (:class:`~ember_code.core.mcp.approval.MCPApprovalManager`).
+servers are offered at all (:class:`CloudMcpApprovals`).
 Only people approve; an app's token is refused (403), and an app's VM
 then connects nothing that needs approving.
 
@@ -18,12 +18,17 @@ from __future__ import annotations
 import logging
 import time
 from collections.abc import Callable
+from pathlib import Path
 from typing import ClassVar
 
 import httpx
 from pydantic import BaseModel, Field, ValidationError
 
 from ember_code.core.activity.http import busy_call
+from ember_code.core.auth.credentials import CloudCredentials
+from ember_code.core.config.group_policy import group_policy_dir
+from ember_code.core.config.settings import load_settings
+from ember_code.core.mcp.approval import McpApprovalPolicy
 
 logger = logging.getLogger(__name__)
 
@@ -138,4 +143,85 @@ class PersonMcpApprovals:
             return None
 
 
-__all__ = ["McpApproval", "McpApprovalList", "PersonMcpApprovals"]
+class ConfiguredApiUrl:
+    """igni server's URL from this process's settings, read once."""
+
+    def __init__(self) -> None:
+        self._url: str | None = None
+        self._read = False
+
+    def __call__(self) -> str | None:
+        if not self._read:
+            self._read = True
+            try:
+                self._url = load_settings().api_url or None
+            except Exception as exc:
+                logger.warning("MCP approvals: settings did not load: %s", exc)
+        return self._url
+
+
+class SessionToken:
+    """The person's session token, read fresh (it is renewed)."""
+
+    def __call__(self) -> str | None:
+        return CloudCredentials().access_token
+
+
+class CloudMcpApprovals(McpApprovalPolicy):
+    """A server is approved when group policy offers it and the person approved it.
+
+    Offered: igni server delivered it as a group policy's ``mcps`` entry,
+    which an administrator configured. Approved: the person's approval,
+    kept on igni server (:class:`PersonMcpApprovals`) — once, for every VM
+    of theirs. :meth:`approve` records it there; nothing not offered can
+    be approved, and nobody is prompted in a VM.
+    """
+
+    def __init__(
+        self,
+        *,
+        delivered_dir: Path | None = None,
+        person: PersonMcpApprovals | None = None,
+    ) -> None:
+        #: Where igni server's group policy delivers MCP configs.
+        self._delivered = delivered_dir or (group_policy_dir() / "mcps")
+        self._person = (
+            person
+            if person is not None
+            else PersonMcpApprovals(api_url=ConfiguredApiUrl(), token=SessionToken())
+        )
+
+    def offered(self, config_path: str) -> bool:
+        try:
+            return Path(config_path).resolve().is_relative_to(self._delivered.resolve())
+        except (OSError, ValueError):
+            return False
+
+    def is_approved(self, server_name: str, config_path: str) -> bool:
+        return self.offered(config_path) and self._person.approved(server_name, config_path)
+
+    def approve(self, server_name: str, config_path: str) -> None:
+        if not self.offered(config_path):
+            logger.warning(
+                "MCP '%s' from %s is not offered by group policy; not approving it",
+                server_name,
+                config_path,
+            )
+            return
+        self._person.approve(server_name, config_path)
+
+    def refusal(self, server_name: str, config_path: str) -> str:
+        return (
+            f"MCP '{server_name}' from {config_path} is not offered by group policy and "
+            "approved by the person on igni server (/v1/me/mcp-approvals) — not connecting."
+        )
+
+
+__all__ = [
+    "CloudMcpApprovals",
+    "ConfiguredApiUrl",
+    "McpApproval",
+    "McpApprovalList",
+    "PersonMcpApprovals",
+    "SessionToken",
+]

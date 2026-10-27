@@ -19,24 +19,16 @@ from __future__ import annotations
 import base64
 import os
 import subprocess
-import time
 import uuid
-from collections.abc import Iterator
 from datetime import datetime, timedelta
 from pathlib import Path
-from types import SimpleNamespace
 
 import pytest
-from agno.db.base import SessionType
-from agno.db.schemas.memory import UserMemory
-from agno.session import AgentSession
 from alembic.autogenerate import compare_metadata
 from alembic.migration import MigrationContext
 from click.testing import CliRunner
-from sqlalchemy import text
 from sqlalchemy.engine import make_url
 
-from ember_code.backend.server_files import FilesController
 from ember_code.cli.migrate import migrate
 from ember_code.core.approvals import journal as approval_journal  # noqa: F401 — its tables
 from ember_code.core.db.base import Base
@@ -49,7 +41,6 @@ from ember_code.core.db.urls import DatabaseUrl
 from ember_code.core.hooks.memory_sync import MemorySyncHook
 from ember_code.core.loop.models import LoopState
 from ember_code.core.loop.store import LoopProgressStore, LoopStore
-from ember_code.core.memory.scoped_postgres import ScopedAsyncPostgresDb
 from ember_code.core.scheduler.models import ScheduledTask
 from ember_code.core.scheduler.store import TaskStore
 from ember_code.core.session import queued_messages  # noqa: F401 — its table
@@ -60,11 +51,9 @@ from ember_code.core.session.session_preferences import SessionPreferencesStore
 from ember_code.core.tools.process_store import BackgroundProcessStore
 from ember_code.core.tools.process_store_schemas import BackgroundProcessRow
 from ember_code.core.utils.attachment_store import (
-    AttachmentReferences,
     Attachments,
     Base64Chunks,
     DirectoryAttachments,
-    LargeObjectAttachments,
 )
 from ember_code.core.utils.context_memory import ProjectMemoryBank
 from ember_code.core.utils.memory_files import (
@@ -85,11 +74,25 @@ from tests.storage_backends import Scopes
 # ── The schema ────────────────────────────────────────────────────
 
 
+#: Tables a shared database's dialect makes when ``igni migrate`` prepares it.
+PREPARED_BY_THE_DIALECT = frozenset({"producer_roles"})
+
+
 def test_alembic_builds_the_schema_the_models_describe(database_url: DatabaseUrl):
     Database(database_url)
     assert SchemaRevision.of(database_url) == HEAD_REVISION
     with cache.get_engine(database_url).connect() as connection:
-        context = MigrationContext.configure(connection, opts={"compare_type": True})
+        context = MigrationContext.configure(
+            connection,
+            opts={
+                "compare_type": True,
+                # What a dialect's own preparation adds is not igni's schema
+                # (PostgreSQL's row-level security keeps ``producer_roles``).
+                "include_name": lambda name, kind, _parent: (
+                    not (kind == "table" and name in PREPARED_BY_THE_DIALECT)
+                ),
+            },
+        )
         drift = compare_metadata(context, Base.metadata)
     assert drift == [], f"the migrations and the models disagree: {drift}"
 
@@ -303,53 +306,6 @@ def test_the_desktop_keeps_its_files(tmp_path: Path):
     assert isinstance(Attachments.for_project(tmp_path, locator), DirectoryAttachments)
 
 
-# ── What only PostgreSQL has ─────────────────────────────────────
-
-
-def test_attachments_are_large_objects_written_and_read_in_chunks(
-    postgres_url: str, tmp_path: Path
-):
-    url = DatabaseUrl.parse(postgres_url)
-    tenancy.use(lambda: Tenant(org="acme", producer="person:ada"))
-    locator = StorageLocator(database_url=url.url, data_dir=tmp_path)
-    store = Attachments.for_project(tmp_path, locator)
-    assert isinstance(store, LargeObjectAttachments)
-
-    payload = os.urandom(3 * LargeObjectAttachments.CHUNK + 17)
-    written: list[int] = []
-
-    def chunks() -> Iterator[bytes]:
-        for start in range(0, len(payload), 10_000):
-            written.append(start)
-            yield payload[start : start + 10_000]
-
-    stored = store.save("s1", "report.pdf", chunks())
-    assert stored.size == len(payload)
-    assert stored.ref.startswith(LargeObjectAttachments.REF_PREFIX)
-    pieces = list(store.open(stored.ref))
-    assert b"".join(pieces) == payload
-    assert max(len(p) for p in pieces) <= LargeObjectAttachments.CHUNK
-    assert len(written) > 1
-
-    other = LargeObjectAttachments(Database(url, scope=Scopes.fresh()))
-    with pytest.raises(FileNotFoundError):
-        list(other.open(stored.ref))
-    assert other.delete(stored.ref) is False
-    assert store.delete(stored.ref) is True  # type: ignore[attr-defined]
-
-
-def test_a_failed_upload_leaves_no_large_object(postgres_url: str):
-    url = DatabaseUrl.parse(postgres_url)
-    store = LargeObjectAttachments(Database(url, scope=Scopes.fresh()))
-    with cache.get_engine(url).connect() as connection:
-        before = connection.scalar(text("SELECT count(*) FROM pg_largeobject_metadata"))
-    with pytest.raises(ValueError):
-        store.save("s1", "x.bin", Base64Chunks("not base64!"))
-    with cache.get_engine(url).connect() as connection:
-        after = connection.scalar(text("SELECT count(*) FROM pg_largeobject_metadata"))
-    assert after == before
-
-
 def test_base64_chunks_decode_like_the_whole(tmp_path: Path):
     payload = os.urandom(200_000)
     encoded = base64.b64encode(payload).decode()
@@ -358,57 +314,6 @@ def test_base64_chunks_decode_like_the_whole(tmp_path: Path):
     stored = DirectoryAttachments(tmp_path).save("s1", "a b.bin", Base64Chunks(encoded))
     assert Path(stored.ref).name == "a_b.bin"
     assert Path(stored.ref).read_bytes() == payload
-
-
-async def test_agno_rows_are_kept_to_their_scope(postgres_url: str):
-    url = DatabaseUrl.parse(postgres_url)
-    first, second = Scopes.fresh(), Scopes.fresh()
-    engine = cache.get_async_engine(url)
-
-    def agno_db(scope: StorageScope) -> ScopedAsyncPostgresDb:
-        return ScopedAsyncPostgresDb(
-            scope=scope,
-            db_engine=engine,
-            session_table="ember_sessions",
-            memory_table="ember_memories",
-        )
-
-    mine, theirs = agno_db(first), agno_db(second)
-    session_id = uuid.uuid4().hex[:8]
-    now = int(time.time())
-    await mine.upsert_session(
-        AgentSession(session_id=session_id, agent_id="igni", created_at=now, updated_at=now)
-    )
-    await theirs.upsert_session(
-        AgentSession(session_id=uuid.uuid4().hex[:8], agent_id="igni", created_at=now)
-    )
-    assert await mine.get_session(session_id, SessionType.AGENT) is not None
-    assert await theirs.get_session(session_id, SessionType.AGENT) is None
-    listed = await mine.get_sessions(session_type=SessionType.AGENT)
-    assert [s.session_id for s in listed] == [session_id]  # type: ignore[union-attr]
-    assert await theirs.delete_session(session_id) is False
-    # The same id in another scope is another row: the scope is part of
-    # the key the database holds, not only a filter.
-    await theirs.upsert_session(
-        AgentSession(session_id=session_id, agent_id="other", created_at=now)
-    )
-    kept = await mine.get_session(session_id, SessionType.AGENT)
-    assert kept is not None and kept.agent_id == "igni"  # type: ignore[union-attr]
-    other = await theirs.get_session(session_id, SessionType.AGENT)
-    assert other is not None and other.agent_id == "other"  # type: ignore[union-attr]
-    assert other.session_id == session_id  # type: ignore[union-attr]
-    with cache.get_engine(url).connect() as connection:
-        stored = connection.scalars(
-            text("SELECT session_id FROM ai.ember_sessions WHERE session_id LIKE :id"),
-            {"id": f"%#{session_id}"},
-        ).all()
-    assert sorted(stored) == sorted([mine.stored_id(session_id), theirs.stored_id(session_id)])
-    assert await mine.delete_session(session_id) is True
-    assert await theirs.get_session(session_id, SessionType.AGENT) is not None
-
-    await mine.upsert_user_memory(UserMemory(memory="likes tea", user_id="someone-else"))
-    assert [m.memory for m in await mine.get_user_memories()] == ["likes tea"]  # type: ignore[union-attr]
-    assert await theirs.get_user_memories() == []
 
 
 # ── Memory files the agent writes ─────────────────────────────────
@@ -468,44 +373,7 @@ def test_the_desktop_has_no_mirror(tmp_path: Path):
     assert bank.mirror() is None
 
 
-# ── Reading an attachment, whichever reference names it ───────────
-
-
-def test_a_message_names_a_cloud_upload_and_it_is_read_through_the_store(
-    postgres_url: str, tmp_path: Path
-):
-    url = DatabaseUrl.parse(postgres_url)
-    tenancy.use(lambda: Tenant(org="acme", producer="person:ada"))
-    locator = StorageLocator(database_url=url.url, data_dir=tmp_path)
-    store = Attachments.for_project(tmp_path, locator)
-    payload = os.urandom(2 * LargeObjectAttachments.CHUNK + 5)
-    stored = store.save("s1", "notes.txt", [payload[:1000], payload[1000:]])
-
-    text = f"summarise @{stored.ref} please"
-    assert AttachmentReferences.present(text)
-    localized = AttachmentReferences.localize(text, store)
-    [path] = [token[1:] for token in localized.split() if token.startswith("@")]
-    assert Path(path).read_bytes() == payload
-    assert Path(path).is_relative_to(tmp_path / ".igni" / "attachments" / "s1")
-    assert AttachmentReferences.localize(text, store) == localized, "the copy is reused"
-
-    # The same store reads a desktop path, and an unknown reference stays as written.
-    plain = tmp_path / "plain.txt"
-    plain.write_text("on disk")
-    assert b"".join(store.open(str(plain))) == b"on disk"
-    unknown = "attachment:" + "0" * 32
-    assert AttachmentReferences.localize(unknown, store) == unknown
-
-    preview = FilesController(
-        SimpleNamespace(
-            project_dir=tmp_path,
-            session_id="s1",
-            settings=SimpleNamespace(
-                storage=SimpleNamespace(data_dir=str(tmp_path), database_url=url.url)
-            ),
-        )
-    ).read_file(stored.ref)
-    assert preview.error == "" and preview.size == len(payload)
+# ── Reading an attachment ────────────────────────────────────────
 
 
 def test_the_desktop_store_reads_paths_and_knows_no_cloud_references(tmp_path: Path):

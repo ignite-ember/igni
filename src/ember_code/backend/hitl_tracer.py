@@ -26,8 +26,8 @@ import os
 import time
 from pathlib import Path
 
+from ember_code.core.layer import Layers
 from ember_code.core.paths import DEFAULT_DATA_DIR
-from ember_code.core.profile import RuntimeProfile
 
 logger = logging.getLogger(__name__)
 
@@ -75,8 +75,8 @@ class HITLTracer:
         """
         if not self._enabled:
             return
-        if RuntimeProfile.current().is_cloud:
-            # No hitl_trace.log in the cloud: a record on standard output.
+        if not Layers.current().log_files():
+            # No hitl_trace.log where the layer keeps no log files: a record.
             TRACE_LOGGER.info(text)
             return
         try:

@@ -26,9 +26,8 @@ import os
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
-from ember_code.core.logs import StdoutLog
+from ember_code.core.layer import Layers
 from ember_code.core.paths import CONFIG_DIR
-from ember_code.core.profile import RuntimeProfile
 
 #: Five files of 2 MB. Enough to hold a long session plus the couple of
 #: restarts either side of it — the reconstruction almost always needs
@@ -79,10 +78,16 @@ def configure_logging(*, debug_flag: bool = False, path: Path | None = None) -> 
     five lines in while the backend ran on for minutes.
     """
     level = resolve_level(debug_flag=debug_flag)
-    if RuntimeProfile.current().is_cloud:
-        # The cloud keeps no log file: JSON lines on standard output,
-        # which the node collects (``core/logs.py``).
-        StdoutLog.attach("ember_code", level)
+    layer = Layers.current()
+    if not layer.log_files():
+        # A layer that keeps no log file (the cloud's: JSON lines on
+        # standard output, which the node collects).
+        layer_pkg = logging.getLogger("ember_code")
+        stream = layer.log_handler()
+        if stream not in layer_pkg.handlers:
+            layer_pkg.addHandler(stream)
+        if layer_pkg.level == logging.NOTSET or layer_pkg.level > level:
+            layer_pkg.setLevel(level)
         return None
     log_path = path or resolve_log_path()
 

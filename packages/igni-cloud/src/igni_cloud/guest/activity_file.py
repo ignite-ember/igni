@@ -28,8 +28,8 @@ from pathlib import Path
 from pydantic import BaseModel, Field
 
 from ember_code.backend.activity import Activity, ActivityState, SessionActivity
-from ember_code.backend.guest.files import AtomicFile
 from ember_code.core.activity import BusyLease, background
+from igni_cloud.guest.files import AtomicFile
 
 logger = logging.getLogger(__name__)
 

@@ -41,8 +41,8 @@ from typing import TYPE_CHECKING, Any
 from pydantic import BaseModel, ConfigDict, Field
 
 from ember_code.core.approvals.journal import ApprovalJournal, ApprovalOrigin, SpawnLink
+from ember_code.core.layer import Layers
 from ember_code.core.paths import DEFAULT_DATA_DIR
-from ember_code.core.profile import RuntimeProfile
 from ember_code.core.tools.spawn_context import SpawnCalls, SpawnDeadline
 from ember_code.protocol import messages as msg
 from ember_code.protocol.agno_tool_formatter import default_registry
@@ -313,8 +313,8 @@ class SubAgentHITLCoordinator:
             agent_path,
         )
         # Direct trace — see backend/server.py for why we bypass logging.
-        # The cloud keeps no trace file: the record goes to standard output.
-        if RuntimeProfile.current().is_cloud:
+        # A layer that keeps no log files gets the record instead.
+        if not Layers.current().log_files():
             logging.getLogger("ember_code.hitl_trace").info(
                 "coord.push_requirement: coord_id=%s run_id=%s path=%s",
                 id(self),

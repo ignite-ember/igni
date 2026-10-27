@@ -30,8 +30,8 @@ from pathlib import Path
 
 from pydantic import BaseModel, ValidationError
 
-from ember_code.backend.guest.watch import DirectoryWatch
 from ember_code.core.activity import background
+from igni_cloud.guest.watch import DirectoryWatch
 
 logger = logging.getLogger(__name__)
 

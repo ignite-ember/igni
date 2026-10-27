@@ -78,7 +78,6 @@ from ember_code.core.lsp import LspServerManager, load_lsp_config
 from ember_code.core.mcp.client import MCPClientManager
 from ember_code.core.mcp.config import MCPConfigLoader
 from ember_code.core.memory.manager import StorageManager
-from ember_code.core.memory.scoped_postgres import ScopedAsyncPostgresDb
 from ember_code.core.monitors import MonitorManager, load_monitor_config
 from ember_code.core.output_styles import OutputStyle, discover_output_styles
 from ember_code.core.plugins import PluginLoader, load_state
@@ -269,11 +268,7 @@ class Session:
             session_named=bool(resume_session_id),
             # In the cloud, Agno's rows are told apart by ``user_id``,
             # which the scoped db fixes to the session's scope.
-            user_id=(
-                self.db.scoped_user_id
-                if isinstance(self.db, ScopedAsyncPostgresDb)
-                else getpass.getuser()
-            ),
+            user_id=self._scoped_user_id() or getpass.getuser(),
             main_team_ref=lambda: getattr(self, "main_team", None),
             persistence_ref=lambda: getattr(self, "persistence", None),
         )
@@ -383,6 +378,11 @@ class Session:
         )
 
     # ── __init__ helpers ────────────────────────────────────────
+
+    def _scoped_user_id(self) -> str | None:
+        """The scope a shared database's Agno storage fixes ``user_id`` to, if it does."""
+        scoped = getattr(self.db, "scoped_user_id", None)
+        return scoped if isinstance(scoped, str) and scoped else None
 
     def _init_per_session_scratch(self) -> None:
         """Set up the per-session scratch state populated by tools /

@@ -28,14 +28,15 @@ from __future__ import annotations
 import json
 import logging
 import os
+from abc import ABC, abstractmethod
 from datetime import datetime, timezone
 from pathlib import Path
 
 from pydantic import BaseModel
 
 from ember_code.core.auth.schemas import JwtClaims, LoadCredentialsResult
+from ember_code.core.layer import Layers
 from ember_code.core.paths import DEFAULT_DATA_DIR
-from ember_code.core.profile import RuntimeProfile
 
 logger = logging.getLogger(__name__)
 
@@ -109,61 +110,26 @@ class Credentials(BaseModel):
 LoadCredentialsResult.model_rebuild(_types_namespace={"Credentials": Credentials})
 
 
-class EnvironmentCredentials:
-    """The cloud's credentials: what the gateway hands the VM.
+class CredentialSource(ABC):
+    """Where a layer keeps credentials instead of ``credentials.json`` (``core/layer.py``)."""
 
-    The gateway hands the producer's VM its token (``docs/CLOUD.md``);
-    igni never keeps a ``credentials.json``. Two ways, the first that is
-    set wins:
+    @abstractmethod
+    def load(self) -> LoadCredentialsResult: ...
 
-    * ``IGNI_ACCESS_TOKEN_FILE`` — a file holding the token, which the
-      gateway rewrites (write a temporary file, rename over) whenever it
-      refreshes the token. igni reads it on every credentials load, so a
-      fresh token reaches a running VM — after a resume too — without a
-      restart;
-    * ``IGNI_ACCESS_TOKEN`` — the token itself, fixed for the process's
-      life.
+    def save(self, creds: Credentials) -> None:
+        """Keeping them is the source's own business; by default nothing is written."""
+        logger.warning("credentials come from %s; not saving them", type(self).__name__)
 
-    ``IGNI_ACCESS_TOKEN_EXPIRES_AT`` and ``IGNI_EMAIL`` are optional.
-    """
-
-    TOKEN_FILE_ENV = "IGNI_ACCESS_TOKEN_FILE"
-    TOKEN_ENV = "IGNI_ACCESS_TOKEN"
-    EXPIRES_ENV = "IGNI_ACCESS_TOKEN_EXPIRES_AT"
-    EMAIL_ENV = "IGNI_EMAIL"
-
-    @classmethod
-    def token(cls) -> str:
-        path = os.environ.get(cls.TOKEN_FILE_ENV, "").strip()
-        if path:
-            try:
-                return Path(path).read_text(encoding="utf-8").strip()
-            except OSError as exc:
-                logger.warning("cannot read the token the gateway wrote at %s: %s", path, exc)
-                return ""
-        return os.environ.get(cls.TOKEN_ENV, "").strip()
-
-    @classmethod
-    def load(cls) -> LoadCredentialsResult:
-        token = cls.token()
-        if not token:
-            return LoadCredentialsResult(ok=False, reason="no_file")
-        return LoadCredentialsResult(
-            ok=True,
-            creds=Credentials(
-                access_token=token,
-                email=os.environ.get(cls.EMAIL_ENV, ""),
-                expires_at=os.environ.get(cls.EXPIRES_ENV, ""),
-            ),
-        )
+    def clear(self) -> None:  # noqa: B027 - nothing to remove, unless a source says
+        """Nothing to remove by default."""
 
 
 class CredentialsStore:
     """Read/write coordinator for one credential file.
 
-    In the cloud profile there is no file: credentials are read from the
-    environment (:class:`EnvironmentCredentials`), and saving or clearing
-    them writes nothing — the gateway owns them.
+    A layer may keep them elsewhere (:meth:`Layer.credentials
+    <ember_code.core.layer.Layer.credentials>`); the store then asks it
+    instead of the file.
 
     One instance per file path; the ``save`` / ``load`` / ``clear``
     operations are methods on the instance instead of free
@@ -192,8 +158,9 @@ class CredentialsStore:
         :meth:`Credentials.new` — this method does not do any
         datetime bookkeeping on its own.
         """
-        if RuntimeProfile.current().is_cloud:
-            logger.warning("the cloud's credentials come from the gateway; not saving them")
+        source = Layers.current().credentials()
+        if source is not None:
+            source.save(creds)
             return
         fp = self._path
         fp.parent.mkdir(parents=True, exist_ok=True)
@@ -216,8 +183,9 @@ class CredentialsStore:
         Expiry is *not* reported here — call :meth:`Credentials
         .is_expired` on the returned ``creds`` value.
         """
-        if RuntimeProfile.current().is_cloud:
-            return EnvironmentCredentials.load()
+        source = Layers.current().credentials()
+        if source is not None:
+            return source.load()
         fp = self._path
         if not fp.exists():
             return LoadCredentialsResult(ok=False, reason="no_file")
@@ -240,7 +208,9 @@ class CredentialsStore:
 
     def clear(self) -> None:
         """Delete the credential file if it exists (no-op otherwise)."""
-        if RuntimeProfile.current().is_cloud:
+        source = Layers.current().credentials()
+        if source is not None:
+            source.clear()
             return
         fp = self._path
         if fp.exists():

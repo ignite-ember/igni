@@ -21,9 +21,8 @@ import os
 from pathlib import Path
 
 from ember_code.core.config.caller_inspector import CallerContextInspector
-from ember_code.core.logs import StdoutLog
+from ember_code.core.layer import Layers
 from ember_code.core.paths import DEFAULT_DATA_DIR
-from ember_code.core.profile import RuntimeProfile
 
 
 class LlmCallLogger:
@@ -64,9 +63,9 @@ class LlmCallLogger:
             self._configured = True
             return
         handler: logging.Handler
-        if RuntimeProfile.current().is_cloud:
-            # No llm_calls.log in the cloud: standard output, as JSON lines.
-            handler = StdoutLog.handler()
+        if not Layers.current().log_files():
+            # No llm_calls.log where the layer keeps no log files.
+            handler = Layers.current().log_handler()
         else:
             self._log_dir.mkdir(parents=True, exist_ok=True)
             handler = logging.FileHandler(self._log_dir / "llm_calls.log")

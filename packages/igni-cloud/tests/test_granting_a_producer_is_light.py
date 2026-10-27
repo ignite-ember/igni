@@ -14,11 +14,11 @@ import sys
 from pathlib import Path
 
 from click.testing import CliRunner
+from igni_cloud.cli import main
+from igni_cloud.db.admin_cli import db
 from sqlalchemy import create_engine, text
 
-from ember_code.cli.db import db as igni_db
 from ember_code.cli.migrate import SchemaMigration
-from ember_code.core.db.admin_cli import db
 from ember_code.core.db.locator import StorageLocator
 from ember_code.core.db.urls import DatabaseUrl
 from tests.storage_backends import ThrowawayPostgres
@@ -26,7 +26,7 @@ from tests.storage_backends import ThrowawayPostgres
 
 def test_the_command_imports_none_of_the_rest_of_igni():
     probe = (
-        "import sys, ember_code.core.db.admin_cli\n"
+        "import sys, igni_cloud.db.admin_cli\n"
         "heavy = [m for m in ('agno', 'ember_code.cli', 'ember_code.core.config.settings', "
         "'ember_code.backend', 'openai', 'mcp') if m in sys.modules]\n"
         "print(heavy)\n"
@@ -37,8 +37,8 @@ def test_the_command_imports_none_of_the_rest_of_igni():
     assert out.strip() == "[]"
 
 
-def test_igni_db_is_the_same_commands():
-    assert igni_db is db
+def test_igni_cloud_db_is_the_same_commands():
+    assert main.commands["db"] is db
 
 
 def test_without_a_database_it_says_how_to_name_one(monkeypatch):

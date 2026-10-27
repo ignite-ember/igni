@@ -41,8 +41,8 @@ from ember_code.core.config.accumulator import SettingsAccumulator
 from ember_code.core.config.cloud_model_migrator import CloudModelMigrator
 from ember_code.core.config.config_io import YamlSource
 from ember_code.core.config.managed_policy import ManagedPolicySource
+from ember_code.core.layer import Layers
 from ember_code.core.paths import home_config_dir, project_config_dir
-from ember_code.core.profile import RuntimeProfile
 
 if TYPE_CHECKING:
     from ember_code.core.config.group_policy import GroupPolicyPack
@@ -346,13 +346,12 @@ class SettingsMergePlan:
         # instance, because the ratchet reads what this one actually set.
         cli_tier = CliTier(cli)
 
-        # The cloud profile reads no settings file of its own: not the
-        # user's under ``~/.igni``, not the workspace's ``.igni``. What it
-        # runs with comes from the image (the command line, managed
-        # policy) and from igni server (group policy) — ``core/profile.py``.
+        # A layer may read no settings file of its own — not the user's
+        # under ``~/.igni``, not the workspace's ``.igni`` (the cloud's:
+        # what it runs with comes from the image and from igni server).
         local_tiers: list[Tier] = (
             []
-            if RuntimeProfile.current().is_cloud
+            if not Layers.current().reads_local_settings()
             else [
                 # User global (lowest priority above built-in defaults)
                 YamlTier(user_ember / "config.yaml"),

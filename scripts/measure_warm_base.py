@@ -11,7 +11,7 @@ waits for ``ready``, then plays the node agent: writes the token and
 * the first turn (a user message → ``stream_end``),
 
 and lists the modules imported after ``ready`` — what
-:class:`~ember_code.backend.guest.warm.WarmImports` should add.
+:class:`~igni_cloud.guest.warm.WarmImports` should add.
 
     igni migrate --database-url postgresql://...   # once, for --pg
     python scripts/measure_warm_base.py --out r.json [--pg URL] [--no-warm]
@@ -36,11 +36,11 @@ from pathlib import Path
 from typing import Any
 
 import click
+from igni_cloud.guest import WarmImports
+from igni_cloud.guest.binding import ProducerBinding
 from websockets.asyncio.client import connect
 
 from ember_code.backend.app import BackendApp
-from ember_code.backend.guest import WarmImports
-from ember_code.backend.guest.binding import ProducerBinding
 from ember_code.backend.logging_setup import configure_logging
 from ember_code.core.config.managed_policy import ManagedPolicySource
 

@@ -25,7 +25,7 @@ import logging
 from pathlib import Path
 
 from ember_code.core.config.settings import Settings
-from ember_code.core.profile import RuntimeProfile
+from ember_code.core.layer import Layers
 from ember_code.core.utils.audit_schemas import (
     AuditDetails,
     AuditEntry,
@@ -73,13 +73,13 @@ class AuditLogger:
     turn.
     """
 
-    #: Where entries go in the cloud: standard output, as JSON lines.
+    #: Where entries go when the layer keeps no log files (``core/layer.py``).
     CLOUD_LOGGER = logging.getLogger("ember_code.audit")
 
     def __init__(self, settings: Settings) -> None:
         self._log_path = Path(settings.storage.audit_log).expanduser()
-        #: The cloud keeps no audit file (``core/profile.py``).
-        self._to_stdout = RuntimeProfile.current().is_cloud
+        #: A layer that keeps no log files keeps no audit file (``core/layer.py``).
+        self._to_stdout = not Layers.current().log_files()
         if not self._to_stdout:
             self._log_path.parent.mkdir(parents=True, exist_ok=True)
         # First IO failure emits a warning; subsequent failures

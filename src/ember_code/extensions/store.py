@@ -41,8 +41,8 @@ from typing import ClassVar
 
 from pydantic import BaseModel, Field, ValidationError
 
+from ember_code.core.layer import Layers
 from ember_code.core.paths import home_config_dir
-from ember_code.core.profile import RuntimeProfile
 from ember_code.extensions.assets import AssetCache, ReadOnlyTree
 from ember_code.extensions.manifest import ExtensionManifest
 from ember_code.extensions.settings_values import SettingsValues
@@ -118,7 +118,7 @@ class StoredGroup(BaseModel):
 class ExtensionStore:
     """The installed bundles on disk.
 
-    In the cloud (``IGNI_PROFILE=cloud``) what igni server sends with the
+    Where the layer keeps no files of it (the cloud's) what igni server sends with the
     listing — the priority order and the person's group — is kept in this
     process only: it is igni server's, read-only in the VM, and a VM
     starts by asking again. Settings values live in the database
@@ -327,7 +327,7 @@ class ExtensionStore:
         stored = StoredPriority(priority=priority)
         if self._stored() == stored:
             return False
-        if RuntimeProfile.current().is_cloud:
+        if not Layers.current().keeps_listing_in_files():
             self._received_priority[str(self._root)] = stored
             return True
         self._root.mkdir(parents=True, exist_ok=True)
@@ -339,7 +339,7 @@ class ExtensionStore:
         return self._stored().priority
 
     def _stored(self) -> StoredPriority:
-        if RuntimeProfile.current().is_cloud:
+        if not Layers.current().keeps_listing_in_files():
             return self._received_priority.get(str(self._root), StoredPriority())
         path = self.priority_path
         if not path.is_file():
@@ -356,7 +356,7 @@ class ExtensionStore:
 
     def record_group(self, group: str | None) -> None:
         """Keep the person's group the listing carried, for the next start before igni answers."""
-        if RuntimeProfile.current().is_cloud:
+        if not Layers.current().keeps_listing_in_files():
             self._received_group[str(self._root)] = StoredGroup(group=group)
             return
         self._root.mkdir(parents=True, exist_ok=True)
@@ -365,7 +365,7 @@ class ExtensionStore:
 
     def group(self) -> StoredGroup | None:
         """The person's group as last received; ``None`` if no listing ever arrived."""
-        if RuntimeProfile.current().is_cloud:
+        if not Layers.current().keeps_listing_in_files():
             return self._received_group.get(str(self._root))
         path = self.group_path
         if not path.is_file():

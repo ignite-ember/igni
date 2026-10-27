@@ -2,9 +2,11 @@
 
 On the desktop they are files under ``<project>/.igni/attachments/
 <session_id>/`` and stay exactly that (:class:`DirectoryAttachments`).
-In the cloud they are PostgreSQL large objects with a row each in the
-shared database, scoped like every other row
-(:class:`LargeObjectAttachments`, ``docs/CLOUD.md`` section 9).
+A shared database's dialect may keep them its own way
+(:meth:`SharedStorage.attachments
+<ember_code.core.db.providers.SharedStorage.attachments>`): PostgreSQL's,
+in ``igni-cloud``, as large objects with a row each, scoped like every
+other row (``docs/CLOUD.md`` section 9).
 
 Either way an upload arrives as chunks and is written as it arrives, and
 a stored one is read back as chunks: an attachment is never held whole
@@ -28,22 +30,19 @@ from __future__ import annotations
 
 import base64
 import re
-import time
-import uuid
 from abc import ABC, abstractmethod
 from collections.abc import Iterable, Iterator
 from pathlib import Path
 from typing import ClassVar
 
 from pydantic import BaseModel
-from sqlalchemy import BigInteger, Index, Integer, String, delete, select, text
+from sqlalchemy import BigInteger, Index, Integer, String
 from sqlalchemy.orm import Mapped, mapped_column
 
 from ember_code.core.db.base import Base
-from ember_code.core.db.database import Database
 from ember_code.core.db.locator import StorageLocator
+from ember_code.core.db.providers import SharedStorages
 from ember_code.core.db.scope import ScopedColumns
-from ember_code.core.db.urls import Dialect
 from ember_code.core.paths import CONFIG_DIR
 
 
@@ -94,6 +93,10 @@ class Base64Chunks:
 class Attachments(ABC):
     """Uploaded files of one project."""
 
+    #: Bytes per chunk read or written.
+    CHUNK: ClassVar[int] = 64 * 1024
+    #: How an upload kept in a database is named, rather than by a path.
+    REF_PREFIX: ClassVar[str] = "attachment:"
     #: How a file name is made safe to keep.
     _SAFE_NAME_RE: ClassVar[re.Pattern[str]] = re.compile(r"[^A-Za-z0-9._-]+")
 
@@ -118,14 +121,19 @@ class Attachments(ABC):
     @staticmethod
     def _file_chunks(path: Path) -> Iterator[bytes]:
         with path.open("rb") as source:
-            while chunk := source.read(LargeObjectAttachments.CHUNK):
+            while chunk := source.read(Attachments.CHUNK):
                 yield chunk
 
     @staticmethod
     def for_project(project_dir: Path, locator: StorageLocator) -> Attachments:
-        """Large objects where the shared database is PostgreSQL; files otherwise."""
-        if locator.shared and locator.project_url(project_dir).dialect is Dialect.POSTGRESQL:
-            return LargeObjectAttachments(locator.project_database(project_dir), project_dir)
+        """The shared database's own kind where its dialect has one; files otherwise."""
+        if locator.shared:
+            url = locator.project_url(project_dir)
+            kept = SharedStorages.for_url(url).attachments(
+                locator.project_database(project_dir), project_dir
+            )
+            if kept is not None:
+                return kept  # type: ignore[no-any-return]
         return DirectoryAttachments(project_dir)
 
 
@@ -164,137 +172,21 @@ class DirectoryAttachments(Attachments):
         return StoredAttachment(ref=str(dest), size=size)
 
     def open(self, ref: str) -> Iterator[bytes]:
-        if ref.startswith(LargeObjectAttachments.REF_PREFIX):
+        if ref.startswith(Attachments.REF_PREFIX):
             raise FileNotFoundError(f"{ref}: the desktop keeps attachments as files")
         return self._file_chunks(Path(ref))
 
     def local_path(self, ref: str) -> Path | None:
-        if ref.startswith(LargeObjectAttachments.REF_PREFIX):
+        if ref.startswith(Attachments.REF_PREFIX):
             return None
         path = Path(ref)
         return path if path.is_file() else None
 
 
-class LargeObjectAttachments(Attachments):
-    """The cloud's: a PostgreSQL large object per upload, a row per object."""
-
-    REF_PREFIX = "attachment:"
-    #: Bytes per ``lowrite`` / ``loread``.
-    CHUNK = 64 * 1024
-    #: ``INV_WRITE`` and ``INV_READ`` from ``libpq-fs.h``.
-    _INV_WRITE = 0x20000
-    _INV_READ = 0x40000
-
-    def __init__(self, db: Database, project_dir: Path | None = None) -> None:
-        if db.url.dialect is not Dialect.POSTGRESQL:
-            raise ValueError("large objects are PostgreSQL's")
-        self._db = db
-        #: Where :meth:`local_path` writes readable copies.
-        self._project_dir = project_dir if project_dir is not None else Path.cwd()
-
-    def save(self, session_id: str, filename: str, chunks: Iterable[bytes]) -> StoredAttachment:
-        attachment_id = uuid.uuid4().hex
-        size = 0
-        with self._db.sync_session() as session, session.begin():
-            connection = session.connection()
-            oid = int(connection.scalar(text("SELECT lo_create(0)")))
-            fd = connection.scalar(
-                text("SELECT lo_open(:oid, :mode)"), {"oid": oid, "mode": self._INV_WRITE}
-            )
-            for chunk in chunks:
-                if chunk:
-                    connection.execute(
-                        text("SELECT lowrite(:fd, :data)"), {"fd": fd, "data": chunk}
-                    )
-                    size += len(chunk)
-            connection.execute(text("SELECT lo_close(:fd)"), {"fd": fd})
-            session.add(
-                AttachmentModel(
-                    **self._db.scope.stamp(),
-                    id=attachment_id,
-                    session_id=session_id,
-                    filename=self.safe_name(filename),
-                    oid=oid,
-                    size=size,
-                    created_at=int(time.time()),
-                )
-            )
-        return StoredAttachment(ref=f"{self.REF_PREFIX}{attachment_id}", size=size)
-
-    def _row(self, ref: str) -> AttachmentModel | None:
-        attachment_id = ref.removeprefix(self.REF_PREFIX)
-        with self._db.sync_session() as session:
-            return session.scalar(
-                select(AttachmentModel).where(
-                    self._db.scope.where(AttachmentModel), AttachmentModel.id == attachment_id
-                )
-            )
-
-    def local_path(self, ref: str) -> Path | None:
-        if not ref.startswith(self.REF_PREFIX):
-            path = Path(ref)
-            return path if path.is_file() else None
-        row = self._row(ref)
-        if row is None:
-            return None
-        cache = (
-            self._project_dir
-            / CONFIG_DIR
-            / "attachments"
-            / row.session_id
-            / f"{row.id}-{row.filename}"
-        )
-        if cache.is_file() and cache.stat().st_size == row.size:
-            return cache
-        cache.parent.mkdir(parents=True, exist_ok=True)
-        partial = cache.with_name(cache.name + ".partial")
-        with partial.open("wb") as out:
-            for chunk in self.open(ref):
-                out.write(chunk)
-        partial.replace(cache)
-        return cache
-
-    def open(self, ref: str) -> Iterator[bytes]:
-        if not ref.startswith(self.REF_PREFIX):
-            return self._file_chunks(Path(ref))
-        return self._read_object(ref)
-
-    def _read_object(self, ref: str) -> Iterator[bytes]:
-        row = self._row(ref)
-        if row is None:
-            raise FileNotFoundError(ref)
-        with self._db.sync_session() as session, session.begin():
-            connection = session.connection()
-            fd = connection.scalar(
-                text("SELECT lo_open(:oid, :mode)"), {"oid": row.oid, "mode": self._INV_READ}
-            )
-            while True:
-                chunk = connection.scalar(
-                    text("SELECT loread(:fd, :size)"), {"fd": fd, "size": self.CHUNK}
-                )
-                if not chunk:
-                    break
-                yield bytes(chunk)
-            connection.execute(text("SELECT lo_close(:fd)"), {"fd": fd})
-
-    def delete(self, ref: str) -> bool:
-        row = self._row(ref)
-        if row is None:
-            return False
-        with self._db.sync_session() as session, session.begin():
-            session.execute(text("SELECT lo_unlink(:oid)"), {"oid": row.oid})
-            session.execute(
-                delete(AttachmentModel).where(
-                    self._db.scope.where(AttachmentModel), AttachmentModel.id == row.id
-                )
-            )
-        return True
-
-
 class AttachmentReferences:
     """The uploads a message names, made readable before anything reads it."""
 
-    #: An upload kept in the database (``LargeObjectAttachments.REF_PREFIX``).
+    #: An upload kept in the database (``attachment:<id>``).
     PATTERN: ClassVar[re.Pattern[str]] = re.compile(r"attachment:[0-9a-f]{32}")
 
     @classmethod
@@ -319,6 +211,5 @@ __all__ = [
     "Attachments",
     "Base64Chunks",
     "DirectoryAttachments",
-    "LargeObjectAttachments",
     "StoredAttachment",
 ]

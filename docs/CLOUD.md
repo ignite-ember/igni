@@ -419,11 +419,28 @@ What moves where (audit of `src/ember_code`, 2026-10-26; built in
 | Logs | files under `~/.igni` | JSON lines on standard output, collected by the node: no backend log, `debug.log`, `llm_calls.log`, `hitl_trace.log` or audit log file |
 | Workspace files, `.igni` in the workspace, worktrees, process logs, installed packages | files | the producer's volume (section 10) |
 
-**The cloud profile is one setting:** `IGNI_PROFILE=cloud`, set by the
-image (`core/profile.py`). An environment variable rather than a setting,
-because it decides where settings come from. It is what turns logs,
-credentials and settings to the cloud's (above) and makes
-`IGNI_DATABASE_URL` required; anything else is the desktop.
+**One product: the core and a cloud layer.** The desktop igni
+(`ignite-ember`, `ember_code`) is the core; the cloud is a layer on top,
+its own package — `packages/igni-cloud` (`igni-cloud`, `igni_cloud`) —
+which the core never imports (a test holds it to that). The core asks
+seams instead of where it runs (`core/layer.py`): where logs go, where
+credentials come from, whether settings files under `~/.igni` count,
+whether state must be in a database, whether igni server's listing is
+kept in files, how MCP servers are approved, and what a backend does
+around its boot and serving. Each has the desktop's answer by default.
+`IGNI_PROFILE=cloud`, set by the image, is read in one place
+(`Layers`): it installs the layer the `igni.layers` entry point `cloud`
+names — `igni-cloud`'s `CloudLayer` — for the backend, `igni migrate` and
+the CLI alike, from the one setting the image already has; a desktop,
+which never sets it, never imports a line of cloud code, and a name no
+package declares is refused rather than run as a desktop. The image
+installs both packages (`pip install ignite-ember igni-cloud`); the
+desktop's wheel depends on neither psycopg nor `agno[postgres]`.
+PostgreSQL storage — Agno's scoped storage, uploads as large objects,
+and what `igni migrate` prepares (Agno's tables, row-level security) —
+is chosen by the database URL instead, through the `igni.storage` entry
+point `postgresql` (`core/db/providers.py`; `igni-cloud`'s), so it is
+there wherever the package is installed.
 
 **How the database is chosen.** One code path; `storage.database_url`
 (`IGNI_DATABASE_URL`) picks the backend. Unset, a project's state is its
@@ -448,7 +465,7 @@ unscoped. The one lookup that cannot know the project — which folder a
 session is in — filters by org and producer only. Under that filter,
 row-level security (below) holds the same line in the database.
 
-**Row-level security** (`core/db/rls.py`), so the isolation holds when
+**Row-level security** (`igni_cloud/db/rls.py`), so the isolation holds when
 igni inside a VM is buggy or compromised:
 
 - *Each producer connects as its own PostgreSQL role.* The role is bound
@@ -485,23 +502,23 @@ igni inside a VM is buggy or compromised:
 **Provisioning contract** (for the node agent and igni server, build
 plan steps 3 and 5). With the org database's admin URL:
 
-- `python -m ember_code.core.db.admin_cli grant-producer --org <org>
-  --producer person:<id>|app:<id>` (also `igni db grant-producer …`; the
-  module imports the role code and SQLAlchemy only — 0.15 s to its help
-  where the full CLI took 0.83 s — since the node agent runs it on a new
-  producer's first start; it becomes the cloud package's own command)
+- `igni-cloud db grant-producer --org <org> --producer
+  person:<id>|app:<id>` (the cloud package's command; it imports the role
+  code and SQLAlchemy only — 0.16 s for a grant, where `igni db` in the
+  full CLI took 0.84 s — since the node agent runs it on a new
+  producer's first start)
   creates the producer's role, or rotates its password when it exists,
   and prints JSON: `role`, `password`, `database_url`. The platform hands
   `database_url` to the producer's VM as `IGNI_DATABASE_URL`, the way it
   hands the token. The org and producer must be the ones the producer's
   token names: the application's filter and the policy then agree, and a
   write in any other scope is refused by the database.
-- `… revoke-producer --org <org> --producer <id>` drops the role.
+- `igni-cloud db revoke-producer --org <org> --producer <id>` drops the role.
   What it owned (its uploads' large objects) passes to the admin role;
   its rows stay, unreachable until a role is granted again.
 
 **The VM's own credential** (igni server's service-identity §16;
-`backend/guest/credential.py`). The platform never mints a producer a
+`igni_cloud/guest/credential.py`). The platform never mints a producer a
 token: each VM holds a **VM credential** and exchanges it for every token
 it needs. A person's comes when they sign in through the gateway, which
 hands their session to igni with the `vm_sign_in` RPC
@@ -536,7 +553,7 @@ service says it needs sign-in until the credential arrives, which igni
 picks up without a restart.
 
 **Guest contract** (igni's side of the guest protocol in
-`igni__cloudvm`; `backend/guest/`, cloud profile only). Three
+`igni__cloudvm`; `igni_cloud/guest/`, the cloud layer's backend hooks). Three
 files on the VM's tmpfs, each movable by a variable (`IGNI_RUN_DIR`
 moves all three, default `/run/igni`):
 

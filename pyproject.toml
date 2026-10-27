@@ -111,17 +111,6 @@ dev = [
     # CI gate may rely on.
     "jsonschema~=4.26.0",
 ]
-# igni's state in PostgreSQL — the cloud (docs/CLOUD.md section 9); the
-# desktop keeps SQLite and never installs this. psycopg 3 is one driver
-# with a sync and an async API, so alembic, the small sync stores, the
-# async stores and Agno's AsyncPostgresDb all speak to the server through
-# the same library — asyncpg would be a second driver for the async half
-# only, beside a sync one alembic still needs. ``agno[postgres]`` is what
-# Agno asks for its PostgreSQL storage.
-postgres = [
-    "psycopg[binary]~=3.3.6",
-    "agno[postgres]~=2.6.12",
-]
 mcp = [
     # ``~=1.28.1`` capped CVE-2026-59951, whose fix is 1.30.0. This pin
     # has now blocked a fix once; widened to the minor.
@@ -167,6 +156,9 @@ exclude = [
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
+# The repository root, so ``packages/igni-cloud/tests`` reaches the core's
+# ``tests`` helpers and fixtures.
+pythonpath = ["."]
 
 [tool.ruff]
 # Deliberately behind ``requires-python``. Raising this to py312 is not

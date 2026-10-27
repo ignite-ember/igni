@@ -24,16 +24,20 @@ jobs:
         uses: astral-sh/setup-uv@v4
 
       - name: Install dependencies
-        run: uv sync --extra dev
+        run: |
+          uv sync --extra dev
+          uv pip install -e packages/igni-cloud
 
       - name: Ruff check
-        run: uv run ruff check src/ tests/
+        run: uv run --no-sync ruff check src/ tests/ packages/igni-cloud/
 
       - name: Ruff format check
-        run: uv run ruff format --check src/ tests/
+        run: uv run --no-sync ruff format --check src/ tests/ packages/igni-cloud/
 
       - name: Mypy
-        run: uv run mypy src/ember_code/
+        run: |
+          uv run --no-sync mypy src/ember_code/
+          uv run --no-sync mypy packages/igni-cloud/src/igni_cloud/
 
   # No matrix. The product ships one interpreter, so there is one job,
   # and its name carries no version — which matters because the branch
@@ -86,11 +90,19 @@ jobs:
       - name: Install uv
         uses: astral-sh/setup-uv@v4
 
+      # The core alone — the desktop's wheel, without psycopg or the
+      # cloud layer: everything it does must work, and every cloud test
+      # lives in packages/igni-cloud.
       - name: Install dependencies
-        run: uv sync --extra dev --extra postgres
+        run: uv sync --extra dev
 
       - name: Run tests
         run: uv run pytest tests/ -q -rs
+
+      - name: The cloud layer's tests
+        run: |
+          uv pip install -e packages/igni-cloud
+          uv run --no-sync pytest packages/igni-cloud/tests -q -rs
 
   # igni's stores against PostgreSQL, the cloud's database (docs/CLOUD.md
   # section 9). The suite above runs them on SQLite; here the same tests
@@ -122,18 +134,22 @@ jobs:
       - name: Install uv
         uses: astral-sh/setup-uv@v4
 
+      # PostgreSQL storage is the igni-cloud package's (an entry point,
+      # found by the database URL), so it is installed here.
       - name: Install dependencies
-        run: uv sync --extra dev --extra postgres
+        run: |
+          uv sync --extra dev
+          uv pip install -e packages/igni-cloud
 
       - name: Storage tests on PostgreSQL
         env:
           IGNI_TEST_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/postgres
         run: >-
-          uv run pytest -q -rs
+          uv run --no-sync pytest -q -rs
           tests/test_storage_backends.py
           tests/test_approvals_and_queued_messages_survive_a_restart.py
           tests/test_an_approval_resumes_after_a_cold_restart.py
-          tests/test_row_level_security.py
+          packages/igni-cloud/tests
 
   # The Python SDKs under packages/ (igni-service, igni-extension) have
   # dependencies of their own and are checked in their own environments,

@@ -23,11 +23,8 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from websockets.asyncio.client import connect
-
-from ember_code.backend.activity import Activity, ActivityState, SessionActivity
-from ember_code.backend.app import BackendApp
-from ember_code.backend.guest import (
+from igni_cloud.credentials import EnvironmentCredentials
+from igni_cloud.guest import (
     ActivityFile,
     AtomicFile,
     CloudGuest,
@@ -41,8 +38,12 @@ from ember_code.backend.guest import (
     UnboundRefusal,
     WarmImports,
 )
+from igni_cloud.layer import CloudLayer
+from websockets.asyncio.client import connect
+
+from ember_code.backend.activity import Activity, ActivityState, SessionActivity
+from ember_code.backend.app import BackendApp
 from ember_code.core.activity import ActivityRegistry
-from ember_code.core.auth.credentials import EnvironmentCredentials
 from ember_code.core.config.schemas.storage_and_paths import StorageConfig
 from ember_code.core.config.settings import load_settings
 from ember_code.core.db.engine import cache
@@ -50,7 +51,7 @@ from ember_code.core.db.engine_registry import EngineRegistry
 from ember_code.core.db.locator import StorageLocator
 from ember_code.core.db.scope import Tenant, tenancy
 from ember_code.core.db.urls import DatabaseUrl
-from ember_code.core.profile import PROFILE_ENV
+from ember_code.core.layer import BackendHooks, Layer
 from ember_code.core.session.pending_messages import PendingMessageStore
 from ember_code.extensions.host.broadcasts import BroadcastSignals
 from ember_code.extensions.host.model import HostState
@@ -75,9 +76,8 @@ ADA_TOKEN = _jwt(sub="u-ada", org=ORG, exp=int(time.time()) + 3600)
 
 
 @pytest.fixture
-def cloud(monkeypatch) -> None:
-    """The cloud profile, with nothing named yet: a warm base's igni."""
-    monkeypatch.setenv(PROFILE_ENV, "cloud")
+def cloud(cloud_layer: Any, monkeypatch) -> None:
+    """The cloud layer, with nothing named yet: a warm base's igni."""
     for name in (
         StorageConfig.DATABASE_URL_ENV,
         EnvironmentCredentials.TOKEN_FILE_ENV,
@@ -123,9 +123,9 @@ def test_the_files_are_on_run_igni_unless_moved():
     assert moved.ready == Path("/y/ok")
 
 
-def test_the_desktop_has_no_guest_contract(monkeypatch):
-    monkeypatch.delenv(PROFILE_ENV, raising=False)
-    assert CloudGuest.current() is None
+def test_the_desktop_has_no_guest_contract():
+    assert type(Layer().backend()) is BackendHooks
+    assert isinstance(CloudLayer().backend(), CloudGuest)
 
 
 def test_an_atomic_write_leaves_only_the_file(tmp_path: Path):
@@ -409,7 +409,8 @@ async def test_an_igni_started_before_its_producer_binds_when_producer_env_appea
             assert database_url.url not in cache.registry._sync_engines, "no database yet"
 
             _hand_over(run_dir, database_url.url)
-            bound = await asyncio.wait_for(binding, timeout=5)
+            assert await asyncio.wait_for(binding, timeout=5) is True
+            bound = guest.binding.bound
             assert bound is not None and bound.database_url == database_url.url
 
             # The backend's boot from here on, as ``BackendApp.run`` does it.
@@ -723,7 +724,7 @@ async def test_bound_before_any_sign_in_says_so_to_the_windows_and_the_node_agen
         restores=RestoreWatch(paths.restored, watch=False),
         gc_freeze=False,
     )
-    assert await asyncio.wait_for(guest.bind(None), timeout=5) is not None
+    assert await asyncio.wait_for(guest.bind(None), timeout=5) is True
     assert guest.tenant == Tenant(org=ORG, producer=PRODUCER), "bound without a token"
 
     sent: list[Any] = []

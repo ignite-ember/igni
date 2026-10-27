@@ -1,7 +1,7 @@
 """Logs in the cloud: JSON lines on standard output.
 
-In the cloud profile (:mod:`ember_code.core.profile`) nothing writes a
-log file: the node collects the VM's standard output. Every logger that
+In the cloud (:class:`igni_cloud.layer.CloudLayer`) nothing writes a log
+file: the node collects the VM's standard output. Every logger that
 writes a file on the desktop writes here instead, one JSON object per
 line — ``ts``, ``level``, ``logger``, ``message``, and whatever
 structured ``fields`` a record carries (the audit log's entries, say).

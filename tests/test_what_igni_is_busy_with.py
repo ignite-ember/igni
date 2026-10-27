@@ -5,13 +5,11 @@ extension calls, scheduled tasks, processes, an extension that said so
 (``self.busy``) — and lets it go when done; a lease with an expiry stops
 counting then, so nothing stuck keeps igni awake for ever. Waiting on a
 person is not busy. What is due later is a wake; the earliest is
-``wake_at``. All of it reaches ``app.activity`` and ``activity.json``.
+``wake_at``. All of it reaches ``app.activity`` (and, in the cloud, ``activity.json``).
 """
 
 from __future__ import annotations
 
-import asyncio
-import json
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -20,7 +18,6 @@ import httpx
 import pytest
 
 from ember_code.backend.activity import Activity, ActivityState, SessionActivity
-from ember_code.backend.guest import ActivityFile
 from ember_code.core.activity import ActivityRegistry, BusyKind
 from ember_code.core.activity.http import BusyAsyncClient, BusyClient
 from ember_code.core.scheduler.runner import SchedulerRunner
@@ -234,40 +231,3 @@ async def test_an_extension_says_it_is_busy_through_the_host_model(tmp_path: Pat
         assert (await rig.ask(extension, "get", "app.activity")).result["suspendable"] is True
     finally:
         await rig.stop()
-
-
-# ── activity.json carries it ──────────────────────────────────────
-
-
-def test_the_activity_file_carries_busy_and_wake_at(tmp_path: Path):
-    registry = ActivityRegistry()
-    wake = datetime(2026, 10, 27, 9, 0, tzinfo=UTC)
-    registry.wake("scheduler:a", wake, "a scheduled task")
-    registry.hold(BusyKind.MONITOR, "monitor:ci", "watching")
-    file = ActivityFile(
-        tmp_path / "activity.json", activity=lambda: Activity.now([], registry), clients=lambda: 0
-    )
-    assert file.refresh()
-    written = json.loads(file.path.read_text())
-    assert written["suspendable"] is False and written["state"] == "running"
-    [lease] = written["busy"]
-    assert {"kind", "holder", "reason", "since", "expires_at"} <= set(lease)
-    assert (lease["kind"], lease["holder"]) == ("monitor", "monitor:ci")
-    assert written["wake_at"] == int(wake.timestamp() * 1000), "Unix milliseconds"
-    assert isinstance(lease["since"], int)
-
-
-async def test_busy_but_not_running_still_gets_its_heartbeat(tmp_path: Path):
-    registry = ActivityRegistry()
-    now = [1000.0]
-    registry.hold(BusyKind.PROCESS, "process:7")
-    file = ActivityFile(
-        tmp_path / "activity.json",
-        activity=lambda: Activity.now([], registry),
-        clients=lambda: 0,
-        clock=lambda: now[0],
-    )
-    assert file.refresh()
-    now[0] += ActivityFile.HEARTBEAT_SECONDS
-    assert file.refresh(), "rewritten so the guest agent does not call it stale"
-    await asyncio.sleep(0)

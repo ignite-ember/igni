@@ -26,7 +26,7 @@ inside a producer's VM is buggy or compromised:
   The project stays an application filter: a person sees all their
   projects.
 * **Agno's tables** (schema ``ai``) carry the scope in ``user_id``
-  (``<org>/<producer>/<project>``, :mod:`ember_code.core.memory.scoped_postgres`);
+  (``<org>/<producer>/<project>``, :mod:`igni_cloud.storage.scoped_agno`);
   their policy compares its prefix. Agno's schema-version table is
   readable; its other tables, which igni does not use, are closed.
 * **Large objects** are not rows of a table: they are protected by their

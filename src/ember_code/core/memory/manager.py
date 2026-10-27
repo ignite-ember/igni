@@ -28,9 +28,8 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from ember_code.core.config.settings import Settings
-from ember_code.core.db.engine import cache
 from ember_code.core.db.locator import StorageLocator
-from ember_code.core.memory.scoped_postgres import ScopedAsyncPostgresDb
+from ember_code.core.db.providers import SharedStorages
 
 if TYPE_CHECKING:
     from agno.db.base import AsyncBaseDb
@@ -99,19 +98,18 @@ class StorageManager:
         storage = StorageLocator.from_settings(self.settings)
         url = storage.project_url(self.project_dir)
         path = url.file
-        if path is not None:
+        if path is not None and not storage.shared:
             path.parent.mkdir(parents=True, exist_ok=True)
             return _agno_sqlite.AsyncSqliteDb(
                 db_file=str(path),
                 session_table=self.SESSION_TABLE,
                 memory_table=self.MEMORY_TABLE,
             )
-        return ScopedAsyncPostgresDb(
+        # A shared database: its dialect's Agno storage, kept to this
+        # scope's rows (``core/db/providers.py``).
+        return SharedStorages.for_url(url).agno_db(
+            url=url,
             scope=storage.scope(self.project_dir),
-            db_engine=cache.get_async_engine(url),
-            # ``igni migrate`` made Agno's tables as the admin role: a
-            # producer's role may not create any (``core/db/rls.py``).
-            create_schema=False,
             session_table=self.SESSION_TABLE,
             memory_table=self.MEMORY_TABLE,
         )

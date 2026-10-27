@@ -27,7 +27,6 @@ from typing import Any
 
 from ember_code.backend.agent_refresh import AgentRefresh
 from ember_code.backend.command_handler import CommandHandler
-from ember_code.backend.guest import CloudGuest
 from ember_code.backend.host_backend import HostModelWiring, ObservedTransport
 from ember_code.backend.login_coordinator import LoginCoordinator
 from ember_code.backend.push_bridge import PushNotificationBridge
@@ -41,6 +40,7 @@ from ember_code.backend.workspace_signals import WorkspaceSignals
 from ember_code.core.config.settings import Settings, load_settings
 from ember_code.core.db.locator import StorageLocator
 from ember_code.core.db.scope import tenancy
+from ember_code.core.layer import Layers
 from ember_code.core.plugins.installer import PluginInstaller
 from ember_code.core.prompts.contributions import prompt_contributions
 from ember_code.extensions.contributions import (
@@ -164,7 +164,8 @@ class BackendApp:
         # The host object model and the socket processes reach it on.
         self._host_model: HostModel | None = None
         self._host_channel: HostChannel | None = None
-        self._guest = CloudGuest.current()
+        #: What the deployment layer does around boot and serving (``core/layer.py``).
+        self._guest = Layers.current().backend()
 
     def _load_settings_with_group_policy(self) -> Settings:
         """Build this process's ``Settings`` with the org's policy applied.
@@ -205,37 +206,32 @@ class BackendApp:
         try:
             await self._boot_and_serve()
         finally:
-            # Whatever ended the process, the guest agent must not go on
-            # reading ``ready`` or an activity nobody keeps true.
-            if self._guest is not None:
-                await self._guest.stop()
+            # Whatever ended the process, the layer tidies what it keeps
+            # (the cloud's: ``ready`` and the activity file).
+            await self._guest.stop()
 
     async def _boot_and_serve(self) -> None:
-        # In a producer's VM: the files igni and the guest agent share
-        # (docs/CLOUD.md §9). ``None`` on the desktop.
+        # The layer's (``core/layer.py``); the desktop's do nothing.
         guest = self._guest
-        if guest is not None:
-            guest.starting()
+        guest.starting()
         # Wrapped once, at the root, so the host object model sees
         # every message igni sends any window — see ``host_backend``.
         self._transport = ObservedTransport(await self._transport_builder.build())
-        if guest is not None:
-            # Listening, imports done: a warm base may be snapshotted
-            # here, before anyone it is for is known. Nothing above
-            # this line is any producer's.
-            guest.listening()
-            if await guest.bind(self._transport) is not None:
-                # The producer's volume is mounted now; a working
-                # directory taken before it would still be the image's.
-                os.chdir(self._project_dir)
+        # Listening, imports done. A layer may wait here for what it needs
+        # before igni opens any state (the cloud's: a producer to bind to).
+        guest.listening()
+        if await guest.bind(self._transport):
+            # Something was mounted since: a working directory taken
+            # before it would still be the old one.
+            os.chdir(self._project_dir)
 
         settings = self._load_settings_with_group_policy()
         # Whose rows a shared database holds: the producer signed in
         # here (docs/CLOUD.md §9). Asked only when ``IGNI_DATABASE_URL``
         # names one — the desktop's files are nobody else's.
-        # A producer's VM is the producer ``producer.env`` named, signed in
-        # or not yet (``backend/guest``).
-        bound = guest.tenant if guest is not None else None
+        # A layer may decide whose rows they are (the cloud's: the
+        # producer its VM is for, signed in or not yet).
+        bound = guest.tenant
         tenancy.use(
             (lambda: bound)
             if bound is not None
@@ -408,18 +404,16 @@ class BackendApp:
         )
         self._supervisor.start_evictor()
         self._supervisor.mark_running()
-        if guest is not None and self._host_model is not None:
-            # Before any window connects: an idle VM nobody is
-            # looking at is the one the node agent most wants to know
-            # it may suspend.
-            guest.serving(
-                model=self._host_model,
-                transport=self._transport,
-                notifications=notifications,
-                on_rebind=self._supervisor.request_shutdown,
-                api_url=self._igni_api_url,
-            )
-            self._orchestrator.attach_vm_sign_in(guest.vm_sign_in)
+        # Before any window connects: an idle process nobody is looking at
+        # is the one a layer that suspends most wants to know about.
+        guest.serving(
+            model=self._host_model,
+            transport=self._transport,
+            orchestrator=self._orchestrator,
+            notifications=notifications,
+            on_rebind=self._supervisor.request_shutdown,
+            api_url=self._igni_api_url,
+        )
 
         try:
             if self._ws_port is not None:

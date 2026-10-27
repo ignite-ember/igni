@@ -16,9 +16,8 @@ import logging
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
-from ember_code.core.logs import StdoutLog
+from ember_code.core.layer import Layers
 from ember_code.core.paths import CONFIG_DIR
-from ember_code.core.profile import RuntimeProfile
 
 
 class DebugLogging:
@@ -42,9 +41,9 @@ class DebugLogging:
         """
         log_path = path if path is not None else cls.DEFAULT_PATH
         handler: logging.Handler
-        if RuntimeProfile.current().is_cloud:
-            # No debug.log in the cloud: standard output, as JSON lines.
-            handler = StdoutLog.handler()
+        if not Layers.current().log_files():
+            # No debug.log where the layer keeps no log files.
+            handler = Layers.current().log_handler()
         else:
             log_path.parent.mkdir(parents=True, exist_ok=True)
             handler = RotatingFileHandler(

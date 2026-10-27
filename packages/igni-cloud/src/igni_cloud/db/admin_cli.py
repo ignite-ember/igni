@@ -1,4 +1,4 @@
-"""``python -m ember_code.core.db.admin_cli`` (and ``igni db``): producers' database roles.
+"""``igni-cloud db`` (or ``python -m igni_cloud.db.admin_cli``): producers' database roles.
 
 ``docs/CLOUD.md`` section 9. Each producer connects to its org's
 database as its own PostgreSQL role, so row-level security holds even if
@@ -10,10 +10,9 @@ or igni server runs these with the admin role's URL:
   ``IGNI_DATABASE_URL`` to hand the producer's VM;
 * ``revoke-producer --org O --producer P`` drops it.
 
-Its own small module, because the node agent runs it on the
-path of a new producer's first start: it imports click, SQLAlchemy and
-the role code, not the rest of igni (``igni db …`` is the same commands
-inside the full CLI). The admin URL comes from ``--database-url`` or
+Its own small module, because the node agent runs it on the path of a new
+producer's first start: it imports click, SQLAlchemy and the role code,
+not the rest of igni. The admin URL comes from ``--database-url`` or
 ``IGNI_DATABASE_URL``.
 """
 
@@ -23,8 +22,8 @@ import os
 
 import click
 
-from ember_code.core.db.rls import ProducerRoles
 from ember_code.core.db.urls import DatabaseUrl
+from igni_cloud.db.rls import ProducerRoles
 
 #: The variable that names the database (``StorageConfig.DATABASE_URL_ENV``).
 DATABASE_URL_ENV = "IGNI_DATABASE_URL"
@@ -67,7 +66,7 @@ def revoke_producer(org: str, producer: str, database_url: str | None) -> None:
 
 
 def main() -> None:
-    db(prog_name="python -m ember_code.core.db.admin_cli")
+    db(prog_name="igni-cloud db")
 
 
 if __name__ == "__main__":

@@ -16,6 +16,10 @@ from pathlib import Path
 
 import httpx
 import pytest
+from igni_cloud.credentials import EnvironmentCredentials
+from igni_cloud.layer import CloudLayer
+from igni_cloud.logs import StdoutLog
+from igni_cloud.mcp_approvals import CloudMcpApprovals, PersonMcpApprovals
 
 from ember_code.backend.hitl_tracer import HITLTracer
 from ember_code.backend.logging_setup import configure_logging
@@ -23,26 +27,20 @@ from ember_code.core.auth.credentials import (
     CloudCredentials,
     Credentials,
     CredentialsStore,
-    EnvironmentCredentials,
 )
 from ember_code.core.config.llm_call_logger import LlmCallLogger
 from ember_code.core.config.settings import Settings, load_settings
 from ember_code.core.db.locator import StorageLocator
-from ember_code.core.logs import StdoutLog
+from ember_code.core.layer import Layer, Layers, UnknownLayer
 from ember_code.core.mcp.approval import MCPApprovalManager
-from ember_code.core.mcp.person_approvals import PersonMcpApprovals
-from ember_code.core.profile import PROFILE_ENV, RuntimeProfile
 from ember_code.core.utils.audit import AuditLogger
 from ember_code.core.utils.audit_schemas import AuditEntry
 from ember_code.extensions.store import ExtensionStore, StoredGroup
 
 
 @pytest.fixture
-def cloud(monkeypatch) -> Iterator[None]:
-    monkeypatch.setenv(PROFILE_ENV, "cloud")
-    StdoutLog.reset()
-    yield
-    StdoutLog.reset()
+def cloud(cloud_layer: CloudLayer) -> CloudLayer:
+    return cloud_layer
 
 
 @pytest.fixture
@@ -67,12 +65,15 @@ def home(monkeypatch, tmp_path: Path) -> Path:
     return fake
 
 
-def test_one_setting_names_the_profile(monkeypatch):
-    assert RuntimeProfile.current() is RuntimeProfile.DESKTOP
-    monkeypatch.setenv(PROFILE_ENV, "cloud")
-    assert RuntimeProfile.current().is_cloud
-    monkeypatch.setenv(PROFILE_ENV, "laptop")
-    assert RuntimeProfile.current() is RuntimeProfile.DESKTOP
+def test_one_setting_installs_the_layer_this_package_declares(monkeypatch):
+    assert type(Layers.current()) is Layer, "unset: the desktop's"
+    monkeypatch.setenv(Layers.ENV, "cloud")
+    Layers.reset()
+    assert isinstance(Layers.current(), CloudLayer), "found through the igni.layers entry point"
+    monkeypatch.setenv(Layers.ENV, "laptop")
+    Layers.reset()
+    with pytest.raises(UnknownLayer, match="laptop"):
+        Layers.current()
 
 
 def test_the_backend_logs_json_lines_to_stdout_and_writes_no_file(
@@ -202,7 +203,8 @@ def test_mcp_servers_are_offered_by_group_policy_and_approved_by_the_person(clou
         transport=httpx.MockTransport(server.handle),
     )
     approvals = MCPApprovalManager(
-        approval_path=approvals_file, delivered_dir=delivered, person_approvals=person
+        approval_path=approvals_file,
+        policy=CloudMcpApprovals(delivered_dir=delivered, person=person),
     )
     search = str(delivered / "search.json")
 

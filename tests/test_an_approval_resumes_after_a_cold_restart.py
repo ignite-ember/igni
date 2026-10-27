@@ -24,9 +24,10 @@ from __future__ import annotations
 import asyncio
 import json
 from collections.abc import AsyncIterator, Callable
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, ClassVar
 
 import pytest
 from agno.agent import Agent
@@ -47,10 +48,9 @@ from ember_code.backend.pending_requirements_store import PendingRequirementsSto
 from ember_code.core.approvals.journal import ApprovalJournal
 from ember_code.core.config.settings import Settings
 from ember_code.core.db.database import Database
-from ember_code.core.db.engine import cache
+from ember_code.core.db.providers import SharedStorages
 from ember_code.core.db.urls import DatabaseUrl
 from ember_code.core.hooks.turn_results import TurnResultHook
-from ember_code.core.memory.scoped_postgres import ScopedAsyncPostgresDb
 from ember_code.core.sub_agent_hitl import SubAgentHITLCoordinator
 from ember_code.core.tools.orchestrate import OrchestrateTools
 from ember_code.core.tools.orchestrate_budget import SpawnBudget
@@ -304,10 +304,20 @@ class Collect:
 class Store:
     """The databases a backend opens: the same ones after a restart."""
 
+    #: Shared databases prepared as ``igni migrate`` would (Agno's tables).
+    _prepared: ClassVar[set[str]] = set()
+
     def __init__(self, url: DatabaseUrl, tmp: Path) -> None:
         self.url = url
         self.tmp = tmp
         self.scope = Scopes.fresh()
+        if not url.is_sqlite and url.url not in self._prepared:
+            Database(url)  # igni's own tables first
+            # ``prepare`` runs its own event loop (as ``igni migrate`` does);
+            # these tests are inside one, so it runs beside it.
+            with ThreadPoolExecutor(max_workers=1) as aside:
+                aside.submit(SharedStorages.for_url(url).prepare, url).result()
+            self._prepared.add(url.url)
 
     def state(self) -> Database:
         return Database(self.url, scope=self.scope)
@@ -315,10 +325,13 @@ class Store:
     def agno(self) -> Any:
         if self.url.is_sqlite:
             return AsyncSqliteDb(db_file=str(self.tmp / "agno.db"), session_table="ember_sessions")
-        return ScopedAsyncPostgresDb(
+        # The database's own storage (``core/db/providers.py``; PostgreSQL's
+        # is ``igni-cloud``'s).
+        return SharedStorages.for_url(self.url).agno_db(
+            url=self.url,
             scope=self.scope,
-            db_engine=cache.get_async_engine(self.url),
             session_table="ember_sessions",
+            memory_table="ember_memories",
         )
 
 

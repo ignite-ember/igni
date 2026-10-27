@@ -60,8 +60,8 @@ from ember_code.protocol.rpc import RpcMethod
 
 logger = logging.getLogger(__name__)
 
-#: Takes a person's session for the VM's own credential; answers its state
-#: (``backend/guest/credential.py``'s ``StateChange``).
+#: Takes a person's session for the VM's own credential (a layer's credential
+#: keeper); answers its state.
 VmSignIn = Callable[[str, str | None], Awaitable[Any]]
 
 

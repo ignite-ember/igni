@@ -1,20 +1,21 @@
 """igni's half of the guest contract, as the backend runs it.
 
 ``docs/CLOUD.md`` §9 and ``igni__cloudvm``'s ``docs/guest-protocol.md``.
-Cloud profile only; the desktop never builds one. In boot order:
+The cloud layer's :class:`~ember_code.core.layer.BackendHooks`; the desktop
+never builds one. In boot order:
 
 1. :meth:`CloudGuest.starting` — a ``ready`` file left by an earlier igni
    in this VM is removed before anything else;
 2. :meth:`CloudGuest.listening` — once the transport listens, what a
    bound backend's first run would import is imported
-   (:class:`~ember_code.backend.guest.warm.WarmImports`) and ``ready``
+   (:class:`~igni_cloud.guest.warm.WarmImports`) and ``ready``
    is written: the node agent may now take a warm base snapshot;
 3. :meth:`CloudGuest.bind` — when no producer is known yet, igni waits
    for ``producer.env``, refusing requests meanwhile
-   (:class:`~ember_code.backend.guest.binding.ProducerBinding`); the
+   (:class:`~igni_cloud.guest.binding.ProducerBinding`); the
    backend loads settings and opens the database only after it returns,
    and the process's pseudo-random state is reseeded
-   (:class:`~ember_code.backend.guest.entropy.ProcessEntropy`);
+   (:class:`~igni_cloud.guest.entropy.ProcessEntropy`);
 4. :meth:`CloudGuest.serving` — the activity file is kept true, a
    restore (``/run/igni/restored``) is reseeded, reconnected and re-timed
    after, what igni built is frozen for the collector, and a ``producer.env``
@@ -30,30 +31,30 @@ from collections.abc import Callable
 from typing import Any
 
 from ember_code.backend.activity import Activity
-from ember_code.backend.guest.activity_file import ActivityFile
-from ember_code.backend.guest.binding import ProducerBinding, ProducerEnv
-from ember_code.backend.guest.credential import (
+from ember_code.core.activity import ActivityRegistry, background
+from ember_code.core.db.engine import cache
+from ember_code.core.db.scope import Tenant
+from ember_code.core.layer import BackendHooks
+from ember_code.protocol import messages as msg
+from igni_cloud.guest.activity_file import ActivityFile
+from igni_cloud.guest.binding import ProducerBinding
+from igni_cloud.guest.credential import (
     CredentialFile,
     CredentialState,
     StateChange,
     VmCredentialExchange,
     VmCredentials,
 )
-from ember_code.backend.guest.entropy import ProcessEntropy
-from ember_code.backend.guest.files import ReadyFile
-from ember_code.backend.guest.paths import GuestPaths
-from ember_code.backend.guest.resume import Restored, RestoreWatch
-from ember_code.backend.guest.warm import WarmImports
-from ember_code.core.activity import ActivityRegistry, background
-from ember_code.core.db.engine import cache
-from ember_code.core.db.scope import Tenant
-from ember_code.core.profile import RuntimeProfile
-from ember_code.protocol import messages as msg
+from igni_cloud.guest.entropy import ProcessEntropy
+from igni_cloud.guest.files import ReadyFile
+from igni_cloud.guest.paths import GuestPaths
+from igni_cloud.guest.resume import Restored, RestoreWatch
+from igni_cloud.guest.warm import WarmImports
 
 logger = logging.getLogger(__name__)
 
 
-class CloudGuest:
+class CloudGuest(BackendHooks):
     """The ready file, the late binding, the activity file and the restore watch."""
 
     def __init__(
@@ -78,10 +79,7 @@ class CloudGuest:
         self._transport: Any = None
 
     @classmethod
-    def current(cls) -> CloudGuest | None:
-        """The contract for this process: only in the cloud profile."""
-        if not RuntimeProfile.current().is_cloud:
-            return None
+    def from_env(cls) -> CloudGuest:
         return cls(GuestPaths.from_env())
 
     def starting(self) -> None:
@@ -98,22 +96,23 @@ class CloudGuest:
         except OSError as exc:
             logger.warning("cannot write %s: %s", self.ready.path, exc)
 
-    async def bind(self, transport: Any) -> ProducerEnv | None:
-        """Wait for a producer, unless the environment already names one."""
+    async def bind(self, transport: Any) -> bool:
+        """Wait for a producer, unless the environment already names one. ``True`` if bound here."""
         if not self.binding.needed():
-            return None
+            return False
         logger.info("no producer yet; waiting for %s", self.binding.path)
-        env = await self.binding.bind(transport)
+        await self.binding.bind(transport)
         # The first moment this VM is one producer's: it must not share
         # the warm base's pseudo-random state with every other.
         self.entropy.reseed()
-        return env
+        return True
 
     def serving(
         self,
         *,
         model: Any,
         transport: Any,
+        orchestrator: Any = None,
         notifications: Any = None,
         on_rebind: Callable[[], None] | None = None,
         api_url: Callable[[], str | None] | None = None,
@@ -122,6 +121,8 @@ class CloudGuest:
         self._model = model
         self._transport = transport
         self.credentials = self._credentials_for(api_url)
+        if orchestrator is not None:
+            orchestrator.attach_vm_sign_in(self.vm_sign_in)
         self.activity = ActivityFile(
             self.paths.activity,
             activity=self._current_activity,
@@ -162,7 +163,7 @@ class CloudGuest:
             return StateChange(state=CredentialState.NEEDS_SIGN_IN, message="not a producer's VM")
         return await self.credentials.sign_in(session_token, organisation)
 
-    @property
+    @property  # type: ignore[override]
     def tenant(self) -> Tenant | None:
         """Whose VM this is, once bound."""
         return self.binding.tenant
