@@ -43,6 +43,7 @@ from ember_code.backend.session_pool import SessionPool, SessionRuntime
 from ember_code.backend.session_stamping_transport import SessionStampingTransport
 from ember_code.core.activity import background
 from ember_code.core.db.locator import StorageLocator
+from ember_code.core.layer import Layers
 from ember_code.core.session.client_state import ClientStateStore
 from ember_code.core.session.session_directories import SessionDirectoryStore
 from ember_code.extensions.host.windows import WindowModelError, WindowRequest
@@ -451,6 +452,18 @@ class SessionOrchestrator:
             )
         )
 
+    #: Calls only the platform makes: a layer may take them from its control
+    #: connection alone (``Layer.platform_calls_need_control``).
+    PLATFORM_RPCS: frozenset[str] = frozenset(
+        {RpcMethod.DELIVER_SERVICE_EVENTS, RpcMethod.VM_SIGN_IN}
+    )
+
+    @staticmethod
+    def _from_platform(message: Any) -> bool:
+        if not Layers.current().platform_calls_need_control():
+            return True
+        return bool(getattr(message, "via_control", False))
+
     def attach_vm_sign_in(self, sign_in: VmSignIn | None) -> None:
         """Who takes ``vm_sign_in``: the VM's credential keeper, in the cloud."""
         self._vm_sign_in = sign_in
@@ -592,6 +605,13 @@ class SessionOrchestrator:
                     await self._handle_host_model(message)
                 elif message.method == RpcMethod.EXTENSION_SERVICE_TOKEN:
                     await self._handle_service_token(message)
+                elif message.method in self.PLATFORM_RPCS and not self._from_platform(message):
+                    await self._transport.send(
+                        msg.RPCResponse(
+                            id=message.id or "",
+                            error=f"{message.method}: only on the platform's control connection",
+                        )
+                    )
                 elif message.method == RpcMethod.DELIVER_SERVICE_EVENTS:
                     await self._handle_service_events(message)
                 elif message.method == RpcMethod.VM_SIGN_IN:

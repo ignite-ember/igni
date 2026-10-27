@@ -16,6 +16,9 @@ installs it when the image sets ``IGNI_PROFILE=cloud`` — for the backend,
   kept in the process, never written;
 * **MCP approvals** — offered by group policy, approved by the person on
   igni server (:mod:`igni_cloud.mcp_approvals`);
+* **the platform's calls** — ``deliver_service_events`` and
+  ``vm_sign_in`` only on the gateway's control stream; igni pulls no
+  events itself;
 * **the backend's boot and serving** — the guest contract with the VM's
   agents: ``ready``, late binding to its producer, ``activity.json``,
   restores, the VM's own credential (:mod:`igni_cloud.guest`).
@@ -62,6 +65,15 @@ class CloudLayer(Layer):
 
     def mcp_approvals(self) -> McpApprovalPolicy | None:
         return CloudMcpApprovals()
+
+    def platform_calls_need_control(self) -> bool:
+        # Only the gateway's control stream: the node agent adds the header
+        # to it and strips it from every client's.
+        return True
+
+    def fetches_own_events(self) -> bool:
+        # The gateway pulls them and delivers them on its control stream.
+        return False
 
     def backend(self) -> BackendHooks:
         return CloudGuest.from_env()

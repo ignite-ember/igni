@@ -258,7 +258,8 @@ built) and igni (`extensions/service_events.py`: built).
    service and keeps the event until delivered or expired (14 days).
 2. **Cloud:** the gateway wakes the producer's VM, pulls its events
    (`/v1/platform/.../events/pull`, a 2-minute lease) and hands them to
-   igni with the `deliver_service_events` RPC (`{events: [...]}`); igni
+   igni with the `deliver_service_events` RPC (`{events: [...]}`) on its
+   own control stream — igni takes it from nowhere else (below); igni
    answers which to acknowledge (`acknowledge`: delivered now or before)
    and the gateway acks those (`/events/ack`). Delivery is at least once;
    igni keeps every event id it delivered (`delivered_events`, scoped,
@@ -522,7 +523,12 @@ plan steps 3 and 5). With the org database's admin URL:
 token: each VM holds a **VM credential** and exchanges it for every token
 it needs. A person's comes when they sign in through the gateway, which
 hands their session to igni with the `vm_sign_in` RPC
-(`{session_token, organisation?}`, answered with the credential's state);
+(`{session_token, organisation?}`, answered with the credential's state)
+on its control stream. **Both platform calls are taken only from the
+platform's control connection:** the node agent adds `X-Igni-Gateway:
+control` to the upgrade of the gateway's `stream?control=1` and strips
+it from every other stream, and igni reads it off the connection, never
+off a message (a client sending either call gets an error);
 igni exchanges it (`vm-sign-in` grant). An app's the node agent writes to
 the volume once; igni takes it when it appears, without a restart. The
 credential lives in `IGNI_VM_CREDENTIAL_FILE` (on the volume, `0600`,

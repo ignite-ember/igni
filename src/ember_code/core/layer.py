@@ -15,6 +15,9 @@ otherwise:
 * whether what igni server's listing carries is kept in files
   (:meth:`Layer.keeps_listing_in_files`);
 * how an MCP server is approved (:meth:`Layer.mcp_approvals`);
+* whether the platform's calls need its control connection
+  (:meth:`Layer.platform_calls_need_control`), and whether igni fetches
+  the person's service events itself (:meth:`Layer.fetches_own_events`);
 * what a backend does around its boot and serving (:meth:`Layer.backend`).
 
 **Choosing one.** :class:`Layers` reads ``IGNI_PROFILE`` — here and
@@ -122,6 +125,15 @@ class Layer:
     def mcp_approvals(self) -> McpApprovalPolicy | None:
         """How MCP servers are approved instead of the desktop's file and prompt; ``None`` is those."""
         return None
+
+    def platform_calls_need_control(self) -> bool:
+        """The platform's calls (``deliver_service_events``, ``vm_sign_in``) are taken
+        only from a control connection (``X-Igni-Gateway: control``)."""
+        return False
+
+    def fetches_own_events(self) -> bool:
+        """igni pulls the person's service events itself, with their session, while online."""
+        return True
 
     def backend(self) -> BackendHooks:
         return BackendHooks()

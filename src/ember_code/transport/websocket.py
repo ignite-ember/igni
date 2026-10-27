@@ -30,7 +30,7 @@ import os
 import uuid
 from collections.abc import AsyncIterator, Callable
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from websockets.asyncio.server import serve
 
@@ -172,6 +172,20 @@ class WebSocketServerTransport(ListeningTransport):
         GUI shells may open the webview long after spawning the BE."""
         await asyncio.wait_for(self._connected.wait(), timeout=timeout)
 
+    #: The header a platform's own connection carries (``X-Igni-Gateway: control``).
+    #: In the cloud the node agent adds it to the gateway's control streams and
+    #: strips it from every other, so the connection's own request says it.
+    CONTROL_HEADER = "X-Igni-Gateway"
+    CONTROL_VALUE = "control"
+
+    @classmethod
+    def is_control(cls, conn: Any) -> bool:
+        request = getattr(conn, "request", None)
+        headers = getattr(request, "headers", None)
+        if headers is None:
+            return False
+        return str(headers.get(cls.CONTROL_HEADER, "")).strip().lower() == cls.CONTROL_VALUE
+
     def watch_connections(self, watcher: Callable[[str, str], None]) -> None:
         """Be told ``("attached" | "detached", client_id)`` for every view.
 
@@ -194,16 +208,20 @@ class WebSocketServerTransport(ListeningTransport):
         self._conns[client_id] = client
         self._connected.set()
         logger.info("FE client %s attached (%d total)", client_id, len(self._conns))
-        self._tell_watchers("attached", client_id)
+        control = self.is_control(conn)
         try:
             # Tell the client who it is so it can recognise its own
-            # broadcast echoes.
+            # broadcast echoes. First: whatever watches attachments can
+            # wait until the client has heard back.
             await conn.send(Welcome(client_id=client_id).model_dump_json())
+            self._tell_watchers("attached", client_id)
             async for raw in conn:
                 if isinstance(raw, bytes):
                     raw = raw.decode()
                 msg = self._registry.deserialize(raw)
                 if msg is not None:
+                    if control:
+                        msg.mark_control()
                     await self._inbox.put(msg)
         except Exception as exc:
             logger.info("WS client %s ended: %s", client_id, exc)
