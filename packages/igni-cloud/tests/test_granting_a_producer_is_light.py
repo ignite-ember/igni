@@ -55,6 +55,16 @@ def test_it_grants_and_revokes_a_producer(postgres_url: str):
         SchemaMigration.migrate(target)
     try:
         _grant_and_revoke(admin)
+        space = CliRunner().invoke(
+            db,
+            [
+                "grant-producer",
+                *("--org", "acme", "--producer", "space:s-42", "--owner", "app:reporter"),
+                *("--database-url", admin.url),
+            ],
+        )
+        assert space.exit_code == 0, space.output
+        assert json.loads(space.output)["owner"] == "app:reporter"
     finally:
         database.drop()
 

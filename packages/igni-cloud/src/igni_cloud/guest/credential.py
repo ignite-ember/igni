@@ -55,6 +55,7 @@ from ember_code.core.activity import ActivityRegistry, background
 from ember_code.core.activity.http import busy_call
 from igni_cloud.guest.files import AtomicFile
 from igni_cloud.guest.watch import DirectoryWatch
+from igni_cloud.producer import ProducerRef, UnknownProducer
 
 logger = logging.getLogger(__name__)
 
@@ -206,7 +207,7 @@ class VmCredentials:
         self._credential = credential_file
         self._token = AtomicFile(token_file)
         self._exchange = exchange
-        #: ``person:<id>`` or ``app:<id>``.
+        #: ``person:<id>``, ``app:<id>`` or ``space:<id>``.
         self._producer = producer
         self._on_state = on_state
         self._clock = clock
@@ -223,7 +224,11 @@ class VmCredentials:
 
     @property
     def is_app(self) -> bool:
-        return self._producer.startswith("app:")
+        """Nobody signs it in — an app, or an app's space: its credential is re-issued."""
+        try:
+            return ProducerRef.parse(self._producer).unattended
+        except UnknownProducer:
+            return False
 
     @property
     def expires_at(self) -> float:

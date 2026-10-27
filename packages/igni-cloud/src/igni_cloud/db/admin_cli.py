@@ -5,7 +5,7 @@ database as its own PostgreSQL role, so row-level security holds even if
 igni inside its VM is compromised (``core/db/rls.py``). The node agent
 or igni server runs these with the admin role's URL:
 
-* ``grant-producer --org O --producer P`` creates the role (or
+* ``grant-producer --org O --producer P [--owner app:<id>]`` creates the role (or
   rotates its password) and prints, as JSON, the credentials and the
   ``IGNI_DATABASE_URL`` to hand the producer's VM;
 * ``revoke-producer --org O --producer P`` drops it.
@@ -18,12 +18,14 @@ not the rest of igni. The admin URL comes from ``--database-url`` or
 
 from __future__ import annotations
 
+import json
 import os
 
 import click
 
 from ember_code.core.db.urls import DatabaseUrl
 from igni_cloud.db.rls import ProducerRoles
+from igni_cloud.producer import ProducerRef, UnknownProducer
 
 #: The variable that names the database (``StorageConfig.DATABASE_URL_ENV``).
 DATABASE_URL_ENV = "IGNI_DATABASE_URL"
@@ -45,14 +47,30 @@ def db() -> None:
     """Producers' roles on the cloud's database."""
 
 
+class ProducerArgument:
+    @staticmethod
+    def parse(producer: str, owner: str | None) -> ProducerRef:
+        try:
+            return ProducerRef.parse(producer, owner=owner)
+        except UnknownProducer as exc:
+            raise click.BadParameter(str(exc), param_hint="--producer / --owner") from exc
+
+
 @db.command("grant-producer")
 @click.option("--org", required=True)
-@click.option("--producer", required=True, help="`person:<id>` or `app:<id>`")
+@click.option(
+    "--producer", required=True, help="`person:<id>`, `app:<id>` or `space:<id>`"
+)
+@click.option("--owner", default=None, help="A space's app: `app:<id>`")
 @click.option("--database-url", default=None, help=_ADMIN_URL_HELP)
-def grant_producer(org: str, producer: str, database_url: str | None) -> None:
+def grant_producer(org: str, producer: str, owner: str | None, database_url: str | None) -> None:
     """Create a producer's role (or rotate its password); print its credentials."""
-    credentials = ProducerRoles(AdminUrl.resolve(database_url)).grant(org, producer)
-    click.echo(credentials.model_dump_json())
+    ref = ProducerArgument.parse(producer, owner)
+    credentials = ProducerRoles(AdminUrl.resolve(database_url)).grant(org, ref.ref)
+    printed = credentials.model_dump(mode="json")
+    if ref.owner:
+        printed["owner"] = ref.owner
+    click.echo(json.dumps(printed))
 
 
 @db.command("revoke-producer")

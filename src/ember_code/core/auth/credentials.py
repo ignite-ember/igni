@@ -312,6 +312,14 @@ class CloudCredentials:
         return self._claims.sub
 
     @property
+    def kind(self) -> str | None:
+        """What the token's subject is — ``person``, ``app`` or ``space`` — if it says."""
+        self._load()
+        if self._claims is None:
+            return None
+        return self._claims.kind
+
+    @property
     def group(self) -> str | None:
         """The person's one group as their session token was issued with it."""
         self._load()

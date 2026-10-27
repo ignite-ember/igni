@@ -507,7 +507,10 @@ igni inside a VM is buggy or compromised:
 plan steps 3 and 5). With the org database's admin URL:
 
 - `igni-cloud db grant-producer --org <org> --producer
-  person:<id>|app:<id>` (the cloud package's command; it imports the role
+  person:<id>|app:<id>|space:<id> [--owner app:<id>]` (the cloud package's
+  command; a **space** is one end user of an app, a producer of its own,
+  the app its owner — `IGNI_PRODUCER_OWNER` in `producer.env`; igni server
+  is still settling its contract. It imports the role
   code and SQLAlchemy only — 0.16 s for a grant, where `igni db` in the
   full CLI took 0.84 s — since the node agent runs it on a new
   producer's first start)

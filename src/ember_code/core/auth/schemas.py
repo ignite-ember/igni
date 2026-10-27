@@ -148,8 +148,10 @@ class JwtClaims(BaseModel):
 
     model_config = {"extra": "ignore"}
 
-    #: The person's user id on igni server.
+    #: The person's user id on igni server (an app's or a space's id for theirs).
     sub: str | None = None
+    #: What ``sub`` is: ``person`` (a session), ``app`` or ``space``.
+    kind: str | None = None
     email: str | None = None
     exp: int | None = None
     org: str | None = None

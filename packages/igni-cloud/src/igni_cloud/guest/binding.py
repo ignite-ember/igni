@@ -8,7 +8,8 @@ nothing producer-specific — and waits for the node agent to write
 
     IGNI_ACCESS_TOKEN_FILE=/run/igni/token
     IGNI_VM_CREDENTIAL_FILE=/vol/igni/vm-credential
-    IGNI_PRODUCER=person:<id>
+    IGNI_PRODUCER=person:<id>                # or app:<id>, or space:<id>
+    IGNI_PRODUCER_OWNER=app:<id>             # a space's app
     IGNI_ORG=<org>
     IGNI_DATABASE_URL=postgresql://...
 
@@ -50,10 +51,10 @@ from ember_code.core.activity import background
 from ember_code.core.auth.credentials import CloudCredentials
 from ember_code.core.config.schemas.storage_and_paths import StorageConfig
 from ember_code.core.db.scope import Tenant
-from ember_code.extensions.principal import Principal, PrincipalKind
 from ember_code.protocol import messages as msg
 from igni_cloud.credentials import EnvironmentCredentials
 from igni_cloud.guest.watch import DirectoryWatch
+from igni_cloud.producer import ProducerKind, ProducerRef, UnknownProducer
 
 logger = logging.getLogger(__name__)
 
@@ -98,6 +99,11 @@ class ProducerEnv(BaseModel):
     def producer(self) -> str:
         return self.values.get(self.PRODUCER_ENV, "")
 
+    @property
+    def owner(self) -> str | None:
+        """A space's app (``IGNI_PRODUCER_OWNER``)."""
+        return self.values.get(ProducerRef.OWNER_ENV) or None
+
     def identity(self) -> tuple[str, str, str]:
         """What may not change under a bound igni: database, org and producer."""
         return (self.database_url, self.org, self.producer)
@@ -115,7 +121,10 @@ class TokenTenant:
         org = credentials.org_id
         if not credentials.is_authenticated or not user_id or not org:
             return None
-        return Tenant(org=org, producer=Principal(kind=PrincipalKind.PERSON, id=user_id).ref)
+        # A person's session says ``kind=person`` (or nothing); an app's or a
+        # space's token says which it is.
+        kind = credentials.kind or ProducerKind.PERSON.value
+        return Tenant(org=org, producer=f"{kind}:{user_id}")
 
 
 class BindingAttempt(BaseModel):
@@ -211,6 +220,10 @@ class ProducerBinding:
             return BindingAttempt(
                 env=env, waiting_for=f"{self.path} to name IGNI_ORG and IGNI_PRODUCER"
             )
+        try:
+            ProducerRef.parse(env.producer, owner=env.owner)
+        except UnknownProducer as exc:
+            return BindingAttempt(env=env, waiting_for=f"{self.path} to name a producer: {exc}")
         named = Tenant(org=env.org, producer=env.producer)
         # No token is needed to bind: a producer's VM may be made before
         # anybody signed in, and works locally until somebody does. A

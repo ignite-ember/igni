@@ -88,7 +88,8 @@ A Rust service, one per host:
   command in a VM (through the guest agent), audited.
 - Per-producer PostgreSQL logins: create on first use, hand to the VM
   (`/run/igni/producer.env`, which igni binds to, `dbffea2`, without
-  needing a token; `IGNI_PRODUCER` is `person:<id>` or `app:<id>`, as
+  needing a token; `IGNI_PRODUCER` is `person:<id>`, `app:<id>` or
+  `space:<id>` (an app's end user, with `IGNI_PRODUCER_OWNER=app:<id>`), as
   the token names it). An app's VM credential is written to the volume
   once (`IGNI_VM_CREDENTIAL_FILE`); igni keeps it and its tokens.
 
