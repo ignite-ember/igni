@@ -22,6 +22,7 @@ if TYPE_CHECKING:
     from ember_code.cli.options import CliOptions
 
 from ember_code.core.auth.credentials import CloudCredentials
+from ember_code.core.auth.http_auth import CloudTokenAuth
 from ember_code.core.config.context_window import (
     DEFAULT_CONTEXT_WINDOW,
     ContextWindowResolver,
@@ -282,6 +283,9 @@ class ModelRegistry:
         # ``get_model`` call.
         self._credentials = CloudCredentials(settings.auth.credentials_file)
         self._cloud_token = self._credentials.access_token
+        # What a model client for igni server's gateway sends: the token
+        # at each request, which the one above is not for long.
+        self._cloud_auth = CloudTokenAuth(settings.auth.credentials_file)
         self._cloud_server_url = settings.api_url if self._cloud_token else None
 
         # Context-window resolver reuses the registry's already-derived
@@ -349,6 +353,7 @@ class ModelRegistry:
             entry,
             cloud_token=self._cloud_token,
             llm_logger=self._llm_logger,
+            cloud_auth=self._cloud_auth,
         )
 
     def get_context_window(self, name: str | None = None) -> int:

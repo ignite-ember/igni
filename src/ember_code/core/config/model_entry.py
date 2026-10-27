@@ -33,6 +33,18 @@ logger = logging.getLogger(__name__)
 # cloud-discovery construction path in ``cloud_models.py``).
 CLOUD_TOKEN_SENTINEL = "cloud_token"
 
+
+class ResolvedApiKey(BaseModel):
+    """An entry's key, and whether it is igni server's token."""
+
+    model_config = ConfigDict(frozen=True)
+
+    value: str | None
+    #: igni server's token: it changes, so a client reads it when it sends
+    #: (:class:`~ember_code.core.auth.http_auth.CloudTokenAuth`).
+    cloud: bool = False
+
+
 # Production igni server gateway hostname — used by the migration
 # tier to identify rows that WE own and should replace with the
 # latest shipping defaults. Kept as a module-level constant next to
@@ -84,6 +96,10 @@ class ModelRegistryEntry(BaseModel):
     # ── API-key resolution ─────────────────────────────────────────
 
     def resolve_api_key(self, cloud_token: str | None = None) -> str | None:
+        """The key :meth:`resolve_key` finds."""
+        return self.resolve_key(cloud_token).value
+
+    def resolve_key(self, cloud_token: str | None = None) -> ResolvedApiKey:
         """Resolve the API key using the four-tier fallback:
 
         1. Literal ``api_key`` on the entry — sentinel ``"cloud_token"``
@@ -102,17 +118,17 @@ class ModelRegistryEntry(BaseModel):
         # Literal value on the entry — honor the cloud_token sentinel.
         if self.api_key is not None:
             if self.api_key == CLOUD_TOKEN_SENTINEL:
-                return cloud_token
-            return self.api_key
+                return ResolvedApiKey(value=cloud_token, cloud=True)
+            return ResolvedApiKey(value=self.api_key)
         env_key = self._api_key_from_env()
         if env_key:
-            return env_key
+            return ResolvedApiKey(value=env_key)
         cmd_key = self._api_key_from_cmd()
         if cmd_key:
-            return cmd_key
+            return ResolvedApiKey(value=cmd_key)
         if self.matches_cloud_gateway():
-            return cloud_token
-        return None
+            return ResolvedApiKey(value=cloud_token, cloud=True)
+        return ResolvedApiKey(value=None)
 
     def why_no_api_key(self) -> str:
         """One sentence naming what was tried and what to do.
