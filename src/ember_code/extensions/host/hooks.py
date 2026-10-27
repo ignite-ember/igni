@@ -281,16 +281,20 @@ class ExtensionHooks:
         value: dict[str, Any],
         *,
         timeout: float,
+        connect_timeout: float | None = None,
     ) -> HookAnswer:
         """Ask one extension about something that is its own, not one of igni's hook events.
 
         A service event (:mod:`ember_code.extensions.service_events`) is
         for the extension whose service sent it, so it is asked whatever
         its manifest hooks, with a deadline of the caller's — work it may
-        do before answering is the point. Raises :class:`HookFailure`
-        when it does not answer.
+        do before answering is the point. ``connect_timeout`` bounds the
+        wait for a process that is not connected yet. Raises
+        :class:`HookFailure` when it does not answer.
         """
-        return await self._ask(extension_id, event, value, timeout=timeout)
+        return await self._ask(
+            extension_id, event, value, timeout=timeout, connect_timeout=connect_timeout
+        )
 
     async def _ask(
         self,
@@ -299,23 +303,25 @@ class ExtensionHooks:
         value: dict[str, Any],
         *,
         timeout: float | None = None,
+        connect_timeout: float | None = None,
     ) -> HookAnswer:
         registry = self._registry
         entry = registry.get(extension_id) if registry is not None else None
-        if (
-            extension_id not in self._senders
-            and entry is not None
-            and entry.state in self._NOT_RUNNING
-        ):
-            detail = f": {entry.reason}" if entry.reason else ""
-            raise HookFailure(f"it is not running{detail}", unanswered=True)
+        if extension_id not in self._senders:
+            # Nothing to wait for: no process will connect.
+            if registry is not None and entry is None:
+                raise HookFailure("it is not installed here", unanswered=True)
+            if entry is not None and entry.state in self._NOT_RUNNING:
+                detail = f": {entry.reason}" if entry.reason else ""
+                raise HookFailure(f"it is not running{detail}", unanswered=True)
         loop = asyncio.get_running_loop()
         allowed = self._timeout if timeout is None else timeout
         deadline = loop.time() + allowed
         connected = self._connected.setdefault(extension_id, asyncio.Event())
         if extension_id not in self._senders:
+            wait = allowed if connect_timeout is None else min(allowed, connect_timeout)
             with contextlib.suppress(TimeoutError):
-                await asyncio.wait_for(connected.wait(), allowed)
+                await asyncio.wait_for(connected.wait(), wait)
         send = self._senders.get(extension_id)
         if send is None:
             raise HookFailure("its process is not connected", unanswered=True)

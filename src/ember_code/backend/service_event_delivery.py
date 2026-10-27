@@ -53,8 +53,13 @@ class MainSession:
 class ExtensionEventHandler:
     """Asks the extension an event is for what the agent should see."""
 
-    #: Longer than a hook's: the extension may look something up first.
-    TIMEOUT_S: ClassVar[float] = 30.0
+    #: Longer than a hook's — the extension may look something up first —
+    #: and well under the gateway's 30 s for the whole delivery: an event
+    #: it does not answer in time goes to the run as it came.
+    TIMEOUT_S: ClassVar[float] = 10.0
+    #: How long a process that is not connected yet is waited for. One
+    #: not installed or not running here is not waited for at all.
+    CONNECT_TIMEOUT_S: ClassVar[float] = 2.0
     #: The frame's event name, the SDK's ``SERVICE_EVENT``.
     EVENT: ClassVar[str] = "ServiceEvent"
 
@@ -68,6 +73,7 @@ class ExtensionEventHandler:
             self.EVENT,
             to_jsonable_python(event.model_dump(mode="json")),
             timeout=self.TIMEOUT_S,
+            connect_timeout=self.CONNECT_TIMEOUT_S,
         )
         if answer.outcome is Outcome.MODIFY and isinstance(answer.value, dict):
             prompt = answer.value.get("prompt")

@@ -35,6 +35,7 @@ repeat.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import time
@@ -177,12 +178,24 @@ class ServiceEventInbox:
 
     async def deliver(self, events: list[ServiceEvent]) -> DeliveryReceipt:
         receipt = DeliveryReceipt()
+        fresh: list[ServiceEvent] = []
         for event in events:
-            if self._delivered.seen(event.event_id):
+            if self._delivered.seen(event.event_id) or event.event_id in {
+                e.event_id for e in fresh
+            }:
                 receipt.duplicate.append(event.event_id)
-                continue
+            else:
+                fresh.append(event)
+        # Every extension asked at once: a batch takes as long as its
+        # slowest answer, not their sum, and stays inside the gateway's
+        # deadline for the delivery.
+        prompts = await asyncio.gather(
+            *(self._prompt(event) for event in fresh), return_exceptions=True
+        )
+        for event, text in zip(fresh, prompts, strict=True):
             try:
-                text = await self._prompt(event)
+                if isinstance(text, BaseException):
+                    raise text
                 await self._session.post(
                     extension_id=event.extension_id, text=text, queued=self._session.busy()
                 )
