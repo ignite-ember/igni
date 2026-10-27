@@ -141,6 +141,33 @@ is unreachable, so the service starts and serves either way:
   anybody may read that says more to somebody signed in. Never sends
   anybody to sign in; a session igni cannot renew counts as nobody.
 
+## Apps and their spaces
+
+An app — and each of its end users, a **space** — can call a service too,
+with a token igni exchanged for the service's URL (`token_use` `app` or
+`space`). A service takes people only unless it says more:
+
+```python
+from igni_service import App, Caller, CallerKind, Person, Space
+
+igni = IgniService(settings, key_store=store,
+                   accepted_callers={CallerKind.PERSON, CallerKind.APP, CallerKind.SPACE})
+
+@app.get("/v1/notes")
+async def notes(caller: Caller = Depends(igni.caller)) -> list[Note]:
+    match caller:
+        case Person(): ...
+        case App(app_id=app_id): ...
+        case Space(app_id=app_id, external_id=user): ...
+```
+
+`Depends(igni.caller)` answers a typed `Person`, `App` or `Space` (with its
+`app_id` and the app's `external_id` for its user) for the kinds the
+service accepts, and a 401 for any other; `igni.person` stays people only
+whatever the service accepts, so a route meant for people never takes an
+app for one. `igni.caller_of(token)` is the same outside a request, and
+`FakeIgni.app_token` / `space_token` make tokens for tests.
+
 ## Calls from the extension's page
 
 `igni.install(app)` puts igni's routes on the app — `igni.router` (erasure,

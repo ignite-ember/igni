@@ -25,7 +25,16 @@ from igni_service.settings import IgniSettings
 from igni_service.sql_keystore import SqlKeyStore
 from igni_service.subjects import ExportSection, Subject
 from igni_service.tables import IgniTables
-from igni_service.tokens import IgniCall, Person, TokenRefused
+from igni_service.tokens import (
+    PEOPLE_ONLY,
+    App,
+    Caller,
+    CallerKind,
+    IgniCall,
+    Person,
+    Space,
+    TokenRefused,
+)
 from igni_service.web import WebSignIn
 from igni_service.web_sessions import (
     MemoryWebSessionStore,
@@ -57,7 +66,12 @@ __all__ = [
     "Notification",
     "NotificationRefused",
     "Organisation",
+    "PEOPLE_ONLY",
+    "App",
+    "Caller",
+    "CallerKind",
     "Person",
+    "Space",
     "SqlKeyStore",
     "SqlWebSessionStore",
     "StoredKey",

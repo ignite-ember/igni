@@ -26,6 +26,7 @@ import io
 import json
 import tarfile
 import uuid
+from collections.abc import Collection
 from datetime import timedelta
 from typing import Any
 from urllib.parse import parse_qs, urlencode, urlsplit
@@ -44,6 +45,7 @@ from igni_service.notifications import Notification, NotificationBatch, Notifier
 from igni_service.registration import PublishedExtension
 from igni_service.service import IgniService
 from igni_service.settings import IgniSettings
+from igni_service.tokens import PEOPLE_ONLY, CallerKind
 from igni_service.urls import IgniPaths, ServiceUrl
 
 
@@ -295,6 +297,7 @@ class FakeIgni:
         *,
         key_store: KeyStore | None = None,
         clock: Clock | None = None,
+        accepted_callers: Collection[CallerKind] = PEOPLE_ONLY,
     ) -> IgniService:
         """An `IgniService` wired to this fake: key in memory, retries without waiting."""
         service = IgniService(
@@ -303,6 +306,7 @@ class FakeIgni:
             http=self.http_client(),
             clock=clock or self.clock,
             retry_min=0.01,
+            accepted_callers=accepted_callers,
         )
         service.notifier = Notifier(service.tokens, sleep=self.no_sleep)
         return service
@@ -423,6 +427,25 @@ class FakeIgni:
             **claims,
         }
         return (key or self.pair).sign_jwt(payload, kid=kid or self.kid)
+
+    def app_token(self, app_id: str, *, org_id: str, name: str = "", **overrides: Any) -> str:
+        """An app's token exchanged for this service (igni's service-identity §9.2)."""
+        claims: dict[str, Any] = {"org": org_id, "kind": "app", "name": name or app_id}
+        claims.update(overrides)
+        return self.token(app_id, use="app", **claims)
+
+    def space_token(
+        self, space_id: str, *, org_id: str, app_id: str, external_id: str, **overrides: Any
+    ) -> str:
+        """A space's token exchanged for this service (§9.2, §17)."""
+        claims: dict[str, Any] = {
+            "org": org_id,
+            "kind": "space",
+            "app": app_id,
+            "external_id": external_id,
+        }
+        claims.update(overrides)
+        return self.token(space_id, use="space", **claims)
 
     def person_token(self, user_id: str, *, org_id: str, **overrides: Any) -> str:
         """A user token as igni issues one: the person's claims, for one organisation."""

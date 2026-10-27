@@ -21,7 +21,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Collection
 from typing import Annotated, Any
 
 import httpx
@@ -54,7 +54,15 @@ from igni_service.subjects import (
     SubjectHandlers,
     SubjectRoutes,
 )
-from igni_service.tokens import IgniCall, Person, TokenRefused, TokenVerifier
+from igni_service.tokens import (
+    PEOPLE_ONLY,
+    Caller,
+    CallerKind,
+    IgniCall,
+    Person,
+    TokenRefused,
+    TokenVerifier,
+)
 from igni_service.web import WebSignIn
 from igni_service.web_sessions import MemoryWebSessionStore, SqlWebSessionStore, WebSessionStore
 
@@ -81,6 +89,7 @@ class IgniService:
         http: httpx.AsyncClient | None = None,
         clock: Clock | None = None,
         retry_min: float | None = None,
+        accepted_callers: Collection[CallerKind] = PEOPLE_ONLY,
     ) -> None:
         missing = [
             name
@@ -107,6 +116,11 @@ class IgniService:
         self.key = SigningKey(key_store, clock=self.clock)
         self.keys = IgniKeys(self.server, clock=self.clock)
         self.verifier = TokenVerifier(self.server, self.keys, clock=self.clock)
+        #: Who `caller` lets in: people only unless the service says more
+        #: (an app, an app's spaces — igni's service-identity §9.2, §17).
+        self.accepted_callers: frozenset[CallerKind] = frozenset(
+            CallerKind(kind) for kind in accepted_callers
+        )
         self.registration = ServiceRegistration(
             self.server,
             self.key,
@@ -253,6 +267,25 @@ class IgniService:
             raise self._refused() from None
         except IgniUnavailable as exc:
             raise self._cannot_check(exc) from exc
+
+    async def caller(
+        self, credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(_BEARER)]
+    ) -> Caller:
+        """FastAPI dependency: whoever a request's token names — a `Person`, an
+        `App` or a `Space` — among the kinds this service accepts
+        (`accepted_callers`, people only by default). 401 for anybody else.
+        """
+        token = self._bare(credentials)
+        try:
+            return await self.verifier.caller(token, accept=self.accepted_callers)
+        except TokenRefused:
+            raise self._refused() from None
+        except IgniUnavailable as exc:
+            raise self._cannot_check(exc) from exc
+
+    async def caller_of(self, token: str) -> Caller:
+        """`caller` for a bare token, outside an HTTP request (see `person_of`)."""
+        return await self.verifier.caller(token, accept=self.accepted_callers)
 
     async def optional_person(
         self, credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(_BEARER)]

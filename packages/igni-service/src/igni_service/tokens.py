@@ -9,8 +9,10 @@ different door:
 * `aud` is **this service's own URL** — a token igni minted for another
   service, or for igni itself, is not a token for this one;
 * `token_use` is the kind the route takes: `user` for a person, `igni`
-  for igni calling this service — a refresh token is not an access token,
-  and a person is not igni;
+  for igni calling this service, and — only where the service accepts them
+  (`accepted_callers`) — `app` and `space` for an app or an app's end user
+  (igni's service-identity §9.2, §17); a refresh token is not an access
+  token, a person is not igni, and an app is not a person;
 * `exp` is in the future, and `iat` and `sub` are present.
 
 Everything a service needs about a person is in their token. Nothing is
@@ -20,6 +22,8 @@ getting in when their ten-minute token expires and igni will not renew it.
 
 from __future__ import annotations
 
+from collections.abc import Collection
+from enum import StrEnum
 from typing import Any
 
 import jwt
@@ -37,6 +41,22 @@ class TokenUse:
 
     USER = "user"
     IGNI = "igni"
+    #: An app acting as itself, exchanged for this service (igni's service-identity §9.2).
+    APP = "app"
+    #: One end user of an app, a producer of its own (§17), exchanged for this service.
+    SPACE = "space"
+
+
+class CallerKind(StrEnum):
+    """Who a request may come from: a person, an app, or an app's space."""
+
+    PERSON = "person"
+    APP = "app"
+    SPACE = "space"
+
+    @property
+    def token_use(self) -> str:
+        return TokenUse.USER if self is CallerKind.PERSON else self.value
 
 
 class TokenRefused(IgniError):
@@ -56,6 +76,10 @@ class Person(BaseModel):
     email: str = ""
     name: str = ""
     super_admin: bool = False
+
+    @property
+    def kind(self) -> CallerKind:
+        return CallerKind.PERSON
 
     @property
     def is_org_admin(self) -> bool:
@@ -78,6 +102,61 @@ class Person(BaseModel):
         )
 
 
+class App(BaseModel):
+    """An app acting as itself: igni's `app` token for this service."""
+
+    model_config = ConfigDict(frozen=True)
+
+    app_id: str
+    org_id: str
+    name: str = ""
+
+    @property
+    def kind(self) -> CallerKind:
+        return CallerKind.APP
+
+    @classmethod
+    def from_claims(cls, claims: dict[str, Any]) -> App:
+        return cls(
+            app_id=str(claims.get("sub") or ""),
+            org_id=str(claims.get("org") or ""),
+            name=str(claims.get("name") or ""),
+        )
+
+
+class Space(BaseModel):
+    """One end user of an app, a producer of its own: igni's `space` token for this service."""
+
+    model_config = ConfigDict(frozen=True)
+
+    space_id: str
+    org_id: str
+    #: The app the space belongs to.
+    app_id: str
+    #: The app's own name for its end user.
+    external_id: str = ""
+
+    @property
+    def kind(self) -> CallerKind:
+        return CallerKind.SPACE
+
+    @classmethod
+    def from_claims(cls, claims: dict[str, Any]) -> Space:
+        return cls(
+            space_id=str(claims.get("sub") or ""),
+            org_id=str(claims.get("org") or ""),
+            app_id=str(claims.get("app") or ""),
+            external_id=str(claims.get("external_id") or ""),
+        )
+
+
+#: Whoever a request comes from, typed: a person, an app or an app's space.
+Caller = Person | App | Space
+
+#: What a service accepts unless it says otherwise: people only.
+PEOPLE_ONLY: frozenset[CallerKind] = frozenset({CallerKind.PERSON})
+
+
 class IgniCall(BaseModel):
     """igni itself calling this service, for one organisation."""
 
@@ -97,8 +176,8 @@ class TokenVerifier:
         self._keys = keys
         self._clock = clock or Clock()
 
-    async def claims(self, token: str, *, use: str) -> dict[str, Any]:
-        """The verified claims of a `use` token for this service.
+    async def claims(self, token: str, *, use: str | Collection[str]) -> dict[str, Any]:
+        """The verified claims of a `use` token (or one of several) for this service.
 
         `TokenRefused` for a token that is not one; `IgniUnavailable` when
         it cannot be checked at all because igni's keys or issuer cannot
@@ -134,7 +213,8 @@ class TokenVerifier:
             )
         except (jwt.PyJWTError, ValueError):
             raise TokenRefused() from None
-        if claims.get("token_use") != use:
+        allowed = {use} if isinstance(use, str) else set(use)
+        if claims.get("token_use") not in allowed:
             raise TokenRefused()
         try:
             expires, issued = float(claims["exp"]), float(claims["iat"])
@@ -153,6 +233,31 @@ class TokenVerifier:
             # is not one igni minted for a person.
             raise TokenRefused()
         return person
+
+    async def caller(self, token: str, *, accept: Collection[CallerKind] = PEOPLE_ONLY) -> Caller:
+        """Whoever a token names, if it is a kind in `accept`. `TokenRefused` otherwise.
+
+        People only unless the service says more: an app's or a space's
+        token is a token for this URL all the same, and a service that
+        serves people must not take an app for one.
+        """
+        kinds = {CallerKind(kind) for kind in accept}
+        claims = await self.claims(token, use={kind.token_use for kind in kinds})
+        use = claims.get("token_use")
+        caller: Caller
+        if use == TokenUse.USER:
+            caller = Person.from_claims(claims)
+            if not caller.user_id or not caller.org_id:
+                raise TokenRefused()
+        elif use == TokenUse.APP:
+            caller = App.from_claims(claims)
+            if not caller.app_id or not caller.org_id:
+                raise TokenRefused()
+        else:
+            caller = Space.from_claims(claims)
+            if not caller.space_id or not caller.org_id or not caller.app_id:
+                raise TokenRefused()
+        return caller
 
     async def igni_call(self, token: str) -> IgniCall:
         """igni itself, for the organisation an `igni` token names."""
