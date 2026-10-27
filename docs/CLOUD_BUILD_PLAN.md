@@ -115,9 +115,8 @@ A Rust service, one per host:
 - Event delivery to a producer that wakes its VM (`CLOUD.md` section 6).
   igni's side built: `deliver_service_events` delivers each event once
   (by id, across restarts), asks the extension (`@ext.on_service_event`)
-  and starts the producer's run, or queues it for the run going. Desktop
-  delivery waits on a person-facing pull on igni server
-  (`/v1/me/events/pull` and `/ack`).
+  and starts the producer's run, or queues it for the run going. On the
+  desktop igni pulls the person's own (`/v1/me/events/pull` and `/ack`).
 - One group per person (built: ember-server `c70d3fd`, igni `918e22d`).
 - Profile packages on the portal; commands in VMs: the producer in its
   own VM, org admins in their org, the super admin anywhere; jobs for

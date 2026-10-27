@@ -48,6 +48,7 @@ from ember_code.extensions.contributions import (
     ExtensionContributions,
 )
 from ember_code.extensions.distribution import ExtensionDistribution
+from ember_code.extensions.event_pull import PersonEventPull
 from ember_code.extensions.faults import ExtensionFaults
 from ember_code.extensions.health import ExtensionHealth
 from ember_code.extensions.host.channel import HostChannel
@@ -164,6 +165,7 @@ class BackendApp:
         # The host object model and the socket processes reach it on.
         self._host_model: HostModel | None = None
         self._host_channel: HostChannel | None = None
+        self._event_pull: PersonEventPull | None = None
         #: What the deployment layer does around boot and serving (``core/layer.py``).
         self._guest = Layers.current().backend()
 
@@ -375,14 +377,27 @@ class BackendApp:
         self._start_host_model()
         # The platform's ``deliver_service_events``: each starts or resumes
         # the agent's run in the main session, once (``extensions/service_events.py``).
-        self._orchestrator.attach_event_inbox(
-            ServiceEventInbox(
-                delivered=DeliveredEvents(
-                    StorageLocator.from_settings(settings).project_database(self._project_dir)
+        inbox = ServiceEventInbox(
+            delivered=DeliveredEvents(
+                StorageLocator.from_settings(settings).project_database(self._project_dir)
+            ),
+            session=MainSession(self._orchestrator),
+            ask_extension=ExtensionEventHandler(),
+        )
+        self._orchestrator.attach_event_inbox(inbox)
+        # On the desktop igni also fetches the person's events itself, while
+        # online (``extensions/event_pull.py``); a layer may leave that to its
+        # platform (the cloud's gateway delivers them).
+        self._event_pull = (
+            PersonEventPull(
+                server=SignedInServer(
+                    api_url=self._igni_api_url,
+                    session=CredentialsSession(settings.auth.credentials_file),
                 ),
-                session=MainSession(self._orchestrator),
-                ask_extension=ExtensionEventHandler(),
+                inbox=inbox,
             )
+            if Layers.current().fetches_own_events()
+            else None
         )
         # The push bridge subscribes to the process-wide shell bus and
         # narrates background-process completions into ITS session's
@@ -430,6 +445,8 @@ class BackendApp:
             # after the client is connected, so the counts this pushes
             # have somebody to reach.
             notifications.start()
+            if self._event_pull is not None:
+                self._event_pull.start()
             # Probing starts once there is a loop to run it on, and
             # after the installs above, so the first sweep has
             # something to sweep.
@@ -443,6 +460,8 @@ class BackendApp:
         except Exception as exc:
             logger.error("Backend error: %s", exc, exc_info=True)
         finally:
+            if self._event_pull is not None:
+                await self._event_pull.stop()
             await notifications.stop()
             if self._host_channel is not None:
                 await self._host_channel.stop()

@@ -266,10 +266,13 @@ built) and igni (`extensions/service_events.py`: built).
    in the producer's database), so a repeat — after a lost ack, across
    restarts — is acknowledged and dropped. One igni could not take
    (`failed`) is left unacknowledged and comes back.
-   **Desktop:** not yet — igni server has no person-facing way to fetch
-   a person's events. It needs `POST /v1/me/events/pull` and
-   `POST /v1/me/events/ack` (the person's session token, same shapes and
-   lease as the platform's); igni would then pull while online.
+   **Desktop:** igni pulls the person's own events itself while online
+   (`extensions/event_pull.py`): `POST /v1/me/events/pull` with their
+   session, each through the same inbox, then `POST /v1/me/events/ack`
+   with what to acknowledge; a full page (100) is followed at once by the
+   next, otherwise it asks again a minute later. An app's token gets a
+   403 and the pull stops; the cloud layer leaves pulling to its gateway
+   (`Layer.fetches_own_events`).
 3. For each new event igni asks the extension it is for, over its host
    socket (`@ext.on_service_event(type)` in the SDK; 30 s), what the
    agent should see; without an answer it writes it itself from the
