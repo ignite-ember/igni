@@ -734,11 +734,27 @@ shared; it only matters for hash flooding.
 **After a restore** the guest agent's `post_restore` steps the wall
 clock and then writes `/run/igni/restored` (`{generation, at_ms,
 clock_step_ms}`; `IGNI_RESTORED_FILE`). igni watches the run directory
-with inotify and, on each new generation, reseeds (above), empties the
-database pools (engines kept, so no query waits on a connection dropped
-while the VM slept), reopens the notification stream keeping its cursor,
-re-arms its timers and rewrites `activity.json`. Not from a clock jump: a
-quick come-back steps the clock by too little to tell. Every PostgreSQL
+with inotify and, on each new generation, reseeds (above) and swaps
+every database pool for an empty one (engines kept, so no query waits on
+a connection dropped while the VM slept); an async engine that had a
+connection opens one again at once, in the background, in the moment
+before a client connects. That is all before the first answer: on a
+restored VM every page touched before it is one it waits for. The old
+pools' connections are closed two seconds later. The rest — reopening
+the notification stream keeping its cursor, re-arming the timers,
+rewriting `activity.json` (a window attaching meanwhile leaves it to
+this), renewing the credential — waits for igni's first answer after
+the restore and half a second more for the burst of requests a window
+sends with it, or one second if nobody asks. Not from a clock jump: a
+quick come-back steps the clock by too little to tell. Each restore logs
+one `resume timeline` line: every step's time from noticing the restore,
+the window attaching, the first answer, collections, with the guest's
+page faults — and, with `IGNI_RESUME_PAGES=1`, the memory touched since
+the restore (`/proc/self/smaps_rollup` after clearing the referenced
+bits), which is what a cold resume reads. `scripts/measure_resume.py`
+plays restores against an igni in a Linux container (or measures one
+already running, `--pid`), and measures what igni touches and changes
+while idle. Every PostgreSQL
 connection also has TCP keepalives, a 30 s user timeout and a 10 s
 connect timeout, so a dead one the pool's pre-ping meets fails in seconds
 and is replaced. **Timers** go by the wall clock where it matters: the
@@ -764,7 +780,13 @@ extensions are installed), the session pool's idle sweep (5 min), and
 the notification stream's read timeout while somebody is signed in.
 Measured on macOS (no inotify there, so the run-directory watches poll):
 60 s idle after a turn, 1,463 event-loop iterations, of which 655 were
-those two polls and 58 the session's naming finishing.
+those two polls and 58 the session's naming finishing. Measured in a
+Linux container (`scripts/measure_resume.py`, PostgreSQL), 60 s idle
+from 30 s after a turn: 0.47 MB of igni's pages changed and 2.8 MB
+touched, under 10 ms of CPU. The plugin marketplaces' catalogs are
+fetched at most every six hours (each fetch clones the marketplace's
+repository and deletes it again), where every boot used to fetch the
+default one twice.
 
 **Agno's tables** keep Agno's schema; `ScopedAsyncPostgresDb` is a
 wrapper. A session is stored under `<org>/<producer>/<project>#<id>` (in

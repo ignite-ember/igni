@@ -135,19 +135,24 @@ class CloudGuest(BackendHooks):
             getattr(transport, "inner", transport), "watch_connections", None
         )
         if watch_connections is not None:
-            watch_connections(lambda _event, _client: self._rewrite_now())
+            watch_connections(self._connection_moved)
+        observe = getattr(transport, "observe", None)
+        if observe is not None:
+            observe(self._sent)
         self.activity.start()
+        # Before the first answer: what it needs.
         self.restores.on_restore(self.entropy.after_restore)
         self.restores.on_restore(self._reset_pools)
+        # After it: what can wait a moment.
         if notifications is not None:
-            self.restores.on_restore(notifications.resumed)
-        self.restores.on_restore(self._rearm_timers)
-        self.restores.on_restore(self._rewrite_activity)
+            self.restores.on_restore(notifications.resumed, after_first_answer=True)
+        self.restores.on_restore(self._rearm_timers, after_first_answer=True)
+        self.restores.on_restore(self._rewrite_activity, after_first_answer=True)
         self.restores.start()
         if self.binding.bound is not None and on_rebind is not None:
             self.binding.watch(lambda _env: on_rebind())
         if self.credentials is not None:
-            self.restores.on_restore(self._renew_credential)
+            self.restores.on_restore(self._renew_credential, after_first_answer=True)
             background.start(
                 self.credentials.start(), holder="vm-credential", reason="a token from it"
             )
@@ -221,6 +226,21 @@ class CloudGuest(BackendHooks):
     async def _renew_credential(self, _restored: Restored) -> None:
         if self.credentials is not None:
             await self.credentials.refresh(force=False)
+
+    def _connection_moved(self, event: str, _client: str) -> None:
+        timeline = self.restores.timeline
+        if timeline is not None and not timeline.done:
+            timeline.mark(f"window {event}")
+        if self.restores.waiting_for_answer:
+            # Rewritten after the first answer, with the rest of the
+            # restore's steps: not on the path of that answer.
+            return
+        self._rewrite_now()
+
+    def _sent(self, message: msg.Message) -> None:
+        """An answer: the first after a restore lets the waiting steps run."""
+        if message.type == "rpc_response":
+            self.restores.answered()
 
     def _rewrite_now(self) -> None:
         if self.activity is not None:

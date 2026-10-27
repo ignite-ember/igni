@@ -52,6 +52,10 @@ class CloudLayer(Layer):
         return False
 
     def log_handler(self) -> logging.Handler:
+        # The core attaches the handler to its own loggers; the layer's
+        # (the guest contract's: binding, restores, the resume timeline)
+        # go to the same standard output.
+        StdoutLog.attach("igni_cloud")
         return StdoutLog.handler()
 
     def credentials(self) -> CredentialSource | None:

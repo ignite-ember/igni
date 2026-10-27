@@ -13,6 +13,17 @@ re-armed from the wall clock (the monotonic clock did not move while the
 VM slept, so an ``asyncio.sleep`` armed before is late by the whole
 suspension), the activity file rewritten.
 
+Only what the first request needs runs before it: the reseed, and the
+pools swapped for empty ones (their old connections are closed a moment
+later, off the path). The rest — the notification stream, the timers,
+the activity file, the credential — waits for igni's first answer after
+the restore (:meth:`RestoreWatch.answered`) and the burst of requests a
+window sends with it (:attr:`RestoreWatch.AFTER_ANSWER_SECONDS`), or
+:attr:`RestoreWatch.LATER_SECONDS` if nobody asks: on a restored VM every
+page touched before that answer is a page the answer waits for, and
+these steps open connections, query the database and write files. Each
+restore's steps are timed (:mod:`igni_cloud.guest.timeline`).
+
 Not from a clock jump: a quick come-back steps the clock by less than any
 threshold worth having. And no timer of its own: where inotify works the
 watch sleeps until the directory changes, so an idle igni does no work
@@ -31,6 +42,7 @@ from pathlib import Path
 from pydantic import BaseModel, ValidationError
 
 from ember_code.core.activity import background
+from igni_cloud.guest.timeline import ResumeTimeline
 from igni_cloud.guest.watch import DirectoryWatch
 
 logger = logging.getLogger(__name__)
@@ -52,16 +64,37 @@ class RestoreWatch:
 
     #: Between looks where the directory cannot be watched (development).
     POLL_SECONDS = 1.0
+    #: The steps that wait for the first answer run by then if none came.
+    LATER_SECONDS = 1.0
+    #: And this long after it: a window's first requests come as a burst.
+    AFTER_ANSWER_SECONDS = 0.5
 
     def __init__(self, path: Path, *, watch: bool = True) -> None:
         self.path = path
         self._directory = DirectoryWatch(path.parent) if watch else None
         self._callbacks: list[RestoreCallback] = []
+        self._later: list[RestoreCallback] = []
+        self._answered = asyncio.Event()
+        self._waiting = False
         self._generation: int | None = None
         self._task: asyncio.Future[None] | None = None
+        #: The last restore's, until its first answer (:mod:`igni_cloud.guest.timeline`).
+        self.timeline: ResumeTimeline | None = None
 
-    def on_restore(self, callback: RestoreCallback) -> None:
-        self._callbacks.append(callback)
+    def on_restore(self, callback: RestoreCallback, *, after_first_answer: bool = False) -> None:
+        """Run ``callback`` after every restore: at once, or once igni has answered."""
+        (self._later if after_first_answer else self._callbacks).append(callback)
+
+    @property
+    def waiting_for_answer(self) -> bool:
+        """A restore's later steps are waiting for igni's first answer."""
+        return self._waiting
+
+    def answered(self) -> None:
+        """igni sent its first answer since the restore: the waiting steps may run."""
+        self._answered.set()
+        if self.timeline is not None:
+            self.timeline.answered()
 
     def read(self) -> Restored | None:
         try:
@@ -80,17 +113,35 @@ class RestoreWatch:
             # What was there when igni started watching: a restore before
             # it bound, which nothing of this igni's outlived.
             return None
-        logger.info(
-            "restored (generation %d, clock stepped %.0f ms)",
-            restored.generation,
-            restored.clock_step_ms,
+        if self.timeline is not None:
+            self.timeline.finish()
+        self._answered.clear()
+        timeline = self.timeline = ResumeTimeline(
+            restored.generation, at_ms=restored.at_ms, clock_step_ms=restored.clock_step_ms
         )
-        for callback in list(self._callbacks):
+        await self._steps(self._callbacks, restored, timeline)
+        if self._later:
+            self._waiting = True
+            try:
+                with contextlib.suppress(TimeoutError):
+                    await asyncio.wait_for(self._answered.wait(), self.LATER_SECONDS)
+                    await asyncio.sleep(self.AFTER_ANSWER_SECONDS)
+            finally:
+                self._waiting = False
+            await self._steps(self._later, restored, timeline)
+        timeline.steps_done()
+        return restored
+
+    @staticmethod
+    async def _steps(
+        callbacks: list[RestoreCallback], restored: Restored, timeline: ResumeTimeline
+    ) -> None:
+        for callback in list(callbacks):
             try:
                 await callback(restored)
             except Exception:
                 logger.exception("an after-restore step failed")
-        return restored
+            timeline.mark(getattr(callback, "__name__", "a step"))
 
     def start(self) -> None:
         if self._task is None:

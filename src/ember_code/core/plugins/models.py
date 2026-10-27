@@ -306,6 +306,19 @@ class MarketplaceEntry(BaseModel):
         self.cached = catalog
         self.last_fetched = datetime.now(timezone.utc).isoformat(timespec="seconds")
 
+    def fetched_within(self, seconds: float, *, now: datetime | None = None) -> bool:
+        """Whether the cached catalog was fetched less than ``seconds`` ago."""
+        if self.cached is None or not self.last_fetched:
+            return False
+        try:
+            fetched = datetime.fromisoformat(self.last_fetched)
+        except ValueError:
+            return False
+        if fetched.tzinfo is None:
+            fetched = fetched.replace(tzinfo=timezone.utc)
+        current = now if now is not None else datetime.now(timezone.utc)
+        return (current - fetched).total_seconds() < seconds
+
     def update_from_catalog(self, url: str, catalog: MarketplaceCatalog) -> None:
         """Re-add path: point the entry at a (possibly new) URL and
         replace its cached catalog + fetched timestamp."""

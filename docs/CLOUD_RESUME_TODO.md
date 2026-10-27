@@ -1,6 +1,7 @@
 # igni cloud — faster resume, TODO
 
-Status: not started. Design: `docs/CLOUD.md`. Build plan:
+Status: igni's part of 1 and 2 done and measured in a Linux container;
+on the image, still to measure. 3 measured. Design: `docs/CLOUD.md`. Build plan:
 `docs/CLOUD_BUILD_PLAN.md`. Measurements so far: `igni__cloudvm`
 `RESULTS.md`.
 
@@ -35,28 +36,60 @@ and cold, before and after.
 
 ### 1. igni's first answer after a resume — igni
 
-- [ ] Profile, on the real image, everything igni does from
-      `/run/igni/restored` to answering the first request (handshake,
-      reseed, pools, notification stream, first RPC).
-- [ ] Cut it; target is the 189 ms of the earlier image or better.
+- [x] Profile everything igni does from `/run/igni/restored` to answering
+      the first request (handshake, reseed, pools, notification stream,
+      first RPC). Profiled in a Linux container that plays restores (stop,
+      clear the referenced bits, continue, write `restored`, connect):
+      `scripts/measure_resume.py`. On the image, igni logs one `resume
+      timeline` line per restore — each step, the window attaching, the
+      first answer, with faults, and with `IGNI_RESUME_PAGES=1` the memory
+      touched since the restore — and the probe runs against a running igni
+      with `--pid --ws --restored`. Found: every after-restore step ran
+      before the handshake — closing the old PostgreSQL connections, the
+      notification stream, the scheduler's two queries (re-armed timers),
+      the activity file, the credential.
+- [ ] Cut it; target is the 189 ms of the earlier image or better. igni
+      side done: before the first answer only the reseed and an empty
+      pool swapped in (a connection opened ahead in the background); the
+      old connections close 2 s later; the rest waits for the first answer
+      plus 0.5 s (1 s if nobody asks). Container, PostgreSQL, p50 of 12,
+      client at once after `restored`: handshake 24.9 → 4.3 ms, first RPC
+      26.8 → 5.2 ms, first database RPC 41.1 → 24.6 ms; memory touched
+      restore → first database answer 28.7 → 24.2 MB. To measure on the
+      image.
 - [ ] Keep `1710f774` (reseed off the first-request path) and check it
-      holds on the image.
+      holds on the image. Kept (the reseed of known generators is 3 ms in
+      the container; the rescan is 2 s later); the image check is open.
 
 ### 2. Read less on a cold resume — igni and node agent
 
-- [ ] igni: find what still dirties memory while idle and stop it, so the
-      changed pages and the working set shrink.
+- [x] igni: find what still dirties memory while idle and stop it, so the
+      changed pages and the working set shrink. Measured by page checksums
+      (Docker Desktop's kernel has no soft-dirty bits) and referenced bits,
+      60 s idle 30 s after a turn: 0.44 MB changed, 2.8 MB touched before;
+      0.47 / 2.8 MB after — idle was already quiet (no periodic work of
+      igni's own; what wakes is the extension health probe, the
+      workspace poll and, without a credential directory, the credential
+      file's poll). What did dirty memory around activity: the after-restore
+      steps (above), and the plugin marketplace catalogs fetched — a clone
+      of the repository, written and deleted — twice on every boot; now at
+      most every six hours.
 - [ ] Node agent: store the working set compressed (lz4 or zstd at a fast
       level) and decompress during the UFFD prefetch; measure bytes read
       and resume time.
 
 ### 3. Start reading earlier — gateway
 
-- [ ] Check how much of the resume already overlaps the client's
+- [x] Check how much of the resume already overlaps the client's
       connection and token check.
-- [ ] Start ensure-running as soon as the client's connection opens, in
+- [x] Start ensure-running as soon as the client's connection opens, in
       parallel with authentication; abandon it (suspend again) if
-      authentication fails.
+      authentication fails. Measured (`igni__cloudvm` `7607ad8`,
+      `8b4570b`): with signing keys cached, auth and gateway work before
+      the wake are under 1 ms, so nothing to overlap; pre-wake built only
+      for when the signing keys must be fetched (first RPC 101.6 → 69.9 ms
+      with a 30 ms key fetch), bounded (wake only, no bytes before the
+      check, 30/min per address).
 
 ### 4. Keep recently suspended producers in memory longer — node agent
 

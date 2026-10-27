@@ -47,7 +47,10 @@ from sqlalchemy.ext.asyncio import (
     create_async_engine,
 )
 from sqlalchemy.orm import Session, sessionmaker
+from sqlalchemy.pool import Pool
+from sqlalchemy.util import greenlet_spawn
 
+from ember_code.core.activity import background
 from ember_code.core.db.urls import DatabaseUrl
 
 logger = logging.getLogger(__name__)
@@ -125,6 +128,11 @@ class EngineRegistry:
         self._sync_sessionmakers: dict[str, sessionmaker[Session]] = {}
         self._async_engines: dict[str, AsyncEngine] = {}
         self._async_sessionmakers: dict[str, async_sessionmaker[AsyncSession]] = {}
+        #: Old pools waiting to be closed (:meth:`reset_pools`): sync, async.
+        self._retired: tuple[list[Pool], list[Pool]] = ([], [])
+        self._retiring: asyncio.Task[None] | None = None
+        #: Connections being opened ahead after a reset.
+        self._warming: set[asyncio.Task[None]] = set()
 
     def get_engine(self, target: DatabaseTarget) -> Engine:
         url = DatabaseUrl.of(target)
@@ -209,29 +217,75 @@ class EngineRegistry:
     #: How long closing one engine's pooled connections may take before
     #: they are dropped unclosed.
     RESET_TIMEOUT_SECONDS = 5.0
+    #: How long after a reset the old pools' connections are closed.
+    RETIRE_AFTER_SECONDS = 2.0
 
     async def reset_pools(self) -> None:
-        """Drop every pooled connection; keep the engines.
+        """Give every engine an empty pool; close the old pools' connections later.
 
         After a snapshot restore (``docs/CLOUD.md`` §9) a pooled
         connection may be to a server that dropped it while the VM was
         away. Stores keep their engines, so the engines stay and only
         their pools are replaced: the next query opens a fresh
-        connection. A close that does not finish in
+        connection. The swap is all that happens now — it touches
+        nothing but the engines. Closing the old connections walks
+        each one's state (and, on a restored VM, faults it back in),
+        so it waits :attr:`RETIRE_AFTER_SECONDS`, off the path of the
+        first requests; a close that does not finish in
         :attr:`RESET_TIMEOUT_SECONDS` leaves the connections to the
         garbage collector rather than wait on a dead socket.
+
+        An async engine that had connections gets one again at once, in
+        the background: a restored VM is idle for the moment between
+        its restore and its first client connecting, and the first
+        query then finds the connection open.
         """
         with self._lock:
             sync_engines: list[Engine] = list(self._sync_engines.values())
             async_engines: list[AsyncEngine] = list(self._async_engines.values())
-        for sync_engine in sync_engines:
-            sync_engine.dispose()
-        for async_engine in async_engines:
+        self._retired[0].extend(self._swap_pool(engine) for engine in sync_engines)
+        for engine in async_engines:
+            old = self._swap_pool(engine.sync_engine)
+            self._retired[1].append(old)
+            if old.checkedin():
+                warming = background.daemon(self._warm(engine), name="warm-pool")
+                self._warming.add(warming)
+                warming.add_done_callback(self._warming.discard)
+        if self._retiring is None or self._retiring.done():
+            self._retiring = background.daemon(self._close_retired_later(), name="retired-pools")
+
+    async def _warm(self, engine: AsyncEngine) -> None:
+        """One connection opened and put back in ``engine``'s new pool."""
+        try:
+            async with asyncio.timeout(self.RESET_TIMEOUT_SECONDS):
+                async with engine.connect():
+                    pass
+        except Exception as exc:
+            logger.info("could not open a connection ahead for %s: %s", engine.url, exc)
+
+    @staticmethod
+    def _swap_pool(engine: Engine) -> Pool:
+        """What :meth:`Engine.dispose` does, minus closing: the old pool is returned."""
+        old = engine.pool
+        engine.pool = old.recreate()
+        return old
+
+    async def _close_retired_later(self) -> None:
+        await asyncio.sleep(self.RETIRE_AFTER_SECONDS)
+        await self._close_retired()
+
+    async def _close_retired(self) -> None:
+        retired, retired_async = self._retired
+        self._retired = ([], [])
+        for pool in retired:
+            pool.dispose()
+        for pool in retired_async:
             try:
-                await asyncio.wait_for(async_engine.dispose(), timeout=self.RESET_TIMEOUT_SECONDS)
+                await asyncio.wait_for(
+                    greenlet_spawn(pool.dispose), timeout=self.RESET_TIMEOUT_SECONDS
+                )
             except Exception as exc:
-                logger.info("dropping %s's connections unclosed: %s", async_engine.url, exc)
-                await async_engine.dispose(close=False)
+                logger.info("dropping a retired pool's connections unclosed: %s", exc)
 
     async def dispose(self) -> None:
         """Async-aware disposal: awaits every cached async engine, then
@@ -241,6 +295,12 @@ class EngineRegistry:
         # an await would serialise every other cache access.
         with self._lock:
             async_engines: list[AsyncEngine] = list(self._async_engines.values())
+        if self._retiring is not None:
+            self._retiring.cancel()
+            self._retiring = None
+        for warming in list(self._warming):
+            warming.cancel()
+        await self._close_retired()
         for engine in async_engines:
             await engine.dispose()
         self.dispose_sync()

@@ -39,14 +39,20 @@ class MarketplaceWarmupPhase(SessionStartupPhase):
     catalog + auto-register defaults.
 
     Fire-and-forget on the
-    running loop, no throttle, per-marketplace timeout, all
-    failures logged and swallowed. Net effect: by the time the
-    user reaches for ``/plugin install`` (seconds to minutes
-    later) the catalog is current.
+    running loop, per-marketplace timeout, all failures logged and
+    swallowed. A catalog fetched within :attr:`REFRESH_EVERY_SECONDS`
+    is kept: a refresh clones the marketplace's repository into a
+    temporary directory and deletes it again — thousands of files
+    written and removed, which in the cloud are memory a suspended
+    VM must keep — and every session start used to do it, including
+    right after the auto-register step had just fetched the same
+    catalog. ``/plugin marketplace refresh`` still fetches on demand.
     """
 
     _TIMEOUT_ADD: ClassVar[float] = 15.0
     _TIMEOUT_REFRESH: ClassVar[float] = 10.0
+    #: A catalog younger than this is not fetched again at session start.
+    REFRESH_EVERY_SECONDS: ClassVar[float] = 6 * 3600.0
 
     def start_background(self) -> None:
         """Kick the marketplace refresh sequence in the background."""
@@ -101,6 +107,8 @@ class MarketplaceWarmupPhase(SessionStartupPhase):
         """Refresh whatever is now registered (defaults + any
         user-added marketplaces)."""
         for entry in registry.marketplaces:
+            if entry.fetched_within(self.REFRESH_EVERY_SECONDS):
+                continue
             try:
                 await asyncio.wait_for(
                     asyncio.to_thread(
