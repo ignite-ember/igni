@@ -658,7 +658,12 @@ same memory, pseudo-random generators included. The kernel's are
 reseeded by `post_restore` (so `os.urandom`, `secrets`, `uuid4`); igni
 reseeds Python's own — the `random` module, any module-level
 `random.Random`, `tempfile`'s name sequence — from the kernel when it
-binds and after every restore it notices (`ProcessEntropy`). The string
+binds and after every restore it notices (`ProcessEntropy`). After a
+restore it reseeds the generators it found at binding at once and looks
+for new ones two seconds later: a restored VM's memory comes back page
+by page as it is touched, and walking every module's namespace on the
+path of the first request after a resume is what the WebSocket handshake
+then waits on. The string
 hash salt (`PYTHONHASHSEED`) is fixed at interpreter start and stays
 shared; it only matters for hash flooding.
 

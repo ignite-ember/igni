@@ -758,3 +758,20 @@ async def test_bound_before_any_sign_in_says_so_to_the_windows_and_the_node_agen
         assert push.payload["state"] == "needs_sign_in"
     finally:
         await guest.stop()
+
+
+async def test_after_a_restore_only_what_is_known_is_reseeded_at_once(monkeypatch):
+    """Walking every module touches thousands of lazily restored pages:
+    not on the path of the first request after a resume."""
+    entropy = ProcessEntropy()
+    entropy.reseed()  # the full look, at binding
+    looks: list[str] = []
+    look = ProcessEntropy._module_generators
+    monkeypatch.setattr(
+        ProcessEntropy, "_module_generators", staticmethod(lambda: looks.append("look") or look())
+    )
+    monkeypatch.setattr(ProcessEntropy, "RESCAN_AFTER_SECONDS", 0.01)
+    await entropy.after_restore(None)
+    assert looks == [], "reseeded at once without looking"
+    await asyncio.sleep(0.05)
+    assert looks == ["look"], "and looked again a moment later"
