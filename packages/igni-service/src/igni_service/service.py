@@ -43,6 +43,7 @@ from igni_service.organisations import (
     OrganisationRoutes,
 )
 from igni_service.registration import ServiceRegistration
+from igni_service.revocations import RevocationFeed, RevocationList
 from igni_service.server import IgniServer
 from igni_service.service_tokens import ServiceTokens
 from igni_service.settings import IgniSettings
@@ -54,6 +55,7 @@ from igni_service.subjects import (
     SubjectHandlers,
     SubjectRoutes,
 )
+from igni_service.token_endpoint import TokenEndpoint
 from igni_service.tokens import (
     PEOPLE_ONLY,
     Caller,
@@ -115,7 +117,13 @@ class IgniService:
         self.clock = clock or Clock()
         self.key = SigningKey(key_store, clock=self.clock)
         self.keys = IgniKeys(self.server, clock=self.clock)
-        self.verifier = TokenVerifier(self.server, self.keys, clock=self.clock)
+        #: What igni has revoked, kept fresh by `lifespan` (`igni_service.revocations`).
+        self.revocations = RevocationList(
+            max_staleness=settings.revocations_max_staleness, clock=self.clock
+        )
+        self.verifier = TokenVerifier(
+            self.server, self.keys, clock=self.clock, revocations=self.revocations
+        )
         #: Who `caller` lets in: people only unless the service says more
         #: (an app, an app's spaces — igni's service-identity §9.2, §17).
         self.accepted_callers: frozenset[CallerKind] = frozenset(
@@ -135,6 +143,9 @@ class IgniService:
             retry_min=retry_min,
         )
         self.tokens = ServiceTokens(self.server, self.registration, self.key, clock=self.clock)
+        self.revocation_feed = RevocationFeed(
+            self.server, TokenEndpoint(self.server, self.registration, self.key), self.revocations
+        )
         self.directory = DirectoryClient(self.tokens, clock=self.clock)
         self.notifier = Notifier(self.tokens)
         self.web = WebSignIn(
@@ -186,20 +197,27 @@ class IgniService:
 
     @contextlib.asynccontextmanager
     async def lifespan(self, app: Any = None) -> AsyncIterator[None]:
-        """Register with igni in the background for as long as the app runs.
+        """Register with igni, and keep its revocation list, for as long as the app runs.
 
         Usable as `FastAPI(lifespan=igni.lifespan)`, or entered inside the
         service's own lifespan (`async with igni.lifespan(app): ...`).
+        From the start every token is checked against the revocation list,
+        which fails closed if it cannot be kept fresh.
         """
         stop = asyncio.Event()
-        registering = asyncio.create_task(self.registration.keep_trying(stop))
+        background = [
+            asyncio.create_task(self.registration.keep_trying(stop)),
+            asyncio.create_task(self.revocation_feed.run(stop)),
+        ]
         try:
             yield
         finally:
             stop.set()
-            registering.cancel()
-            with contextlib.suppress(asyncio.CancelledError):
-                await registering
+            for task in background:
+                task.cancel()
+            for task in background:
+                with contextlib.suppress(asyncio.CancelledError):
+                    await task
             await self.aclose()
 
     async def aclose(self) -> None:

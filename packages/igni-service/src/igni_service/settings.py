@@ -48,5 +48,10 @@ class IgniSettings(BaseSettings):
     extension_bundle_path: str = Field(
         default="", validation_alias=AliasChoices("IGNI_EXTENSION_BUNDLE", "EXTENSION_BUNDLE_PATH")
     )
+    #: Seconds the revocation list may go unrefreshed before every token is
+    #: refused (it fails closed): a removed person can do nothing after that.
+    revocations_max_staleness: float = Field(
+        default=30.0, validation_alias=AliasChoices("IGNI_REVOCATIONS_MAX_STALENESS")
+    )
     #: Seconds before a call to igni gives up.
     timeout: float = Field(default=10.0, validation_alias=AliasChoices("IGNI_SERVER_TIMEOUT"))

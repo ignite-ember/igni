@@ -43,6 +43,12 @@ from igni_service.directory import Member, Organisation
 from igni_service.keystore import KeyStore, MemoryKeyStore
 from igni_service.notifications import Notification, NotificationBatch, Notifier
 from igni_service.registration import PublishedExtension
+from igni_service.revocations import (
+    Revocation,
+    RevocationFeed,
+    RevocationKind,
+    RevocationPage,
+)
 from igni_service.service import IgniService
 from igni_service.settings import IgniSettings
 from igni_service.tokens import PEOPLE_ONLY, CallerKind
@@ -211,6 +217,8 @@ class FakeIgni:
         self.grants: list[str] = []
         #: Every refresh token revoked at `/v1/oauth/revoke`, as presented.
         self.revoked: list[str] = []
+        #: igni's revocation list, in order (`revoke_session`, `remove_producer`, …).
+        self.revocations: list[Revocation] = []
 
     def reset(self) -> None:
         """Forget what happened, keep who exists.
@@ -527,6 +535,8 @@ class FakeIgni:
             return self._issue(seen)
         if path == IgniPaths.REVOKE:
             return self._revoke(seen)
+        if path == IgniPaths.REVOCATIONS:
+            return self._revocations(seen)
         if path.startswith(f"{IgniPaths.DIRECTORY}/") or path == IgniPaths.NOTIFICATIONS:
             held = self._service_tokens.get(
                 seen.headers.get("authorization", "").removeprefix("Bearer ")
@@ -539,6 +549,34 @@ class FakeIgni:
                 return self._notify(seen, client_id, org_id)
             return self._directory(seen, org_id)
         return httpx.Response(404, json={"detail": "Not Found"})
+
+    # ── The revocation list ─────────────────────────────────────────
+
+    def revoke_session(self, session_id: str) -> None:
+        """A sign-in ended: every token with ``sid`` = ``session_id`` stops."""
+        self.revocations.append(Revocation(kind=RevocationKind.SESSION, id=session_id))
+
+    def remove_producer(self, producer: str, *, org_id: str) -> None:
+        """``person:<id>`` (or ``app:``, ``space:``) removed from ``org_id``."""
+        self.revocations.append(
+            Revocation(kind=RevocationKind.PRODUCER, id=producer, org_id=org_id)
+        )
+
+    def revoke_incarnation(self, incarnation: str) -> None:
+        self.revocations.append(Revocation(kind=RevocationKind.INCARNATION, id=incarnation))
+
+    def _revocations(self, seen: SeenRequest) -> httpx.Response:
+        """At once, never held: the SDK then polls, as it does with an igni that cannot hold."""
+        held = self._service_tokens.get(
+            seen.headers.get("authorization", "").removeprefix("Bearer ")
+        )
+        if held is None or held[1] != "":
+            return httpx.Response(401, json={"detail": "Not authenticated"})
+        since = int((seen.query.get("since") or ["0"])[0] or 0)
+        page = RevocationPage(
+            revocations=self.revocations[since:], cursor=str(len(self.revocations))
+        )
+        return httpx.Response(200, json=page.model_dump(mode="json"))
 
     # ── Registration and the extension ──────────────────────────────
 
@@ -759,6 +797,12 @@ class FakeIgni:
         return client
 
     def _client_credentials(self, client: FakeClient, form: dict[str, str]) -> httpx.Response:
+        if form.get("scope") == RevocationFeed.SCOPE and not form.get("organisation"):
+            token = f"revocations-{uuid.uuid4().hex}"
+            self._service_tokens[token] = (client.client_id, "")
+            return httpx.Response(
+                200, json={"access_token": token, "token_type": "Bearer", "expires_in": 600}
+            )
         if not form.get("organisation"):
             return httpx.Response(400, json={"error": "invalid_request"})
         token = f"service-{uuid.uuid4().hex}"

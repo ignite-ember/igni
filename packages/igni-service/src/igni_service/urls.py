@@ -39,6 +39,8 @@ class IgniPaths:
     REVOKE = "/v1/oauth/revoke"
     DIRECTORY = "/v1/directory"
     NOTIFICATIONS = "/v1/service-notifications"
+    #: What igni has revoked: sessions, producers, incarnations.
+    REVOCATIONS = "/v1/platform/revocations"
 
     @classmethod
     def extension(cls, client_id: str) -> str:

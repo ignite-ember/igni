@@ -168,6 +168,22 @@ whatever the service accepts, so a route meant for people never takes an
 app for one. `igni.caller_of(token)` is the same outside a request, and
 `FakeIgni.app_token` / `space_token` make tokens for tests.
 
+## Somebody removed
+
+A person removed from an organisation — or an app, a space, a sign-in
+or one life (incarnation) of a producer that igni revoked — can do
+nothing from that moment, not for the ten minutes their token would
+still live. While `igni.lifespan` runs, the service keeps igni's
+revocation list (`GET /v1/platform/revocations`, long-polled, else
+polled every 2 s) and every token it names is refused with a 401.
+
+The list **fails closed**: if it cannot be refreshed for
+`IGNI_REVOCATIONS_MAX_STALENESS` seconds (30 by default), every token is
+answered with a 503 until it can be again. A service that never runs
+`igni.lifespan` keeps no list and checks nothing. In tests,
+`FakeIgni.remove_producer("person:<id>", org_id=…)`, `revoke_session`
+and `revoke_incarnation` put entries on the fake's list.
+
 ## Calls from the extension's page
 
 `igni.install(app)` puts igni's routes on the app — `igni.router` (erasure,

@@ -24,7 +24,7 @@ from __future__ import annotations
 
 from collections.abc import Collection
 from enum import StrEnum
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import jwt
 from pydantic import BaseModel, ConfigDict
@@ -34,6 +34,9 @@ from igni_service.crypto import ALGORITHM
 from igni_service.errors import IgniError
 from igni_service.jwks import IgniKeys
 from igni_service.server import IgniServer
+
+if TYPE_CHECKING:
+    from igni_service.revocations import RevocationList
 
 
 class TokenUse:
@@ -171,10 +174,19 @@ class TokenVerifier:
     #: How far in the future an `iat` may be, for clocks that disagree.
     LEEWAY = 60.0
 
-    def __init__(self, igni: IgniServer, keys: IgniKeys, *, clock: Clock | None = None) -> None:
+    def __init__(
+        self,
+        igni: IgniServer,
+        keys: IgniKeys,
+        *,
+        clock: Clock | None = None,
+        revocations: RevocationList | None = None,
+    ) -> None:
         self._igni = igni
         self._keys = keys
         self._clock = clock or Clock()
+        #: What igni has revoked since a token was issued (`igni_service.revocations`).
+        self.revocations = revocations
 
     async def claims(self, token: str, *, use: str | Collection[str]) -> dict[str, Any]:
         """The verified claims of a `use` token (or one of several) for this service.
@@ -223,6 +235,10 @@ class TokenVerifier:
         now = self._clock.wall()
         if now >= expires or issued > now + self.LEEWAY:
             raise TokenRefused()
+        if self.revocations is not None and claims.get("token_use") != TokenUse.IGNI:
+            # A removed person is refused at once, not when their token
+            # expires; igni's own calls are not anybody's session.
+            self.revocations.check(claims)
         return claims
 
     async def person(self, token: str) -> Person:
