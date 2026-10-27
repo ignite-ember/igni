@@ -65,6 +65,8 @@ def test_granting_refuses_a_kind_it_does_not_know():
             "o",
             "--producer",
             "robot:x",
+            "--incarnation",
+            "x",
             "--database-url",
             "postgresql://a@b/c",
         ],
@@ -73,7 +75,13 @@ def test_granting_refuses_a_kind_it_does_not_know():
 
 
 def test_a_space_binds_with_its_token_naming_it(cloud_layer: Any, tmp_path: Path, monkeypatch):
-    for name in ("IGNI_ACCESS_TOKEN_FILE", "IGNI_ACCESS_TOKEN", "IGNI_ORG", "IGNI_PRODUCER"):
+    for name in (
+        "IGNI_ACCESS_TOKEN_FILE",
+        "IGNI_ACCESS_TOKEN",
+        "IGNI_ORG",
+        "IGNI_PRODUCER",
+        "IGNI_PRODUCER_INCARNATION",
+    ):
         monkeypatch.setenv(name, "")
         monkeypatch.delenv(name)
     token = tmp_path / "token"
@@ -82,9 +90,11 @@ def test_a_space_binds_with_its_token_naming_it(cloud_layer: Any, tmp_path: Path
     env.write_text(
         "IGNI_DATABASE_URL=sqlite:///x.db\nIGNI_ORG=org-acme\nIGNI_PRODUCER=space:s-42\n"
         f"IGNI_PRODUCER_OWNER=app:reporter\nIGNI_ACCESS_TOKEN_FILE={token}\n"
+        # A space's incarnation is its own id.
+        "IGNI_PRODUCER_INCARNATION=s-42\n"
     )
     attempt = ProducerBinding(env, environ={}).attempt()
-    assert attempt.bound and attempt.tenant == Tenant(org="org-acme", producer="space:s-42")
+    assert attempt.bound and attempt.tenant == Tenant(org="org-acme", producer="space:s-42@s-42")
     assert attempt.env is not None and attempt.env.owner == "app:reporter"
 
 

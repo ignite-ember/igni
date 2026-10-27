@@ -90,7 +90,9 @@ A Rust service, one per host:
   (`/run/igni/producer.env`, which igni binds to, `dbffea2`, without
   needing a token; `IGNI_PRODUCER` is `person:<id>`, `app:<id>` or
   `space:<id>` (an app's end user, with `IGNI_PRODUCER_OWNER=app:<id>`), as
-  the token names it). An app's VM credential is written to the volume
+  the token names it, and `IGNI_PRODUCER_INCARNATION` the feed's
+  `incarnation`: a role and rows per incarnation; `revoke-producer` on
+  removal, `export-producer` during retention, `erase-producer` after). An app's VM credential is written to the volume
   once (`IGNI_VM_CREDENTIAL_FILE`); igni keeps it and its tokens.
 
 ## 4. Gateway (M)

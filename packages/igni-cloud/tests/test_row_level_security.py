@@ -21,6 +21,7 @@ import pytest
 from agno.db.base import SessionType
 from agno.session import AgentSession
 from igni_cloud.db.rls import AGNO_SCHEMA, ProducerCredentials, ProducerRoles
+from igni_cloud.producer import ProducerIncarnation, ProducerRef
 from igni_cloud.storage.attachments import LargeObjectAttachments
 from igni_cloud.storage.scoped_agno import ScopedAsyncPostgresDb
 from sqlalchemy import BigInteger, Boolean, DateTime, Integer, create_engine, text
@@ -46,12 +47,17 @@ from tests.storage_backends import ThrowawayPostgres
 
 
 class Producer:
-    """A producer as the platform sets one up: a role, and a scope."""
+    """A producer's incarnation as the platform sets one up: a role, and a scope."""
 
-    def __init__(self, admin: DatabaseUrl, run: str, name: str) -> None:
-        self.tenant = Tenant(org=f"org-{run}", producer=f"person:{name}-{run}")
+    def __init__(
+        self, admin: DatabaseUrl, run: str, name: str, *, incarnation: str = "m-1"
+    ) -> None:
+        self.incarnation = ProducerIncarnation.of(
+            ProducerRef.parse(f"person:{name}-{run}"), incarnation
+        )
+        self.tenant = Tenant(org=f"org-{run}", producer=self.incarnation.stored)
         self.credentials: ProducerCredentials = ProducerRoles(admin).grant(
-            self.tenant.org, self.tenant.producer
+            self.tenant.org, self.incarnation
         )
         self.url = DatabaseUrl.parse(self.credentials.database_url)
         self.scope = StorageScope.for_tenant(self.tenant, project="p1")
@@ -86,7 +92,7 @@ def producers(admin: DatabaseUrl) -> Iterator[tuple[Producer, Producer]]:
         yield a, b
     finally:
         for p in (a, b):
-            ProducerRoles(admin).revoke(p.tenant.org, p.tenant.producer)
+            ProducerRoles(admin).revoke(p.tenant.org, p.incarnation)
 
 
 def _tenant_tables() -> list[Any]:

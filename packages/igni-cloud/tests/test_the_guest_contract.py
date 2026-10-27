@@ -39,6 +39,7 @@ from igni_cloud.guest import (
     WarmImports,
 )
 from igni_cloud.layer import CloudLayer
+from igni_cloud.producer import ProducerIncarnation
 from websockets.asyncio.client import connect
 
 from ember_code.backend.activity import Activity, ActivityState, SessionActivity
@@ -55,14 +56,16 @@ from ember_code.core.layer import BackendHooks, Layer
 from ember_code.core.session.pending_messages import PendingMessageStore
 from ember_code.extensions.host.broadcasts import BroadcastSignals
 from ember_code.extensions.host.model import HostState
-from ember_code.extensions.principal import SignedInPerson
-from ember_code.extensions.store import ExtensionStore
 from ember_code.notifications.stream import NotificationStreamFollower
 from ember_code.protocol import messages as msg
 from ember_code.transport.websocket import WebSocketServerTransport
 
 ORG = "org-acme"
 PRODUCER = "person:u-ada"
+#: Ada's membership of the org: which life of her the VM is.
+INCARNATION = "m-1"
+#: The producer column of her rows: the incarnation's.
+STORED = f"{PRODUCER}@{INCARNATION}"
 
 
 def _jwt(**claims: Any) -> str:
@@ -84,6 +87,7 @@ def cloud(cloud_layer: Any, monkeypatch) -> None:
         EnvironmentCredentials.TOKEN_ENV,
         ProducerEnv.ORG_ENV,
         ProducerEnv.PRODUCER_ENV,
+        ProducerIncarnation.ENV,
     ):
         monkeypatch.setenv(name, "")  # recorded, so put back as it was
         monkeypatch.delenv(name, raising=False)
@@ -104,6 +108,7 @@ def _hand_over(run: Path, database_url: str, *, org: str = ORG, producer: str = 
         (
             f"IGNI_ACCESS_TOKEN_FILE={run / 'token'}\n"
             f"IGNI_PRODUCER={producer}\n"
+            f"IGNI_PRODUCER_INCARNATION={INCARNATION}\n"
             f"IGNI_ORG={org}\n"
             f"IGNI_DATABASE_URL={database_url}\n"
         ).encode()
@@ -312,7 +317,14 @@ def test_it_says_what_it_is_waiting_for(cloud, tmp_path: Path):
     path.write_text(f"IGNI_ORG={ORG}\n")
     assert "IGNI_DATABASE_URL" in binding.attempt().waiting_for
     path.write_text("IGNI_DATABASE_URL=sqlite:///x.db\n")
-    assert "IGNI_ORG and IGNI_PRODUCER" in binding.attempt().waiting_for
+    assert "IGNI_ORG, IGNI_PRODUCER and IGNI_PRODUCER_INCARNATION" in binding.attempt().waiting_for
+    path.write_text(f"IGNI_DATABASE_URL=sqlite:///x.db\nIGNI_ORG={ORG}\nIGNI_PRODUCER={PRODUCER}\n")
+    assert "IGNI_PRODUCER_INCARNATION" in binding.attempt().waiting_for
+    path.write_text(
+        f"IGNI_DATABASE_URL=sqlite:///x.db\nIGNI_ORG={ORG}\nIGNI_PRODUCER={PRODUCER}\n"
+        "IGNI_PRODUCER_INCARNATION=m/1\n"
+    )
+    assert "not an incarnation" in binding.attempt().waiting_for
 
 
 def test_it_binds_before_anybody_signed_in(cloud, tmp_path: Path):
@@ -320,10 +332,11 @@ def test_it_binds_before_anybody_signed_in(cloud, tmp_path: Path):
     path = tmp_path / "producer.env"
     path.write_text(
         f"IGNI_DATABASE_URL=sqlite:///x.db\nIGNI_ORG={ORG}\nIGNI_PRODUCER={PRODUCER}\n"
+        f"IGNI_PRODUCER_INCARNATION={INCARNATION}\n"
         f"IGNI_ACCESS_TOKEN_FILE={tmp_path / 'not-yet'}\n"
     )
     attempt = ProducerBinding(path, environ={}).attempt()
-    assert attempt.bound and attempt.tenant == Tenant(org=ORG, producer=PRODUCER)
+    assert attempt.bound and attempt.tenant == Tenant(org=ORG, producer=STORED)
 
 
 @pytest.mark.parametrize(
@@ -355,7 +368,7 @@ def test_requests_before_binding_are_refused():
 
 
 async def test_a_changed_producer_is_reported_after_binding(cloud, tmp_path: Path, monkeypatch):
-    for name in ("IGNI_ACCESS_TOKEN_FILE", "IGNI_ORG", "IGNI_PRODUCER"):
+    for name in ("IGNI_ACCESS_TOKEN_FILE", "IGNI_ORG", "IGNI_PRODUCER", ProducerIncarnation.ENV):
         monkeypatch.setenv(name, "")  # recorded, so put back as it was
         monkeypatch.delenv(name, raising=False)
     monkeypatch.setenv(StorageConfig.DATABASE_URL_ENV, "")  # recorded, so put back as it was
@@ -417,9 +430,9 @@ async def test_an_igni_started_before_its_producer_binds_when_producer_env_appea
             assert os.environ[StorageConfig.DATABASE_URL_ENV] == database_url.url
             settings = load_settings(project_dir=tmp_path)
             assert settings.storage.database_url == database_url.url
-            tenancy.use(SignedInPerson(settings.auth.credentials_file, ExtensionStore()).tenant)
+            tenancy.use(lambda: guest.tenant)
             database = StorageLocator.from_settings(settings).project_database(tmp_path)
-            assert (database.scope.org, database.scope.producer) == (ORG, PRODUCER)
+            assert (database.scope.org, database.scope.producer) == (ORG, STORED)
             store = PendingMessageStore(database)
             store.record_received("s1", "after the restore")
             assert [m.text for m in store.list_pending("s1")] == ["after the restore"]
@@ -715,6 +728,7 @@ async def test_bound_before_any_sign_in_says_so_to_the_windows_and_the_node_agen
         (
             f"IGNI_DATABASE_URL=sqlite:///{tmp_path / 'x.db'}\nIGNI_ORG={ORG}\n"
             f"IGNI_PRODUCER={PRODUCER}\nIGNI_ACCESS_TOKEN_FILE={run_dir / 'token'}\n"
+            f"IGNI_PRODUCER_INCARNATION={INCARNATION}\n"
             f"IGNI_VM_CREDENTIAL_FILE={tmp_path / 'vol' / 'vm-credential'}\n"
         ).encode()
     )
@@ -725,7 +739,7 @@ async def test_bound_before_any_sign_in_says_so_to_the_windows_and_the_node_agen
         gc_freeze=False,
     )
     assert await asyncio.wait_for(guest.bind(None), timeout=5) is True
-    assert guest.tenant == Tenant(org=ORG, producer=PRODUCER), "bound without a token"
+    assert guest.tenant == Tenant(org=ORG, producer=STORED), "bound without a token"
 
     sent: list[Any] = []
 

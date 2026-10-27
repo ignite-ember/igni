@@ -106,7 +106,13 @@ async def test_without_inotify_it_says_so_once(tmp_path: Path):
 async def test_binding_wakes_on_the_rename_and_falls_back_to_polling(
     cloud_layer: Any, tmp_path: Path, monkeypatch
 ):
-    for name in ("IGNI_DATABASE_URL", "IGNI_ACCESS_TOKEN_FILE", "IGNI_ORG", "IGNI_PRODUCER"):
+    for name in (
+        "IGNI_DATABASE_URL",
+        "IGNI_ACCESS_TOKEN_FILE",
+        "IGNI_ORG",
+        "IGNI_PRODUCER",
+        "IGNI_PRODUCER_INCARNATION",
+    ):
         monkeypatch.setenv(name, "")  # recorded, so put back as it was
         monkeypatch.delenv(name, raising=False)
     binding = ProducerBinding(tmp_path / "producer.env")
@@ -115,7 +121,7 @@ async def test_binding_wakes_on_the_rename_and_falls_back_to_polling(
     (tmp_path / "token").write_text(_token())
     (tmp_path / ".p.tmp").write_text(
         f"IGNI_ACCESS_TOKEN_FILE={tmp_path / 'token'}\nIGNI_DATABASE_URL=sqlite:///x.db\n"
-        "IGNI_ORG=org-acme\nIGNI_PRODUCER=person:u-ada\n"
+        "IGNI_ORG=org-acme\nIGNI_PRODUCER=person:u-ada\nIGNI_PRODUCER_INCARNATION=m-1\n"
     )
     handed = time.perf_counter()
     os.replace(tmp_path / ".p.tmp", tmp_path / "producer.env")

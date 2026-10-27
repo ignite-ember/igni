@@ -35,11 +35,17 @@ nor `agno[postgres]`.
 
 ## Commands
 
-- `igni-cloud db grant-producer --org O --producer person:<id>|app:<id>
-  --database-url <admin>` — create a producer's role (or rotate its
-  password) and print `{role, password, database_url}`; `revoke-producer`
-  drops it. What the node agent runs on a new producer's first start: it
-  imports click, SQLAlchemy and the role code only.
+- `igni-cloud db grant-producer --org O --producer person:<id>|app:<id>|space:<id>
+  --incarnation I --database-url <admin>` — create an incarnation's role
+  (or rotate its password) and print `{role, password, database_url,
+  producer, incarnation}`; `revoke-producer` drops it and keeps its rows.
+  What the node agent runs on a new producer's first start: it imports
+  click, SQLAlchemy and the role code only.
+- `igni-cloud db export-producer … --incarnation I --out FILE` — a removed
+  incarnation's data as a portable zip (`manifest.json`, `rows.jsonl`,
+  `attachments/`), for an org admin during retention;
+  `erase-producer … --incarnation I` deletes every row and upload of it
+  and drops its role, printing the audit summary. Idempotent.
 - `IGNI_PROFILE=cloud igni migrate --database-url <admin>` — igni's tables,
   Agno's tables and row-level security.
 - `IGNI_PROFILE=cloud python -m ember_code.backend --ws-port …` — the

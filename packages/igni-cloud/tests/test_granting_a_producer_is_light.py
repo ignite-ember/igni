@@ -43,7 +43,9 @@ def test_igni_cloud_db_is_the_same_commands():
 
 def test_without_a_database_it_says_how_to_name_one(monkeypatch):
     monkeypatch.delenv("IGNI_DATABASE_URL", raising=False)
-    result = CliRunner().invoke(db, ["grant-producer", "--org", "o", "--producer", "person:p"])
+    result = CliRunner().invoke(
+        db, ["grant-producer", "--org", "o", "--producer", "person:p", "--incarnation", "m-1"]
+    )
     assert result.exit_code != 0 and "IGNI_DATABASE_URL" in result.output
 
 
@@ -60,6 +62,7 @@ def test_it_grants_and_revokes_a_producer(postgres_url: str):
             [
                 "grant-producer",
                 *("--org", "acme", "--producer", "space:s-42", "--owner", "app:reporter"),
+                *("--incarnation", "s-42"),
                 *("--database-url", admin.url),
             ],
         )
@@ -78,6 +81,8 @@ def _grant_and_revoke(admin: DatabaseUrl) -> None:
             "acme",
             "--producer",
             "person:ada",
+            "--incarnation",
+            "m-1",
             "--database-url",
             admin.url,
         ],
@@ -85,6 +90,7 @@ def _grant_and_revoke(admin: DatabaseUrl) -> None:
     assert granted.exit_code == 0, granted.output
     credentials = json.loads(granted.output)
     assert {"role", "password", "database_url"} <= set(credentials)
+    assert (credentials["producer"], credentials["incarnation"]) == ("person:ada", "m-1")
     engine = create_engine(DatabaseUrl.parse(credentials["database_url"]).sync)
     try:
         with engine.connect() as connection:
@@ -99,6 +105,8 @@ def _grant_and_revoke(admin: DatabaseUrl) -> None:
             "acme",
             "--producer",
             "person:ada",
+            "--incarnation",
+            "m-1",
             "--database-url",
             admin.url,
         ],

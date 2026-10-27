@@ -10,6 +10,7 @@ nothing producer-specific — and waits for the node agent to write
     IGNI_VM_CREDENTIAL_FILE=/vol/igni/vm-credential
     IGNI_PRODUCER=person:<id>                # or app:<id>, or space:<id>
     IGNI_PRODUCER_OWNER=app:<id>             # a space's app
+    IGNI_PRODUCER_INCARNATION=<id>           # which life of it (a person's membership)
     IGNI_ORG=<org>
     IGNI_DATABASE_URL=postgresql://...
 
@@ -26,6 +27,11 @@ variables are put in igni's environment and :meth:`ProducerBinding.bind`
 returns: the backend then loads its settings and opens the database, as
 it would have with those variables set from the start. Until then every
 request a client sends is answered with a refusal (:class:`UnboundRefusal`).
+
+The rows igni writes are the incarnation's: the bound tenant's producer
+is :attr:`~igni_cloud.producer.ProducerIncarnation.stored`, so a person
+removed and added again — a new incarnation, a fresh VM — never reads
+the old one's rows, which their database role could not reach anyway.
 
 A VM is one producer's for its life. If the file changes after binding to
 name another producer or another database, igni does not move its open
@@ -54,7 +60,12 @@ from ember_code.core.db.scope import Tenant
 from ember_code.protocol import messages as msg
 from igni_cloud.credentials import EnvironmentCredentials
 from igni_cloud.guest.watch import DirectoryWatch
-from igni_cloud.producer import ProducerKind, ProducerRef, UnknownProducer
+from igni_cloud.producer import (
+    ProducerIncarnation,
+    ProducerKind,
+    ProducerRef,
+    UnknownProducer,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -104,9 +115,20 @@ class ProducerEnv(BaseModel):
         """A space's app (``IGNI_PRODUCER_OWNER``)."""
         return self.values.get(ProducerRef.OWNER_ENV) or None
 
-    def identity(self) -> tuple[str, str, str]:
-        """What may not change under a bound igni: database, org and producer."""
-        return (self.database_url, self.org, self.producer)
+    @property
+    def incarnation(self) -> str:
+        """Which life of the producer (``IGNI_PRODUCER_INCARNATION``)."""
+        return self.values.get(ProducerIncarnation.ENV, "")
+
+    def producer_incarnation(self) -> ProducerIncarnation:
+        """The producer and incarnation it names; :class:`UnknownProducer` if malformed."""
+        return ProducerIncarnation.of(
+            ProducerRef.parse(self.producer, owner=self.owner), self.incarnation
+        )
+
+    def identity(self) -> tuple[str, str, str, str]:
+        """What may not change under a bound igni: database, org, producer and incarnation."""
+        return (self.database_url, self.org, self.producer, self.incarnation)
 
     def apply(self, environ: MutableMapping[str, str]) -> None:
         environ.update(self.values)
@@ -197,10 +219,10 @@ class ProducerBinding:
 
     @property
     def tenant(self) -> Tenant | None:
-        """Whose VM this is, as ``producer.env`` named it once bound."""
+        """Whose rows: the incarnation ``producer.env`` named, once bound."""
         if self._bound is None:
             return None
-        return Tenant(org=self._bound.org, producer=self._bound.producer)
+        return Tenant(org=self._bound.org, producer=self._bound.producer_incarnation().stored)
 
     def needed(self) -> bool:
         """Whether to wait: the file is the source when present, and when nothing else names a database."""
@@ -216,12 +238,15 @@ class ProducerBinding:
             return BindingAttempt(waiting_for=f"{self.path} to be readable ({exc})")
         if not env.database_url:
             return BindingAttempt(env=env, waiting_for=f"{self.path} to name IGNI_DATABASE_URL")
-        if not env.org or not env.producer:
+        if not env.org or not env.producer or not env.incarnation:
             return BindingAttempt(
-                env=env, waiting_for=f"{self.path} to name IGNI_ORG and IGNI_PRODUCER"
+                env=env,
+                waiting_for=(
+                    f"{self.path} to name IGNI_ORG, IGNI_PRODUCER and {ProducerIncarnation.ENV}"
+                ),
             )
         try:
-            ProducerRef.parse(env.producer, owner=env.owner)
+            incarnation = env.producer_incarnation()
         except UnknownProducer as exc:
             return BindingAttempt(env=env, waiting_for=f"{self.path} to name a producer: {exc}")
         named = Tenant(org=env.org, producer=env.producer)
@@ -239,7 +264,7 @@ class ProducerBinding:
                     f"{named.producer} of {named.org}, as {self.path} says"
                 ),
             )
-        return BindingAttempt(env=env, tenant=named)
+        return BindingAttempt(env=env, tenant=Tenant(org=env.org, producer=incarnation.stored))
 
     def _tenant_under(self, env: ProducerEnv) -> Tenant | None:
         """The token's tenant, read where the file says the token is.

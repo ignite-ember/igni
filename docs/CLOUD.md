@@ -472,14 +472,32 @@ row-level security (below) holds the same line in the database.
 **Row-level security** (`igni_cloud/db/rls.py`), so the isolation holds when
 igni inside a VM is buggy or compromised:
 
-- *Each producer connects as its own PostgreSQL role.* The role is bound
-  to its org and producer in `producer_roles(role_name, org, producer)`,
+- *Each incarnation of a producer connects as its own PostgreSQL role.*
+  The role is bound to its org, producer and incarnation in
+  `producer_roles(role_name, org, producer, incarnation)`,
   a table no producer role can read or write; the policies reach it only
   through `SECURITY DEFINER` functions keyed on `session_user` — the role
   that logged in, which `SET ROLE` cannot change. Nothing the VM can
   `SET` decides whose rows it sees. A mapping table rather than role
   names spelling the ids: org and producer ids are free-form and may not
   fit a role name, and an opaque name rotates without the data changing.
+- *Incarnations* (igni server's service-identity §11.3). A producer's
+  **incarnation** is which life of it a VM is: a person's membership of
+  the org, new each time they are added; an app's or a space's own id.
+  A person removed and added again is a new incarnation and must never
+  see the old one's data, which the org keeps for its retention period
+  (default 30 days) and then erases. So the cloud's rows are an
+  incarnation's: the producer column holds `person:<id>@<incarnation>`
+  (`ProducerIncarnation.stored`; an incarnation is an id without `@` or
+  `/`), and so does the connection's side of every policy and Agno's
+  `user_id` prefix. In the producer value rather than a column of its
+  own because igni's tables are keyed — and upserted — on org, producer
+  and project, and the core knows nothing of incarnations: a separate
+  column would leave the new incarnation's writes colliding with the
+  old one's keys. A role per incarnation rather than one per producer
+  told its incarnation: the role is what the VM cannot change, so the
+  new VM's credentials cannot reach the old rows, and old credentials,
+  should they leak, cannot reach the new ones.
 - *Every igni table* with `org` and `producer` columns has `ENABLE` and
   `FORCE ROW LEVEL SECURITY` and one policy, for reading and writing, on
   org and producer; the project stays the application's filter (a person
@@ -507,22 +525,39 @@ igni inside a VM is buggy or compromised:
 plan steps 3 and 5). With the org database's admin URL:
 
 - `igni-cloud db grant-producer --org <org> --producer
-  person:<id>|app:<id>|space:<id> [--owner app:<id>]` (the cloud package's
+  person:<id>|app:<id>|space:<id> --incarnation <id> [--owner app:<id>]` (the cloud package's
   command; a **space** is one end user of an app, a producer of its own,
   the app its owner — `IGNI_PRODUCER_OWNER` in `producer.env`; igni server
   is still settling its contract. It imports the role
   code and SQLAlchemy only — 0.16 s for a grant, where `igni db` in the
   full CLI took 0.84 s — since the node agent runs it on a new
   producer's first start)
-  creates the producer's role, or rotates its password when it exists,
-  and prints JSON: `role`, `password`, `database_url`. The platform hands
-  `database_url` to the producer's VM as `IGNI_DATABASE_URL`, the way it
-  hands the token. The org and producer must be the ones the producer's
+  creates the incarnation's role, or rotates its password when it
+  exists, and prints JSON: `role`, `password`, `database_url`, `producer`,
+  `incarnation`. The platform hands `database_url` to the producer's VM
+  as `IGNI_DATABASE_URL`, the way it hands the token, and the
+  incarnation as `IGNI_PRODUCER_INCARNATION` (the feed's `incarnation`). The org and producer must be the ones the producer's
   token names: the application's filter and the policy then agree, and a
   write in any other scope is refused by the database.
-- `igni-cloud db revoke-producer --org <org> --producer <id>` drops the role.
-  What it owned (its uploads' large objects) passes to the admin role;
-  its rows stay, unreachable until a role is granted again.
+- `igni-cloud db revoke-producer --org <org> --producer <id> --incarnation <id>`
+  drops the role — when the incarnation is removed. What it owned (its
+  uploads' large objects) passes to the admin role; its rows stay, for
+  the org's retention period, unreachable by any producer.
+- `igni-cloud db export-producer --org <org> --producer <id> --incarnation <id>
+  --out <file>` writes the incarnation's data, for an org admin during
+  retention, as a zip: `manifest.json` (whose, when, rows per table,
+  uploads), `rows.jsonl` (`{"table", "row"}` per line: every igni table's
+  and Agno's rows, dates ISO 8601, bytes base64) and
+  `attachments/<id>/<filename>`; read in one repeatable-read snapshot,
+  written to a `.partial` file and renamed. It prints the manifest.
+- `igni-cloud db erase-producer --org <org> --producer <id> --incarnation <id>`
+  deletes, in one transaction, every row of the incarnation in igni's
+  and Agno's tables, unlinks its uploads' large objects and drops its
+  role (with anything else it still owned), and prints the audit
+  summary: rows per table, large objects and their bytes, whether a role
+  was dropped, when. Run again it finds nothing and says so. Export and
+  erase need the admin role to bypass row-level security, as data
+  migrations do; one that does not is told so.
 
 **The VM's own credential** (igni server's service-identity §16;
 `igni_cloud/guest/credential.py`). The platform never mints a producer a
@@ -634,11 +669,12 @@ moves all three, default `/run/igni`):
   poll interval. It binds when the file names a
   database and the token in `IGNI_ACCESS_TOKEN_FILE` is a producer's
   whose org and `person:<id>` are the file's `IGNI_ORG` and
-  `IGNI_PRODUCER`; only `IGNI_*` lines are taken into the environment.
+  `IGNI_PRODUCER`, and names `IGNI_PRODUCER_INCARNATION`, whose rows igni
+  then reads and writes; only `IGNI_*` lines are taken into the environment.
   The backend then changes into the project directory again (the volume
   is mounted over it by then) and boots as it would have with the
   variables set from the start. A file rewritten as it was is nothing; one
-  that comes to name another producer or database shuts igni down, for
+  that comes to name another producer, incarnation or database shuts igni down, for
   the image's supervisor to start one that binds afresh. An igni started
   with `IGNI_DATABASE_URL` set and no file binds at once, as before.
 - `activity.json` (`IGNI_ACTIVITY_FILE`): `app.activity` — `state`,
@@ -731,7 +767,8 @@ Measured on macOS (no inotify there, so the run-directory watches poll):
 those two polls and 58 the session's naming finishing.
 
 **Agno's tables** keep Agno's schema; `ScopedAsyncPostgresDb` is a
-wrapper. A session is stored under `<org>/<producer>/<project>#<id>` and
+wrapper. A session is stored under `<org>/<producer>/<project>#<id>` (in
+the cloud the producer is the incarnation's, `person:<id>@<incarnation>`) and
 handed back with the plain id, so two producers' sessions with one id
 are two rows apart by the database's primary key, not by ids being
 random; `user_id` carries the same scope and is forced on every session,

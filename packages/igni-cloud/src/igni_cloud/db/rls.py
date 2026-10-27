@@ -5,16 +5,26 @@ by org, producer and project (:class:`~ember_code.core.db.scope.StorageScope`).
 This is the second layer, held by PostgreSQL itself, so it holds when igni
 inside a producer's VM is buggy or compromised:
 
-* **Each producer connects as its own role**, minted by the platform
-  (:class:`ProducerRoles`, ``igni db grant-producer``) and handed to the VM
-  like its token. A role belongs to one producer through
-  ``producer_roles(role_name, org, producer)``, a table no producer role can
+* **Each incarnation of a producer connects as its own role**, minted by
+  the platform (:class:`ProducerRoles`, ``igni-cloud db grant-producer``)
+  and handed to the VM like its token. A role belongs to one producer's
+  incarnation through ``producer_roles(role_name, org, producer,
+  incarnation)``, a table no producer role can
   read or write; the policies reach it only through ``SECURITY DEFINER``
   functions keyed on ``session_user`` — the role that logged in, which
   ``SET ROLE`` does not change and only a superuser's ``SET SESSION
   AUTHORIZATION`` could. (Inside a ``SECURITY DEFINER`` function
   ``current_user`` is the function's owner, so it would not do.) A setting the VM could ``SET`` would not do:
   igni compromised in the VM would set it to someone else.
+
+  A role per incarnation, not one per producer told its incarnation: a
+  person removed and added again is a new incarnation, and their new
+  VM's credentials must not reach the old one's rows, kept for the org's
+  retention period — nor the old credentials, should they leak, the new
+  rows. The role is what the VM cannot change, so it carries the
+  incarnation; the old role is dropped when the person is removed
+  (``revoke-producer``) and the old rows stay, out of everyone's reach,
+  until ``erase-producer``.
 
   The mapping table rather than role names that spell org and producer:
   org and producer ids are free-form and may not fit a role name (63
@@ -23,10 +33,13 @@ inside a producer's VM is buggy or compromised:
 * **Every igni-owned table** (each with ``org`` and ``producer`` columns)
   has ``ENABLE`` and ``FORCE ROW LEVEL SECURITY`` and a policy comparing the
   row's org and producer with the connection's, for reading and writing.
+  The row's producer is the incarnation's
+  (:attr:`~igni_cloud.producer.ProducerIncarnation.stored`,
+  ``person:<id>@<incarnation>``), and so is the connection's.
   The project stays an application filter: a person sees all their
   projects.
 * **Agno's tables** (schema ``ai``) carry the scope in ``user_id``
-  (``<org>/<producer>/<project>``, :mod:`igni_cloud.storage.scoped_agno`);
+  (``<org>/<producer>@<incarnation>/<project>``, :mod:`igni_cloud.storage.scoped_agno`);
   their policy compares its prefix. Agno's schema-version table is
   readable; its other tables, which igni does not use, are closed.
 * **Large objects** are not rows of a table: they are protected by their
@@ -54,6 +67,7 @@ from sqlalchemy import Connection, Engine, create_engine, text
 from sqlalchemy.engine import make_url
 
 from ember_code.core.db.urls import DatabaseUrl, Dialect
+from igni_cloud.producer import ProducerIncarnation
 
 #: The group role every producer role takes its table privileges from.
 RUNTIME_ROLE = "igni_runtime"
@@ -70,13 +84,18 @@ class TenantFunctions:
     PRODUCER = "igni_producer"
     AGNO_PREFIX = "igni_agno_prefix"
 
+    #: The producer column of the connection's rows: the incarnation's.
+    STORED = f"producer || '{ProducerIncarnation.SEPARATOR}' || incarnation"
+
     @classmethod
     def statements(cls) -> list[str]:
         body = {
             cls.ORG: "SELECT org FROM public.producer_roles WHERE role_name = session_user",
-            cls.PRODUCER: "SELECT producer FROM public.producer_roles WHERE role_name = session_user",
+            cls.PRODUCER: (
+                f"SELECT {cls.STORED} FROM public.producer_roles WHERE role_name = session_user"
+            ),
             cls.AGNO_PREFIX: (
-                "SELECT org || '/' || producer || '/' FROM public.producer_roles "
+                f"SELECT org || '/' || {cls.STORED} || '/' FROM public.producer_roles "
                 "WHERE role_name = session_user"
             ),
         }
@@ -123,7 +142,7 @@ class RowLevelSecurity:
             text(
                 "CREATE TABLE IF NOT EXISTS public.producer_roles ("
                 "role_name text PRIMARY KEY, org text NOT NULL, producer text NOT NULL, "
-                "UNIQUE (org, producer))"
+                "incarnation text NOT NULL, UNIQUE (org, producer, incarnation))"
             )
         )
         c.execute(text("REVOKE ALL ON public.producer_roles FROM PUBLIC"))
@@ -131,7 +150,7 @@ class RowLevelSecurity:
             c.execute(text(statement))
         c.execute(text(f"GRANT USAGE ON SCHEMA public TO {RUNTIME_ROLE}"))
         c.execute(text(f"GRANT SELECT ON public.alembic_version TO {RUNTIME_ROLE}"))
-        for table in self._tenant_tables(c):
+        for table in self.tenant_tables(c):
             self._protect(
                 c,
                 f'public."{table}"',
@@ -139,7 +158,7 @@ class RowLevelSecurity:
                 f"AND producer = (SELECT public.{TenantFunctions.PRODUCER}())",
             )
         c.execute(text(f"GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO {RUNTIME_ROLE}"))
-        if self._schema_exists(c, AGNO_SCHEMA):
+        if self.schema_exists(c, AGNO_SCHEMA):
             self._protect_agno(c)
 
     def _protect(self, c: Connection, table: str, condition: str) -> None:
@@ -185,7 +204,7 @@ class RowLevelSecurity:
                 c.execute(text(f"GRANT SELECT ON {qualified} TO {RUNTIME_ROLE}"))
 
     @staticmethod
-    def _tenant_tables(c: Connection) -> list[str]:
+    def tenant_tables(c: Connection) -> list[str]:
         return list(
             c.scalars(
                 text(
@@ -198,7 +217,22 @@ class RowLevelSecurity:
         )
 
     @staticmethod
-    def _schema_exists(c: Connection, schema: str) -> bool:
+    def agno_scoped_tables(c: Connection) -> list[str]:
+        """Agno's tables with a ``user_id``: the ones holding a scope's rows."""
+        if not RowLevelSecurity.schema_exists(c, AGNO_SCHEMA):
+            return []
+        return list(
+            c.scalars(
+                text(
+                    "SELECT table_name FROM information_schema.columns "
+                    "WHERE table_schema = :schema AND column_name = 'user_id' ORDER BY table_name"
+                ),
+                {"schema": AGNO_SCHEMA},
+            ).all()
+        )
+
+    @staticmethod
+    def schema_exists(c: Connection, schema: str) -> bool:
         return bool(
             c.scalar(
                 text("SELECT 1 FROM information_schema.schemata WHERE schema_name = :s"),
@@ -219,9 +253,9 @@ class ProducerCredentials(BaseModel):
 class ProducerRoles:
     """Mints and drops producers' PostgreSQL roles, as the admin role.
 
-    What the node agent or igni server calls (``igni db grant-producer`` /
-    ``revoke-producer``) when a producer is first placed or removed.
-    Granting again rotates the password.
+    What the node agent calls (``igni-cloud db grant-producer`` /
+    ``revoke-producer``) when a producer's incarnation is first placed or
+    removed. Granting again rotates the password.
     """
 
     PREFIX = "igni_p_"
@@ -231,11 +265,12 @@ class ProducerRoles:
         self._admin = admin
 
     @classmethod
-    def role_name(cls, org: str, producer: str) -> str:
-        digest = hashlib.sha256(f"{org}\x00{producer}".encode()).hexdigest()[:40]
+    def role_name(cls, org: str, producer: ProducerIncarnation) -> str:
+        key = f"{org}\x00{producer.producer.ref}\x00{producer.incarnation}"
+        digest = hashlib.sha256(key.encode()).hexdigest()[:40]
         return f"{cls.PREFIX}{digest}"
 
-    def grant(self, org: str, producer: str) -> ProducerCredentials:
+    def grant(self, org: str, producer: ProducerIncarnation) -> ProducerCredentials:
         role = self.role_name(org, producer)
         # Only [A-Za-z0-9_-]: safe inside a quoted literal, which role
         # DDL needs (it takes no bound parameters).
@@ -254,11 +289,12 @@ class ProducerRoles:
                 c.execute(text(f"GRANT {RUNTIME_ROLE} TO {role} WITH INHERIT TRUE, SET FALSE"))
                 c.execute(
                     text(
-                        "INSERT INTO public.producer_roles (role_name, org, producer) "
-                        "VALUES (:r, :o, :p) ON CONFLICT (role_name) DO UPDATE "
-                        "SET org = excluded.org, producer = excluded.producer"
+                        "INSERT INTO public.producer_roles (role_name, org, producer, incarnation) "
+                        "VALUES (:r, :o, :p, :i) ON CONFLICT (role_name) DO UPDATE "
+                        "SET org = excluded.org, producer = excluded.producer, "
+                        "incarnation = excluded.incarnation"
                     ),
-                    {"r": role, "o": org, "p": producer},
+                    {"r": role, "o": org, "p": producer.producer.ref, "i": producer.incarnation},
                 )
         finally:
             engine.dispose()
@@ -267,24 +303,33 @@ class ProducerRoles:
             role=role, password=password, database_url=url.render_as_string(hide_password=False)
         )
 
-    def revoke(self, org: str, producer: str) -> bool:
+    def revoke(self, org: str, producer: ProducerIncarnation) -> bool:
         """Drop the role. What it owned (its uploads' large objects) passes
-        to the admin role; its rows stay, unreachable until granted again."""
-        role = self.role_name(org, producer)
+        to the admin role; its rows stay — for the org's retention period,
+        until ``erase-producer`` — unreachable until granted again."""
         engine = self._rls.engine()
         try:
             with engine.connect() as c:
-                if not c.scalar(text("SELECT 1 FROM pg_roles WHERE rolname = :r"), {"r": role}):
-                    return False
-                c.execute(text(f"REASSIGN OWNED BY {role} TO CURRENT_USER"))
-                c.execute(text(f"DROP OWNED BY {role}"))
-                c.execute(text(f"DROP ROLE {role}"))
-                c.execute(
-                    text("DELETE FROM public.producer_roles WHERE role_name = :r"), {"r": role}
-                )
+                return self.drop(c, self.role_name(org, producer), keep_owned=True)
         finally:
             engine.dispose()
-        return True
+
+    @staticmethod
+    def drop(c: Connection, role: str, *, keep_owned: bool) -> bool:
+        """Drop ``role`` and its mapping; what it owns is kept (passed to
+        the admin role) or dropped with it. ``False`` if there was none."""
+        if c.scalar(text("SELECT 1 FROM pg_roles WHERE rolname = :r"), {"r": role}):
+            if keep_owned:
+                c.execute(text(f"REASSIGN OWNED BY {role} TO CURRENT_USER"))
+            c.execute(text(f"DROP OWNED BY {role}"))
+            c.execute(text(f"DROP ROLE {role}"))
+            existed = True
+        else:
+            existed = False
+        mapped = c.execute(
+            text("DELETE FROM public.producer_roles WHERE role_name = :r"), {"r": role}
+        )
+        return existed or bool(mapped.rowcount)
 
 
 __all__ = [
