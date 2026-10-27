@@ -79,8 +79,8 @@ and cold, before and after.
       side done: before the first answer only the reseed and an empty
       pool swapped in (a connection opened ahead in the background); the
       old connections close 2 s later; the rest waits for the first answer
-      plus 0.5 s (1 s if nobody asks). Container, PostgreSQL, p50 of 12,
-      client at once after `restored`: handshake 24.9 → 4.3 ms, first RPC
+      plus 0.5 s (1 s if nobody asks). Diagnostic only (Linux container,
+      fake model, PostgreSQL, p50 of 12, client at once after `restored`): handshake 24.9 → 4.3 ms, first RPC
       26.8 → 5.2 ms, first database RPC 41.1 → 24.6 ms; memory touched
       restore → first database answer 28.7 → 24.2 MB. To measure on the
       image.
@@ -91,7 +91,8 @@ and cold, before and after.
 ### 2. Read less on a cold resume — igni and node agent
 
 - [x] igni: find what still dirties memory while idle and stop it, so the
-      changed pages and the working set shrink. Measured by page checksums
+      changed pages and the working set shrink. Diagnostic, measured in a
+      Linux container by page checksums
       (Docker Desktop's kernel has no soft-dirty bits) and referenced bits,
       60 s idle 30 s after a turn: 0.44 MB changed, 2.8 MB touched before;
       0.47 / 2.8 MB after — idle was already quiet (no periodic work of
@@ -105,14 +106,42 @@ and cold, before and after.
       level) and decompress during the UFFD prefetch; measure bytes read
       and resume time.
 
-- [ ] igni: attribute the 90 MB changed at binding (163 MB after a run) to
+- [x] igni: attribute the 90 MB changed at binding (163 MB after a run) to
       modules and objects — Python's reference counting writes to every
       object it touches, so shared base pages become the producer's own —
       and cut it: touch less while binding, freeze or immortalise
-      long-lived objects where Python allows.
-- [ ] igni: the allocator — limit glibc's per-thread arenas or use
+      long-lived objects where Python allows. Attributed in a Linux
+      container (`scripts/measure_resume.py --save-pages`, page checksums
+      against the warm base, each changed 8-byte word mapped to the object
+      and field it falls in): of igni's own process, base pages written
+      were mostly one to eight words each — reference counts, string
+      hashes computed on first use, class version tags, the collector's
+      headers — then code objects' adaptive bytecode (specialisation
+      counters, which CPython 3.12 cannot turn off) and dict keys'
+      versions. Cut: at the warm base the collector freezes what is there
+      and every object alive is made immortal (CPython 3.12's immortal
+      refcount: taking a reference writes nothing), with its strings'
+      hashes and its classes' version tags filled in
+      (`igni_cloud/guest/immortal.py`, 0.3 s at base build). Diagnostic
+      (container, fake model, PostgreSQL; igni's process only, not the
+      VM's page cache): changed pages at binding 35.7–38.3 → 28.4 MB,
+      after a turn 55.4–58.0 → 40.9 MB; RSS at `ready` unchanged (181 MB).
+      Left: the adaptive bytecode and dict-keys versions — only running
+      the code in the base would settle them (a dry-run bind while
+      building the base: proposed, not done).
+- [x] igni: the allocator — limit glibc's per-thread arenas or use
       jemalloc/mimalloc; return freed memory (`malloc_trim`) before
       suspend so it is not in the snapshot. Measure changed pages.
+      Diagnostic (container, same run), changed MB at binding / after a
+      turn / RSS at ready: glibc 28.4 / 40.9 / 181; `MALLOC_ARENA_MAX=2`
+      28.5 / 40.9 / 181 (igni's few threads use few arenas); jemalloc
+      37.6 / 49.5 / 200; mimalloc 30.3 / 41.2 / 205. glibc stays.
+      `malloc_trim(0)` before suspend: 2.0 MB fewer changed pages after a
+      turn — igni answers `/run/igni/suspending` from its before-suspend
+      hook (`packages/igni-cloud/hooks/before-suspend.d/50-igni`, waits
+      0.5 s at most), which the image must install in
+      `hooks/before-suspend.d/`; pages the kernel then reports free
+      leave the snapshot.
 - [ ] igni: memory during a real agent run, and with several chats at once
       in one VM; confirm or change the 1 GiB default.
 - [ ] igni: what is imported at `ready` (~169 MB) that a producer may never

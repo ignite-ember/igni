@@ -20,6 +20,8 @@ never builds one. In boot order:
    restore (``/run/igni/restored``) is reseeded, reconnected and re-timed
    after, what igni built is frozen for the collector, and a ``producer.env``
    that comes to name another producer shuts igni down;
+   and the before-suspend hook's ``suspending`` is answered once igni
+   has handed its free heap back (:mod:`igni_cloud.guest.suspend`);
 5. :meth:`CloudGuest.stop` — the files igni keeps are removed.
 """
 
@@ -47,8 +49,10 @@ from igni_cloud.guest.credential import (
 )
 from igni_cloud.guest.entropy import ProcessEntropy
 from igni_cloud.guest.files import ReadyFile
+from igni_cloud.guest.immortal import BaseObjects
 from igni_cloud.guest.paths import GuestPaths
 from igni_cloud.guest.resume import Restored, RestoreWatch
+from igni_cloud.guest.suspend import SuspendWatch
 from igni_cloud.guest.warm import WarmImports
 
 logger = logging.getLogger(__name__)
@@ -63,6 +67,7 @@ class CloudGuest(BackendHooks):
         *,
         binding: ProducerBinding | None = None,
         restores: RestoreWatch | None = None,
+        suspends: SuspendWatch | None = None,
         warm: WarmImports | None = None,
         gc_freeze: bool = True,
     ) -> None:
@@ -70,6 +75,11 @@ class CloudGuest(BackendHooks):
         self.ready = ReadyFile(paths.ready)
         self.binding = binding if binding is not None else ProducerBinding(paths.producer_env)
         self.restores = restores if restores is not None else RestoreWatch(paths.restored)
+        self.suspends = (
+            suspends
+            if suspends is not None
+            else SuspendWatch(paths.suspending, paths.suspend_ready)
+        )
         self.warm = warm if warm is not None else WarmImports()
         self.entropy = ProcessEntropy()
         self._gc_freeze = gc_freeze
@@ -89,8 +99,16 @@ class CloudGuest(BackendHooks):
             logger.warning("cannot clear %s: %s", self.ready.path, exc)
 
     def listening(self) -> None:
-        """Warm the imports a bound backend needs, then say ``ready``."""
+        """Warm the imports a bound backend needs, freeze them, then say ``ready``."""
         self.warm.run()
+        if self._gc_freeze:
+            # What the warm base holds is every producer's. Immortal, using
+            # it writes no reference count; frozen, a collection while
+            # binding does not walk it. Either write would make the page
+            # this producer's own (:mod:`igni_cloud.guest.immortal`).
+            gc.collect()
+            BaseObjects.immortalise()
+            gc.freeze()
         try:
             self.ready.mark()
         except OSError as exc:
@@ -149,6 +167,7 @@ class CloudGuest(BackendHooks):
         self.restores.on_restore(self._rearm_timers, after_first_answer=True)
         self.restores.on_restore(self._rewrite_activity, after_first_answer=True)
         self.restores.start()
+        self.suspends.start()
         if self.binding.bound is not None and on_rebind is not None:
             self.binding.watch(lambda _env: on_rebind())
         if self.credentials is not None:
@@ -177,6 +196,7 @@ class CloudGuest(BackendHooks):
         if self.credentials is not None:
             await self.credentials.stop()
         await self.restores.stop()
+        await self.suspends.stop()
         await self.binding.stop()
         if self.activity is not None:
             await self.activity.stop()

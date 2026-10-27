@@ -96,6 +96,12 @@ class ProcessPages:
     def clear(self, what: str) -> None:
         Path(f"/proc/{self.pid}/clear_refs").write_text(what)
 
+    def rss_kb(self) -> int:
+        for line in Path(f"/proc/{self.pid}/smaps_rollup").read_text().splitlines():
+            if line.startswith("Rss:"):
+                return int(line.split()[1])
+        return 0
+
     def referenced_kb(self) -> int:
         for line in Path(f"/proc/{self.pid}/smaps_rollup").read_text().splitlines():
             if line.startswith("Referenced:"):
@@ -177,6 +183,39 @@ class ProcessPages:
         return found
 
     @staticmethod
+    def compare(
+        before: dict[int, tuple[str, int]], after: dict[int, tuple[str, int]], top: int = 12
+    ) -> dict[str, Any]:
+        """``after`` against ``before``: base pages written to, and pages new since.
+
+        A base page written to is one a snapshot of the warm base had and
+        the producer's VM now holds a copy of; a new page was not in the
+        base at all.
+        """
+        modified: Counter[str] = Counter()
+        new: Counter[str] = Counter()
+        for address, (label, checksum) in after.items():
+            earlier = before.get(address)
+            if earlier is None:
+                new[label] += 1
+            elif earlier[1] != checksum:
+                modified[label] += 1
+        kb = ProcessPages.PAGE // 1024
+        return {
+            "changed_kb": (sum(modified.values()) + sum(new.values())) * kb,
+            "base_pages_written_kb": sum(modified.values()) * kb,
+            "new_pages_kb": sum(new.values()) * kb,
+            "base_pages_written_by_mapping": {k: v * kb for k, v in modified.most_common(top)},
+            "new_pages_by_mapping": {k: v * kb for k, v in new.most_common(top)},
+        }
+
+    @staticmethod
+    def save(pages: dict[int, tuple[str, int]], path: Path) -> None:
+        with path.open("w") as out:
+            for address, (label, checksum) in pages.items():
+                out.write(f"{address:x} {checksum:x} {label}\n")
+
+    @staticmethod
     def changed(
         before: dict[int, tuple[str, int]], after: dict[int, tuple[str, int]], top: int = 12
     ) -> tuple[int, dict[str, int]]:
@@ -208,7 +247,10 @@ class ProcessPages:
 class Igni:
     """An igni backend started here, in the cloud profile, as a warm base starts."""
 
-    def __init__(self, *, database_url: str | None, port: int) -> None:
+    def __init__(
+        self, *, database_url: str | None, port: int, env: dict[str, str] | None = None
+    ) -> None:
+        self.extra_env = env or {}
         self.tmp = Path(tempfile.mkdtemp(prefix="resume-"))
         self.run_dir = self.tmp / "run"
         self.project = self.tmp / "project"
@@ -246,6 +288,7 @@ class Igni:
         env.update(
             IGNI_PROFILE="cloud", IGNI_RUN_DIR=str(self.run_dir), HOME=str(self.tmp / "home")
         )
+        env.update(self.extra_env)
         self.process = subprocess.Popen(
             [
                 sys.executable,
@@ -457,6 +500,21 @@ class Summary:
 @click.option("--settle", default=3.0, help="Seconds between the session and the idle window")
 @click.option("--resumes", default=10, help="Simulated restores")
 @click.option(
+    "--base-settle", default=2.0, help="Seconds after ready at which the warm base is taken"
+)
+@click.option(
+    "--save-pages",
+    type=click.Path(path_type=Path),
+    default=None,
+    help="Write the base, bound and after-a-run page checksums here",
+)
+@click.option(
+    "--env",
+    "igni_env",
+    multiple=True,
+    help="KEY=VALUE for igni's process (MALLOC_ARENA_MAX=2, LD_PRELOAD=...)",
+)
+@click.option(
     "--connect-after-ms",
     default=30.0,
     help="From restored to the client connecting: the node agent's reply and the stream",
@@ -472,6 +530,9 @@ def main(
     idle_seconds: float,
     settle: float,
     resumes: int,
+    base_settle: float,
+    save_pages: Path | None,
+    igni_env: tuple[str, ...],
     connect_after_ms: float,
     port: int,
     pid: int | None,
@@ -485,7 +546,11 @@ def main(
         if pid is None:
             server = ThreadingHTTPServer(("127.0.0.1", 0), FakeModel)
             threading.Thread(target=server.serve_forever, daemon=True).start()
-            igni = Igni(database_url=database_url, port=port)
+            igni = Igni(
+                database_url=database_url,
+                port=port,
+                env=dict(item.split("=", 1) for item in igni_env),
+            )
             igni.start(f"http://127.0.0.1:{server.server_address[1]}/v1")
             igni.wait_ready()
             assert igni.process is not None
@@ -496,9 +561,25 @@ def main(
                 simulate=True,
                 connect_after_ms=connect_after_ms,
             )
-            result["rss_at_ready_kb"] = probe.pages.referenced_kb()
+            # The warm base: what a snapshot taken now would hold.
+            await asyncio.sleep(base_settle)
+            base = await asyncio.to_thread(probe.pages.contents)
+            result["rss_at_ready_kb"] = probe.pages.rss_kb()
             igni.hand_over()
             result["bind_to_first_answer_ms"] = round(await probe.first_answer() * 1000, 1)
+            await asyncio.sleep(settle)
+            bound = await asyncio.to_thread(probe.pages.contents)
+            result["bound"] = ProcessPages.compare(base, bound) | {"rss_kb": probe.pages.rss_kb()}
+            await probe.session()
+            await asyncio.sleep(settle)
+            ran = await asyncio.to_thread(probe.pages.contents)
+            result["after_a_run"] = ProcessPages.compare(base, ran) | {
+                "rss_kb": probe.pages.rss_kb()
+            }
+            if save_pages is not None:
+                save_pages.mkdir(parents=True, exist_ok=True)
+                for name, pages in (("base", base), ("bound", bound), ("ran", ran)):
+                    ProcessPages.save(pages, save_pages / f"{name}.pages")
         else:
             assert ws_url and restored, "--ws and --restored with --pid"
             probe = ResumeProbe(
@@ -509,9 +590,11 @@ def main(
                 connect_after_ms=connect_after_ms,
             )
         try:
-            await probe.session()
-            await asyncio.sleep(settle)
-            result["idle"] = await probe.idle(idle_seconds)
+            if pid is not None:
+                await probe.session()
+                await asyncio.sleep(settle)
+            if idle_seconds:
+                result["idle"] = await probe.idle(idle_seconds)
             if probe.simulate and resumes:
                 runs = []
                 for _ in range(resumes):

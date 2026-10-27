@@ -156,7 +156,9 @@ def test_what_a_bound_backend_imports_is_imported_before_ready(tmp_path: Path):
             self.ready_then = (tmp_path / "ready").exists()
 
     warm = Recorded()
-    guest = CloudGuest(GuestPaths.from_env({GuestPaths.RUN_DIR_ENV: str(tmp_path)}), warm=warm)
+    guest = CloudGuest(
+        GuestPaths.from_env({GuestPaths.RUN_DIR_ENV: str(tmp_path)}), warm=warm, gc_freeze=False
+    )
     guest.listening()
     assert warm.ready_then is False, "imports first: the snapshot is taken at ready"
     assert (tmp_path / "ready").exists()
@@ -400,6 +402,7 @@ async def test_an_igni_started_before_its_producer_binds_when_producer_env_appea
     guest = CloudGuest(
         GuestPaths.from_env(),
         binding=ProducerBinding(GuestPaths.from_env().producer_env, poll_seconds=0.01),
+        gc_freeze=False,
     )
     guest.starting()
     # Engines other tests opened on the run's database go, so that "no

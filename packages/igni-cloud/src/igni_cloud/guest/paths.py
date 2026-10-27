@@ -27,6 +27,8 @@ class GuestPaths(BaseModel):
     READY_ENV: ClassVar[str] = "IGNI_READY_FILE"
     PRODUCER_ENV_ENV: ClassVar[str] = "IGNI_PRODUCER_ENV_FILE"
     RESTORED_ENV: ClassVar[str] = "IGNI_RESTORED_FILE"
+    SUSPENDING_ENV: ClassVar[str] = "IGNI_SUSPENDING_FILE"
+    SUSPEND_READY_ENV: ClassVar[str] = "IGNI_SUSPEND_READY_FILE"
     TOKEN_ENV: ClassVar[str] = "IGNI_ACCESS_TOKEN_FILE"
     MANAGED_SETTINGS_ENV: ClassVar[str] = "IGNI_MANAGED_SETTINGS_FILE"
     VM_CREDENTIAL_ENV: ClassVar[str] = "IGNI_VM_CREDENTIAL_FILE"
@@ -41,6 +43,10 @@ class GuestPaths(BaseModel):
     producer_env: Path
     #: ``{generation, at_ms, clock_step_ms}``, rewritten by the guest agent after every restore.
     restored: Path
+    #: ``{"token"}``, written by the before-suspend hook: igni gets ready.
+    suspending: Path
+    #: ``{"token", "ms", "trimmed_kb"}``, igni's answer to ``suspending``.
+    suspend_ready: Path
     #: The access token igni keeps from the VM credential (``producer.env`` names it).
     token: Path
     #: igni's managed policy, written by the node agent at every start.
@@ -62,6 +68,8 @@ class GuestPaths(BaseModel):
             ready=named(cls.READY_ENV, "ready"),
             producer_env=named(cls.PRODUCER_ENV_ENV, "producer.env"),
             restored=named(cls.RESTORED_ENV, "restored"),
+            suspending=named(cls.SUSPENDING_ENV, "suspending"),
+            suspend_ready=named(cls.SUSPEND_READY_ENV, "suspend-ready"),
             token=named(cls.TOKEN_ENV, "token"),
             managed_settings=named(cls.MANAGED_SETTINGS_ENV, "managed-settings.yaml"),
             vm_credential=Path(

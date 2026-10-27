@@ -767,6 +767,26 @@ and whenever a task is stored (`ActivityRegistry.rearm`). The model's
 HTTP client is rebuilt after every run, and a run in progress keeps the
 VM awake (`suspendable: false`).
 
+**The warm base stays the base's.** A page a producer's igni writes to
+becomes its own: stored at every suspend, read back on a cold resume.
+CPython writes to an object whenever it takes or drops a reference to
+it, computes a string's hash and a class's version tag on first use, and
+writes a header into every object a collection walks — so merely running
+igni turned base pages into the producer's own. When the warm base is
+taken (`CloudGuest.listening`, just before `ready`), the collector
+freezes what is there and every object alive is made immortal (CPython
+3.12's immortal reference count, the one `None` has: taking a reference
+writes nothing, and it is never freed — these objects lived as long as
+the process anyway), with its strings' hashes and its classes' version
+tags filled in (`igni_cloud/guest/immortal.py`). **Before a suspend**
+the image's hook `packages/igni-cloud/hooks/before-suspend.d/50-igni`
+(installed in the guest agent's `hooks/before-suspend.d/`) writes
+`/run/igni/suspending` and waits at most 0.5 s for igni's answer in
+`/run/igni/suspend-ready`: igni hands its allocator's free memory back
+(`malloc_trim(0)`), which the kernel then reports free and the snapshot
+leaves out (`igni_cloud/guest/suspend.py`). glibc's allocator stays:
+jemalloc and mimalloc changed more pages and held more memory.
+
 **Idle is idle.** Every wake-up of an idle igni dirties memory the next
 suspend must write. Once bound, igni has no periodic work of its own in
 the cloud: `activity.json` is written when something moves (a heartbeat
