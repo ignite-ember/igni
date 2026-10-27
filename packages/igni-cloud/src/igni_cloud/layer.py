@@ -9,7 +9,8 @@ installs it when the image sets ``IGNI_PROFILE=cloud`` — for the backend,
   file under ``~/.igni`` (:mod:`igni_cloud.logs`);
 * **credentials** — the token the VM keeps from its own credential, never
   ``credentials.json`` (:mod:`igni_cloud.credentials`);
-* **settings** — only the image's (command line, managed policy) and igni
+* **settings** — only the image's (command line, and the managed policy
+  the node agent writes to ``/run/igni/managed-settings.yaml``) and igni
   server's (group policy); nothing under ``~/.igni`` or the workspace;
 * **state** — must be in ``IGNI_DATABASE_URL``;
 * **the extension listing** — the priority and group igni server sends are
@@ -31,6 +32,7 @@ URL (:mod:`igni_cloud.storage.postgres`, the ``igni.storage`` entry point
 from __future__ import annotations
 
 import logging
+from pathlib import Path
 from typing import ClassVar
 
 from ember_code.core.auth.credentials import CredentialSource
@@ -38,6 +40,7 @@ from ember_code.core.layer import BackendHooks, Layer
 from ember_code.core.mcp.approval import McpApprovalPolicy
 from igni_cloud.credentials import EnvironmentCredentials
 from igni_cloud.guest.contract import CloudGuest
+from igni_cloud.guest.paths import GuestPaths
 from igni_cloud.logs import StdoutLog
 from igni_cloud.mcp_approvals import CloudMcpApprovals
 
@@ -65,6 +68,11 @@ class CloudLayer(Layer):
 
     def mcp_approvals(self) -> McpApprovalPolicy | None:
         return CloudMcpApprovals()
+
+    def managed_settings_path(self) -> Path | None:
+        # The node agent writes the producer's managed policy into the run
+        # directory at every start, after the token and before producer.env.
+        return GuestPaths.from_env().managed_settings
 
     def platform_calls_need_control(self) -> bool:
         # Only the gateway's control stream: the node agent adds the header

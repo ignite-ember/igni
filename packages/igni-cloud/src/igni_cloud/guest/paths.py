@@ -28,6 +28,7 @@ class GuestPaths(BaseModel):
     PRODUCER_ENV_ENV: ClassVar[str] = "IGNI_PRODUCER_ENV_FILE"
     RESTORED_ENV: ClassVar[str] = "IGNI_RESTORED_FILE"
     TOKEN_ENV: ClassVar[str] = "IGNI_ACCESS_TOKEN_FILE"
+    MANAGED_SETTINGS_ENV: ClassVar[str] = "IGNI_MANAGED_SETTINGS_FILE"
     VM_CREDENTIAL_ENV: ClassVar[str] = "IGNI_VM_CREDENTIAL_FILE"
     DEFAULT_VM_CREDENTIAL: ClassVar[str] = "/vol/igni/vm-credential"
     DEFAULT_RUN_DIR: ClassVar[str] = "/run/igni"
@@ -42,6 +43,8 @@ class GuestPaths(BaseModel):
     restored: Path
     #: The access token igni keeps from the VM credential (``producer.env`` names it).
     token: Path
+    #: igni's managed policy, written by the node agent at every start.
+    managed_settings: Path
     #: The VM's credential, on the producer's volume (``producer.env`` names it).
     vm_credential: Path
 
@@ -60,6 +63,7 @@ class GuestPaths(BaseModel):
             producer_env=named(cls.PRODUCER_ENV_ENV, "producer.env"),
             restored=named(cls.RESTORED_ENV, "restored"),
             token=named(cls.TOKEN_ENV, "token"),
+            managed_settings=named(cls.MANAGED_SETTINGS_ENV, "managed-settings.yaml"),
             vm_credential=Path(
                 env.get(cls.VM_CREDENTIAL_ENV, "").strip() or cls.DEFAULT_VM_CREDENTIAL
             ),

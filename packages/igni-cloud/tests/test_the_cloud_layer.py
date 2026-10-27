@@ -29,6 +29,7 @@ from ember_code.core.auth.credentials import (
     CredentialsStore,
 )
 from ember_code.core.config.llm_call_logger import LlmCallLogger
+from ember_code.core.config.managed_policy import ManagedPolicySource
 from ember_code.core.config.settings import Settings, load_settings
 from ember_code.core.db.locator import StorageLocator
 from ember_code.core.layer import Layer, Layers, UnknownLayer
@@ -266,3 +267,12 @@ def test_a_fresh_token_reaches_a_running_vm_through_the_file_the_gateway_writes(
     fresh.write_text("second")
     fresh.replace(token_file)  # how the gateway refreshes it
     assert CloudCredentials().access_token == "second"
+
+
+def test_managed_settings_are_what_the_node_agent_wrote_to_the_run_directory(
+    cloud, tmp_path: Path, monkeypatch
+):
+    monkeypatch.setenv("IGNI_RUN_DIR", str(tmp_path))
+    (tmp_path / "managed-settings.yaml").write_text("update_check_ttl: 0\n")
+    assert ManagedPolicySource.platform_path() == tmp_path / "managed-settings.yaml"
+    assert ManagedPolicySource.load() == {"update_check_ttl": 0}

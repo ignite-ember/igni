@@ -555,6 +555,19 @@ written to `activity.json` (`credential`). The node agent no longer
 writes or refreshes tokens; `IGNI_ACCESS_TOKEN` (fixed for the process)
 remains for a VM started without the guest contract.
 
+**Managed settings** are what the node agent writes to
+`/run/igni/managed-settings.yaml` at every start, after the token and
+before `producer.env` (`IGNI_MANAGED_SETTINGS_FILE`; the layer's
+`managed_settings_path` seam) — `api_url` among them.
+
+**Confirmed end to end on Linux** (a container, PostgreSQL on the host):
+a cold boot with the node agent's files in place — an app's credential
+on the volume, managed settings, `producer.env` with a granted role —
+binds, exchanges the credential (rotated, kept `0600`), writes the token
+and `activity.json` with `credential: ready`, and answers a client, 3.3 s
+after start including a cold interpreter; the cloud package's tests pass
+there too, inotify included.
+
 **Bound before anybody signed in.** igni binds with `producer.env`'s
 database, org and producer alone — automatic provisioning boots a
 producer's VM before the person ever signs in. Its rows are that

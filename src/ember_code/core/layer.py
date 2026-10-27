@@ -42,6 +42,7 @@ import logging
 import os
 import threading
 from importlib.metadata import entry_points
+from pathlib import Path
 from typing import TYPE_CHECKING, Any, ClassVar
 
 if TYPE_CHECKING:
@@ -124,6 +125,10 @@ class Layer:
 
     def mcp_approvals(self) -> McpApprovalPolicy | None:
         """How MCP servers are approved instead of the desktop's file and prompt; ``None`` is those."""
+        return None
+
+    def managed_settings_path(self) -> Path | None:
+        """Where the managed policy is, instead of the platform's directory; ``None`` is that."""
         return None
 
     def platform_calls_need_control(self) -> bool:

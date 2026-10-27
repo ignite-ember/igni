@@ -58,9 +58,7 @@ class ProducerArgument:
 
 @db.command("grant-producer")
 @click.option("--org", required=True)
-@click.option(
-    "--producer", required=True, help="`person:<id>`, `app:<id>` or `space:<id>`"
-)
+@click.option("--producer", required=True, help="`person:<id>`, `app:<id>` or `space:<id>`")
 @click.option("--owner", default=None, help="A space's app: `app:<id>`")
 @click.option("--database-url", default=None, help=_ADMIN_URL_HELP)
 def grant_producer(org: str, producer: str, owner: str | None, database_url: str | None) -> None:
