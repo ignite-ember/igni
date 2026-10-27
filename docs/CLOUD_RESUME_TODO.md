@@ -1,7 +1,8 @@
 # igni cloud — faster resume, TODO
 
-Status: igni's part of 1 and 2 done and measured in a Linux container;
-on the image, still to measure. 3 measured. Design: `docs/CLOUD.md`. Build plan:
+Status: target 50 ms. igni's part of 1 and the idle-memory part of 2 done
+and measured in a Linux container; on the image, still to measure. 3
+done. Design: `docs/CLOUD.md`. Build plan:
 `docs/CLOUD_BUILD_PLAN.md`. Measurements so far: `igni__cloudvm`
 `RESULTS.md`.
 
@@ -28,6 +29,20 @@ guest (not igni), fscrypt state (`igni__cloudvm` `5fccca5`):
 Storage choice is settled: local SSD by default; pd-ssd, Hyperdisk and
 EBS as supported options (a network disk survives its node, so recovery
 is simpler at +85 ms cold); pd-balanced not for node state.
+
+## Target
+
+Wake plus first answer under **50 ms** at p50, measured at the gateway on
+the real igni image with node state on local SSD.
+
+- Hot (pages still in host memory): 44 ms with the test guest today, so
+  igni's own part must stay a few milliseconds.
+- Cold (working set read from disk): 195 ms with the test guest today.
+  Under 50 ms needs a small working set read compressed and in parallel
+  (items 2, 5), and most resumes made hot by keeping pages in memory
+  (item 4). Each item reports how far it moved this.
+- Out of scope for 50 ms: resumes from network disks or object storage
+  (offload), and a producer's first start; they get their own numbers.
 
 ## TODO
 
@@ -77,6 +92,19 @@ and cold, before and after.
 - [ ] Node agent: store the working set compressed (lz4 or zstd at a fast
       level) and decompress during the UFFD prefetch; measure bytes read
       and resume time.
+
+- [ ] igni: attribute the 90 MB changed at binding (163 MB after a run) to
+      modules and objects — Python's reference counting writes to every
+      object it touches, so shared base pages become the producer's own —
+      and cut it: touch less while binding, freeze or immortalise
+      long-lived objects where Python allows.
+- [ ] igni: the allocator — limit glibc's per-thread arenas or use
+      jemalloc/mimalloc; return freed memory (`malloc_trim`) before
+      suspend so it is not in the snapshot. Measure changed pages.
+- [ ] igni: memory during a real agent run, and with several chats at once
+      in one VM; confirm or change the 1 GiB default.
+- [ ] igni: what is imported at `ready` (~169 MB) that a producer may never
+      use; weigh it against loading on the first request.
 
 ### 3. Start reading earlier — gateway
 
