@@ -174,19 +174,24 @@ A person removed from an organisation (or deactivated, erased, their
 sessions withdrawn), an app or a space deleted: nothing they hold works
 from that moment, not for the ten minutes their token would still live
 (igni's service-identity §21). While `igni.lifespan` runs, the service
-follows each organisation's revocations (`GET /v1/revocations`, with its
-own token for that organisation, long-polled) from the first token it
-sees of it, and refuses with a 401 a token whose subject, kind and
-organisation a revocation names and whose `iat` is at or before its
-`not_before`. Someone added back signs in again, after it.
+follows the revocations of every organisation it serves on one cursor
+and one long poll (`GET /v1/revocations?scope=served`, `If-None-Match`
+answered with 304 when nothing is new), and refuses with a 401 a token
+whose subject, kind and organisation a revocation names and whose
+`iat_ms` is at or before its `not_before_ms`. Someone added back signs
+in again, after it.
 
-The check **fails closed**: an organisation's tokens are answered with a
-503 until its revocations have been read once, and whenever they go
-unrefreshed for `IGNI_REVOCATIONS_MAX_STALENESS` seconds (30 by
-default). A service that never runs `igni.lifespan` checks nothing. In
-tests, `FakeIgni.publish_revocation("u-ada", org_id=…)` (`org_id=None`
-for every organisation, `kind="app"` or `"space"` for those) publishes
-one.
+Both calls take one of the service's own tokens, and a service token
+names an organisation: set `IGNI_SERVED_ORGANISATION` to any one it
+serves and the service follows from startup; without it, the first
+token it checks names one, and waits for the first read.
+
+The check **fails closed**: tokens are answered with a 503 until the
+revocations have been read once, and whenever they go unrefreshed for
+`IGNI_REVOCATIONS_MAX_STALENESS` seconds (30 by default). A service that
+never runs `igni.lifespan` checks nothing. In tests,
+`FakeIgni.publish_revocation("u-ada", org_id=…)` (`org_id=None` for every
+organisation, `kind="app"` or `"space"` for those) publishes one.
 
 ## Calls from the extension's page
 

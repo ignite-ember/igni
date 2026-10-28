@@ -140,7 +140,11 @@ class IgniService:
             retry_min=retry_min,
         )
         self.tokens = ServiceTokens(self.server, self.registration, self.key, clock=self.clock)
-        self.revocation_feed = RevocationFeed(self.tokens, self.revocations)
+        self.revocation_feed = RevocationFeed(
+            self.tokens,
+            self.revocations,
+            known_organisation=settings.served_organisation or None,
+        )
         self.verifier.revocations = self.revocation_feed
         self.directory = DirectoryClient(self.tokens, clock=self.clock)
         self.notifier = Notifier(self.tokens)

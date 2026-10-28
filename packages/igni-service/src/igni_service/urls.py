@@ -41,6 +41,8 @@ class IgniPaths:
     NOTIFICATIONS = "/v1/service-notifications"
     #: What igni has revoked in an organisation (service-identity §21).
     REVOCATIONS = "/v1/revocations"
+    #: Every organisation this service serves (service-identity §21).
+    SERVED = "/v1/organisations/served"
 
     @classmethod
     def extension(cls, client_id: str) -> str:

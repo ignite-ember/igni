@@ -426,6 +426,7 @@ class FakeIgni:
             "aud": aud if aud is not None else self.service_url,
             "token_use": use,
             "iat": now,
+            "iat_ms": int(self.clock.wall() * 1000),
             "exp": int(now + lifetime),
             **claims,
         }
@@ -534,6 +535,7 @@ class FakeIgni:
             path.startswith(f"{IgniPaths.DIRECTORY}/")
             or path == IgniPaths.NOTIFICATIONS
             or path == IgniPaths.REVOCATIONS
+            or path == IgniPaths.SERVED
         ):
             held = self._service_tokens.get(
                 seen.headers.get("authorization", "").removeprefix("Bearer ")
@@ -543,7 +545,9 @@ class FakeIgni:
                 return httpx.Response(401, json={"detail": "Not authenticated"})
             client_id, org_id = held
             if path == IgniPaths.REVOCATIONS:
-                return self._revocations(seen, org_id)
+                return self._revocations(seen)
+            if path == IgniPaths.SERVED:
+                return self._served()
             if path == IgniPaths.NOTIFICATIONS:
                 return self._notify(seen, client_id, org_id)
             return self._directory(seen, org_id)
@@ -569,23 +573,26 @@ class FakeIgni:
             org_id=org_id,
             subject_id=subject_id,
             incarnation=incarnation,
-            not_before=int(self.clock.wall()),
+            not_before_ms=int(self.clock.wall() * 1000),
             reason=reason,
         )
         self.revocations.append(revocation)
         return revocation
 
-    def _revocations(self, seen: SeenRequest, org_id: str) -> httpx.Response:
-        """An organisation's revocations, and every organisation's — at once, never held."""
+    def _served(self) -> httpx.Response:
+        served = [
+            {"org_id": org_id, "name": held.organisation.name}
+            for org_id, held in self.organisations.items()
+        ]
+        return httpx.Response(200, json={"organisations": served})
+
+    def _revocations(self, seen: SeenRequest) -> httpx.Response:
+        """Every served organisation's revocations on one cursor — at once, never held."""
         since = int((seen.query.get("since") or ["0"])[0] or 0)
-        limit = int((seen.query.get("limit") or ["500"])[0])
-        mine = [
-            (number, r)
-            for number, r in enumerate(self.revocations, start=1)
-            if number > since and r.org_id in (org_id, None)
-        ][:limit]
-        cursor = mine[-1][0] if mine else max(since, 0)
-        page = RevocationPage(revocations=[r for _, r in mine], cursor=str(cursor))
+        cursor = str(len(self.revocations))
+        if seen.headers.get("if-none-match") == f'"{cursor}"':
+            return httpx.Response(304)
+        page = RevocationPage(revocations=self.revocations[since:], cursor=cursor)
         return httpx.Response(200, json=page.model_dump(mode="json"))
 
     # ── Registration and the extension ──────────────────────────────

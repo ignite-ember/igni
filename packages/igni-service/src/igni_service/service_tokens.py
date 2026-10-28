@@ -103,13 +103,14 @@ class ServiceTokens:
         401 — which is retried once with a new token, and raised if it
         happens again.
         """
+        extra_headers: dict[str, str] = dict(kwargs.pop("headers", None) or {})
         for attempt in (1, 2):
             token = await self.token(org_id)
             try:
                 response = await self._igni.http.request(
                     method,
                     self._igni.url(path),
-                    headers={"Authorization": f"Bearer {token}"},
+                    headers={**extra_headers, "Authorization": f"Bearer {token}"},
                     **kwargs,
                 )
             except httpx.HTTPError as exc:
