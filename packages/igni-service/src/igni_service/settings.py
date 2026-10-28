@@ -53,11 +53,5 @@ class IgniSettings(BaseSettings):
     revocations_max_staleness: float = Field(
         default=30.0, validation_alias=AliasChoices("IGNI_REVOCATIONS_MAX_STALENESS")
     )
-    #: Any one organisation this service serves: its token reads the
-    #: revocations of them all from startup. Without it, the first token
-    #: the service checks names one.
-    served_organisation: str = Field(
-        default="", validation_alias=AliasChoices("IGNI_SERVED_ORGANISATION")
-    )
     #: Seconds before a call to igni gives up.
     timeout: float = Field(default=10.0, validation_alias=AliasChoices("IGNI_SERVER_TIMEOUT"))

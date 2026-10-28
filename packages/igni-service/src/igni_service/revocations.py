@@ -20,11 +20,10 @@ signs in again, after the watermark.
 
 :class:`RevocationFeed` follows them for as long as the service runs —
 long-polled, asked again at once after anything new, and every
-:attr:`RevocationFeed.POLL_SECONDS` while igni fails. Both calls take any
-of the service's tokens, and a service token names one organisation:
-the feed starts once it knows one — from
-:attr:`RevocationFeed.known_organisation` (``IGNI_SERVED_ORGANISATION``),
-or the first token it is asked to check. While it runs the check
+:attr:`RevocationFeed.POLL_SECONDS` while igni fails. Both calls take a
+token for no organisation (``client_credentials`` with
+``scope=revocations``, good for these two calls only), so the feed
+follows from start-up. While it runs the check
 **fails closed**: tokens are refused (:class:`RevocationsStale`, a 503)
 until the revocations have been read once, and whenever they go
 unrefreshed for :attr:`RevocationList.max_staleness` seconds. A verifier
@@ -40,17 +39,20 @@ import time
 from enum import StrEnum
 from typing import TYPE_CHECKING, Any, ClassVar
 
+import httpx
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from igni_service.clock import Clock
 from igni_service.errors import IgniUnavailable
+from igni_service.token_endpoint import GrantRefused
 from igni_service.tokens import TokenRefused
 from igni_service.urls import IgniPaths
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
 
-    from igni_service.service_tokens import ServiceTokens
+    from igni_service.server import IgniServer
+    from igni_service.token_endpoint import TokenEndpoint
 
 logger = logging.getLogger(__name__)
 
@@ -186,23 +188,28 @@ class RevocationFeed:
     #: Between tries while igni fails.
     POLL_SECONDS: ClassVar[float] = 2.0
 
+    #: The token's scope: no organisation, these two calls only.
+    SCOPE: ClassVar[str] = "revocations"
+    #: How long before expiry the token is replaced, in seconds.
+    RENEW_BEFORE: ClassVar[float] = 60.0
+
     def __init__(
         self,
-        tokens: ServiceTokens,
+        igni: IgniServer,
+        endpoint: TokenEndpoint,
         revocations: RevocationList,
         *,
-        known_organisation: str | None = None,
+        clock: Clock | None = None,
         sleep: Callable[[float], Awaitable[None]] | None = None,
     ) -> None:
-        self._tokens = tokens
+        self._igni = igni
+        self._endpoint = endpoint
         self.revocations = revocations
-        #: An organisation whose service token reads the lists (any served one).
-        self.known_organisation = known_organisation or None
+        self._clock = clock or Clock()
         self._sleep = sleep or asyncio.sleep
         self._first = asyncio.Event()
-        self._org_known = asyncio.Event()
-        if self.known_organisation:
-            self._org_known.set()
+        self._token: str | None = None
+        self._token_expires = 0.0
         self._stop: asyncio.Event | None = None
         #: What ``/v1/organisations/served`` last answered.
         self.served: list[ServedOrganisation] = []
@@ -228,16 +235,11 @@ class RevocationFeed:
         if not self.running:
             return
         if not self.revocations.has_heard:
-            org = str(claims.get("org") or "")
-            if org and not self.known_organisation:
-                self.known_organisation = org
-                self._org_known.set()
             with contextlib.suppress(TimeoutError):
                 await asyncio.wait_for(self._first.wait(), self.revocations.max_staleness)
         self.revocations.check(claims)
 
     async def _follow(self) -> None:
-        await self._org_known.wait()
         while self.running:
             wait = self.WAIT_SECONDS if self._first.is_set() else 0.0
             started = time.monotonic()
@@ -285,11 +287,35 @@ class RevocationFeed:
         except (ValueError, ValidationError) as exc:
             raise IgniUnavailable("igni server's revocations are unreadable") from exc
 
-    async def _request(self, path: str, **kwargs: Any) -> Any:
-        org = self.known_organisation
-        if not org:
-            raise IgniUnavailable("no organisation known yet to ask igni with")
-        return await self._tokens.request("GET", path, org_id=org, **kwargs)
+    async def _request(self, path: str, **kwargs: Any) -> httpx.Response:
+        """A GET with the revocations token; a 401 is tried once more with a new one."""
+        headers: dict[str, str] = dict(kwargs.pop("headers", None) or {})
+        for attempt in (1, 2):
+            token = await self._read_token()
+            try:
+                response = await self._igni.http.get(
+                    self._igni.url(path),
+                    headers={**headers, "Authorization": f"Bearer {token}"},
+                    **kwargs,
+                )
+            except httpx.HTTPError as exc:
+                raise IgniUnavailable(f"could not reach igni server: {type(exc).__name__}") from exc
+            if response.status_code != 401 or attempt == 2:
+                return response
+            self._token = None
+        raise IgniUnavailable("unreachable")  # pragma: no cover - the loop returns
+
+    async def _read_token(self) -> str:
+        if self._token is None or self._clock.monotonic() >= self._token_expires:
+            try:
+                issued = await self._endpoint.grant(
+                    {"grant_type": "client_credentials", "scope": self.SCOPE}
+                )
+            except GrantRefused as exc:
+                raise IgniUnavailable(f"igni server refused a revocations token: {exc}") from exc
+            self._token = issued.access_token
+            self._token_expires = self._clock.monotonic() + issued.expires_in - self.RENEW_BEFORE
+        return self._token
 
 
 __all__ = [

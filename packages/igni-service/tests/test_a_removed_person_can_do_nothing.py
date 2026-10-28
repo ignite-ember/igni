@@ -40,7 +40,11 @@ class Feed:
             await asyncio.sleep(0.001)
 
         igni.revocation_feed = RevocationFeed(
-            igni.tokens, igni.revocations, known_organisation=ORG, sleep=sleep
+            igni.server,
+            igni.revocation_feed._endpoint,
+            igni.revocations,
+            clock=igni.clock,
+            sleep=sleep,
         )
         igni.verifier.revocations = igni.revocation_feed
 
@@ -178,19 +182,24 @@ async def test_one_long_poll_for_every_organisation_and_a_304_when_nothing_is_ne
     assert {o.org_id for o in igni.revocation_feed.served} == {ORG, OTHER_ORG}
 
 
-async def test_without_a_known_organisation_the_first_token_names_one(
-    fake: FakeIgni, igni: IgniService
+async def test_it_follows_from_start_up_with_a_token_for_no_organisation(
+    feed: Feed, fake: FakeIgni
 ) -> None:
+    await feed.settle()
+    pulls = fake.requests_to("/v1/revocations") + fake.requests_to("/v1/organisations/served")
+    tokens = {p.headers["authorization"].removeprefix("Bearer ") for p in pulls}
+    assert tokens and all(t.startswith("revocations-") for t in tokens), "no organisation's"
+    grants = [s.form() for s in fake.requests_to("/v1/oauth/token")]
+    assert {"grant_type": "client_credentials", "scope": "revocations"} in [
+        {k: v for k, v in g.items() if k in ("grant_type", "scope", "organisation")} for g in grants
+    ]
+
+
+async def test_that_token_reads_nothing_else(fake: FakeIgni, igni: IgniService) -> None:
     await igni.registration.start()
-    stop = asyncio.Event()
-    igni.revocation_feed = RevocationFeed(igni.tokens, igni.revocations)
-    igni.verifier.revocations = igni.revocation_feed
-    task = asyncio.create_task(igni.revocation_feed.run(stop))
-    await asyncio.sleep(0)
-    fake.publish_revocation("u-sam", org_id=ORG)
-    sam = fake.person_token("u-sam", org_id=ORG)
-    with pytest.raises(Revoked):
-        await igni.verifier.person(sam)
-    assert igni.revocation_feed.known_organisation == ORG
-    stop.set()
-    await task
+    await igni.revocation_feed.pull()
+    token = igni.revocation_feed._token
+    response = await igni.server.http.get(
+        igni.server.url("/v1/directory/users"), headers={"Authorization": f"Bearer {token}"}
+    )
+    assert response.status_code == 401

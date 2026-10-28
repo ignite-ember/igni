@@ -55,6 +55,7 @@ from igni_service.subjects import (
     SubjectHandlers,
     SubjectRoutes,
 )
+from igni_service.token_endpoint import TokenEndpoint
 from igni_service.tokens import (
     PEOPLE_ONLY,
     Caller,
@@ -141,9 +142,10 @@ class IgniService:
         )
         self.tokens = ServiceTokens(self.server, self.registration, self.key, clock=self.clock)
         self.revocation_feed = RevocationFeed(
-            self.tokens,
+            self.server,
+            TokenEndpoint(self.server, self.registration, self.key),
             self.revocations,
-            known_organisation=settings.served_organisation or None,
+            clock=self.clock,
         )
         self.verifier.revocations = self.revocation_feed
         self.directory = DirectoryClient(self.tokens, clock=self.clock)

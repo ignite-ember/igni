@@ -181,10 +181,9 @@ whose subject, kind and organisation a revocation names and whose
 `iat_ms` is at or before its `not_before_ms`. Someone added back signs
 in again, after it.
 
-Both calls take one of the service's own tokens, and a service token
-names an organisation: set `IGNI_SERVED_ORGANISATION` to any one it
-serves and the service follows from startup; without it, the first
-token it checks names one, and waits for the first read.
+It reads them with a token for no organisation (`client_credentials`
+with `scope=revocations`, good for these calls only), so it follows from
+start-up.
 
 The check **fails closed**: tokens are answered with a 503 until the
 revocations have been read once, and whenever they go unrefreshed for

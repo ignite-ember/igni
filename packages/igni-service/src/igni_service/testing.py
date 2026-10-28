@@ -544,6 +544,8 @@ class FakeIgni:
             if held is None or client is None or client.state == "revoked":
                 return httpx.Response(401, json={"detail": "Not authenticated"})
             client_id, org_id = held
+            if not org_id and path not in (IgniPaths.REVOCATIONS, IgniPaths.SERVED):
+                return httpx.Response(401, json={"detail": "Not authenticated"})
             if path == IgniPaths.REVOCATIONS:
                 return self._revocations(seen)
             if path == IgniPaths.SERVED:
@@ -814,6 +816,13 @@ class FakeIgni:
         return client
 
     def _client_credentials(self, client: FakeClient, form: dict[str, str]) -> httpx.Response:
+        if form.get("scope") == "revocations" and not form.get("organisation"):
+            # A token for no organisation: revocations and served only (§3, §21).
+            token = f"revocations-{uuid.uuid4().hex}"
+            self._service_tokens[token] = (client.client_id, "")
+            return httpx.Response(
+                200, json={"access_token": token, "token_type": "Bearer", "expires_in": 600}
+            )
         if not form.get("organisation"):
             return httpx.Response(400, json={"error": "invalid_request"})
         token = f"service-{uuid.uuid4().hex}"
