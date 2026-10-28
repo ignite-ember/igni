@@ -51,7 +51,7 @@ from igni_cloud.guest.entropy import ProcessEntropy
 from igni_cloud.guest.files import ReadyFile
 from igni_cloud.guest.immortal import BaseObjects
 from igni_cloud.guest.paths import GuestPaths
-from igni_cloud.guest.resume import Restored, RestoreWatch
+from igni_cloud.guest.resume import Restored, RestoreStep, RestoreWatch
 from igni_cloud.guest.suspend import SuspendWatch
 from igni_cloud.guest.warm import WarmImports
 
@@ -158,20 +158,21 @@ class CloudGuest(BackendHooks):
         if observe is not None:
             observe(self._sent)
         self.activity.start()
-        # Before the first answer: what it needs.
-        self.restores.on_restore(self.entropy.after_restore)
+        # Before any query: the pools' connections marked stale (touches nothing).
         self.restores.on_restore(self._reset_pools)
-        # After it: what can wait a moment.
+        # The moment the first answer is out.
+        self.restores.on_restore(self.entropy.after_restore, when=RestoreStep.AT_FIRST_ANSWER)
+        # After the window's first burst: what can wait a moment.
         if notifications is not None:
-            self.restores.on_restore(notifications.resumed, after_first_answer=True)
-        self.restores.on_restore(self._rearm_timers, after_first_answer=True)
-        self.restores.on_restore(self._rewrite_activity, after_first_answer=True)
+            self.restores.on_restore(notifications.resumed, when=RestoreStep.LATER)
+        self.restores.on_restore(self._rearm_timers, when=RestoreStep.LATER)
+        self.restores.on_restore(self._rewrite_activity, when=RestoreStep.LATER)
         self.restores.start()
         self.suspends.start()
         if self.binding.bound is not None and on_rebind is not None:
             self.binding.watch(lambda _env: on_rebind())
         if self.credentials is not None:
-            self.restores.on_restore(self._renew_credential, after_first_answer=True)
+            self.restores.on_restore(self._renew_credential, when=RestoreStep.LATER)
             background.start(
                 self.credentials.start(), holder="vm-credential", reason="a token from it"
             )

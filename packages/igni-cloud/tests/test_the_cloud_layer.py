@@ -82,6 +82,7 @@ def test_the_backend_logs_json_lines_to_stdout_and_writes_no_file(
 ):
     assert configure_logging(path=tmp_path / "backend.log") is None
     logging.getLogger("ember_code.backend.test").warning("hello %s", "cloud")
+    StdoutLog.flush()
     line = json.loads(capsys.readouterr().out.strip().splitlines()[-1])
     assert line["message"] == "hello cloud"
     assert line["level"] == "WARNING"
@@ -92,6 +93,7 @@ def test_the_backend_logs_json_lines_to_stdout_and_writes_no_file(
 def test_the_hitl_trace_writes_no_file(cloud, clean_loggers, capsys, tmp_path: Path):
     configure_logging()
     HITLTracer(path=tmp_path / "hitl_trace.log").trace("paused run r1")
+    StdoutLog.flush()
     assert not (tmp_path / "hitl_trace.log").exists()
     assert "paused run r1" in capsys.readouterr().out
 
@@ -104,6 +106,7 @@ def test_the_audit_log_is_a_json_line_on_stdout(cloud, clean_loggers, capsys, tm
         AuditEntry.success(session_id="s1", agent_name="igni", tool_name="run_shell_command")
     )
     assert result.ok
+    StdoutLog.flush()
     assert not (tmp_path / "audit").exists()
     lines = [json.loads(x) for x in capsys.readouterr().out.strip().splitlines()]
     [entry] = [line["audit"] for line in lines if "audit" in line]

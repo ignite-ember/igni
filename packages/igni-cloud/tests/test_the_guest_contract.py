@@ -631,7 +631,7 @@ async def test_binding_reseeds(cloud, tmp_path: Path, monkeypatch):
     assert reseeded == ["now"]
 
 
-async def test_pools_are_emptied_and_the_engines_kept(database_url: DatabaseUrl):
+async def test_pools_are_marked_stale_and_the_engines_kept(database_url: DatabaseUrl):
     registry = EngineRegistry()
     engine = registry.get_engine(database_url)
     async_engine = registry.get_async_engine(database_url)
@@ -639,11 +639,9 @@ async def test_pools_are_emptied_and_the_engines_kept(database_url: DatabaseUrl)
         connection.exec_driver_sql("SELECT 1")
     async with async_engine.connect() as connection:
         await connection.exec_driver_sql("SELECT 1")
-    pooled = engine.pool
     await registry.reset_pools()
     assert registry.get_engine(database_url) is engine
     assert registry.get_async_engine(database_url) is async_engine
-    assert engine.pool is not pooled, "the old connections went with the old pool"
     with engine.connect() as connection:
         assert connection.exec_driver_sql("SELECT 1").scalar() == 1
     async with async_engine.connect() as connection:
@@ -715,7 +713,7 @@ async def test_serving_keeps_the_file_and_reconnects_after_a_restore(run_dir: Pa
         ActivityRegistry.shared().on_rearm(lambda: calls.append("timers"))
         agent.restore()
         assert await guest.restores.check()
-        assert calls == ["entropy", "pools", "notifications", "timers"]
+        assert calls == ["pools", "entropy", "notifications", "timers"]
     finally:
         await guest.stop()
     assert not (run_dir / "activity.json").exists()

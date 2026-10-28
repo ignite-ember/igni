@@ -21,7 +21,7 @@ import pytest
 from igni_cloud.guest.contract import CloudGuest
 from igni_cloud.guest.files import AtomicFile
 from igni_cloud.guest.paths import GuestPaths
-from igni_cloud.guest.resume import RestoreWatch
+from igni_cloud.guest.resume import RestoreStep, RestoreWatch
 from igni_cloud.guest.timeline import ResumeTimeline
 from igni_cloud.layer import CloudLayer
 from igni_cloud.logs import StdoutLog
@@ -57,10 +57,10 @@ def _steps(watch: RestoreWatch, ran: list[str]) -> None:
         run.__name__ = name
         return run
 
-    watch.on_restore(step("reseed"))
     watch.on_restore(step("pools"))
-    watch.on_restore(step("notifications"), after_first_answer=True)
-    watch.on_restore(step("timers"), after_first_answer=True)
+    watch.on_restore(step("reseed"), when=RestoreStep.AT_FIRST_ANSWER)
+    watch.on_restore(step("notifications"), when=RestoreStep.LATER)
+    watch.on_restore(step("timers"), when=RestoreStep.LATER)
 
 
 async def test_what_can_wait_waits_for_the_first_answer(tmp_path: Path, quick: None) -> None:
@@ -73,11 +73,11 @@ async def test_what_can_wait_waits_for_the_first_answer(tmp_path: Path, quick: N
         agent.restore()
         checking = asyncio.create_task(watch.check())
         await asyncio.sleep(0.1)
-        assert ran == ["reseed", "pools"], "only what the first answer needs"
+        assert ran == ["pools"], "only marking the pools stale before an answer"
         assert watch.waiting_for_answer
         watch.answered()
         assert await asyncio.wait_for(checking, 1)
-        assert ran == ["reseed", "pools", "notifications", "timers"]
+        assert ran == ["pools", "reseed", "notifications", "timers"]
         assert not watch.waiting_for_answer
     finally:
         await watch.stop()
@@ -92,7 +92,7 @@ async def test_with_nobody_asking_it_waits_a_moment_only(tmp_path: Path, quick: 
     try:
         agent.restore()
         assert await asyncio.wait_for(watch.check(), 2)
-        assert ran == ["reseed", "pools", "notifications", "timers"]
+        assert ran == ["pools", "reseed", "notifications", "timers"]
     finally:
         await watch.stop()
 
@@ -118,7 +118,7 @@ async def test_each_restore_logs_its_timeline(
     timeline = records[0].fields["timeline"]  # type: ignore[attr-defined]
     assert timeline["generation"] == 1 and timeline["answered"]
     steps = [s["step"] for s in timeline["steps"]]
-    assert steps[:3] == ["reseed", "pools", "first answer"]
+    assert steps[:3] == ["pools", "first answer", "reseed"]
     assert steps[-2:] == ["notifications", "timers"]
     assert all(s["minor_faults"] >= 0 and s["took_ms"] >= 0 for s in timeline["steps"])
 

@@ -1,84 +1,64 @@
-"""After a restore the pools are swapped at once and the old ones closed later.
+"""After a restore the pools are marked stale, and nothing more happens until a query.
 
 ``docs/CLOUD_RESUME_TODO.md`` item 1, ``EngineRegistry.reset_pools``. On a
-restored VM every page touched before the first answer is one that answer
-waits for; closing a pool's connections walks each one's state. So the
-reset swaps empty pools in — nothing more — closes the old connections
-:attr:`EngineRegistry.RETIRE_AFTER_SECONDS` later, and opens a connection
-ahead for an engine that had one, in the moment before a client connects.
+restored VM every page touched before the first answer is one that
+answer waits for, so the reset closes and opens nothing: it marks every
+pooled connection as older than the restore, and SQLAlchemy recycles
+one — closes it, opens a fresh one — when a query next checks it out,
+before any pre-ping could wait on a connection whose packets go nowhere.
 Run on SQLite and, with ``IGNI_TEST_DATABASE_URL``, PostgreSQL.
 """
 
 from __future__ import annotations
 
-import asyncio
-from pathlib import Path
+from typing import Any
 
-import pytest
 from sqlalchemy import event
 
 from ember_code.core.db.engine_registry import EngineRegistry
 from ember_code.core.db.urls import DatabaseUrl
 
 
-@pytest.fixture
-def registry(monkeypatch: pytest.MonkeyPatch) -> EngineRegistry:
-    monkeypatch.setattr(EngineRegistry, "RETIRE_AFTER_SECONDS", 0.05)
-    return EngineRegistry()
+class Seen:
+    """Every connection a pool closes and opens."""
+
+    def __init__(self, engine: Any) -> None:
+        self.closed: list[object] = []
+        self.opened: list[object] = []
+        event.listen(engine, "close", lambda dbapi, record: self.closed.append(dbapi))
+        event.listen(engine, "connect", lambda dbapi, record: self.opened.append(dbapi))
 
 
-async def test_the_old_connections_are_closed_later_not_at_once(
-    registry: EngineRegistry, database_url: DatabaseUrl
-) -> None:
+async def test_a_reset_closes_and_opens_nothing_until_a_query(database_url: DatabaseUrl) -> None:
+    registry = EngineRegistry()
     engine = registry.get_async_engine(database_url)
     async with engine.connect() as connection:
         await connection.exec_driver_sql("SELECT 1")
-    old = engine.sync_engine.pool
-    closed: list[object] = []
-    event.listen(old, "close", lambda dbapi, record: closed.append(dbapi))
+    pool = engine.sync_engine.pool
+    seen = Seen(engine.sync_engine)
 
     await registry.reset_pools()
 
-    assert engine.sync_engine.pool is not old, "an empty pool, at once"
-    assert closed == [], "the old connection is not closed on the way to the first request"
-    await asyncio.sleep(EngineRegistry.RETIRE_AFTER_SECONDS + 0.2)
-    assert len(closed) == 1, "closed a moment later"
+    assert engine.sync_engine.pool is pool, "the same pool"
+    assert (seen.closed, seen.opened) == ([], []), "nothing on the way to the first answer"
     async with engine.connect() as connection:
         assert (await connection.exec_driver_sql("SELECT 1")).scalar() == 1
-    await registry.dispose()
-
-
-async def test_an_engine_that_had_a_connection_gets_one_ahead(
-    registry: EngineRegistry, database_url: DatabaseUrl, tmp_path: Path
-) -> None:
-    engine = registry.get_async_engine(database_url)
-    idle = registry.get_async_engine(DatabaseUrl.for_file(tmp_path / "idle.db"))
+    assert len(seen.closed) == 1 and len(seen.opened) == 1, "the old one recycled at checkout"
     async with engine.connect() as connection:
         await connection.exec_driver_sql("SELECT 1")
-
-    await registry.reset_pools()
-    for _ in range(100):
-        if engine.sync_engine.pool.checkedin():
-            break
-        await asyncio.sleep(0.01)
-
-    assert engine.sync_engine.pool.checkedin() == 1, "waiting for the first query"
-    assert idle.sync_engine.pool.checkedin() == 0, "nothing opened for an engine never used"
+    assert len(seen.opened) == 1, "the fresh one is kept"
     await registry.dispose()
 
 
-async def test_disposing_closes_what_waits_to_be_closed(
-    registry: EngineRegistry, database_url: DatabaseUrl, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    monkeypatch.setattr(EngineRegistry, "RETIRE_AFTER_SECONDS", 3600.0)
+async def test_a_sync_engine_too(database_url: DatabaseUrl) -> None:
+    registry = EngineRegistry()
     engine = registry.get_engine(database_url)
     with engine.connect() as connection:
         connection.exec_driver_sql("SELECT 1")
-    old = engine.pool
-    closed: list[object] = []
-    event.listen(old, "close", lambda dbapi, record: closed.append(dbapi))
-
+    seen = Seen(engine)
     await registry.reset_pools()
+    assert seen.closed == []
+    with engine.connect() as connection:
+        assert connection.exec_driver_sql("SELECT 1").scalar() == 1
+    assert len(seen.closed) == 1 and len(seen.opened) == 1
     await registry.dispose()
-
-    assert len(closed) == 1

@@ -5,12 +5,23 @@ file: the node collects the VM's standard output. Every logger that
 writes a file on the desktop writes here instead, one JSON object per
 line — ``ts``, ``level``, ``logger``, ``message``, and whatever
 structured ``fields`` a record carries (the audit log's entries, say).
+
+Written by a thread of its own, never by the code that logs: in a VM
+standard output is the serial console, where each byte is a trap to the
+host, and a line written from the event loop held every request behind
+it — on a resume, the first answer among them. The loop only queues the
+record (:class:`StdoutLog`); :meth:`StdoutLog.flush` waits for the
+thread to have written what was queued.
 """
 
 from __future__ import annotations
 
+import atexit
+import copy
 import json
 import logging
+import logging.handlers
+import queue
 import sys
 import threading
 from datetime import UTC, datetime
@@ -32,7 +43,22 @@ class JsonLineFormatter(logging.Formatter):
             line.update(fields)
         if record.exc_info:
             line["exception"] = self.formatException(record.exc_info)
+        elif record.exc_text:
+            line["exception"] = record.exc_text
         return json.dumps(line, default=str)
+
+
+class QueuedRecords(logging.handlers.QueueHandler):
+    """Queues a record whole — its fields, and its exception as text — for the writer."""
+
+    def prepare(self, record: logging.LogRecord) -> logging.LogRecord:
+        prepared = copy.copy(record)
+        prepared.msg = record.getMessage()
+        prepared.args = None
+        if record.exc_info:
+            prepared.exc_text = logging.Formatter().formatException(record.exc_info)
+            prepared.exc_info = None
+        return prepared
 
 
 class StdoutLog:
@@ -40,22 +66,39 @@ class StdoutLog:
 
     _lock: ClassVar[threading.Lock] = threading.Lock()
     _handler: ClassVar[logging.Handler | None] = None
+    _queue: ClassVar[queue.Queue[logging.LogRecord] | None] = None
+    _writer: ClassVar[logging.handlers.QueueListener | None] = None
 
     @classmethod
     def handler(cls) -> logging.Handler:
+        """What loggers get: a handler that queues; a thread writes the line."""
         with cls._lock:
             if cls._handler is None:
-                handler = logging.StreamHandler(sys.stdout)
-                handler.setFormatter(JsonLineFormatter())
-                cls._handler = handler
+                stream = logging.StreamHandler(sys.stdout)
+                stream.setFormatter(JsonLineFormatter())
+                records: queue.Queue[logging.LogRecord] = queue.Queue()
+                writer = logging.handlers.QueueListener(records, stream)
+                writer.start()
+                cls._queue, cls._writer = records, writer
+                cls._handler = QueuedRecords(records)
             return cls._handler
 
     @classmethod
+    def flush(cls) -> None:
+        """Until every record queued so far is written."""
+        records = cls._queue
+        if records is not None:
+            records.join()
+
+    @classmethod
     def reset(cls) -> None:
-        """Forget the handler, so the next one writes to the current
-        ``sys.stdout`` (tests capture it)."""
+        """Write what is queued and forget the handler, so the next one
+        writes to the current ``sys.stdout`` (tests capture it)."""
         with cls._lock:
-            cls._handler = None
+            writer = cls._writer
+            cls._handler = cls._queue = cls._writer = None
+        if writer is not None:
+            writer.stop()
 
     @classmethod
     def attach(cls, name: str, level: int = logging.INFO) -> logging.Logger:
@@ -69,4 +112,8 @@ class StdoutLog:
         return target
 
 
-__all__ = ["JsonLineFormatter", "StdoutLog"]
+# What was logged last is written before the process ends.
+atexit.register(StdoutLog.reset)
+
+
+__all__ = ["JsonLineFormatter", "QueuedRecords", "StdoutLog"]

@@ -210,6 +210,39 @@ and cold, before and after.
 - [ ] Break the hot 44 ms into phases (gateway, node stream, Firecracker
       restore, UFFD faults, guest wake, igni) on the real image and cut the
       largest toward 25 ms.
+- [ ] igni's share (`igni__cloudvm` `1be6114`, diagnostic: ~91 ms of 120 —
+      29 ms to notice the restore, 62 ms more to answer; its timeline:
+      reseed 4–8 ms and the pool swap 7–13 ms on the loop before the
+      window attached 27–30 ms later, the answer 16–19 ms after that).
+      Cut on igni's side (ember-code after `fa3e6371`), diagnostic in a
+      Linux container until the image measures it:
+      - nothing runs before the first answer but marking the pools'
+        connections stale (0.3 ms; no swap, no closing, no connection
+        opened ahead — a query's checkout recycles a stale one);
+      - the reseed runs the moment the first answer is out;
+      - logs are written by a thread, not the event loop: igni's standard
+        output in the VM is `console=ttyS0`, the serial console, where
+        every byte traps to the host — a JSON line written from the loop
+        (one per window attaching) held every request behind it. The node
+        agent should also give igni's output a faster sink than ttyS0
+        (a pipe to the guest agent, or virtio-console).
+      Container, client 30 ms after `restored`: window attached at
+      34.2 ms, first answer 0.7 ms later; with the client at once, first
+      answer 3.3 ms after the restore (was 4.3 with the swap, 24.9 before
+      the last round), first database answer 18 ms.
+- [x] `list_sessions` "never answered within 60 s" through the gateway
+      (realwork harness): igni answers it — as a typed
+      `session_list_result` carrying the request's id, like every RPC whose
+      handler returns a protocol message (`get_status` too); clients
+      correlate answers by id (`clients/web/src/protocol/client.ts`). The
+      harness waited for `type == "rpc_response"` only. Fix the harness:
+      match the id, whatever the type.
+- [ ] The first answer on resumes that were not evicted took 1.24–1.39 s at
+      the gateway, 0.46–0.51 s on evicted ones. igni's own timelines from
+      those runs show the same 40–70 ms from noticing the restore to its
+      answer in both; the extra ~0.8 s is before igni sees the connection
+      (`welcome_ms` 1.22–1.37 s vs 0.45–0.49 s), on the node's or the
+      gateway's side of a kept (not evicted) VM's resume.
 
 ### 4. Keep recently suspended producers in memory longer — node agent
 

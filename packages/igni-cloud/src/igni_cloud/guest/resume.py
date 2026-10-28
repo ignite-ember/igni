@@ -13,16 +13,19 @@ re-armed from the wall clock (the monotonic clock did not move while the
 VM slept, so an ``asyncio.sleep`` armed before is late by the whole
 suspension), the activity file rewritten.
 
-Only what the first request needs runs before it: the reseed, and the
-pools swapped for empty ones (their old connections are closed a moment
-later, off the path). The rest — the notification stream, the timers,
-the activity file, the credential — waits for igni's first answer after
-the restore (:meth:`RestoreWatch.answered`) and the burst of requests a
-window sends with it (:attr:`RestoreWatch.AFTER_ANSWER_SECONDS`), or
-:attr:`RestoreWatch.LATER_SECONDS` if nobody asks: on a restored VM every
-page touched before that answer is a page the answer waits for, and
-these steps open connections, query the database and write files. Each
-restore's steps are timed (:mod:`igni_cloud.guest.timeline`).
+Nothing waits for this: a request is answered whether or not the
+restore has been noticed — a client connecting is proof enough that the
+VM runs. What has to happen before a query (:attr:`RestoreStep.AT_ONCE`)
+is only marking the database pools' connections stale, which touches
+nothing. The reseed of Python's own generators runs the moment the first
+answer has gone out (:attr:`RestoreStep.AT_FIRST_ANSWER`; nothing on the
+first-answer path draws from them, and the kernel's randomness was
+reseeded before the VM ran). The rest — the notification stream, the
+timers, the activity file, the credential — waits also for the burst of
+requests a window sends with its first (:attr:`RestoreWatch.AFTER_ANSWER_SECONDS`),
+or :attr:`RestoreWatch.LATER_SECONDS` if nobody asks: on a restored VM
+every page touched before an answer is a page that answer waits for.
+Each restore's steps are timed (:mod:`igni_cloud.guest.timeline`).
 
 Not from a clock jump: a quick come-back steps the clock by less than any
 threshold worth having. And no timer of its own: where inotify works the
@@ -37,6 +40,7 @@ import contextlib
 import json
 import logging
 from collections.abc import Awaitable, Callable
+from enum import StrEnum
 from pathlib import Path
 
 from pydantic import BaseModel, ValidationError
@@ -59,6 +63,17 @@ class Restored(BaseModel):
     clock_step_ms: float = 0.0
 
 
+class RestoreStep(StrEnum):
+    """When an after-restore step runs."""
+
+    #: As soon as the restore is noticed, before anything is answered.
+    AT_ONCE = "at_once"
+    #: As soon as the first answer has gone out (or nobody asked for a moment).
+    AT_FIRST_ANSWER = "at_first_answer"
+    #: Once the burst of requests a window sends with it is through.
+    LATER = "later"
+
+
 class RestoreWatch:
     """Runs its callbacks once per restore the guest agent reports."""
 
@@ -72,8 +87,9 @@ class RestoreWatch:
     def __init__(self, path: Path, *, watch: bool = True) -> None:
         self.path = path
         self._directory = DirectoryWatch(path.parent) if watch else None
-        self._callbacks: list[RestoreCallback] = []
-        self._later: list[RestoreCallback] = []
+        self._steps_by: dict[RestoreStep, list[RestoreCallback]] = {
+            when: [] for when in RestoreStep
+        }
         self._answered = asyncio.Event()
         self._waiting = False
         self._generation: int | None = None
@@ -81,9 +97,11 @@ class RestoreWatch:
         #: The last restore's, until its first answer (:mod:`igni_cloud.guest.timeline`).
         self.timeline: ResumeTimeline | None = None
 
-    def on_restore(self, callback: RestoreCallback, *, after_first_answer: bool = False) -> None:
-        """Run ``callback`` after every restore: at once, or once igni has answered."""
-        (self._later if after_first_answer else self._callbacks).append(callback)
+    def on_restore(
+        self, callback: RestoreCallback, *, when: RestoreStep = RestoreStep.AT_ONCE
+    ) -> None:
+        """Run ``callback`` after every restore, at ``when``."""
+        self._steps_by[when].append(callback)
 
     @property
     def waiting_for_answer(self) -> bool:
@@ -119,16 +137,20 @@ class RestoreWatch:
         timeline = self.timeline = ResumeTimeline(
             restored.generation, at_ms=restored.at_ms, clock_step_ms=restored.clock_step_ms
         )
-        await self._steps(self._callbacks, restored, timeline)
-        if self._later:
+        await self._steps(self._steps_by[RestoreStep.AT_ONCE], restored, timeline)
+        at_answer = self._steps_by[RestoreStep.AT_FIRST_ANSWER]
+        later = self._steps_by[RestoreStep.LATER]
+        if at_answer or later:
             self._waiting = True
             try:
                 with contextlib.suppress(TimeoutError):
                     await asyncio.wait_for(self._answered.wait(), self.LATER_SECONDS)
+                await self._steps(at_answer, restored, timeline)
+                if later and self._answered.is_set():
                     await asyncio.sleep(self.AFTER_ANSWER_SECONDS)
             finally:
                 self._waiting = False
-            await self._steps(self._later, restored, timeline)
+            await self._steps(later, restored, timeline)
         timeline.steps_done()
         return restored
 
@@ -168,4 +190,4 @@ class RestoreWatch:
             await self.check()
 
 
-__all__ = ["RestoreCallback", "RestoreWatch", "Restored"]
+__all__ = ["RestoreCallback", "RestoreStep", "RestoreWatch", "Restored"]

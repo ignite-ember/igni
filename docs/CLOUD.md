@@ -734,18 +734,24 @@ shared; it only matters for hash flooding.
 **After a restore** the guest agent's `post_restore` steps the wall
 clock and then writes `/run/igni/restored` (`{generation, at_ms,
 clock_step_ms}`; `IGNI_RESTORED_FILE`). igni watches the run directory
-with inotify and, on each new generation, reseeds (above) and swaps
-every database pool for an empty one (engines kept, so no query waits on
-a connection dropped while the VM slept); an async engine that had a
-connection opens one again at once, in the background, in the moment
-before a client connects. That is all before the first answer: on a
-restored VM every page touched before it is one it waits for. The old
-pools' connections are closed two seconds later. The rest — reopening
-the notification stream keeping its cursor, re-arming the timers,
-rewriting `activity.json` (a window attaching meanwhile leaves it to
-this), renewing the credential — waits for igni's first answer after
-the restore and half a second more for the burst of requests a window
-sends with it, or one second if nobody asks. Not from a clock jump: a
+with inotify. No request waits for that: a client connecting is proof
+enough that the VM runs. On each new generation igni only marks every
+pooled database connection as older than the restore (SQLAlchemy's
+pool-wide invalidation: a connection is recycled — closed, opened afresh
+— when a query next checks it out, before its pre-ping could wait on a
+connection whose packets go nowhere); that touches nothing. The moment
+its first answer has gone out it reseeds (above; nothing on the
+first-answer path draws from Python's generators, and the kernel's were
+reseeded before the VM ran). The rest — reopening the notification
+stream keeping its cursor, re-arming the timers, rewriting
+`activity.json` (a window attaching meanwhile leaves it to this),
+renewing the credential — waits half a second more for the burst of
+requests a window sends with its first, or one second if nobody asks.
+On a restored VM every page touched before an answer is one it waits
+for. Logs are written by a thread of their own (`igni_cloud/logs.py`):
+in a VM standard output is the serial console, where every byte traps
+to the host, and a line written from the event loop held every request
+behind it. Not from a clock jump: a
 quick come-back steps the clock by too little to tell. Each restore logs
 one `resume timeline` line: every step's time from noticing the restore,
 the window attaching, the first answer, collections, with the guest's
