@@ -73,12 +73,18 @@ profile — there is never a choice between several. A profile holds:
 | Setting | Example "standard" | Example "browser" |
 |---|---|---|
 | Memory: normal, most (ceiling), and CPUs | 1 GiB, up to 4 GiB, 1 vCPU | 2 GiB, up to 8 GiB, 2 vCPU |
-| `idle_before_suspend` | 10 s | 10 min, or never |
-| Drop caches before suspend (e.g. close the headless browser) | — | yes |
+| `idle_before_pause_s` | 10 s | 10 min, or never |
+| Expected memory, for placement | the node's estimate | 3 GiB |
+
+Every value a VM boots and runs with is a setting: the profile's above (igni
+server; the deployment sets the Standard profile and the caps), the rest in
+the node agent's configuration (`igni__cloudvm` `docs/node-agent.md`, "Every
+setting a VM boots or runs with"). Nothing closes caches before a suspend:
+what it would drop, the next resume reads again.
 
 - The platform sets the maximum ceiling and the longest timeout; time
   awake counts against the org's quota.
-- A long `idle_before_suspend` is for producers whose suspend would be
+- A long `idle_before_pause_s` is for producers whose suspend would be
   large: a headless browser dirties hundreds of MB to GBs, so suspending
   and resuming it between closely spaced requests costs more than
   staying awake.
