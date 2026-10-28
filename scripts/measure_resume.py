@@ -50,6 +50,7 @@ from pathlib import Path
 from typing import Any
 
 import click
+from sqlalchemy import create_engine, text
 from websockets.asyncio.client import connect
 
 
@@ -516,6 +517,74 @@ class AgentRunProbe:
         }
 
 
+class PauseProbe:
+    """igni's before-suspend step: connections held, closed, and the first query after."""
+
+    HOOK = (
+        Path(__file__).resolve().parents[1] / "packages/igni-cloud/hooks/before-suspend.d/50-igni"
+    )
+
+    def __init__(self, *, url: str, run_dir: Path, database_url: str) -> None:
+        self.url = url
+        self.run_dir = run_dir
+        self.database_url = database_url
+
+    def connections(self) -> int:
+        """igni's connections to the database, as the server counts them."""
+        engine = create_engine(self.database_url.replace("postgresql://", "postgresql+psycopg://"))
+        try:
+            with engine.connect() as c:
+                return int(
+                    c.scalar(
+                        text(
+                            "SELECT count(*) FROM pg_stat_activity WHERE backend_type = "
+                            "'client backend' AND datname = current_database() "
+                            "AND pid <> pg_backend_pid()"
+                        )
+                    )
+                )
+        finally:
+            engine.dispose()
+
+    async def run(self, rounds: int) -> dict[str, Any]:
+        out: list[dict[str, Any]] = []
+        for _ in range(rounds):
+            async with connect(self.url, max_size=None) as ws:
+                await ws.recv()
+                window = Window(ws)
+                await window.rpc("list_sessions")  # a connection is held
+                held = self.connections()
+                started = time.perf_counter()
+                hook = await asyncio.create_subprocess_exec(
+                    str(self.HOOK), env={**os.environ, "IGNI_RUN_DIR": str(self.run_dir)}
+                )
+                await hook.wait()
+                hook_ms = (time.perf_counter() - started) * 1000
+                paused = self.connections()
+                answer = json.loads((self.run_dir / "suspend-ready").read_text())
+                t0 = time.perf_counter()
+                await window.rpc("list_sessions")
+                first = (time.perf_counter() - t0) * 1000
+                t1 = time.perf_counter()
+                await window.rpc("list_sessions")
+                warm = (time.perf_counter() - t1) * 1000
+            out.append(
+                {
+                    "held_before": held,
+                    "held_paused": paused,
+                    "hook_ms": round(hook_ms, 1),
+                    "igni_steps_ms": answer.get("ms"),
+                    "first_db_after_ms": round(first, 1),
+                    "warm_db_ms": round(warm, 1),
+                }
+            )
+        keys = ("held_before", "held_paused", "hook_ms", "igni_steps_ms", "first_db_after_ms")
+        return {
+            "rounds": out,
+            "p50": {k: statistics.median(r[k] for r in out) for k in (*keys, "warm_db_ms")},
+        }
+
+
 class ResumeProbe:
     def __init__(
         self, *, pid: int, url: str, restored: Path, simulate: bool, connect_after_ms: float
@@ -662,6 +731,11 @@ class Summary:
 )
 @click.option("--task-timeout", default=900.0)
 @click.option(
+    "--pause-rounds",
+    default=0,
+    help="Run the before-suspend hook this often: connections held, and the first query after",
+)
+@click.option(
     "--base-settle", default=2.0, help="Seconds after ready at which the warm base is taken"
 )
 @click.option(
@@ -699,6 +773,7 @@ def main(
     task: str | None,
     chats: tuple[int, ...],
     task_timeout: float,
+    pause_rounds: int,
     base_settle: float,
     save_pages: Path | None,
     igni_env: tuple[str, ...],
@@ -752,6 +827,11 @@ def main(
             result["after_a_run"] = ProcessPages.compare(base, ran) | {
                 "rss_kb": probe.pages.rss_kb()
             }
+            if pause_rounds and database_url:
+                pause = PauseProbe(
+                    url=f"ws://127.0.0.1:{port}", run_dir=igni.run_dir, database_url=database_url
+                )
+                result["pause"] = await pause.run(pause_rounds)
             if task:
                 agent = AgentRunProbe(pid=igni.process.pid, url=f"ws://127.0.0.1:{port}")
                 result["agent_runs"] = []

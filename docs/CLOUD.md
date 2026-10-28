@@ -788,9 +788,18 @@ tags filled in (`igni_cloud/guest/immortal.py`). **Before a suspend**
 the image's hook `packages/igni-cloud/hooks/before-suspend.d/50-igni`
 (installed in the guest agent's `hooks/before-suspend.d/`) writes
 `/run/igni/suspending` and waits at most 0.5 s for igni's answer in
-`/run/igni/suspend-ready`: igni hands its allocator's free memory back
-(`malloc_trim(0)`), which the kernel then reports free and the snapshot
-leaves out (`igni_cloud/guest/suspend.py`). glibc's allocator stays:
+`/run/igni/suspend-ready`: igni first closes every PostgreSQL connection
+it holds — Agno's too; a node pauses about a thousand VMs, and each
+producer's own login cannot share a pooler — then hands its allocator's
+free memory back (`malloc_trim(0)`), which the kernel then reports free
+and the snapshot leaves out (`igni_cloud/guest/suspend.py`). Nothing
+reconnects on resume: the first query opens a fresh connection, and the
+first answer needs none. Diagnostic (container, PostgreSQL with SCRAM):
+1–3 connections held before, 0 paused; igni's steps 0.6 ms, the hook
+9 ms; the first query after 6.9 ms against 2.3 ms on a held connection.
+Every connection also asks the server to keepalive it (`options`:
+`tcp_keepalives_idle=30`, 10 s apart, 3 probes), so a VM killed holding
+one frees the server's within about a minute. glibc's allocator stays:
 jemalloc and mimalloc changed more pages and held more memory.
 
 **Idle is idle.** Every wake-up of an idle igni dirties memory the next

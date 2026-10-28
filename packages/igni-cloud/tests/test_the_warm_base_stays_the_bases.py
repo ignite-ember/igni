@@ -70,13 +70,13 @@ def test_where_objects_are_not_immortal_that_way_it_does_nothing(
     assert BaseObjects.immortalise() is None
 
 
-def test_a_suspending_request_is_answered_once(tmp_path: Path) -> None:
+async def test_a_suspending_request_is_answered_once(tmp_path: Path) -> None:
     watch = SuspendWatch(tmp_path / "suspending", tmp_path / "suspend-ready", watch=False)
     (tmp_path / "suspending").write_text(json.dumps({"token": "t1"}))
-    answer = watch.check()
+    answer = await watch.check()
     assert answer is not None and answer.token == "t1"
     assert json.loads((tmp_path / "suspend-ready").read_text())["token"] == "t1"
-    assert watch.check() is None, "once per request"
+    assert await watch.check() is None, "once per request"
     if sys.platform.startswith("linux"):
         assert answer.trimmed_kb is not None
     else:
@@ -105,3 +105,24 @@ async def test_the_hook_waits_for_igni_and_never_long(
     hook = await asyncio.create_subprocess_exec(str(HOOK), env=env, stderr=asyncio.subprocess.PIPE)
     _, err = await asyncio.wait_for(hook.communicate(), 5)
     assert hook.returncode == 0 and b"did not answer" in err
+
+
+async def test_steps_before_a_suspend_run_first_and_a_slow_one_is_left(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(SuspendWatch, "STEPS_SECONDS", 0.05)
+    watch = SuspendWatch(tmp_path / "suspending", tmp_path / "suspend-ready", watch=False)
+    ran: list[str] = []
+
+    async def close_connections() -> None:
+        ran.append("closed")
+
+    async def slow() -> None:
+        await asyncio.sleep(5)
+
+    watch.before_suspend(close_connections)
+    watch.before_suspend(slow)
+    (tmp_path / "suspending").write_text(json.dumps({"token": "t2"}))
+    answer = await watch.check()
+    assert ran == ["closed"]
+    assert answer is not None and answer.unfinished == ["slow"], "answered within the hook's wait"

@@ -1,4 +1,4 @@
-"""igni's step before a suspend: freed heap memory handed back.
+"""igni's steps before a suspend: its database connections closed, freed heap handed back.
 
 ``docs/CLOUD_RESUME_TODO.md`` item 2, ``igni__cloudvm``'s
 ``docs/guest-protocol.md`` (``before_suspend``). The node agent asks the
@@ -6,11 +6,16 @@ guest agent to run ``hooks/before-suspend.d/*`` before every suspend;
 igni's hook (``packages/igni-cloud/hooks/before-suspend.d/50-igni``)
 writes ``/run/igni/suspending`` (``{"token"}``, atomically) and waits —
 half a second at most — for igni to answer in ``/run/igni/suspend-ready``
-with the same token. In between igni returns the memory its allocator
-holds free to the kernel (``malloc_trim(0)``): pages the kernel then
-reports free are not part of the snapshot, so a cold resume does not
-read them. Measured in a Linux container after a turn (diagnostic):
-about 2 MB fewer changed pages.
+with the same token. In between igni runs its before-suspend steps
+(:meth:`SuspendWatch.before_suspend`) — the cloud's closes every
+PostgreSQL connection it holds, Agno's included, so a paused VM holds
+none: a node pauses about a thousand, and each producer's own login
+cannot share a pooler; the first query after the VM runs again opens a
+fresh one — and then returns the memory its allocator holds free to the
+kernel (``malloc_trim(0)``): pages the kernel then reports free are not
+part of the snapshot, so a cold resume does not read them. Measured in
+a Linux container after a turn (diagnostic): about 2 MB fewer changed
+pages.
 
 Watched like ``restored`` (inotify on the run directory): no timer.
 """
@@ -26,9 +31,10 @@ import logging
 import os
 import sys
 import time
+from collections.abc import Awaitable, Callable
 from pathlib import Path
 
-from pydantic import BaseModel, ValidationError
+from pydantic import BaseModel, Field, ValidationError
 
 from ember_code.core.activity import background
 from igni_cloud.guest.files import AtomicFile
@@ -44,6 +50,8 @@ class SuspendRequest(BaseModel):
 class SuspendReady(BaseModel):
     token: str
     ms: float
+    #: Steps that did not finish in their share of the hook's half second.
+    unfinished: list[str] = Field(default_factory=list)
     #: How much the resident set shrank; ``None`` where the heap is not glibc's.
     trimmed_kb: int | None = None
 
@@ -82,6 +90,8 @@ class SuspendWatch:
 
     #: Between looks where the directory cannot be watched (development).
     POLL_SECONDS = 1.0
+    #: The most the steps may take together: the hook waits half a second.
+    STEPS_SECONDS = 0.4
 
     def __init__(self, request: Path, ready: Path, *, watch: bool = True) -> None:
         self.request = request
@@ -89,6 +99,11 @@ class SuspendWatch:
         self._directory = DirectoryWatch(request.parent) if watch else None
         self._answered: str | None = None
         self._task: asyncio.Future[None] | None = None
+        self._steps: list[Callable[[], Awaitable[None]]] = []
+
+    def before_suspend(self, step: Callable[[], Awaitable[None]]) -> None:
+        """Run ``step`` before answering each request, ahead of the heap trim."""
+        self._steps.append(step)
 
     def read(self) -> SuspendRequest | None:
         try:
@@ -96,17 +111,29 @@ class SuspendWatch:
         except (OSError, ValueError, ValidationError):
             return None
 
-    def check(self) -> SuspendReady | None:
+    async def check(self) -> SuspendReady | None:
         """Look once; get ready and answer a request not answered yet."""
         request = self.read()
         if request is None or request.token == self._answered:
             return None
         started = time.perf_counter()
+        unfinished: list[str] = []
+        for step in list(self._steps):
+            remaining = self.STEPS_SECONDS - (time.perf_counter() - started)
+            name = getattr(step, "__name__", "a step")
+            try:
+                await asyncio.wait_for(step(), max(remaining, 0.01))
+            except TimeoutError:
+                unfinished.append(name)
+            except Exception:
+                logger.exception("before-suspend step %s failed", name)
+                unfinished.append(name)
         trimmed = HeapTrim.run()
         answer = SuspendReady(
             token=request.token,
             ms=round((time.perf_counter() - started) * 1000, 2),
             trimmed_kb=trimmed,
+            unfinished=unfinished,
         )
         try:
             AtomicFile(self.ready).write(answer.model_dump_json().encode())
@@ -141,7 +168,7 @@ class SuspendWatch:
                 await directory.wait(None)
             else:
                 await asyncio.sleep(self.POLL_SECONDS)
-            self.check()
+            await self.check()
 
 
 __all__ = ["HeapTrim", "SuspendReady", "SuspendRequest", "SuspendWatch"]

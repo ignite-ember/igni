@@ -168,6 +168,9 @@ class CloudGuest(BackendHooks):
         self.restores.on_restore(self._rearm_timers, when=RestoreStep.LATER)
         self.restores.on_restore(self._rewrite_activity, when=RestoreStep.LATER)
         self.restores.start()
+        # A paused VM holds no database connection: a node pauses about a
+        # thousand, and each producer's own login cannot share a pooler.
+        self.suspends.before_suspend(self._close_connections)
         self.suspends.start()
         if self.binding.bound is not None and on_rebind is not None:
             self.binding.watch(lambda _env: on_rebind())
@@ -266,6 +269,9 @@ class CloudGuest(BackendHooks):
     def _rewrite_now(self) -> None:
         if self.activity is not None:
             self.activity.refresh()
+
+    async def _close_connections(self) -> None:
+        await cache.close_connections()
 
     async def _reset_pools(self, _restored: Restored) -> None:
         await cache.reset_pools()

@@ -88,7 +88,9 @@ class PostgresConnectionSetup:
     VM restored from a snapshot, a NAT entry that expired while it
     slept — fails within seconds instead of the kernel's quarter of an
     hour of retransmissions: the pool's pre-ping on it errors out and
-    the pool opens a fresh one (``docs/CLOUD.md`` §9). libpq parameters,
+    the pool opens a fresh one (``docs/CLOUD.md`` §9). The server
+    keepalives too (``options``), so a VM that died holding a connection
+    does not hold the server's for long. libpq parameters,
     which psycopg takes for its sync and async connections alike; a
     platform without ``TCP_USER_TIMEOUT`` ignores that one.
     """
@@ -108,6 +110,13 @@ class PostgresConnectionSetup:
             "keepalives_interval": cls.KEEPALIVE_INTERVAL_SECONDS,
             "keepalives_count": cls.KEEPALIVE_COUNT,
             "tcp_user_timeout": cls.USER_TIMEOUT_MS,
+            # The server probes too: a VM killed without a word frees its
+            # connection on the server within about a minute.
+            "options": (
+                f"-c tcp_keepalives_idle={cls.KEEPALIVE_IDLE_SECONDS} "
+                f"-c tcp_keepalives_interval={cls.KEEPALIVE_INTERVAL_SECONDS} "
+                f"-c tcp_keepalives_count={cls.KEEPALIVE_COUNT}"
+            ),
         }
 
 
@@ -205,6 +214,22 @@ class EngineRegistry:
             self._sync_sessionmakers.clear()
             self._async_engines.clear()
             self._async_sessionmakers.clear()
+
+    async def close_connections(self) -> None:
+        """Close every connection the pools hold now; keep the engines.
+
+        Before a VM is paused (``docs/CLOUD.md`` §9): a paused VM holds no
+        connection to its database — a node pauses about a thousand, and
+        each producer's own login cannot share a pooler. The pools stay,
+        empty, and the first query afterwards opens a fresh connection.
+        """
+        with self._lock:
+            sync_engines: list[Engine] = list(self._sync_engines.values())
+            async_engines: list[AsyncEngine] = list(self._async_engines.values())
+        for engine in sync_engines:
+            engine.dispose()
+        for async_engine in async_engines:
+            await async_engine.dispose()
 
     async def reset_pools(self) -> None:
         """Mark every pooled connection as opened before now; nothing more.
