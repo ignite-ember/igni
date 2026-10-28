@@ -72,7 +72,7 @@ profile — there is never a choice between several. A profile holds:
 
 | Setting | Example "standard" | Example "browser" |
 |---|---|---|
-| Memory ceiling and CPUs | 256 MB, 1 vCPU | 4 GB, 2 vCPU |
+| Memory: normal, most (ceiling), and CPUs | 1 GiB, up to 4 GiB, 1 vCPU | 2 GiB, up to 8 GiB, 2 vCPU |
 | `idle_before_suspend` | 10 s | 10 min, or never |
 | Drop caches before suspend (e.g. close the headless browser) | — | yes |
 
@@ -87,10 +87,21 @@ profile — there is never a choice between several. A profile holds:
   node agent forces that cold boot at the next suspend; nothing is lost,
   since durable state is in PostgreSQL and on the volume.
 
-### Elastic memory: a hard ceiling, real usage only
+### Elastic memory: a ceiling, a normal size, real usage only
 
-- **The ceiling is fixed at boot** and never exceeded.
-- **Growing needs no request.** The host backs only the pages the guest
+- **The ceiling is fixed at boot** and never exceeded: Firecracker fixes
+  a VM's memory when it boots.
+- **A normal size, held by the balloon.** The VM boots with the ceiling
+  and the balloon inflated so the guest normally has the profile's
+  normal size (1 GiB by default; igni idle uses ~220 MB). While the guest
+  needs more (a native build: igni and a ripgrep build peaked at 1.9 GB)
+  the node agent deflates the balloon, up to the ceiling, if the node has
+  room; if not, the paused tier makes room by stopping the longest-paused
+  VMs. It inflates it back when the need is over and before every pause,
+  so a paused VM and its snapshot are back to about the normal size
+  (`igni__cloudvm` `docs/node-agent.md`). `deflate_on_oom` is the
+  guest's last resort, counted against the node like a grant.
+- **Only touched pages cost.** The host backs only the pages the guest
   touches, so a VM at 300 MB of a 4 GB ceiling holds 300 MB of host RAM.
 - **Shrinking gives memory back.** The guest reports freed pages to the
   host through Firecracker's balloon device (free page reporting) and

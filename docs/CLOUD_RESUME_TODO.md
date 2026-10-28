@@ -166,9 +166,10 @@ and cold, before and after.
       reused the built wheel and peaked at 0.75 GB with three chats. RSS
       summed over processes counts shared pages more than once, so the
       true peak is lower — but a build like that in a 1 GiB VM would meet
-      the OOM killer. Keep 1 GiB as the default; the profile's ceiling is
-      the knob for producers that build native code, and the counted run
-      on x86_64 (where that wheel exists) says how often it matters.
+      the OOM killer. Decided: every VM boots with a 4 GiB ceiling and runs
+      at a 1 GiB normal size held by the balloon, which the node agent
+      deflates while the guest needs more and the node has room
+      (`igni__cloudvm` `docs/node-agent.md`, results/balloon/).
 - [x] igni: what is imported at `ready` (~169 MB) that a producer may never
       use; weigh it against loading on the first request. Diagnostic
       (container, `PYTHONTRACEMALLOC`, `-X importtime`): 2,706 modules at
