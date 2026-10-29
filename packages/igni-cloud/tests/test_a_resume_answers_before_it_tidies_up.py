@@ -27,13 +27,16 @@ import pytest
 from igni_cloud.guest.contract import CloudGuest
 from igni_cloud.guest.files import AtomicFile
 from igni_cloud.guest.paths import GuestPaths
+from igni_cloud.guest.practice import FirstAnswerPractice
 from igni_cloud.guest.resume import RestoreStep, RestoreWatch
 from igni_cloud.guest.timeline import ResumeTimeline
 from igni_cloud.guest.watch import DirectoryWatch
 from igni_cloud.layer import CloudLayer
 from igni_cloud.logs import StdoutLog
 
+from ember_code.backend.host_backend import ObservedTransport
 from ember_code.protocol import messages as msg
+from ember_code.transport.websocket import WebSocketServerTransport
 
 
 class GuestAgent:
@@ -309,3 +312,24 @@ def test_the_log_writer_waits_for_the_first_answer(capsys: pytest.CaptureFixture
     finally:
         log.removeHandler(StdoutLog.handler())
         StdoutLog.reset()
+
+
+async def test_the_warm_base_practises_its_first_answer_and_keeps_nothing() -> None:
+    transport = WebSocketServerTransport(port=0)
+    await transport.start()
+    try:
+        result = await FirstAnswerPractice(ObservedTransport(transport)).run()
+        assert result.ok, result.error
+        assert result.welcome_ms is not None and result.answer_ms is not None
+        assert result.welcome_ms <= result.answer_ms
+        assert transport.client_count == 0
+        assert not transport._connected.is_set(), "a window is still awaited"
+        assert transport._event_seq == 0
+        assert transport._inbox.empty(), "the request was answered, not left queued"
+    finally:
+        await transport.close()
+
+
+async def test_a_practice_that_cannot_run_says_why() -> None:
+    result = await FirstAnswerPractice(None).run()
+    assert not result.ok and "no port" in result.error

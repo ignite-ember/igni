@@ -150,16 +150,19 @@ def test_ready_is_written_and_cleared(tmp_path: Path):
     assert not ready.path.exists()
 
 
-def test_what_a_bound_backend_imports_is_imported_before_ready(tmp_path: Path):
+async def test_what_a_bound_backend_imports_is_imported_before_ready(tmp_path: Path):
     class Recorded(WarmImports):
         def run(self) -> None:
             self.ready_then = (tmp_path / "ready").exists()
 
     warm = Recorded()
     guest = CloudGuest(
-        GuestPaths.from_env({GuestPaths.RUN_DIR_ENV: str(tmp_path)}), warm=warm, gc_freeze=False
+        GuestPaths.from_env({GuestPaths.RUN_DIR_ENV: str(tmp_path)}),
+        warm=warm,
+        gc_freeze=False,
+        practise=False,
     )
-    guest.listening()
+    await guest.listening(None)
     assert warm.ready_then is False, "imports first: the snapshot is taken at ready"
     assert (tmp_path / "ready").exists()
 
@@ -411,8 +414,11 @@ async def test_an_igni_started_before_its_producer_binds_when_producer_env_appea
     transport = WebSocketServerTransport(port=0)
     await transport.start()
     try:
-        guest.listening()
+        await guest.listening(transport)
         assert (run_dir / "ready").exists(), "the warm base may be snapshotted now"
+        # The base answered once on its own listener, and nothing of it is left.
+        assert transport.client_count == 0
+        assert not transport._connected.is_set(), "the practice is not a window"
         binding = asyncio.create_task(guest.bind(transport))
 
         async with connect(f"ws://127.0.0.1:{transport.port}") as window:

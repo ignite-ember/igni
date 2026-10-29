@@ -315,6 +315,40 @@ and cold, before and after.
       handshake's own pages — a dry-run bind and handshake while building
       the warm base would make them base pages, shared and likelier
       resident (proposed, not done).
+- [x] The warm base practises its first answer (proposed above; counted
+      on GCP with `f1fc03fb` first: igni handshake ~31 ms at the gateway,
+      noticed 8.1 + 25.1 ms after the resume, answered 22.1 ms later,
+      faults after the first answer 2,700 → 843, paused host RSS +32 MiB,
+      wake times within noise: hot 62 vs 53 ms, cold 218 vs 193 ms).
+      Before `ready`, a warm base's igni (no producer bound) connects to
+      its own listener on `127.0.0.1` as the guest agent's `forward` does
+      for the gateway, without compression, takes the handshake and
+      `welcome`, sends `get_session_id`, gets it answered as every request
+      is before binding, and closes; the transport forgets the connection
+      (the first window is still awaited, the event sequence starts over),
+      then the collector runs, the base is made immortal and frozen, and
+      `ready` is written (`igni_cloud/guest/practice.py`,
+      `CloudGuest.listening`). Needs no producer, token or database;
+      bounded at 5 s and logged either way (`first answer practised` /
+      `not practised`, with `welcome_ms`, `answer_ms`). The node needs no
+      new call: `ready` now comes after the practice. Past the transport
+      — the dispatch to a session — needs a producer and is not practised.
+      Diagnostic (container, as above, two runs each, p50 of 12, with
+      `--fault-trace`: igni's page faults by address through a kprobe, so
+      each touched page is the base's unchanged, igni's own, or a file's):
+
+      | pages touched | without practice | with |
+      |---|---|---|
+      | restore → welcome, all | 2,155 / 2,173 | 2,135 / 2,173 |
+      | of them igni's own (not the base's) | 743 / 743 | 706 / 714 |
+      | restore → first answer, all | 2,652 / 2,663 | 2,595 / 2,669 |
+      | of them igni's own | 940 / 944 | 885 / 903 |
+      | changed since the base at binding, MB | 29.5 / 29.5 | 28.6 / 29.1 |
+
+      A small gain (~5% fewer own pages on the answer's path): most of the
+      ~900 own pages it touches are not the handshake's code but memory
+      igni allocated after the base — the bind, the session, the objects
+      of earlier connections — which no practice in the base can share.
 - [x] `list_sessions` "never answered within 60 s" through the gateway
       (realwork harness): igni answers it — as a typed
       `session_list_result` carrying the request's id, like every RPC whose

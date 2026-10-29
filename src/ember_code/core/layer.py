@@ -67,8 +67,8 @@ class BackendHooks:
     def starting(self) -> None:
         pass
 
-    def listening(self) -> None:
-        pass
+    async def listening(self, transport: Any) -> None:
+        """The transport listens; nothing is bound or opened yet."""
 
     async def bind(self, transport: Any) -> bool:
         """Wait for whatever the layer needs before igni may open its state.

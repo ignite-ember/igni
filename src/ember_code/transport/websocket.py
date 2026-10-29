@@ -172,6 +172,19 @@ class WebSocketServerTransport(ListeningTransport):
         GUI shells may open the webview long after spawning the BE."""
         await asyncio.wait_for(self._connected.wait(), timeout=timeout)
 
+    def forget_past_connections(self) -> None:
+        """Clients that came and went no longer count: the next is the first.
+
+        :meth:`wait_for_connection` waits again and the event sequence
+        starts over — for a connection made only to exercise the path
+        (the cloud's warm base practises its first answer). Nothing
+        changes while a client is attached.
+        """
+        if self._conns:
+            return
+        self._connected.clear()
+        self._event_seq = 0
+
     #: The header a platform's own connection carries (``X-Igni-Gateway: control``).
     #: In the cloud the node agent adds it to the gateway's control streams and
     #: strips it from every other, so the connection's own request says it.

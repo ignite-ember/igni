@@ -8,8 +8,11 @@ never builds one. In boot order:
    in this VM is removed before anything else;
 2. :meth:`CloudGuest.listening` — once the transport listens, what a
    bound backend's first run would import is imported
-   (:class:`~igni_cloud.guest.warm.WarmImports`) and ``ready``
-   is written: the node agent may now take a warm base snapshot;
+   (:class:`~igni_cloud.guest.warm.WarmImports`), a warm base answers
+   once on its own listener
+   (:class:`~igni_cloud.guest.practice.FirstAnswerPractice`), what is
+   there is frozen and made immortal, and ``ready`` is written: the node
+   agent may now take a warm base snapshot;
 3. :meth:`CloudGuest.bind` — when no producer is known yet, igni waits
    for ``producer.env``, refusing requests meanwhile
    (:class:`~igni_cloud.guest.binding.ProducerBinding`); the
@@ -58,6 +61,7 @@ from igni_cloud.guest.entropy import ProcessEntropy
 from igni_cloud.guest.files import ReadyFile
 from igni_cloud.guest.immortal import BaseObjects
 from igni_cloud.guest.paths import GuestPaths
+from igni_cloud.guest.practice import FirstAnswerPractice
 from igni_cloud.guest.resume import Restored, RestoreStep, RestoreWatch
 from igni_cloud.guest.suspend import SuspendWatch
 from igni_cloud.guest.warm import WarmImports
@@ -79,6 +83,7 @@ class CloudGuest(BackendHooks):
         suspends: SuspendWatch | None = None,
         warm: WarmImports | None = None,
         gc_freeze: bool = True,
+        practise: bool = True,
     ) -> None:
         self.paths = paths
         self.ready = ReadyFile(paths.ready)
@@ -107,6 +112,7 @@ class CloudGuest(BackendHooks):
         self.warm = warm if warm is not None else WarmImports()
         self.entropy = ProcessEntropy()
         self._gc_freeze = gc_freeze
+        self._practise = practise
         self.activity: ActivityFile | None = None
         self.credentials: VmCredentials | None = None
         self._model: Any = None
@@ -129,9 +135,18 @@ class CloudGuest(BackendHooks):
         except OSError as exc:
             logger.warning("cannot clear %s: %s", self.ready.path, exc)
 
-    def listening(self) -> None:
-        """Warm the imports a bound backend needs, freeze them, then say ``ready``."""
+    async def listening(self, transport: Any) -> None:
+        """Warm the imports, practise the first answer, freeze it all, then say ``ready``."""
         self.warm.run()
+        if self._practise and self.binding.needed():
+            # A warm base: its first answer is every producer's
+            # (:mod:`igni_cloud.guest.practice`).
+            result = await FirstAnswerPractice(transport).run()
+            log = logger.info if result.ok else logger.warning
+            log(
+                "first answer practised" if result.ok else "first answer not practised",
+                extra={"fields": {"practice": result.model_dump(mode="json")}},
+            )
         if self._gc_freeze:
             # What the warm base holds is every producer's. Immortal, using
             # it writes no reference count; frozen, a collection while

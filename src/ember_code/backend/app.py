@@ -221,7 +221,7 @@ class BackendApp:
         self._transport = ObservedTransport(await self._transport_builder.build())
         # Listening, imports done. A layer may wait here for what it needs
         # before igni opens any state (the cloud's: a producer to bind to).
-        guest.listening()
+        await guest.listening(self._transport)
         if await guest.bind(self._transport):
             # Something was mounted since: a working directory taken
             # before it would still be the old one.
