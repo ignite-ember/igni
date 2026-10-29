@@ -27,6 +27,13 @@ or :attr:`RestoreWatch.LATER_SECONDS` if nobody asks: on a restored VM
 every page touched before an answer is a page that answer waits for.
 Each restore's steps are timed (:mod:`igni_cloud.guest.timeline`).
 
+The collector waits too: from noticing the restore until the steps
+that wait for the burst begin, automatic collection is off. A collection walks the young objects and
+reads the header of everything they point to — on a restored VM,
+pages of the warm base the answer has no use for (on the image, 10–50 ms
+for a generation-0 collection during the first requests). It runs again
+once the burst is through.
+
 Not from a clock jump: a quick come-back steps the clock by less than any
 threshold worth having. And no timer of its own: where inotify works the
 watch sleeps until the directory changes, so an idle igni does no work
@@ -37,8 +44,10 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import gc
 import json
 import logging
+import os
 from collections.abc import Awaitable, Callable
 from enum import StrEnum
 from pathlib import Path
@@ -47,7 +56,7 @@ from pydantic import BaseModel, ValidationError
 
 from ember_code.core.activity import background
 from igni_cloud.guest.timeline import ResumeTimeline
-from igni_cloud.guest.watch import DirectoryWatch
+from igni_cloud.guest.watch import DirectoryWatch, FileWatch
 
 logger = logging.getLogger(__name__)
 
@@ -84,9 +93,14 @@ class RestoreWatch:
     #: And this long after it: a window's first requests come as a burst.
     AFTER_ANSWER_SECONDS = 0.5
 
-    def __init__(self, path: Path, *, watch: bool = True) -> None:
+    def __init__(
+        self, path: Path, *, watch: bool = True, directory: DirectoryWatch | None = None
+    ) -> None:
         self.path = path
-        self._directory = DirectoryWatch(path.parent) if watch else None
+        #: Woken by ``restored`` alone; ``directory`` shares one watch of the run directory.
+        self._directory: FileWatch | None = (
+            (directory or DirectoryWatch(path.parent)).file(path.name) if watch else None
+        )
         self._steps_by: dict[RestoreStep, list[RestoreCallback]] = {
             when: [] for when in RestoreStep
         }
@@ -120,8 +134,11 @@ class RestoreWatch:
         except (OSError, ValueError, ValidationError):
             return None
 
-    async def check(self) -> Restored | None:
-        """Look once; run the callbacks for a generation not seen yet."""
+    async def check(self, *, woken_at: float | None = None) -> Restored | None:
+        """Look once; run the callbacks for a generation not seen yet.
+
+        ``woken_at``: when the loop read the directory's event (``time.perf_counter()``).
+        """
         restored = self.read()
         if restored is None or restored.generation == self._generation:
             return None
@@ -134,25 +151,42 @@ class RestoreWatch:
         if self.timeline is not None:
             self.timeline.finish()
         self._answered.clear()
-        timeline = self.timeline = ResumeTimeline(
-            restored.generation, at_ms=restored.at_ms, clock_step_ms=restored.clock_step_ms
-        )
-        await self._steps(self._steps_by[RestoreStep.AT_ONCE], restored, timeline)
-        at_answer = self._steps_by[RestoreStep.AT_FIRST_ANSWER]
-        later = self._steps_by[RestoreStep.LATER]
-        if at_answer or later:
-            self._waiting = True
-            try:
+        collecting = gc.isenabled()
+        gc.disable()
+        try:
+            timeline = self.timeline = ResumeTimeline(
+                restored.generation,
+                at_ms=restored.at_ms,
+                clock_step_ms=restored.clock_step_ms,
+                written_ns=self._written_ns(),
+                woken_at=woken_at,
+            )
+            await self._steps(self._steps_by[RestoreStep.AT_ONCE], restored, timeline)
+            at_answer = self._steps_by[RestoreStep.AT_FIRST_ANSWER]
+            later = self._steps_by[RestoreStep.LATER]
+            if at_answer or later:
+                self._waiting = True
                 with contextlib.suppress(TimeoutError):
                     await asyncio.wait_for(self._answered.wait(), self.LATER_SECONDS)
                 await self._steps(at_answer, restored, timeline)
                 if later and self._answered.is_set():
                     await asyncio.sleep(self.AFTER_ANSWER_SECONDS)
-            finally:
-                self._waiting = False
-            await self._steps(later, restored, timeline)
+        finally:
+            self._waiting = False
+            # The burst is through: collections may run again (the later
+            # steps may wait on the network; nothing more waits for them).
+            if collecting:
+                gc.enable()
+        await self._steps(later, restored, timeline)
         timeline.steps_done()
         return restored
+
+    def _written_ns(self) -> int | None:
+        """When the guest agent wrote ``restored`` (its modification time)."""
+        try:
+            return os.stat(self.path).st_mtime_ns
+        except OSError:
+            return None
 
     @staticmethod
     async def _steps(
@@ -183,11 +217,13 @@ class RestoreWatch:
     async def _run(self) -> None:
         while True:
             directory = self._directory
+            woken_at = None
             if directory is not None and (directory.watching or directory.start()):
                 await directory.wait(None)
+                woken_at, directory.woken_at = directory.woken_at, None
             else:
                 await asyncio.sleep(self.POLL_SECONDS)
-            await self.check()
+            await self.check(woken_at=woken_at)
 
 
 __all__ = ["RestoreCallback", "RestoreStep", "RestoreWatch", "Restored"]

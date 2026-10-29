@@ -59,7 +59,7 @@ from ember_code.core.config.schemas.storage_and_paths import StorageConfig
 from ember_code.core.db.scope import Tenant
 from ember_code.protocol import messages as msg
 from igni_cloud.credentials import EnvironmentCredentials
-from igni_cloud.guest.watch import DirectoryWatch
+from igni_cloud.guest.watch import DirectoryWatch, FileWatch
 from igni_cloud.producer import (
     ProducerIncarnation,
     ProducerKind,
@@ -202,12 +202,16 @@ class ProducerBinding:
         tenant: Callable[[], Tenant | None] | None = None,
         poll_seconds: float | None = None,
         watch: bool = True,
+        directory: DirectoryWatch | None = None,
     ) -> None:
         self.path = path
         self._environ = os.environ if environ is None else environ
         self._tenant = tenant if tenant is not None else TokenTenant()
         self._poll = self.POLL_SECONDS if poll_seconds is None else poll_seconds
-        self._directory = DirectoryWatch(path.parent) if watch else None
+        #: Woken by ``producer.env`` alone; ``directory`` shares one watch of the run directory.
+        self._directory: FileWatch | None = (
+            (directory or DirectoryWatch(path.parent)).file(path.name) if watch else None
+        )
         self._seen: tuple[int, int, int] | None = None
         self._said = ""
         self._bound: ProducerEnv | None = None

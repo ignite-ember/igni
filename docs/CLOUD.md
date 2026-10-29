@@ -78,7 +78,7 @@ profile — there is never a choice between several. A profile holds:
 
 Every value a VM boots and runs with is a setting: the profile's above (igni
 server; the deployment sets the Standard profile and the caps), the rest in
-the node agent's configuration (`igni__cloudvm` `docs/node-agent.md`, "Every
+the node agent's configuration (`igni__cloudvm/docs/node-agent.md`, "Every
 setting a VM boots or runs with"). Nothing closes caches before a suspend:
 what it would drop, the next resume reads again.
 
@@ -105,7 +105,7 @@ what it would drop, the next resume reads again.
   room; if not, the paused tier makes room by stopping the longest-paused
   VMs. It inflates it back when the need is over and before every pause,
   so a paused VM and its snapshot are back to about the normal size
-  (`igni__cloudvm` `docs/node-agent.md`). `deflate_on_oom` is the
+  (`igni__cloudvm/docs/node-agent.md`). `deflate_on_oom` is the
   guest's last resort, counted against the node like a grant.
 - **Only touched pages cost.** The host backs only the pages the guest
   touches, so a VM at 300 MB of a 4 GB ceiling holds 300 MB of host RAM.
@@ -807,9 +807,14 @@ the image's hook `packages/igni-cloud/hooks/before-suspend.d/50-igni`
 `/run/igni/suspending` and waits at most 0.5 s for igni's answer in
 `/run/igni/suspend-ready`: igni first closes every PostgreSQL connection
 it holds — Agno's too; a node pauses about a thousand VMs, and each
-producer's own login cannot share a pooler — then hands its allocator's
-free memory back (`malloc_trim(0)`), which the kernel then reports free
-and the snapshot leaves out (`igni_cloud/guest/suspend.py`). Nothing
+producer's own login cannot share a pooler — then, when its allocator
+holds 64 MiB free or more (a big run's leftovers), hands that back
+(`malloc_trim(0)`), which the kernel then reports free and the snapshot
+leaves out (`igni_cloud/guest/suspend.py`). Less is kept, because a page given
+back and used again comes back as a fresh page — a guest fault and a
+host fault each, never prefetched — and a usual turn's free heap is the
+next turn's (trimming before every suspend cost every wake's first
+requests ~3,200–3,500 such faults on the image). Nothing
 reconnects on resume: the first query opens a fresh connection, and the
 first answer needs none. Diagnostic (container, PostgreSQL with SCRAM):
 1–3 connections held before, 0 paused; igni's steps 0.6 ms, the hook

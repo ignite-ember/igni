@@ -45,7 +45,7 @@ class GuestPaths(BaseModel):
     restored: Path
     #: ``{"token"}``, written by the before-suspend hook: igni gets ready.
     suspending: Path
-    #: ``{"token", "ms", "trimmed_kb"}``, igni's answer to ``suspending``.
+    #: ``{"token", "ms", "trimmed_kb", "free_heap_kb"}``, igni's answer to ``suspending``.
     suspend_ready: Path
     #: The access token igni keeps from the VM credential (``producer.env`` names it).
     token: Path

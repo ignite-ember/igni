@@ -6,14 +6,20 @@ answer needs runs at once — the reseed, the pools swapped — and the rest
 (the notification stream, the timers, the activity file, the credential)
 waits for igni's first answer and the burst of requests a window sends
 with it, or a second if nobody asks. Each restore's steps are timed and
-logged as one ``resume timeline`` line.
+logged as one ``resume timeline`` line. Meanwhile the collector does not
+run and the log writer is not woken; and a restore wakes the restore
+watch alone, not every watch of the run directory.
 """
 
 from __future__ import annotations
 
 import asyncio
+import gc
 import json
 import logging
+import os
+import struct
+import time
 from pathlib import Path
 from typing import Any
 
@@ -23,6 +29,7 @@ from igni_cloud.guest.files import AtomicFile
 from igni_cloud.guest.paths import GuestPaths
 from igni_cloud.guest.resume import RestoreStep, RestoreWatch
 from igni_cloud.guest.timeline import ResumeTimeline
+from igni_cloud.guest.watch import DirectoryWatch
 from igni_cloud.layer import CloudLayer
 from igni_cloud.logs import StdoutLog
 
@@ -171,4 +178,134 @@ def test_the_layers_own_logs_reach_standard_output() -> None:
         assert logging.getLogger("igni_cloud").getEffectiveLevel() <= logging.INFO
     finally:
         logging.getLogger("igni_cloud").removeHandler(handler)
+        StdoutLog.reset()
+
+
+class InotifyEvents:
+    """``struct inotify_event`` records, as the kernel writes them, through a pipe."""
+
+    def __init__(self, watch: DirectoryWatch) -> None:
+        self.read, self.write = os.pipe()
+        os.set_blocking(self.read, False)
+        watch._fd = self.read
+
+    def send(self, *names: str, mask: int = DirectoryWatch.IN_MOVED_TO) -> None:
+        data = b""
+        for name in names:
+            raw = name.encode() + b"\0" * (16 - len(name) % 16)
+            data += struct.pack("iIII", 1, mask, 0, len(raw)) + raw
+        if not names:
+            data = struct.pack("iIII", -1, mask, 0, 0)
+        os.write(self.write, data)
+
+    def close(self) -> None:
+        os.close(self.read)
+        os.close(self.write)
+
+
+async def test_a_file_watch_is_woken_by_its_own_file_only(tmp_path: Path) -> None:
+    directory = DirectoryWatch(tmp_path)
+    restored = directory.file("restored")
+    suspending = directory.file("suspending")
+    events = InotifyEvents(directory)
+    try:
+        events.send(".activity.json.tmp", "activity.json")
+        directory._readable()
+        assert not restored._woken.is_set() and not suspending._woken.is_set(), (
+            "igni's own activity file wakes nobody"
+        )
+        events.send("restored")
+        directory._readable()
+        assert restored._woken.is_set() and not suspending._woken.is_set()
+        assert restored.woken_at is not None
+        events.send(mask=DirectoryWatch.IN_Q_OVERFLOW)
+        directory._readable()
+        assert suspending._woken.is_set(), "events lost: every file may have changed"
+    finally:
+        directory._fd = None
+        events.close()
+
+
+def test_the_directory_is_watched_until_its_last_file_lets_go(tmp_path: Path) -> None:
+    directory = DirectoryWatch(tmp_path)
+    restored = directory.file("restored")
+    suspending = directory.file("suspending")
+    events = InotifyEvents(directory)
+    try:
+        restored.close()
+        assert directory.watching
+        suspending.close()
+        assert not directory.watching
+    finally:
+        os.close(events.write)
+
+
+def test_the_guest_watches_its_run_directory_once(tmp_path: Path) -> None:
+    guest = CloudGuest(
+        GuestPaths.from_env({GuestPaths.RUN_DIR_ENV: str(tmp_path)}), gc_freeze=False
+    )
+    watches = {
+        guest.binding._directory.directory,  # type: ignore[union-attr]
+        guest.restores._directory.directory,  # type: ignore[union-attr]
+        guest.suspends._directory.directory,  # type: ignore[union-attr]
+    }
+    assert len(watches) == 1
+
+
+async def test_the_collector_waits_for_the_burst(tmp_path: Path, quick: None) -> None:
+    agent = GuestAgent(tmp_path / "restored")
+    watch = RestoreWatch(agent.path, watch=False)
+    collecting: list[bool] = []
+
+    async def step(_restored: Any) -> None:
+        collecting.append(gc.isenabled())
+
+    watch.on_restore(step)
+    watch.on_restore(step, when=RestoreStep.LATER)
+    watch.start()
+    assert gc.isenabled()
+    try:
+        agent.restore()
+        checking = asyncio.create_task(watch.check())
+        await asyncio.sleep(0.05)
+        watch.answered()
+        await asyncio.wait_for(checking, 1)
+    finally:
+        await watch.stop()
+    assert collecting == [False, True], "no collection before the burst is through, then as usual"
+    assert gc.isenabled()
+
+
+def test_the_timeline_says_where_the_time_before_noticing_went() -> None:
+    now_ms = time.time() * 1000
+    timeline = ResumeTimeline(
+        7,
+        at_ms=int(now_ms - 50),
+        written_ns=int((now_ms - 30) * 1e6),
+        woken_at=time.perf_counter() - 0.01,
+    )
+    timeline.mark("step")
+    record = timeline.record
+    timeline.finish()
+    assert record.written_after_ms is not None and 15 <= record.written_after_ms <= 25
+    assert record.woke_after_write_ms is not None and 10 <= record.woke_after_write_ms <= 30
+    assert record.noticed_after_ms is not None and record.noticed_after_ms >= 49
+    assert record.steps[0].cpu_ms >= 0
+
+
+def test_the_log_writer_waits_for_the_first_answer(capsys: pytest.CaptureFixture[str]) -> None:
+    StdoutLog.reset()
+    log = StdoutLog.attach("igni_cloud.tests.held")
+    try:
+        StdoutLog.hold()
+        log.info("first")
+        log.info("second")
+        StdoutLog.flush()
+        assert capsys.readouterr().out == "", "nothing written while held"
+        StdoutLog.release()
+        StdoutLog.flush()
+        lines = [json.loads(line)["message"] for line in capsys.readouterr().out.splitlines()]
+        assert lines == ["first", "second"]
+    finally:
+        log.removeHandler(StdoutLog.handler())
         StdoutLog.reset()

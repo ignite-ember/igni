@@ -18,11 +18,17 @@ never builds one. In boot order:
    (:class:`~igni_cloud.guest.entropy.ProcessEntropy`);
 4. :meth:`CloudGuest.serving` — the activity file is kept true, a
    restore (``/run/igni/restored``) is reseeded, reconnected and re-timed
-   after, what igni built is frozen for the collector, and a ``producer.env``
+   after (the log writer held until its first answer and burst are
+   through), what igni built is frozen for the collector, and a ``producer.env``
    that comes to name another producer shuts igni down;
    and the before-suspend hook's ``suspending`` is answered once igni
    has handed its free heap back (:mod:`igni_cloud.guest.suspend`);
 5. :meth:`CloudGuest.stop` — the files igni keeps are removed.
+
+The binding, the restore and the suspend watch share one inotify watch
+per directory (:class:`~igni_cloud.guest.watch.DirectoryWatch`), each
+woken only by its own file: a restore wakes the restore watch alone,
+and igni's own ``activity.json`` wakes none.
 """
 
 from __future__ import annotations
@@ -30,6 +36,7 @@ from __future__ import annotations
 import gc
 import logging
 from collections.abc import Callable
+from pathlib import Path
 from typing import Any
 
 from ember_code.backend.activity import Activity
@@ -54,6 +61,8 @@ from igni_cloud.guest.paths import GuestPaths
 from igni_cloud.guest.resume import Restored, RestoreStep, RestoreWatch
 from igni_cloud.guest.suspend import SuspendWatch
 from igni_cloud.guest.warm import WarmImports
+from igni_cloud.guest.watch import DirectoryWatch
+from igni_cloud.logs import StdoutLog
 
 logger = logging.getLogger(__name__)
 
@@ -73,12 +82,27 @@ class CloudGuest(BackendHooks):
     ) -> None:
         self.paths = paths
         self.ready = ReadyFile(paths.ready)
-        self.binding = binding if binding is not None else ProducerBinding(paths.producer_env)
-        self.restores = restores if restores is not None else RestoreWatch(paths.restored)
+        self._directories: dict[Path, DirectoryWatch] = {}
+        self.binding = (
+            binding
+            if binding is not None
+            else ProducerBinding(
+                paths.producer_env, directory=self._directory(paths.producer_env.parent)
+            )
+        )
+        self.restores = (
+            restores
+            if restores is not None
+            else RestoreWatch(paths.restored, directory=self._directory(paths.restored.parent))
+        )
         self.suspends = (
             suspends
             if suspends is not None
-            else SuspendWatch(paths.suspending, paths.suspend_ready)
+            else SuspendWatch(
+                paths.suspending,
+                paths.suspend_ready,
+                directory=self._directory(paths.suspending.parent),
+            )
         )
         self.warm = warm if warm is not None else WarmImports()
         self.entropy = ProcessEntropy()
@@ -87,6 +111,13 @@ class CloudGuest(BackendHooks):
         self.credentials: VmCredentials | None = None
         self._model: Any = None
         self._transport: Any = None
+
+    def _directory(self, path: Path) -> DirectoryWatch:
+        """The one watch of ``path`` the guest's file watches share."""
+        watch = self._directories.get(path)
+        if watch is None:
+            watch = self._directories[path] = DirectoryWatch(path)
+        return watch
 
     @classmethod
     def from_env(cls) -> CloudGuest:
@@ -158,6 +189,10 @@ class CloudGuest(BackendHooks):
         if observe is not None:
             observe(self._sent)
         self.activity.start()
+        # The log writer sleeps until the first answer and its burst are
+        # through: first of the steps after the restore, and first of the later ones.
+        self.restores.on_restore(self._hold_logs)
+        self.restores.on_restore(self._release_logs, when=RestoreStep.LATER)
         # Before any query: the pools' connections marked stale (touches nothing).
         self.restores.on_restore(self._reset_pools)
         # The moment the first answer is out.
@@ -200,6 +235,7 @@ class CloudGuest(BackendHooks):
         if self.credentials is not None:
             await self.credentials.stop()
         await self.restores.stop()
+        StdoutLog.release()
         await self.suspends.stop()
         await self.binding.stop()
         if self.activity is not None:
@@ -272,6 +308,12 @@ class CloudGuest(BackendHooks):
 
     async def _close_connections(self) -> None:
         await cache.close_connections()
+
+    async def _hold_logs(self, _restored: Restored) -> None:
+        StdoutLog.hold()
+
+    async def _release_logs(self, _restored: Restored) -> None:
+        StdoutLog.release()
 
     async def _reset_pools(self, _restored: Restored) -> None:
         await cache.reset_pools()

@@ -17,10 +17,11 @@ import os
 import subprocess
 import sys
 from pathlib import Path
+from typing import Any
 
 import pytest
 from igni_cloud.guest.immortal import BaseObjects
-from igni_cloud.guest.suspend import HeapTrim, SuspendWatch
+from igni_cloud.guest.suspend import HeapTrim, MallInfo2, SuspendWatch
 
 HOOK = Path(__file__).parents[1] / "hooks" / "before-suspend.d" / "50-igni"
 
@@ -79,6 +80,7 @@ async def test_a_suspending_request_is_answered_once(tmp_path: Path) -> None:
     assert await watch.check() is None, "once per request"
     if sys.platform.startswith("linux"):
         assert answer.trimmed_kb is not None
+        assert answer.free_heap_kb is not None
     else:
         assert HeapTrim.run() is None
 
@@ -126,3 +128,50 @@ async def test_steps_before_a_suspend_run_first_and_a_slow_one_is_left(
     answer = await watch.check()
     assert ran == ["closed"]
     assert answer is not None and answer.unfinished == ["slow"], "answered within the hook's wait"
+
+
+class FakeLibc:
+    """``malloc_trim`` and ``mallinfo2`` as glibc answers them, with this much free."""
+
+    def __init__(self, free_kb: int) -> None:
+        self.trims: list[int] = []
+        self.mallinfo2 = self.MallInfo(free_kb)
+
+    def malloc_trim(self, pad: int) -> int:
+        self.trims.append(pad)
+        return 1
+
+    class MallInfo:
+        def __init__(self, free_kb: int) -> None:
+            self.free_kb = free_kb
+            self.restype: Any = None
+
+        def __call__(self) -> MallInfo2:
+            return MallInfo2(fordblks=self.free_kb * 1024)
+
+
+@pytest.mark.parametrize(("free_kb", "trimmed"), [(12 * 1024, False), (200 * 1024, True)])
+def test_only_a_large_free_heap_is_given_back(
+    monkeypatch: pytest.MonkeyPatch, free_kb: int, trimmed: bool
+) -> None:
+    libc = FakeLibc(free_kb)
+    monkeypatch.setattr(HeapTrim, "_libc", classmethod(lambda cls: libc))
+    free = HeapTrim.free_kb()
+    assert free == free_kb
+    result = HeapTrim.run(free)
+    assert bool(libc.trims) is trimmed, "a usual turn's free heap is the next turn's"
+    if not trimmed:
+        assert result == 0
+
+
+async def test_the_answer_says_how_much_was_free(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    libc = FakeLibc(1234)
+    monkeypatch.setattr(HeapTrim, "_libc", classmethod(lambda cls: libc))
+    watch = SuspendWatch(tmp_path / "suspending", tmp_path / "suspend-ready", watch=False)
+    (tmp_path / "suspending").write_text(json.dumps({"token": "t3"}))
+    answer = await watch.check()
+    assert answer is not None
+    assert (answer.free_heap_kb, answer.trimmed_kb) == (1234, 0)
+    assert libc.trims == []

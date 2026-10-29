@@ -11,11 +11,24 @@ with the same token. In between igni runs its before-suspend steps
 PostgreSQL connection it holds, Agno's included, so a paused VM holds
 none: a node pauses about a thousand, and each producer's own login
 cannot share a pooler; the first query after the VM runs again opens a
-fresh one — and then returns the memory its allocator holds free to the
-kernel (``malloc_trim(0)``): pages the kernel then reports free are not
-part of the snapshot, so a cold resume does not read them. Measured in
-a Linux container after a turn (diagnostic): about 2 MB fewer changed
-pages.
+fresh one — and then, when its allocator holds a lot free, returns that
+memory to the kernel (``malloc_trim(0)``): pages the kernel then reports
+free are not part of the snapshot, so a cold resume does not read them.
+
+Only a lot (:attr:`HeapTrim.MIN_FREE_KB`): a trimmed page that igni
+uses again comes back as a fresh page — in the VM a guest page fault and
+a host fault for a zero page each, never prefetched with the working
+set. Trimming before every suspend cost every wake's first requests a
+page fault per page the allocator gave back (diagnostic, Linux container,
+fake model, six turns of 300 kB replies: the first database answer after
+a wake took ~3,900 page faults with the trim, 5 without; on the image,
+counted, ~3,200–3,500 guest page faults over ~255 ms after every wake's
+first answer, from paused as from a snapshot) to save
+~2 MB of changed pages per suspend. Free heap of a usual turn's size is
+the next turn's: kept. Free heap of a peak far beyond it (a big run's
+leftovers) goes back. A paused VM holds what is kept (here 19–45 MB
+after six turns of 300 kB replies): latency against density, a
+setting to weigh on the node's counted runs.
 
 Watched like ``restored`` (inotify on the run directory): no timer.
 """
@@ -38,7 +51,7 @@ from pydantic import BaseModel, Field, ValidationError
 
 from ember_code.core.activity import background
 from igni_cloud.guest.files import AtomicFile
-from igni_cloud.guest.watch import DirectoryWatch
+from igni_cloud.guest.watch import DirectoryWatch, FileWatch
 
 logger = logging.getLogger(__name__)
 
@@ -52,25 +65,77 @@ class SuspendReady(BaseModel):
     ms: float
     #: Steps that did not finish in their share of the hook's half second.
     unfinished: list[str] = Field(default_factory=list)
-    #: How much the resident set shrank; ``None`` where the heap is not glibc's.
+    #: How much the resident set shrank (0: the free heap was kept); ``None`` where the heap is not glibc's.
     trimmed_kb: int | None = None
+    #: What the allocator held free before (``mallinfo2``); ``None`` where it cannot say.
+    free_heap_kb: int | None = None
+
+
+class MallInfo2(ctypes.Structure):
+    """glibc's ``struct mallinfo2``."""
+
+    _fields_ = [
+        (name, ctypes.c_size_t)
+        for name in (
+            "arena",
+            "ordblks",
+            "smblks",
+            "hblks",
+            "hblkhd",
+            "usmblks",
+            "fsmblks",
+            "uordblks",
+            "fordblks",
+            "keepcost",
+        )
+    ]
 
 
 class HeapTrim:
-    """glibc's ``malloc_trim(0)``: free heap pages given back to the kernel."""
+    """glibc's ``malloc_trim(0)``: free heap pages given back to the kernel, when there are many."""
 
+    #: Free heap below this is kept for the next turn (see the module's notes).
+    MIN_FREE_KB = 64 * 1024
     _STATM = Path("/proc/self/statm")
 
     @classmethod
-    def run(cls) -> int | None:
-        """Trim; the resident set's shrink in kB, or ``None`` with no glibc here."""
+    def _libc(cls) -> ctypes.CDLL | None:
         if not sys.platform.startswith("linux"):
             return None
         try:
-            libc = ctypes.CDLL(ctypes.util.find_library("c") or "libc.so.6")
-            trim = libc.malloc_trim
-        except (OSError, AttributeError):
+            return ctypes.CDLL(ctypes.util.find_library("c") or "libc.so.6")
+        except OSError:
             return None
+
+    @classmethod
+    def free_kb(cls) -> int | None:
+        """What the allocator holds free (``mallinfo2().fordblks``); ``None`` where it cannot say."""
+        libc = cls._libc()
+        try:
+            info = libc.mallinfo2 if libc is not None else None
+        except AttributeError:
+            return None
+        if info is None:
+            return None
+        info.restype = MallInfo2
+        return int(info().fordblks) // 1024
+
+    @classmethod
+    def run(cls, free_kb: int | None = None) -> int | None:
+        """Trim when ``free_kb`` (unknown: always) reaches :attr:`MIN_FREE_KB`.
+
+        The resident set's shrink in kB — 0 when the heap was kept — or
+        ``None`` with no glibc here.
+        """
+        libc = cls._libc()
+        try:
+            trim = libc.malloc_trim if libc is not None else None
+        except AttributeError:
+            return None
+        if trim is None:
+            return None
+        if free_kb is not None and free_kb < cls.MIN_FREE_KB:
+            return 0
         before = cls._resident_kb()
         trim(0)
         after = cls._resident_kb()
@@ -93,10 +158,20 @@ class SuspendWatch:
     #: The most the steps may take together: the hook waits half a second.
     STEPS_SECONDS = 0.4
 
-    def __init__(self, request: Path, ready: Path, *, watch: bool = True) -> None:
+    def __init__(
+        self,
+        request: Path,
+        ready: Path,
+        *,
+        watch: bool = True,
+        directory: DirectoryWatch | None = None,
+    ) -> None:
         self.request = request
         self.ready = ready
-        self._directory = DirectoryWatch(request.parent) if watch else None
+        #: Woken by ``suspending`` alone; ``directory`` shares one watch of the run directory.
+        self._directory: FileWatch | None = (
+            (directory or DirectoryWatch(request.parent)).file(request.name) if watch else None
+        )
         self._answered: str | None = None
         self._task: asyncio.Future[None] | None = None
         self._steps: list[Callable[[], Awaitable[None]]] = []
@@ -128,11 +203,13 @@ class SuspendWatch:
             except Exception:
                 logger.exception("before-suspend step %s failed", name)
                 unfinished.append(name)
-        trimmed = HeapTrim.run()
+        free = HeapTrim.free_kb()
+        trimmed = HeapTrim.run(free)
         answer = SuspendReady(
             token=request.token,
             ms=round((time.perf_counter() - started) * 1000, 2),
             trimmed_kb=trimmed,
+            free_heap_kb=free,
             unfinished=unfinished,
         )
         try:
@@ -141,7 +218,9 @@ class SuspendWatch:
             logger.warning("cannot answer %s: %s", self.request, exc)
             return None
         self._answered = request.token
-        logger.info("ready to suspend: %s kB trimmed in %.1f ms", trimmed, answer.ms)
+        logger.info(
+            "ready to suspend: %s kB trimmed of %s kB free in %.1f ms", trimmed, free, answer.ms
+        )
         return answer
 
     def start(self) -> None:
@@ -171,4 +250,4 @@ class SuspendWatch:
             await self.check()
 
 
-__all__ = ["HeapTrim", "SuspendReady", "SuspendRequest", "SuspendWatch"]
+__all__ = ["HeapTrim", "MallInfo2", "SuspendReady", "SuspendRequest", "SuspendWatch"]

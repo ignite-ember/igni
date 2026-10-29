@@ -207,13 +207,15 @@ class WebSocketServerTransport(ListeningTransport):
         client = MirroredClient(client_id=client_id, conn=conn)
         self._conns[client_id] = client
         self._connected.set()
-        logger.info("FE client %s attached (%d total)", client_id, len(self._conns))
         control = self.is_control(conn)
         try:
             # Tell the client who it is so it can recognise its own
-            # broadcast echoes. First: whatever watches attachments can
-            # wait until the client has heard back.
+            # broadcast echoes. First — before logging it, too: whatever
+            # watches attachments can wait until the client has heard
+            # back (on a cloud VM just restored, every line of code run
+            # before the welcome is memory it waits for).
             await conn.send(Welcome(client_id=client_id).model_dump_json())
+            logger.info("FE client %s attached (%d total)", client_id, len(self._conns))
             self._tell_watchers("attached", client_id)
             async for raw in conn:
                 if isinstance(raw, bytes):

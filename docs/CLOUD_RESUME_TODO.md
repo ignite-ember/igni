@@ -141,7 +141,10 @@ and cold, before and after.
       hook (`packages/igni-cloud/hooks/before-suspend.d/50-igni`, waits
       0.5 s at most), which the image must install in
       `hooks/before-suspend.d/`; pages the kernel then reports free
-      leave the snapshot.
+      leave the snapshot. **Changed (item 3b, this round): only when 64 MiB
+      or more is free** — trimming before every suspend cost every
+      wake's first requests a fresh page fault per page given back
+      (~3,200–3,500 guest faults over ~255 ms on the image).
 - [x] igni: memory during a real agent run, and with several chats at once
       in one VM; confirm or change the 1 GiB default. Diagnostic (Linux
       container on Apple Silicon, MiniMax-M2.7, PostgreSQL; the counted
@@ -169,7 +172,7 @@ and cold, before and after.
       the OOM killer. Decided: every VM boots with a 4 GiB ceiling and runs
       at a 1 GiB normal size held by the balloon, which the node agent
       deflates while the guest needs more and the node has room
-      (`igni__cloudvm` `docs/node-agent.md`, results/balloon/).
+      (`igni__cloudvm/docs/node-agent.md`, results/balloon/).
 - [x] igni: what is imported at `ready` (~169 MB) that a producer may never
       use; weigh it against loading on the first request. Diagnostic
       (container, `PYTHONTRACEMALLOC`, `-X importtime`): 2,706 modules at
@@ -231,6 +234,87 @@ and cold, before and after.
       34.2 ms, first answer 0.7 ms later; with the client at once, first
       answer 3.3 ms after the restore (was 4.3 with the swap, 24.9 before
       the last round), first database answer 18 ms.
+- [x] Profile igni from the restore to the first answer on the real path
+      (connect as the gateway does, igni's before-suspend hook before each
+      pause, a session with some work behind it) and take off the answer's
+      path what it does not need. Diagnostic, Linux container on Apple
+      Silicon (Docker Desktop, 2 CPUs), fake model (6 turns of 300 kB
+      replies), PostgreSQL, p50 of 12, client at once after `restored`:
+      `scripts/measure_resume.py --idle 0 --resumes 12 --connect-after-ms 0
+      --turns 6 --reply-kb 300` (`--no-clear-referenced` for fresh faults
+      only). "Pages touched" are igni's page faults with the referenced
+      bits cleared at the stop (on arm64 every first touch is then a
+      fault); on a restored VM each is a UFFD fault until the prefetch has
+      the page. Found:
+      - **igni's first answer is mostly the WebSocket handshake's pages.**
+        Restore → welcome ~2,370 pages, → first answer ~2,800 (~11 MB):
+        the websockets server, asyncio and igni's handler and dispatch
+        (~460 distinct Python functions, libpython's own code); the
+        restore's own handling ~200–300 of them. The whole path is 2–3 ms
+        of igni's CPU, in two dozen callbacks of which the handshake's is
+        the longest (half the calls); igni's CPU ≈ its wall time (it never
+        waited). On the image
+        that is the gateway's `igni_handshake` (p50 57–65 ms from a
+        snapshot, 4–8 ms from paused with everything resident): each page
+        a fault while the prefetch runs. igni can shave it, not remove it:
+        what serves it is the working set reaching those pages first.
+      - **"Noticed 139 ms after the restore" is not igni's loop.**
+        `restored`'s `at_ms` is the host's clock when it sent
+        `post_restore` (guest agent `ops.rs`), not when the file was
+        written. The timeline now splits it: `written_after_ms` (host →
+        agent → file, by its modification time) and `woke_after_write_ms`
+        (file → igni's loop reading the event), and gives every step igni's
+        CPU time (`cpu_ms`: far below `at_ms`, igni was waiting).
+      - **The ~3,500 page faults over 255 ms after the answer were the heap
+        trim before the pause.** Every pause gave the allocator's free heap
+        back (8–27 MB here), and the first requests after the wake
+        allocated it again, one fresh page — a guest fault and a host
+        zero-page fault — at a time. Reproduced: first answer → first
+        database answer 4,311 fresh faults with the trim, 5 without.
+      - **A collection during the burst** reads the header of everything
+        young objects point to: on the image gen-0 collections of
+        10–53 ms and a gen-2 of 130 ms among the first requests.
+      - **Three inotify watches on `/run/igni`**, each woken by every file
+        written there: a restore also ran the binding's and the suspend
+        watch's look, and igni's own `activity.json` (each window
+        attaching, each activity change) woke all three.
+      - **The log writer thread** was woken by the window attaching's line,
+        taking the interpreter's lock from the loop during the handshake.
+
+      Cut (ember-code, this commit): one inotify watch per directory, each
+      file's waiter woken by its own name only; the collector off from
+      noticing the restore until the burst is through (the later steps
+      begin: answer + 0.5 s, or 1 s with no answer); the log writer held
+      (records kept, in order, with their times) until then; the window's
+      "attached" line after its welcome; the timeline's records built when
+      it is logged, not while marking; the heap trimmed only from 64 MiB
+      free (`free_heap_kb` in `suspend-ready`). What is kept stays in a
+      paused VM (19–45 MB free heap here, before: trimmed to ~0): the
+      trim's threshold is first-request latency against the paused
+      tier's density, for the counted runs to settle. glibc's own
+      trimming still gives some back between wakes (one run: 5 fresh
+      faults on each first database answer, another 1,320); fixing its
+      thresholds with `mallopt` (32 MiB, with the trim's threshold there
+      too) stopped that but let the free heap grow past the trim's
+      threshold, so every suspend trimmed (5,400 faults): not kept.
+
+      | p50, n = 12 | before | after |
+      |---|---|---|
+      | restore → welcome, pages touched | 2,374 | 2,173 |
+      | restore → first answer, pages touched | 2,802 | 2,594 |
+      | igni's timeline, noticed → first answer, pages | 1,795 | 1,609 |
+      | first answer → first database answer, fresh page faults | 4,311 | 5 |
+      | free heap at the before-suspend answer / trimmed | trimmed 8–27 MB | 39–42 MB, kept |
+      | collections before the burst is through | gen 0 at 33–46 ms | none |
+      | restore → welcome / first answer / first database answer (ms, container) | 2.0 / 2.8 / 42.7 | 1.6 / 2.5 / 40.7 |
+
+      The container's times barely move — its memory is resident; the
+      gain is in pages and faults, which the image pays for. Next: the
+      node's counted run on this igni (`igni_handshake`, first database
+      answer, the timeline's new splits). Left on igni's side: the
+      handshake's own pages — a dry-run bind and handshake while building
+      the warm base would make them base pages, shared and likelier
+      resident (proposed, not done).
 - [x] `list_sessions` "never answered within 60 s" through the gateway
       (realwork harness): igni answers it — as a typed
       `session_list_result` carrying the request's id, like every RPC whose
