@@ -18,12 +18,25 @@ Two ways to run it:
   probe only measures the idle window and prints the timeline igni
   itself logged for the last real restore (``resume timeline`` lines).
 
+Each simulated restore plays what the node does: igni's before-suspend
+hook first (``--before-suspend``, on by default: igni closes its
+database connections and may trim its heap), then the stop, the
+referenced bits cleared, the continue, ``restored`` written and a client
+connecting as the gateway does (no ``permessage-deflate``: the
+gateway's WebSocket client offers none). ``--turns`` and ``--reply-kb``
+size the session before it (the fake model's reply), so the heap looks
+like one that did some work.
+
 Per resume it prints: the WebSocket handshake (connect → ``welcome``), the
-first RPC, the first database RPC, the kB of igni's memory referenced
-from the restore to the last answer (what a cold resume must read), and
-its CPU time. For the idle window: the pages dirtied (soft-dirty), by
-mapping. igni's own ``resume timeline`` (each after-restore step, the
-first connection, the first answer, with page faults) is in its log.
+first RPC, the first database RPC, igni's page faults up to each (with
+the referenced bits cleared, on arm64 every first touch of a page is a
+fault: pages touched; ``--no-clear-referenced`` counts only fresh pages),
+the kB of igni's memory referenced from the restore to the last answer
+(what a cold resume must read), and its CPU time. For the idle window:
+the pages dirtied (soft-dirty), by mapping. igni's own ``resume
+timeline`` (each after-restore step, the first connection, the first
+answer, with page faults and CPU time) is in its log, and summarised
+per step (p50) under ``timeline_summary``.
 
     python scripts/measure_resume.py --out r.json [--database-url URL] [--idle 60] [--resumes 10]
 """
@@ -55,7 +68,10 @@ from websockets.asyncio.client import connect
 
 
 class FakeModel(BaseHTTPRequestHandler):
-    """Answers every chat completion with a streamed "hi"."""
+    """Answers every chat completion with a streamed "hi" — or ``REPLY_KB`` kB of text."""
+
+    #: The reply's size in kB; 0 for "hi".
+    REPLY_KB = 0
 
     def log_message(self, *_: Any) -> None:
         pass
@@ -65,17 +81,18 @@ class FakeModel(BaseHTTPRequestHandler):
         self.send_response(200)
         self.send_header("content-type", "text/event-stream")
         self.end_headers()
+        text = ("lorem ipsum dolor sit amet " * 40)[:1000] if self.REPLY_KB else "hi"
         chunk = {
             "id": "c1",
             "object": "chat.completion.chunk",
             "created": 0,
             "model": "fake",
             "choices": [
-                {"index": 0, "delta": {"role": "assistant", "content": "hi"}, "finish_reason": None}
+                {"index": 0, "delta": {"role": "assistant", "content": text}, "finish_reason": None}
             ],
         }
         done = dict(chunk, choices=[{"index": 0, "delta": {}, "finish_reason": "stop"}])
-        for c in (chunk, done):
+        for c in [chunk] * max(1, self.REPLY_KB) + [done]:
             self.wfile.write(f"data: {json.dumps(c)}\n\n".encode())
         self.wfile.write(b"data: [DONE]\n\n")
 
@@ -227,6 +244,11 @@ class ProcessPages:
                 counts[label] += 1
         total = sum(counts.values())
         return total, {k: v * ProcessPages.PAGE // 1024 for k, v in counts.most_common(top)}
+
+    def faults(self) -> int:
+        """Minor page faults so far, every thread's."""
+        fields = Path(f"/proc/{self.pid}/stat").read_text().rsplit(")", 1)[1].split()
+        return int(fields[7])
 
     def cpu_seconds(self) -> float:
         fields = Path(f"/proc/{self.pid}/stat").read_text().rsplit(")", 1)[1].split()
@@ -586,14 +608,29 @@ class PauseProbe:
 
 
 class ResumeProbe:
+    #: The before-suspend hook igni's image installs.
+    HOOK = PauseProbe.HOOK
+
     def __init__(
-        self, *, pid: int, url: str, restored: Path, simulate: bool, connect_after_ms: float
+        self,
+        *,
+        pid: int,
+        url: str,
+        restored: Path,
+        simulate: bool,
+        connect_after_ms: float,
+        turns: int = 1,
+        before_suspend: bool = True,
+        clear_referenced: bool = True,
     ) -> None:
         self.connect_after = connect_after_ms / 1000
         self.pages = ProcessPages(pid)
         self.url = url
         self.restored = restored
         self.simulate = simulate
+        self.turns = turns
+        self.before_suspend = before_suspend
+        self.clear_referenced = clear_referenced
 
     async def first_answer(self) -> float:
         """Until a bound igni answers (it refuses while unbound)."""
@@ -606,12 +643,13 @@ class ResumeProbe:
         return time.perf_counter() - started
 
     async def session(self) -> None:
-        """What a person does before igni goes idle: a turn, a few reads."""
+        """What a person does before igni goes idle: turns, a few reads."""
         async with connect(self.url, max_size=None) as ws:
             await ws.recv()
             window = Window(ws)
             await window.rpc("get_session_id")
-            await window.turn("say hi")
+            for turn in range(self.turns):
+                await window.turn(f"turn {turn}: say hi")
             await window.rpc("list_sessions")
             await window.rpc("get_status")
 
@@ -646,11 +684,27 @@ class ResumeProbe:
         except (OSError, ValueError, KeyError):
             return 1
 
+    async def suspend_hook(self) -> dict[str, Any]:
+        """The node's ``before_suspend``: igni's hook, and igni's answer to it."""
+        run_dir = self.restored.parent
+        hook = await asyncio.create_subprocess_exec(
+            str(self.HOOK), env={**os.environ, "IGNI_RUN_DIR": str(run_dir)}
+        )
+        await hook.wait()
+        try:
+            return dict(json.loads((run_dir / "suspend-ready").read_text()))
+        except (OSError, ValueError):
+            return {}
+
     async def resume(self) -> dict[str, Any]:
         pid = self.pages.pid
+        ready = await self.suspend_hook() if self.before_suspend else {}
+        await asyncio.sleep(0.5)  # idle until the pause
         os.kill(pid, signal.SIGSTOP)
-        self.pages.clear(ProcessPages.CLEAR_REFERENCED)
+        if self.clear_referenced:
+            self.pages.clear(ProcessPages.CLEAR_REFERENCED)
         await asyncio.sleep(0.2)
+        faults = self.pages.faults()
         os.kill(pid, signal.SIGCONT)
         cpu = self.pages.cpu_seconds()
         staged = self.restored.with_name(".restored.probe")
@@ -666,23 +720,31 @@ class ResumeProbe:
         t0 = time.perf_counter()
         os.replace(staged, self.restored)
         await asyncio.sleep(self.connect_after)
-        async with connect(self.url, max_size=None) as ws:
+        # As the gateway connects: no compression offered.
+        async with connect(self.url, max_size=None, compression=None) as ws:
             await ws.recv()
             handshake = time.perf_counter()
+            at_handshake = self.pages.faults()
             window = Window(ws)
             await window.rpc("get_session_id")
             first_rpc = time.perf_counter()
+            at_first_rpc = self.pages.faults()
             await window.rpc("list_sessions")
             first_db = time.perf_counter()
+            at_first_db = self.pages.faults()
         referenced = self.pages.referenced_kb()
         by_mapping = self.pages.referenced_by_mapping()
         return {
             "handshake_ms": round((handshake - t0) * 1000, 1),
             "first_rpc_ms": round((first_rpc - t0) * 1000, 1),
             "first_db_rpc_ms": round((first_db - t0) * 1000, 1),
+            "faults_to_handshake": at_handshake - faults,
+            "faults_to_first_rpc": at_first_rpc - faults,
+            "faults_first_rpc_to_db": at_first_db - at_first_rpc,
             "referenced_kb": referenced,
             "cpu_ms": round((self.pages.cpu_seconds() - cpu) * 1000, 1),
             "referenced_kb_by_mapping": by_mapping,
+            "suspend_ready": ready,
         }
 
 
@@ -690,13 +752,44 @@ class Summary:
     @staticmethod
     def of(resumes: list[dict[str, Any]]) -> dict[str, Any]:
         out: dict[str, Any] = {"n": len(resumes)}
-        for key in ("handshake_ms", "first_rpc_ms", "first_db_rpc_ms", "referenced_kb", "cpu_ms"):
+        for key in (
+            "handshake_ms",
+            "first_rpc_ms",
+            "first_db_rpc_ms",
+            "faults_to_handshake",
+            "faults_to_first_rpc",
+            "faults_first_rpc_to_db",
+            "referenced_kb",
+            "cpu_ms",
+        ):
             values = sorted(r[key] for r in resumes)
             out[key] = {
                 "p50": statistics.median(values),
                 "max": values[-1],
             }
         return out
+
+    @staticmethod
+    def steps(timelines: list[dict[str, Any]]) -> dict[str, dict[str, float]]:
+        """Each step's p50 over the timelines: when it ended, its faults, igni's CPU."""
+        found: dict[str, dict[str, list[float]]] = {}
+        for timeline in timelines:
+            seen: Counter[str] = Counter()
+            for step in timeline.get("steps", []):
+                seen[step["step"]] += 1
+                name = (
+                    step["step"]
+                    if seen[step["step"]] == 1
+                    else f"{step['step']} #{seen[step['step']]}"
+                )
+                values = found.setdefault(name, {"at_ms": [], "minor_faults": [], "cpu_ms": []})
+                for key in values:
+                    if step.get(key) is not None:
+                        values[key].append(step[key])
+        return {
+            name: {key: statistics.median(v) for key, v in values.items() if v}
+            for name, values in found.items()
+        }
 
     @staticmethod
     def timelines(log: Path) -> list[dict[str, Any]]:
@@ -755,6 +848,18 @@ class Summary:
     default=30.0,
     help="From restored to the client connecting: the node agent's reply and the stream",
 )
+@click.option("--turns", default=1, help="Turns in the session before the idle window")
+@click.option("--reply-kb", default=0, help='The fake model\'s reply, in kB (0: "hi")')
+@click.option(
+    "--before-suspend/--no-before-suspend",
+    default=True,
+    help="Run igni's before-suspend hook before each simulated restore, as the node does",
+)
+@click.option(
+    "--clear-referenced/--no-clear-referenced",
+    default=True,
+    help="Clear the referenced bits at each stop (on arm64 every first touch then faults)",
+)
 @click.option("--port", default=18765)
 @click.option("--pid", type=int, default=None, help="Measure this igni instead of starting one")
 @click.option("--ws", "ws_url", default=None, help="Its WebSocket URL, with --pid")
@@ -778,6 +883,10 @@ def main(
     save_pages: Path | None,
     igni_env: tuple[str, ...],
     connect_after_ms: float,
+    turns: int,
+    reply_kb: int,
+    before_suspend: bool,
+    clear_referenced: bool,
     port: int,
     pid: int | None,
     ws_url: str | None,
@@ -787,6 +896,7 @@ def main(
     async def run() -> dict[str, Any]:
         igni: Igni | None = None
         result: dict[str, Any] = {}
+        FakeModel.REPLY_KB = reply_kb
         if pid is None:
             server = ThreadingHTTPServer(("127.0.0.1", 0), FakeModel)
             threading.Thread(target=server.serve_forever, daemon=True).start()
@@ -811,6 +921,9 @@ def main(
                 restored=igni.run_dir / "restored",
                 simulate=True,
                 connect_after_ms=connect_after_ms,
+                turns=turns,
+                before_suspend=before_suspend,
+                clear_referenced=clear_referenced,
             )
             # The warm base: what a snapshot taken now would hold.
             await asyncio.sleep(base_settle)
@@ -854,6 +967,9 @@ def main(
                 restored=restored,
                 simulate=simulate,
                 connect_after_ms=connect_after_ms,
+                turns=turns,
+                before_suspend=before_suspend,
+                clear_referenced=clear_referenced,
             )
         try:
             if pid is not None:
@@ -869,7 +985,10 @@ def main(
                 result["resumes"] = runs
                 result["resume_summary"] = Summary.of(runs)
                 if igni is not None:
-                    result["igni_timelines"] = Summary.timelines(igni.log)
+                    await asyncio.sleep(0.5)  # the last timeline is logged after its steps
+                    timelines = Summary.timelines(igni.log)[-resumes:]
+                    result["igni_timelines"] = timelines
+                    result["timeline_summary"] = Summary.steps(timelines)
         finally:
             if igni is not None:
                 igni.stop()
