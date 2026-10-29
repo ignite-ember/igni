@@ -45,6 +45,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import contextlib
 import json
 import os
 import re
@@ -265,6 +266,81 @@ class ProcessPages:
         if "site-packages/" in path:
             return "site-packages/" + path.split("site-packages/", 1)[1].split("/", 1)[0]
         return path
+
+
+class FaultTrace:
+    """igni's page faults, by address, through a kprobe on ``handle_mm_fault`` (root).
+
+    With the referenced bits cleared at the stop, every page igni touches
+    after the continue faults once (arm64), so the addresses are the pages
+    touched; :meth:`classify` says which of them are still the warm base's
+    — shared by every producer — and which are this igni's own.
+    """
+
+    TRACING = Path("/sys/kernel/tracing")
+    EVENT = "igni_probe_fault"
+    #: ``handle_mm_fault``'s second argument, the address.
+    REGISTER = {"aarch64": "%x1", "arm64": "%x1", "x86_64": "%si"}
+    _ADDRESS = re.compile(r"addr=0x([0-9a-f]+)")
+
+    def __init__(self, pid: int) -> None:
+        self.pid = pid
+
+    def _write(self, name: str, value: str, *, append: bool = False) -> None:
+        # tracefs files refuse the seek a Python "a" open makes.
+        flags = os.O_WRONLY | (os.O_APPEND if append else os.O_TRUNC)
+        fd = os.open(self.TRACING / name, flags)
+        try:
+            os.write(fd, (value + "\n").encode())
+        finally:
+            os.close(fd)
+
+    def install(self) -> None:
+        if not (self.TRACING / "kprobe_events").exists():
+            subprocess.run(["mount", "-t", "tracefs", "nodev", str(self.TRACING)], check=True)
+        register = self.REGISTER[os.uname().machine]
+        self._write("kprobe_events", f"p:{self.EVENT} handle_mm_fault addr={register}", append=True)
+
+    def remove(self) -> None:
+        with contextlib.suppress(OSError):
+            self._write(f"events/kprobes/{self.EVENT}/enable", "0")
+        with contextlib.suppress(OSError):
+            self._write("set_event_pid", "")
+        with contextlib.suppress(OSError):
+            self._write("kprobe_events", f"-:{self.EVENT}", append=True)
+
+    def start(self) -> None:
+        threads = " ".join(p.name for p in Path(f"/proc/{self.pid}/task").iterdir())
+        self._write("set_event_pid", threads)
+        self._write("trace", "")
+        self._write(f"events/kprobes/{self.EVENT}/enable", "1")
+
+    def pages(self) -> set[int]:
+        """The pages faulted since :meth:`start`."""
+        text = (self.TRACING / "trace").read_text(errors="replace")
+        page = ProcessPages.PAGE
+        return {int(m.group(1), 16) // page * page for m in self._ADDRESS.finditer(text)}
+
+    def stop(self) -> None:
+        self._write(f"events/kprobes/{self.EVENT}/enable", "0")
+
+    @staticmethod
+    def classify(
+        touched: set[int],
+        base: dict[int, tuple[str, int]],
+        now: dict[int, tuple[str, int]],
+    ) -> dict[str, int]:
+        """Touched pages: the base's (unchanged since it), igni's own, and the rest (code, files)."""
+        counts = Counter[str]()
+        for address in touched:
+            current = now.get(address)
+            if current is None:
+                counts["file_or_shared"] += 1
+            elif base.get(address, (None, None))[1] == current[1]:
+                counts["base"] += 1
+            else:
+                counts["own"] += 1
+        return dict(counts)
 
 
 class ModelChoice:
@@ -622,8 +698,12 @@ class ResumeProbe:
         turns: int = 1,
         before_suspend: bool = True,
         clear_referenced: bool = True,
+        fault_trace: bool = False,
     ) -> None:
         self.connect_after = connect_after_ms / 1000
+        self.trace = FaultTrace(pid) if fault_trace else None
+        #: The warm base's pages, for :meth:`FaultTrace.classify`.
+        self.base: dict[int, tuple[str, int]] = {}
         self.pages = ProcessPages(pid)
         self.url = url
         self.restored = restored
@@ -704,6 +784,9 @@ class ResumeProbe:
         if self.clear_referenced:
             self.pages.clear(ProcessPages.CLEAR_REFERENCED)
         await asyncio.sleep(0.2)
+        now = await asyncio.to_thread(self.pages.contents) if self.trace else {}
+        if self.trace is not None:
+            self.trace.start()
         faults = self.pages.faults()
         os.kill(pid, signal.SIGCONT)
         cpu = self.pages.cpu_seconds()
@@ -725,10 +808,14 @@ class ResumeProbe:
             await ws.recv()
             handshake = time.perf_counter()
             at_handshake = self.pages.faults()
+            to_welcome = self.trace.pages() if self.trace else set()
             window = Window(ws)
             await window.rpc("get_session_id")
             first_rpc = time.perf_counter()
             at_first_rpc = self.pages.faults()
+            to_answer = self.trace.pages() if self.trace else set()
+            if self.trace is not None:
+                self.trace.stop()
             await window.rpc("list_sessions")
             first_db = time.perf_counter()
             at_first_db = self.pages.faults()
@@ -745,6 +832,14 @@ class ResumeProbe:
             "cpu_ms": round((self.pages.cpu_seconds() - cpu) * 1000, 1),
             "referenced_kb_by_mapping": by_mapping,
             "suspend_ready": ready,
+            **(
+                {
+                    "touched_to_welcome": FaultTrace.classify(to_welcome, self.base, now),
+                    "touched_to_first_rpc": FaultTrace.classify(to_answer, self.base, now),
+                }
+                if self.trace
+                else {}
+            ),
         }
 
 
@@ -767,6 +862,13 @@ class Summary:
                 "p50": statistics.median(values),
                 "max": values[-1],
             }
+        for key in ("touched_to_welcome", "touched_to_first_rpc"):
+            kinds = {kind for r in resumes for kind in r.get(key, {})}
+            if kinds:
+                out[key] = {
+                    kind: statistics.median(r.get(key, {}).get(kind, 0) for r in resumes)
+                    for kind in sorted(kinds)
+                }
         return out
 
     @staticmethod
@@ -860,6 +962,11 @@ class Summary:
     default=True,
     help="Clear the referenced bits at each stop (on arm64 every first touch then faults)",
 )
+@click.option(
+    "--fault-trace/--no-fault-trace",
+    default=False,
+    help="Trace igni's page faults by address (kprobe, root): touched base pages against its own",
+)
 @click.option("--port", default=18765)
 @click.option("--pid", type=int, default=None, help="Measure this igni instead of starting one")
 @click.option("--ws", "ws_url", default=None, help="Its WebSocket URL, with --pid")
@@ -887,6 +994,7 @@ def main(
     reply_kb: int,
     before_suspend: bool,
     clear_referenced: bool,
+    fault_trace: bool,
     port: int,
     pid: int | None,
     ws_url: str | None,
@@ -924,10 +1032,11 @@ def main(
                 turns=turns,
                 before_suspend=before_suspend,
                 clear_referenced=clear_referenced,
+                fault_trace=fault_trace,
             )
             # The warm base: what a snapshot taken now would hold.
             await asyncio.sleep(base_settle)
-            base = await asyncio.to_thread(probe.pages.contents)
+            base = probe.base = await asyncio.to_thread(probe.pages.contents)
             result["rss_at_ready_kb"] = probe.pages.rss_kb()
             igni.hand_over()
             result["bind_to_first_answer_ms"] = round(await probe.first_answer() * 1000, 1)
@@ -979,9 +1088,15 @@ def main(
                 result["idle"] = await probe.idle(idle_seconds)
             if probe.simulate and resumes:
                 runs = []
-                for _ in range(resumes):
-                    runs.append(await probe.resume())
-                    await asyncio.sleep(2.5)  # past the deferred rescan
+                if probe.trace is not None:
+                    probe.trace.install()
+                try:
+                    for _ in range(resumes):
+                        runs.append(await probe.resume())
+                        await asyncio.sleep(2.5)  # past the deferred rescan
+                finally:
+                    if probe.trace is not None:
+                        probe.trace.remove()
                 result["resumes"] = runs
                 result["resume_summary"] = Summary.of(runs)
                 if igni is not None:
