@@ -91,3 +91,7 @@ def test_the_generated_python_imports_and_builds_the_whole_tree() -> None:
             for member in group:
                 assert hasattr(node, member.name), f"{spec.path}.{member.name}"
     assert host.windows.ui("w-1").PATH == "ui"
+    elsewhere = host.sessions.chat("s-2")
+    assert elsewhere.PATH == "chat" and elsewhere.approvals.PATH == "chat.approvals"
+    assert elsewhere._session == "s-2" and elsewhere.approvals._session == "s-2"
+    assert host.chat._session is None

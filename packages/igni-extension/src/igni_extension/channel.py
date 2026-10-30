@@ -95,6 +95,7 @@ class HostConnection:
         path: str,
         *,
         window: str | None = None,
+        session: str | None = None,
         params: dict[str, Any] | None = None,
         value: Any = None,
     ) -> Any:
@@ -111,6 +112,8 @@ class HostConnection:
         body: dict[str, Any] = {"op": op, "path": path}
         if window is not None:
             body["window"] = window
+        if session is not None:
+            body["session"] = session
         if params:
             body["params"] = params
         if op == "set":

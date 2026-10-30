@@ -34,7 +34,7 @@ from ember_code.extensions.host.spec import (
 )
 
 #: The model's version. Semver; see the module docstring.
-SCHEMA_VERSION = "1.8.0"
+SCHEMA_VERSION = "1.10.0"
 
 # ── Permissions ───────────────────────────────────────────────────
 
@@ -54,6 +54,12 @@ PERMISSIONS = (
         doc="The windows and what is on screen in them: page, sidebar, composer, and so on.",
     ),
     PermissionSpec(name="sessions", doc="The list of sessions, and which one is open."),
+    PermissionSpec(
+        name="sessions.post",
+        doc="Post messages and show blocks in any session of this project, not only the "
+        "one on screen — labelled as this extension, without switching what the person "
+        "sees. Needed besides `chat.post` or `chat.append`.",
+    ),
     PermissionSpec(name="chat.read", doc="The conversation: messages, runs, status, todos."),
     PermissionSpec(
         name="chat.post",
@@ -352,7 +358,15 @@ TYPES = (
         field(
             "from_extension",
             "str | None",
-            "The extension that posted it; `None` for the person.",
+            "The extension that posted it, or whose service sent it; `None` for the person.",
+            optional=True,
+        ),
+        field(
+            "from_service",
+            "str | None",
+            "The client id of the service that sent it, when the extension's service did "
+            "(a message item, posted as sent); `None` for a post an extension made itself "
+            "and for the person's.",
             optional=True,
         ),
     ),
@@ -1202,7 +1216,8 @@ OBJECTS = (
     ),
     ObjectSpec(
         path="sessions",
-        doc="The sessions of this project, and which one the active window shows.",
+        doc="The sessions of this project, and which one the active window shows. "
+        "Reach any session's chat, without showing it, with `host.sessions.chat(id)`.",
         permission="sessions",
         properties=(
             prop(
@@ -1240,8 +1255,19 @@ OBJECTS = (
             ),
             method(
                 "create",
-                "Start a new session, in a folder or in this project.",
+                "Start a new session, in a folder or in this project. It moves no window "
+                "unless `focus` is true: reach it with `host.sessions.chat(session_id)`. "
+                "A `title` names it at once, kept as a service's chat title is, so no "
+                "auto-name replaces it.",
                 param("project_dir", "str", optional=True),
+                param("title", "str", "Its name in the session list.", optional=True),
+                param(
+                    "focus",
+                    "bool",
+                    "Show it in the caller's window — a page's own, else the active one. "
+                    "False by default.",
+                    optional=True,
+                ),
                 result="SessionAttached",
             ),
             method(
@@ -1256,8 +1282,14 @@ OBJECTS = (
     ObjectSpec(
         path="chat",
         doc="The conversation in the current session. Signals carry the session they "
-        "happened in, and arrive for every live session.",
+        "happened in, and arrive for every live session. `host.sessions.chat(id)` is the "
+        "same object for any session of this project, without showing it: its properties "
+        "read that session, and `post`, `queue`, `append` and `replace` write there "
+        "(with `sessions.post` as well). A message posted there starts a run, or waits "
+        "for the run already going there — never answering an approval. Its other "
+        "methods act only on the session on screen.",
         permission="chat.read",
+        per_session=True,
         properties=(
             prop("session_id", "str", "The current session.", changed_by=[_SESSION_MOVED]),
             prop(
@@ -1297,7 +1329,8 @@ OBJECTS = (
             signal(
                 "message_added",
                 "ChatMessage",
-                "A message was posted — by the person or an extension.",
+                "A message was posted — by the person, an extension, or an extension's "
+                "service (`from_service`).",
             ),
             signal("content_delta", "ContentDelta", "The agent's answer, streaming."),
             signal("reasoning_started", "RunRef", "The agent started thinking."),
@@ -1329,16 +1362,20 @@ OBJECTS = (
             method(
                 "post",
                 "Post a message in the chat, labelled as this extension. The agent "
-                "sees it and answers in the chat as usual.",
+                "sees it and answers in the chat as usual. In a session that is not on "
+                "screen it starts a run, or is queued for the run going there (working "
+                "or waiting on an approval) — then without attachments.",
                 param("text", "str"),
                 param("attachments", "dict[str, str]", "Path → content.", optional=True),
                 permission="chat.post",
+                elsewhere="sessions.post",
             ),
             method(
                 "queue",
                 "Post a message for the next turn, labelled as this extension.",
                 param("text", "str"),
                 permission="chat.post",
+                elsewhere="sessions.post",
             ),
             method(
                 "append",
@@ -1348,6 +1385,7 @@ OBJECTS = (
                 param("title", "str", optional=True),
                 result="str",
                 permission="chat.append",
+                elsewhere="sessions.post",
             ),
             method(
                 "replace",
@@ -1356,6 +1394,7 @@ OBJECTS = (
                 param("view", "json"),
                 param("title", "str", optional=True),
                 permission="chat.append",
+                elsewhere="sessions.post",
             ),
             method(
                 "search",
@@ -1363,6 +1402,7 @@ OBJECTS = (
                 param("query", "str"),
                 param("limit", "int", "At most this many; 50 by default.", optional=True),
                 result="list[json]",
+                elsewhere="chat.read",
             ),
             method("cancel", "Stop the run.", permission="chat.control"),
             method(
@@ -1410,8 +1450,11 @@ OBJECTS = (
     ),
     ObjectSpec(
         path="chat.approvals",
-        doc="The agent asking to act, and the answers.",
+        doc="The agent asking to act, and the answers. Through `host.sessions.chat(id)` "
+        "`waiting` reads that session; an approval is answered only in the session on "
+        "screen.",
         permission="chat.approvals",
+        per_session=True,
         properties=(
             prop(
                 "waiting",
@@ -1448,8 +1491,11 @@ OBJECTS = (
     ),
     ObjectSpec(
         path="chat.views",
-        doc="json-render blocks in the transcript — the visualizer's and extensions'.",
+        doc="json-render blocks in the transcript — the visualizer's and extensions'. "
+        "Through `host.sessions.chat(id)` `list` reads that session; `dispatch` acts only "
+        "in the session on screen.",
         permission="chat.append",
+        per_session=True,
         properties=(
             prop("list", "list[View]", "The views in the current session.", changed_by=["shown"]),
         ),

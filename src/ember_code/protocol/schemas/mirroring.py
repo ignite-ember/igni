@@ -52,6 +52,10 @@ class UserMessageReceived(Message):
     #: Set when an extension posted it (``host.chat.post``): every view
     #: paints it labelled as that extension's, never as the person's.
     extension_id: str = ""
+    #: Set when the extension's service sent it, as a message item
+    #: (``docs/CLOUD.md`` §6.1): that service's client id. Posted as the
+    #: extension's all the same — ``extension_id`` is set too.
+    service_client_id: str = ""
 
 
 class RequirementResolved(Message):

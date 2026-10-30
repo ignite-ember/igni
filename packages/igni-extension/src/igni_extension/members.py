@@ -48,6 +48,7 @@ class HostLink(Protocol):
         path: str,
         *,
         window: str | None = None,
+        session: str | None = None,
         params: dict[str, Any] | None = None,
         value: Any = None,
     ) -> Any: ...
@@ -69,13 +70,17 @@ def plain(value: Any) -> Any:
 
 
 class HostObject:
-    """One object of the host model: `host.chat`, `host.windows.ui(id)`."""
+    """One object of the host model: `host.chat`, `host.windows.ui(id)`,
+    `host.sessions.chat(id)`."""
 
     PATH = ""
 
-    def __init__(self, link: HostLink, window: str | None = None) -> None:
+    def __init__(
+        self, link: HostLink, window: str | None = None, session: str | None = None
+    ) -> None:
         self._link = link
         self._window = window
+        self._session = session
 
     def _member(self, name: str) -> str:
         return f"{self.PATH}.{name}" if self.PATH else name
@@ -83,7 +88,7 @@ class HostObject:
     async def _call(self, name: str, params: dict[str, Any], result: Any) -> Any:
         sent = {key: plain(value) for key, value in params.items() if value is not None}
         answer = await self._link.request(
-            "call", self._member(name), window=self._window, params=sent
+            "call", self._member(name), window=self._window, session=self._session, params=sent
         )
         if result is NO_RESULT:
             return None
@@ -104,7 +109,9 @@ class Property[T]:
         return self._owner._member(self.name)
 
     async def get(self) -> T:
-        answer = await self._owner._link.request("get", self.path, window=self._owner._window)
+        answer = await self._owner._link.request(
+            "get", self.path, window=self._owner._window, session=self._owner._session
+        )
         return parse(self.annotation, answer)  # type: ignore[no-any-return]
 
     async def set(self, value: T) -> None:
@@ -112,7 +119,11 @@ class Property[T]:
         if not self.writable:
             raise TypeError(f"host.{self.path} cannot be set")
         await self._owner._link.request(
-            "set", self.path, window=self._owner._window, value=plain(value)
+            "set",
+            self.path,
+            window=self._owner._window,
+            session=self._owner._session,
+            value=plain(value),
         )
 
     def __await__(self) -> Generator[Any, None, T]:

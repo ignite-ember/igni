@@ -390,6 +390,7 @@
       "extension_id",
       "id",
       "queued",
+      "service_client_id",
       "session_id",
       "text",
       "type"

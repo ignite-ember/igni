@@ -61,8 +61,9 @@ NOT_REACHABLE: tuple[Unreachable, ...] = (
         key="events",
         what="Delivering a service's events (`deliver_service_events`)",
         why="The platform's: it hands the producer the events services sent their "
-        "extensions. An extension hears its own as `@ext.on_service_event`, before they "
-        "start or resume the run; it does not deliver them.",
+        "extensions. An extension hears its own as `@ext.on_service_event`, and igni posts "
+        "nothing for them: the handler acts through its own host calls (*Opening a chat "
+        "for an event*, below). It does not deliver them.",
     ),
     Unreachable(
         key="service",

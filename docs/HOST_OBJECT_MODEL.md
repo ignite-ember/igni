@@ -140,7 +140,7 @@ window, another extension, or this one.
   the model's — fails the build, so the model cannot fall behind the
   app.
 - **One schema, two SDKs.** The model is described once —
-  `ember_code.extensions.host.definition`, version **1.7.0** — and
+  `ember_code.extensions.host.definition`, version **1.10.0** — and
   versioned under the compatibility floor (EXTENSIBILITY §8): a new
   member is a minor version, a changed or removed one a major. The Python
   SDK (`igni-extension`, `igni_extension.host_model`) and the TypeScript
@@ -193,8 +193,9 @@ Errors carry a code both SDKs raise (`HostError.code`): `not_granted`,
 | `host.app.state` | `values` — key–value state (its own keys) | `changed` | `get(key)`, `set(key, value)`, `delete(key)` | always (own keys) |
 | `host.windows` | `list` — every open window: id, kind (`tauri`, `vscode`, `jetbrains`, `web`), session, `focused`; `focused` — the window with focus | `opened`, `closed`, `focus_changed` | `ui(id)` — that window's `host.ui` | `ui` |
 | `host.ui` — the active window, or `host.windows.ui(id)` | `route` (the page stack: kind, label and params of each), `panel`, `sidebar` (open, width, section), `preview`, `selection` (message, text, file), `composer` (draft, attachments, mode) — all writable; `toasts`, `dialog`, `scroll` | `navigated`, `panel_changed`, `sidebar_changed`, `preview_changed`, `selection_changed`, `composer_changed`, `toast_shown`, `toast_dismissed`, `dialog_opened`, `dialog_closed` (with the answer), `scrolled` | `navigate(page, params)`, `back()`, `open_panel(kind, params)`, `close_panel()`, `set_sidebar(open, width, section)`, `open_preview(path)`, `close_preview()`, `select(selection)`, `set_composer(text, attachments, mode)`, `toast(text, kind, body, target)`, `dismiss_toast(toast_id)` (its own), `show_dialog(spec)` → the person's answer, `scroll_to(message_id)` | `ui`; `open_preview` also needs the path within `permissions.workspace` |
-| `host.sessions` | `list`, `current` (writable — switches the active window) | `current_changed`, `listed`, `cleared`, `named` | `open(session_id)`, `create(project_dir)`, `attach(session_id, project_dir)` | `sessions` |
-| `host.chat` — the current session | `session_id`, `messages` (the transcript), `pending` (queued messages), `processing`, `status`, `timeout`, `interrupted_runs`, `context` (token counts and breakdown) | `message_added` (with `from_extension`), `content_delta`, `reasoning_started`, `run_started`, `run_completed` (with the files changed), `run_error`, `run_paused`, `streaming_done`, `typing`, `status_changed`, `info`, `error`, `tool_started`, `tool_completed`, `tool_error`, `model_completed`, `file_edited` (needs `workspace`), `agent_event`, `retry`, `history_changed` | `post(text, attachments)` — **as the extension**; the agent answers. `queue(text)` — for the next turn, as the extension. `append(view, title)` → its id, `replace(view_id, view, title)` — json-render blocks in the transcript, not sent to the model. `search(query, limit)`, `cancel()`, `cancel_agent(run_id)`, `truncate(run_id)`, `compact()`, `extract_learnings(user_msg, assistant_msg)`, `discard_interrupted(message_id)`, `upload(filename, content_base64)` | `chat.read`; `post`, `queue`, `upload`: `chat.post`; `append`, `replace`: `chat.append`; the rest of the methods: `chat.control` |
+| `host.sessions` | `list`, `current` (writable — switches the active window) | `current_changed`, `listed`, `cleared`, `named` | `open(session_id)`, `create(project_dir, title, focus)` — a new session, titled at once when `title` is given, shown in the caller's window only with `focus`; `attach(session_id, project_dir)`, `chat(session_id)` → that session's `host.chat`, without showing it | `sessions`; `chat(id)` itself needs none |
+| `host.sessions.chat(id)` — any session of this project, not shown | everything `host.chat` has, read from that session; `approvals.waiting`, `views.list` too | `host.chat`'s, which carry `session_id` already | `post(text, attachments)` — starts a run there, or is queued for the run going (working or waiting on an approval; then without attachments), never answering an approval. `queue(text)`, `append(view, title)`, `replace(view_id, view, title)`, `search(query, limit)`. The other methods act only on the session on screen and are `refused` here. The session on screen's id is `host.chat` exactly. | as `host.chat`, and `sessions.post` as well for `post`, `queue`, `append`, `replace` in a session that is not on screen |
+| `host.chat` — the current session | `session_id`, `messages` (the transcript), `pending` (queued messages), `processing`, `status`, `timeout`, `interrupted_runs`, `context` (token counts and breakdown) | `message_added` (with `from_extension`, and `from_service` when the extension's service sent it), `content_delta`, `reasoning_started`, `run_started`, `run_completed` (with the files changed), `run_error`, `run_paused`, `streaming_done`, `typing`, `status_changed`, `info`, `error`, `tool_started`, `tool_completed`, `tool_error`, `model_completed`, `file_edited` (needs `workspace`), `agent_event`, `retry`, `history_changed` | `post(text, attachments)` — **as the extension**; the agent answers. `queue(text)` — for the next turn, as the extension. `append(view, title)` → its id, `replace(view_id, view, title)` — json-render blocks in the transcript, not sent to the model. `search(query, limit)`, `cancel()`, `cancel_agent(run_id)`, `truncate(run_id)`, `compact()`, `extract_learnings(user_msg, assistant_msg)`, `discard_interrupted(message_id)`, `upload(filename, content_base64)` | `chat.read`; `post`, `queue`, `upload`: `chat.post`; `append`, `replace`: `chat.append`; the rest of the methods: `chat.control` |
 | `host.chat.approvals` — the agent asking to act | `waiting` (requests and details) | `requested`, `resolved`, `details`, `changed` (appeared or went away, however and whenever answered — after a restart too) | `answer(requirement_id, action, choice)`, `answer_all(answers)` | `chat.approvals` |
 | `host.chat.views` — json-render in the chat | `list` — the views in the session, the visualizer's and extensions' | `shown`, `action` | `dispatch(view_id, action, params)` | `chat.append` |
 | `host.plan` | `latest` | `changed` | `approve(run_id)`, `dismiss(run_id)` | `chat.control` |
@@ -403,7 +404,7 @@ rules are EXTENSIBILITY §6, *A page and its own service*.
 | Posting *as the person* (`UserMessage` from an extension) | Decided: an extension's messages are labelled as the extension's (`host.chat.post`). |
 | `shutdown` | Quitting igni is the person's decision. |
 | The model's own plumbing: the `host_model` and `window_model` RPCs, and the `host_signal`, `window_model_changed` and `open_external` pushes | They are how the model reaches a page and a window, not things igni does. |
-| Delivering a service's events (`deliver_service_events`) | The platform's: it hands the producer the events services sent their extensions. An extension hears its own as `@ext.on_service_event`, before they start or resume the run; it does not deliver them. |
+| Delivering a service's events (`deliver_service_events`) | The platform's: it hands the producer the events services sent their extensions. An extension hears its own as `@ext.on_service_event`, and igni posts nothing for them: the handler acts through its own host calls (*Opening a chat for an event*, below). It does not deliver them. |
 | A page's token for its own service (`extension_service_token`) | Not igni's to model: it is how a page reaches its own service (`bridge.service`), the page's half of what `ext.service` is for the process. No `permissions.host` grant — having a service is the grant — and the audience is that extension's own service, never one it names. |
 
 Anything else missing from this table is a bug in it.
@@ -420,6 +421,105 @@ person, and nothing calls a model behind the person's back.
 blocks in the transcript — the same path the visualizer's cards take,
 kept in the session's log so a reload shows them again — shown to the
 person and never sent to the model. An extension replaces only its own.
+
+### In a session nobody is looking at
+
+`host.sessions.chat(session_id)` is `host.chat` for any session of this
+project, and writing to it moves no window:
+
+```python
+@ext.on(ext.host.chat.run_completed)
+async def review(run: Run) -> None:
+    # The session the run was in, even if the person has moved on.
+    chat = ext.host.sessions.chat(run.session_id)
+    history = await chat.messages
+    await chat.append({"root": "c", "elements": {"c": card}}, "Review")
+    await chat.post("Two issues in the files you just changed: …")
+```
+
+A page writes `bridge.host.sessions.chat(id)`, the same object.
+
+The message is stored in that session, labelled as the extension's, and
+streamed stamped with that session, so a window showing another one does
+not draw it. `post` follows the rules a service event follows (CLOUD
+§6): with nothing going on in the session it starts a run; with a run
+going — working, or waiting on an approval — it is queued for that run,
+as a message typed during a run is, and the run takes it after its next
+step. It never answers, or goes round, an approval: that decision is the
+person's. A message queued this way cannot carry attachments, and is
+refused if it has them. The sidebar has no per-session activity mark
+yet; the session's run is seen when the person opens it, and by any
+extension following `chat.run_started`.
+
+**`sessions.post`, not `chat.post`.** `chat.post` lets an extension
+write in front of the person; writing where they are not looking, into
+any of their conversations, is a broader thing to approve, so it is its
+own grant, shown on its own before a super admin approves. It is needed
+*as well as* the member's own grant — `chat.post` for `post` and
+`queue`, `chat.append` for `append` and `replace` — so it widens where an
+extension may write, never what. It is not under `chat.*`: a manifest
+that asked for every chat permission did not ask for this. Reads need
+only `chat.read`, whose signals already arrive for every live session.
+Steering a run (`cancel`, `truncate`, `compact`, …), answering an
+approval and acting on a view stay with the session on screen.
+
+The session must be one of this project's — live, or in the list the
+sidebar shows — and is reached by the check a window's attach passes:
+another project's session is `refused`, and an id that is no session is
+`not_found` and is not created. Named by its id, the session on screen
+is `host.chat` and nothing more — the same grants and the same
+behaviour. For a page, the session on screen is its own window's.
+
+### Opening a chat for an event
+
+A service's event reaches its extension's `@ext.on_service_event`
+handler, and igni posts nothing for it (CLOUD §6). A handler that wants
+the agent to work on it in a chat of its own opens one and posts there:
+
+```python
+@ext.on_service_event("index.ready")
+async def index_ready(event: ServiceEvent) -> None:
+    created = await ext.host.sessions.create(title=f"Index: {event.payload['repo']}")
+    await ext.host.sessions.chat(created.session_id).post("The index is ready; review the open changes.")
+```
+
+`sessions.create(project_dir, title, focus)` returns the new session
+(`SessionAttached`: its id and folder). It **moves no window** unless
+`focus` is true, when it is shown in the caller's window — a page's own,
+else the active one. A `title` is kept the way a service's chat title is
+(`BackendServer.title_session`): before anything runs in it, so no
+auto-name replaces it, and every window's list shows it at once
+(`sessions.named`). Without a title the session is auto-named after its
+first run, as any is. A session in another folder is another project's,
+and `sessions.chat(id)` refuses it.
+
+It needs `sessions`, nothing more. That grant already lets an extension
+create a session and switch the person's window to it; one created out
+of sight is less, not more. Writing into it is what reaches the person's
+conversations, and that is `sessions.post`, which `chat(id).post` needs
+anyway.
+
+Until 1.10.0 `create` always moved the caller's window. Nothing in
+igni's repositories called it, and moving the person's window from a
+process, which has no window of its own, was the wrong default, so the
+default is now not to.
+
+### Which messages a service sent
+
+`chat.message_added` carries `from_extension` and `from_service`:
+
+| Posted by | `from_extension` | `from_service` |
+|---|---|---|
+| the person | `None` | `None` |
+| an extension (`chat.post`, `chat.queue`, `sessions.chat(id).post`) | its id | `None` |
+| an extension's service, as a message item (CLOUD §6.1) | that extension's id | the service's client id |
+
+A service's message is posted as its extension's, and labelled so in
+every window, so `from_extension` names the extension there too. An
+extension that skips its own posts by `from_extension` keeps skipping
+them, and one that needs to tell its service's messages from its own
+reads `from_service`. The extension only sees the message. It cannot
+rewrite, redirect or drop it.
 
 ## The existing events
 

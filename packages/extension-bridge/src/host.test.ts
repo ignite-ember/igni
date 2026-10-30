@@ -140,6 +140,28 @@ describe("bridge.host", () => {
     await writing;
   });
 
+  it("addresses any session's chat by id, and host.chat by none", async () => {
+    const page = framedPage();
+    const bridge = await page.connected();
+
+    const posting = bridge.host.sessions.chat("s-2").post("The index is ready.");
+    const [request] = page.posted;
+    expect(request).toMatchObject({
+      op: "call",
+      path: "chat.post",
+      session: "s-2",
+      params: { text: "The index is ready." },
+    });
+    page.reply(request.id, { ok: true, result: null });
+    await posting;
+
+    const here = bridge.host.chat.post("here");
+    const second = page.posted[1];
+    expect(second.session).toBeUndefined();
+    page.reply(second.id, { ok: true, result: null });
+    await here;
+  });
+
   it("waits for a dialog's answer as long as the person takes", async () => {
     const page = framedPage();
     const bridge = await page.connected();

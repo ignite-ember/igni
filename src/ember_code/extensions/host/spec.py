@@ -29,6 +29,17 @@ an extension can be written against it today; calling it answers
 member's shape can be decided once, before what backs it is built —
 which is how the window's model was added: defined in 1.0.0, built in
 1.1.0. No member is stage 2 today.
+
+## Sessions other than the one on screen
+
+An object marked ``per_session`` (``host.chat`` and the objects under
+it) is the session on screen when it is reached as ``host.chat``, and
+any session of the project when it is reached as
+``host.sessions.chat(id)``. Every property of it reads any session. A
+method acts on a session that is not on screen only when it names the
+grant that takes (``elsewhere``) — a write somewhere the person is not
+looking is broader than a write in front of them — and is refused there
+otherwise.
 """
 
 from __future__ import annotations
@@ -162,6 +173,12 @@ class MethodSpec(Strict):
     permission: str | None = None
     inherit_permission: bool = True
     stage: int = 1
+    #: For a method of a ``per_session`` object: the grant a call needs,
+    #: besides its own, when it is addressed to a session that is not
+    #: the one on screen (``host.sessions.chat(id)``). ``None``: it acts
+    #: only on the session on screen. Naming the method's own grant
+    #: means nothing more is needed there.
+    elsewhere: str | None = None
 
 
 class ObjectSpec(Strict):
@@ -175,6 +192,9 @@ class ObjectSpec(Strict):
     #: ``True`` for objects that belong to a window — ``host.ui`` is
     #: the active window's, ``host.windows.ui(id)`` any one's.
     per_window: bool = False
+    #: ``True`` for objects that belong to a session — ``host.chat`` is
+    #: the session on screen, ``host.sessions.chat(id)`` any one's.
+    per_session: bool = False
     properties: tuple[PropertySpec, ...] = ()
     signals: tuple[SignalSpec, ...] = ()
     methods: tuple[MethodSpec, ...] = ()
@@ -341,9 +361,18 @@ class HostSchema(Strict):
                 if wire in wires:
                     problems.append(f"{where}: wire name {wire!r} also used by {wires[wire]}")
                 wires[wire] = where
+            if spec.per_window and spec.per_session:
+                problems.append(f"{spec.path}: belongs to a window or a session, not both")
             for method in spec.methods:
                 where = f"{spec.path}.{method.name}"
                 check_type(where, method.result)
+                if method.elsewhere is not None:
+                    if not spec.per_session:
+                        problems.append(f"{where}: elsewhere, on an object no session owns")
+                    if method.elsewhere not in permissions:
+                        problems.append(
+                            f"{where}: elsewhere permission {method.elsewhere!r} is not declared"
+                        )
                 for param in method.params:
                     if not NAME.match(param.name):
                         problems.append(f"{where}({param.name}): not a lowercase name")
@@ -450,6 +479,7 @@ def method(
     permission: str | None = None,
     always: bool = False,
     stage: int = 1,
+    elsewhere: str | None = None,
 ) -> MethodSpec:
     return MethodSpec(
         name=name,
@@ -459,6 +489,7 @@ def method(
         permission=permission,
         inherit_permission=not always,
         stage=stage,
+        elsewhere=elsewhere,
     )
 
 

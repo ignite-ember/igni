@@ -30,14 +30,17 @@ from typing import Any
 from ember_code.backend.activity import Activity
 from ember_code.backend.message_dispatcher import _serialize
 from ember_code.backend.rpc_router import POOL_LEVEL_RPCS
+from ember_code.backend.service_event_delivery import PoolSession
 from ember_code.backend.session_orchestrator import SessionOrchestrator
 from ember_code.core.activity import ActivityRegistry, background
 from ember_code.core.approvals.events import approval_events
 from ember_code.core.hooks.extension_gate import ExtensionHookGate
+from ember_code.core.session.schemas import PersistResult
 from ember_code.extensions.host.broadcasts import BroadcastSignals
 from ember_code.extensions.host.hooks import ExtensionHooks
 from ember_code.extensions.host.model import HostModel
 from ember_code.extensions.registry import ExtensionRegistry
+from ember_code.extensions.service_events import UnattendedPost
 from ember_code.extensions.store import ExtensionStore
 from ember_code.protocol import messages as msg
 from ember_code.protocol.rpc import RpcMethod
@@ -201,6 +204,21 @@ class OrchestratorHostBackend:
             media=media,
             queued=queued,
         )
+
+    async def deliver(
+        self,
+        *,
+        session_id: str,
+        extension_id: str,
+        text: str,
+        media: dict[str, str] | None,
+    ) -> UnattendedPost:
+        return await PoolSession(self._orchestrator, session_id).deliver(
+            extension_id=extension_id, text=text, media=media
+        )
+
+    async def title(self, *, session_id: str, title: str) -> PersistResult:
+        return await PoolSession(self._orchestrator, session_id).title(title)
 
     async def show_view(self, *, session_id: str, payload: dict[str, Any], run_id: str) -> None:
         runtime = await self._orchestrator.pool.get_or_create(session_id)

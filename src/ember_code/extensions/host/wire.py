@@ -48,6 +48,9 @@ class Request(BaseModel):
     #: A window id, for a per-window member addressed to a window other
     #: than the active one (``host.windows.ui(id)``).
     window: str | None = None
+    #: A session id, for a per-session member addressed to a session other
+    #: than the one on screen (``host.sessions.chat(id)``).
+    session: str | None = None
     #: A method's parameters, by name.
     params: dict[str, Any] = Field(default_factory=dict)
     #: The value of a ``set``.

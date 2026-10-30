@@ -298,8 +298,16 @@ export function ExtensionFrame({
       }
 
       if (message.kind === "host") {
-        const { id, op, path, window: target, params: args, value, signals: wires } =
-          message;
+        const {
+          id,
+          op,
+          path,
+          window: target,
+          session,
+          params: args,
+          value,
+          signals: wires,
+        } = message;
         const refuse = (code: string, text: string) =>
           post({
             igni: BRIDGE_VERSION,
@@ -312,7 +320,18 @@ export function ExtensionFrame({
           refuse("not_found", "this window does not reach the host model");
           return;
         }
-        void ask({ id, op, path, window: target, params: args, value, signals: wires }).then(
+        void ask({
+          id,
+          op,
+          path,
+          window: target,
+          // `host.sessions.chat(id)`: the backend checks the grant and
+          // the project; this window only carries it.
+          ...(session ? { session } : {}),
+          params: args,
+          value,
+          signals: wires,
+        }).then(
           (reply) =>
             post({
               igni: BRIDGE_VERSION,

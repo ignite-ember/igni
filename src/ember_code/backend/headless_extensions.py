@@ -29,6 +29,7 @@ from ember_code.backend.activity import Activity
 from ember_code.backend.command_handler import CommandHandler
 from ember_code.core.hooks.extension_gate import ExtensionHookGate
 from ember_code.core.plugins.installer import PluginInstaller
+from ember_code.core.session.schemas import PersistResult
 from ember_code.extensions.contributions import ExtensionContributions
 from ember_code.extensions.host.channel import HostChannel
 from ember_code.extensions.host.errors import HostModelError
@@ -44,6 +45,7 @@ from ember_code.extensions.profile import DeploymentProfile, DevelopmentFlag
 from ember_code.extensions.python_env import PythonEnvironments
 from ember_code.extensions.registry import ExtensionRegistry, ExtensionState
 from ember_code.extensions.rpc import ExtensionRpc
+from ember_code.extensions.service_events import UnattendedPost
 from ember_code.extensions.service_token import (
     CredentialsSession,
     ServiceTokenEndpoint,
@@ -109,6 +111,19 @@ class HeadlessHostBackend:
         queued: bool,
     ) -> None:
         raise self._refused("chat.post")
+
+    async def deliver(
+        self,
+        *,
+        session_id: str,
+        extension_id: str,
+        text: str,
+        media: dict[str, str] | None,
+    ) -> UnattendedPost:
+        raise self._refused("chat.post")
+
+    async def title(self, *, session_id: str, title: str) -> PersistResult:
+        raise self._refused("sessions.create")
 
     async def show_view(self, *, session_id: str, payload: dict[str, Any], run_id: str) -> None:
         raise self._refused("chat.show")

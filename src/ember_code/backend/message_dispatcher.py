@@ -167,25 +167,39 @@ class MessageDispatcher:
     # ── An extension's messages ──────────────────────────────────
 
     async def post_from_extension(
-        self, extension_id: str, text: str, media: dict[str, str]
+        self, extension_id: str, text: str, media: dict[str, str], from_service: str = ""
     ) -> None:
         """``host.chat.post``: a message from an extension, for the agent.
 
         Every view paints it labelled as the extension's — never as the
         person's, which an extension cannot post as — and the agent is
         told who sent it, then answers in the chat as it answers the
-        person.
+        person. ``from_service`` is the client id of the extension's
+        service when that service sent it (``docs/CLOUD.md`` §6.1).
         """
         await self._transport.send(
-            msg.UserMessageReceived(text=text, client_id="", extension_id=extension_id)
+            msg.UserMessageReceived(
+                text=text,
+                client_id="",
+                extension_id=extension_id,
+                service_client_id=from_service,
+            )
         )
         await self._run_turn(ExtensionMessage.wrap(extension_id, text), media, "")
 
-    async def queue_from_extension(self, extension_id: str, text: str) -> None:
+    async def queue_from_extension(
+        self, extension_id: str, text: str, from_service: str = ""
+    ) -> None:
         """``host.chat.queue``: the same, for the next turn."""
         self._queue.append(ExtensionMessage.wrap(extension_id, text))
         await self._transport.send(
-            msg.UserMessageReceived(text=text, client_id="", queued=True, extension_id=extension_id)
+            msg.UserMessageReceived(
+                text=text,
+                client_id="",
+                queued=True,
+                extension_id=extension_id,
+                service_client_id=from_service,
+            )
         )
 
     def _maybe_wrap_plan_hint(self, text: str) -> str:

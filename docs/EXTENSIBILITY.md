@@ -239,11 +239,54 @@ has none.
 a message in the chat with the extension's name on it, and the agent is
 told who sent it before it answers; nothing posts as the person.
 `host.chat.append(view)` shows a json-render block that is never sent to
-the model.
+the model. `host.sessions.chat(id)` does the same in any session of the
+project without moving the person's window — a post there starts a run,
+or waits for the run going, as a service's message does, and never
+answers an approval. Writing where the person is not looking is its own grant,
+`sessions.post`, needed as well as `chat.post` or `chat.append`
+(`docs/HOST_OBJECT_MODEL.md`, *In a session nobody is looking at*).
 
 The four topics under *Events* above are signals of the model whose wire
 names are those topic strings (`sessions.current_changed` travels as
 `session.switched`).
+
+### What its service sends a producer
+
+A service reaches a person's or an app's igni — on the desktop, or in a
+Fleet VM woken for it — two explicit ways, through igni server
+(`docs/CLOUD.md` §6, igni server's service-identity §15). Send a message
+when the service knows what the agent should read; send an event when
+the extension should decide what happens.
+
+**A message is the agent's.** The service sends it
+(`agent.send_message`, `new_chat`, `chat(thread)` in `igni-service`) and
+igni posts it exactly as sent, labelled as the extension's, in the chat
+its thread names or the extension's own chat — never the one on screen —
+starting a run, or waiting for the run going. Files go with it, imported
+as a person's upload is. The extension's code is not involved: it sees
+the post on `chat.message_added`, and cannot change it.
+
+```python
+await igni.host(org_id).agent(Producer.person("u-marieke")).send_message(
+    "Claim CL-20431 arrived; assess the damage.", thread="claim:CL-20431"
+)
+```
+
+**An event is the extension's.** igni hands it to the handler for its
+type and posts nothing; the handler acts through its host calls, and the
+agent runs only if it posts. An event no handler took is reported to the
+service as `not_handled`.
+
+```python
+@ext.on_service_event("index.ready")
+async def ready(event: ServiceEvent) -> None:
+    await ext.host.sessions.chat(await ext.host.sessions.current.get()).post("The index is ready.")
+```
+
+A service may send events with no grant. Anything more — messages,
+files, threads and chats — is declared under `permissions.service` and
+approved with the service (*Permissions*, below). Answering an approval
+is not among what a service can be granted, and never will be.
 
 ### Shipping one: from its service, through igni
 
@@ -640,7 +683,7 @@ The manifest's `trust` (`first-party` / `partner` / `unsigned`) is the author's 
 
 ### Permissions
 
-Declared, admin-granted, base-enforced, deny by default: `workspace` (none/read/write, path-scoped), `egress` (the hosts its pages may connect to, empty by default), `secrets` (named grants the deployment resolves), `tools` (MCP tools it may register with the agent, each with its four hints), `rpc` (backend methods its UI may call over the bridge — exact names, or a `*`-suffixed prefix, because this list is read by whoever approves the install), `host` (objects of the host object model its process and page may reach, same grammar), `hooks` (igni's hook events its process answers — on the five that decide it may stop or change the event; the rest it is told).
+Declared, admin-granted, base-enforced, deny by default: `workspace` (none/read/write, path-scoped), `egress` (the hosts its pages may connect to, empty by default), `secrets` (named grants the deployment resolves), `tools` (MCP tools it may register with the agent, each with its four hints), `rpc` (backend methods its UI may call over the bridge — exact names, or a `*`-suffixed prefix, because this list is read by whoever approves the install), `host` (objects of the host object model its process and page may reach, same grammar), `hooks` (igni's hook events its process answers — on the five that decide it may stop or change the event; the rest it is told), `service` (what its service may send a producer's agent beyond a plain event: `messages`, `attachments`, `chats`).
 
 **Where each one is enforced, and how far.** This list was written before any of it was, and for a while the only enforced permission was `rpc` — which made the rest a list of restrictions that restricted nothing.
 
@@ -654,6 +697,7 @@ Declared, admin-granted, base-enforced, deny by default: `workspace` (none/read/
 | `workspace` | what igni *tells* a service, as `IGNI_WORKSPACE*` | An extension that was never granted the workspace is not told where it is. A service that goes looking anyway is not stopped — same OS-sandbox gap. |
 | `secrets` | resolution: an undeclared name is never looked up, and the resolver is the deployment's | The value arrives in the service's environment as `IGNI_SECRET_<NAME>`. **Not a handle** — see below. |
 | provenance | the distribution sync, before a bundle is stored, and the installer, which trusts only a recorded distribution | Complete. The JWS covers the archive's SHA-256, so changing any byte — a permission, a file — breaks it. |
+| `service` | igni server, on every item the service sends (`POST /v1/service-items`, `POST /v1/service-attachments`), read off the approved upload | Complete for what reaches igni: a message, a file, a thread or a chat the extension does not declare is refused with 403 before it is stored. igni itself accepts the field and does not check it again. |
 
 #### What a tool says it is
 

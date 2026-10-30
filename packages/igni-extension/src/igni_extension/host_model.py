@@ -1,4 +1,4 @@
-"""GENERATED from the igni host schema 1.8.0 by ember_code.extensions.host.codegen — do not edit. Run `make host-sdks` after changing the schema.
+"""GENERATED from the igni host schema 1.10.0 by ember_code.extensions.host.codegen — do not edit. Run `make host-sdks` after changing the schema.
 
 `ext.host` as an extension's process sees it. Read
 `docs/HOST_OBJECT_MODEL.md` in igni for what each object is.
@@ -22,7 +22,7 @@ from igni_extension.members import (
 )
 from igni_extension.notifications import LocalNotification, Target
 
-SCHEMA_VERSION = "1.8.0"
+SCHEMA_VERSION = "1.10.0"
 
 NotificationTarget = Target
 
@@ -354,7 +354,9 @@ class ChatMessage(BaseModel):
     queued: bool
     """For the next turn rather than now."""
     from_extension: str | None = None
-    """The extension that posted it; `None` for the person."""
+    """The extension that posted it, or whose service sent it; `None` for the person."""
+    from_service: str | None = None
+    """The client id of the service that sent it, when the extension's service did (a message item, posted as sent); `None` for a post an extension made itself and for the person's."""
 
 
 class HistoryChange(BaseModel):
@@ -997,8 +999,10 @@ class HostAppState(HostObject):
 
     PATH = "app.state"
 
-    def __init__(self, link: HostLink, window: str | None = None) -> None:
-        super().__init__(link, window)
+    def __init__(
+        self, link: HostLink, window: str | None = None, session: str | None = None
+    ) -> None:
+        super().__init__(link, window, session)
         self.values: Property[dict[str, str]] = Property(self, "values", dict[str, str], writable=False)
         """Every key and value."""
         self.changed: Signal[StateChange] = Signal("app.state.changed", StateChange)
@@ -1017,12 +1021,14 @@ class HostAppState(HostObject):
         await self._call("delete", {"key": key}, NO_RESULT)
 
 class HostChatApprovals(HostObject):
-    """The agent asking to act, and the answers."""
+    """The agent asking to act, and the answers. Through `host.sessions.chat(id)` `waiting` reads that session; an approval is answered only in the session on screen."""
 
     PATH = "chat.approvals"
 
-    def __init__(self, link: HostLink, window: str | None = None) -> None:
-        super().__init__(link, window)
+    def __init__(
+        self, link: HostLink, window: str | None = None, session: str | None = None
+    ) -> None:
+        super().__init__(link, window, session)
         self.waiting: Property[list[Approval]] = Property(self, "waiting", list[Approval], writable=False)
         """Requests not yet answered."""
         self.requested: Signal[Approval] = Signal("chat.approvals.requested", Approval)
@@ -1043,12 +1049,14 @@ class HostChatApprovals(HostObject):
         await self._call("answer_all", {"answers": answers}, NO_RESULT)
 
 class HostChatViews(HostObject):
-    """json-render blocks in the transcript — the visualizer's and extensions'."""
+    """json-render blocks in the transcript — the visualizer's and extensions'. Through `host.sessions.chat(id)` `list` reads that session; `dispatch` acts only in the session on screen."""
 
     PATH = "chat.views"
 
-    def __init__(self, link: HostLink, window: str | None = None) -> None:
-        super().__init__(link, window)
+    def __init__(
+        self, link: HostLink, window: str | None = None, session: str | None = None
+    ) -> None:
+        super().__init__(link, window, session)
         self.list: Property[list[View]] = Property(self, "list", list[View], writable=False)
         """The views in the current session."""
         self.shown: Signal[View] = Signal("chat.views.shown", View)
@@ -1065,9 +1073,11 @@ class HostApp(HostObject):
 
     PATH = "app"
 
-    def __init__(self, link: HostLink, window: str | None = None) -> None:
-        super().__init__(link, window)
-        self.state = HostAppState(link, window)
+    def __init__(
+        self, link: HostLink, window: str | None = None, session: str | None = None
+    ) -> None:
+        super().__init__(link, window, session)
+        self.state = HostAppState(link, window, session)
         self.display: Property[Display] = Property(self, "display", Display, writable=False)
         """Theme, verbosity, output style."""
         self.version: Property[str] = Property(self, "version", str, writable=False)
@@ -1108,8 +1118,10 @@ class HostWindows(HostObject):
 
     PATH = "windows"
 
-    def __init__(self, link: HostLink, window: str | None = None) -> None:
-        super().__init__(link, window)
+    def __init__(
+        self, link: HostLink, window: str | None = None, session: str | None = None
+    ) -> None:
+        super().__init__(link, window, session)
         self.list: Property[list[WindowInfo]] = Property(self, "list", list[WindowInfo], writable=False)
         """Every window connected now."""
         self.focused: Property[str | None] = Property(self, "focused", str | None, writable=False)
@@ -1130,8 +1142,10 @@ class HostUi(HostObject):
 
     PATH = "ui"
 
-    def __init__(self, link: HostLink, window: str | None = None) -> None:
-        super().__init__(link, window)
+    def __init__(
+        self, link: HostLink, window: str | None = None, session: str | None = None
+    ) -> None:
+        super().__init__(link, window, session)
         self.route: Property[list[Page]] = Property(self, "route", list[Page], writable=True)
         """The page stack; empty when the chat is showing. Writable: setting it navigates."""
         self.panel: Property[Panel | None] = Property(self, "panel", Panel | None, writable=True)
@@ -1226,12 +1240,14 @@ class HostUi(HostObject):
         return cast(Scroll, await self._call("scroll_to", {"message_id": message_id}, Scroll))
 
 class HostSessions(HostObject):
-    """The sessions of this project, and which one the active window shows."""
+    """The sessions of this project, and which one the active window shows. Reach any session's chat, without showing it, with `host.sessions.chat(id)`."""
 
     PATH = "sessions"
 
-    def __init__(self, link: HostLink, window: str | None = None) -> None:
-        super().__init__(link, window)
+    def __init__(
+        self, link: HostLink, window: str | None = None, session: str | None = None
+    ) -> None:
+        super().__init__(link, window, session)
         self.list: Property[list[SessionInfo]] = Property(self, "list", list[SessionInfo], writable=False)
         """Every session, newest first."""
         self.current: Property[str] = Property(self, "current", str, writable=True)
@@ -1249,23 +1265,31 @@ class HostSessions(HostObject):
         """Show a session in the active window."""
         return cast(SessionChange, await self._call("open", {"session_id": session_id}, SessionChange))
 
-    async def create(self, project_dir: str | None = None) -> SessionAttached:
-        """Start a new session, in a folder or in this project."""
-        return cast(SessionAttached, await self._call("create", {"project_dir": project_dir}, SessionAttached))
+    async def create(self, project_dir: str | None = None, title: str | None = None, focus: bool | None = None) -> SessionAttached:
+        """Start a new session, in a folder or in this project. It moves no window unless `focus` is true: reach it with `host.sessions.chat(session_id)`. A `title` names it at once, kept as a service's chat title is, so no auto-name replaces it."""
+        return cast(SessionAttached, await self._call("create", {"project_dir": project_dir, "title": title, "focus": focus}, SessionAttached))
 
     async def attach(self, session_id: str, project_dir: str | None = None) -> SessionAttached:
         """Make sure a session is live, without showing it."""
         return cast(SessionAttached, await self._call("attach", {"session_id": session_id, "project_dir": project_dir}, SessionAttached))
 
+    def chat(self, session_id: str) -> HostChat:
+        """`host.chat` of any session of this project, by its id,
+        without showing it. The session on screen's id is
+        `host.chat` itself."""
+        return HostChat(self._link, None, session_id)
+
 class HostChat(HostObject):
-    """The conversation in the current session. Signals carry the session they happened in, and arrive for every live session."""
+    """The conversation in the current session. Signals carry the session they happened in, and arrive for every live session. `host.sessions.chat(id)` is the same object for any session of this project, without showing it: its properties read that session, and `post`, `queue`, `append` and `replace` write there (with `sessions.post` as well). A message posted there starts a run, or waits for the run already going there — never answering an approval. Its other methods act only on the session on screen."""
 
     PATH = "chat"
 
-    def __init__(self, link: HostLink, window: str | None = None) -> None:
-        super().__init__(link, window)
-        self.approvals = HostChatApprovals(link, window)
-        self.views = HostChatViews(link, window)
+    def __init__(
+        self, link: HostLink, window: str | None = None, session: str | None = None
+    ) -> None:
+        super().__init__(link, window, session)
+        self.approvals = HostChatApprovals(link, window, session)
+        self.views = HostChatViews(link, window, session)
         self.session_id: Property[str] = Property(self, "session_id", str, writable=False)
         """The current session."""
         self.messages: Property[list[JsonValue]] = Property(self, "messages", list[JsonValue], writable=False)
@@ -1283,7 +1307,7 @@ class HostChat(HostObject):
         self.context: Property[ContextUsage] = Property(self, "context", ContextUsage, writable=False)
         """Token counts and what fills them."""
         self.message_added: Signal[ChatMessage] = Signal("chat.message_added", ChatMessage)
-        """A message was posted — by the person or an extension."""
+        """A message was posted — by the person, an extension, or an extension's service (`from_service`)."""
         self.content_delta: Signal[ContentDelta] = Signal("chat.content_delta", ContentDelta)
         """The agent's answer, streaming."""
         self.reasoning_started: Signal[RunRef] = Signal("chat.reasoning_started", RunRef)
@@ -1324,7 +1348,7 @@ class HostChat(HostObject):
         """Turns were truncated or discarded."""
 
     async def post(self, text: str, attachments: dict[str, str] | None = None) -> None:
-        """Post a message in the chat, labelled as this extension. The agent sees it and answers in the chat as usual."""
+        """Post a message in the chat, labelled as this extension. The agent sees it and answers in the chat as usual. In a session that is not on screen it starts a run, or is queued for the run going there (working or waiting on an approval) — then without attachments."""
         await self._call("post", {"text": text, "attachments": attachments}, NO_RESULT)
 
     async def queue(self, text: str) -> None:
@@ -1376,8 +1400,10 @@ class HostPlan(HostObject):
 
     PATH = "plan"
 
-    def __init__(self, link: HostLink, window: str | None = None) -> None:
-        super().__init__(link, window)
+    def __init__(
+        self, link: HostLink, window: str | None = None, session: str | None = None
+    ) -> None:
+        super().__init__(link, window, session)
         self.latest: Property[Plan] = Property(self, "latest", Plan, writable=False)
         """The latest plan."""
         self.changed: Signal[PlanChange] = Signal("plan.changed", PlanChange)
@@ -1396,8 +1422,10 @@ class HostTasks(HostObject):
 
     PATH = "tasks"
 
-    def __init__(self, link: HostLink, window: str | None = None) -> None:
-        super().__init__(link, window)
+    def __init__(
+        self, link: HostLink, window: str | None = None, session: str | None = None
+    ) -> None:
+        super().__init__(link, window, session)
         self.todos: Property[list[JsonValue]] = Property(self, "todos", list[JsonValue], writable=False)
         """The todo list."""
         self.created: Signal[TaskEvent] = Signal("tasks.created", TaskEvent)
@@ -1416,8 +1444,10 @@ class HostLoop(HostObject):
 
     PATH = "loop"
 
-    def __init__(self, link: HostLink, window: str | None = None) -> None:
-        super().__init__(link, window)
+    def __init__(
+        self, link: HostLink, window: str | None = None, session: str | None = None
+    ) -> None:
+        super().__init__(link, window, session)
         self.status: Property[LoopStatus] = Property(self, "status", LoopStatus, writable=False)
         """Where it is."""
         self.changed: Signal[LoopStatus] = Signal("loop.changed", LoopStatus)
@@ -1444,8 +1474,10 @@ class HostCommands(HostObject):
 
     PATH = "commands"
 
-    def __init__(self, link: HostLink, window: str | None = None) -> None:
-        super().__init__(link, window)
+    def __init__(
+        self, link: HostLink, window: str | None = None, session: str | None = None
+    ) -> None:
+        super().__init__(link, window, session)
         self.list: Property[list[JsonValue]] = Property(self, "list", list[JsonValue], writable=False)
         """Every slash command."""
         self.skills: Property[list[str]] = Property(self, "skills", list[str], writable=False)
@@ -1464,8 +1496,10 @@ class HostAgents(HostObject):
 
     PATH = "agents"
 
-    def __init__(self, link: HostLink, window: str | None = None) -> None:
-        super().__init__(link, window)
+    def __init__(
+        self, link: HostLink, window: str | None = None, session: str | None = None
+    ) -> None:
+        super().__init__(link, window, session)
         self.details: Property[list[JsonValue]] = Property(self, "details", list[JsonValue], writable=False)
         """Every agent."""
         self.changed: Signal[CollectionChange] = Signal("agents.changed", CollectionChange)
@@ -1484,8 +1518,10 @@ class HostWorkflows(HostObject):
 
     PATH = "workflows"
 
-    def __init__(self, link: HostLink, window: str | None = None) -> None:
-        super().__init__(link, window)
+    def __init__(
+        self, link: HostLink, window: str | None = None, session: str | None = None
+    ) -> None:
+        super().__init__(link, window, session)
         self.list: Property[list[JsonValue]] = Property(self, "list", list[JsonValue], writable=False)
         """Every workflow."""
         self.changed: Signal[CollectionChange] = Signal("workflows.changed", CollectionChange)
@@ -1504,8 +1540,10 @@ class HostScheduler(HostObject):
 
     PATH = "scheduler"
 
-    def __init__(self, link: HostLink, window: str | None = None) -> None:
-        super().__init__(link, window)
+    def __init__(
+        self, link: HostLink, window: str | None = None, session: str | None = None
+    ) -> None:
+        super().__init__(link, window, session)
         self.tasks: Property[list[JsonValue]] = Property(self, "tasks", list[JsonValue], writable=False)
         """Every scheduled task."""
         self.event: Signal[SchedulerEvent] = Signal("scheduler.event", SchedulerEvent)
@@ -1528,8 +1566,10 @@ class HostProcesses(HostObject):
 
     PATH = "processes"
 
-    def __init__(self, link: HostLink, window: str | None = None) -> None:
-        super().__init__(link, window)
+    def __init__(
+        self, link: HostLink, window: str | None = None, session: str | None = None
+    ) -> None:
+        super().__init__(link, window, session)
         self.list: Property[list[JsonValue]] = Property(self, "list", list[JsonValue], writable=False)
         """Every background shell."""
         self.changed: Signal[ProcessEvent] = Signal("processes.changed", ProcessEvent)
@@ -1552,8 +1592,10 @@ class HostWorkspace(HostObject):
 
     PATH = "workspace"
 
-    def __init__(self, link: HostLink, window: str | None = None) -> None:
-        super().__init__(link, window)
+    def __init__(
+        self, link: HostLink, window: str | None = None, session: str | None = None
+    ) -> None:
+        super().__init__(link, window, session)
         self.root: Property[str] = Property(self, "root", str, writable=False)
         """The project directory."""
         self.head: Property[Head | None] = Property(self, "head", Head | None, writable=False)
@@ -1588,8 +1630,10 @@ class HostModels(HostObject):
 
     PATH = "models"
 
-    def __init__(self, link: HostLink, window: str | None = None) -> None:
-        super().__init__(link, window)
+    def __init__(
+        self, link: HostLink, window: str | None = None, session: str | None = None
+    ) -> None:
+        super().__init__(link, window, session)
         self.registry: Property[JsonValue] = Property(self, "registry", JsonValue, writable=False)
         """Every model igni knows."""
         self.current: Property[str] = Property(self, "current", str, writable=True)
@@ -1602,8 +1646,10 @@ class HostMcp(HostObject):
 
     PATH = "mcp"
 
-    def __init__(self, link: HostLink, window: str | None = None) -> None:
-        super().__init__(link, window)
+    def __init__(
+        self, link: HostLink, window: str | None = None, session: str | None = None
+    ) -> None:
+        super().__init__(link, window, session)
         self.servers: Property[list[JsonValue]] = Property(self, "servers", list[JsonValue], writable=False)
         """Every server."""
         self.status: Property[list[JsonValue]] = Property(self, "status", list[JsonValue], writable=False)
@@ -1634,8 +1680,10 @@ class HostPlugins(HostObject):
 
     PATH = "plugins"
 
-    def __init__(self, link: HostLink, window: str | None = None) -> None:
-        super().__init__(link, window)
+    def __init__(
+        self, link: HostLink, window: str | None = None, session: str | None = None
+    ) -> None:
+        super().__init__(link, window, session)
         self.installed: Property[list[JsonValue]] = Property(self, "installed", list[JsonValue], writable=False)
         """Every installed plugin."""
         self.marketplaces: Property[list[JsonValue]] = Property(self, "marketplaces", list[JsonValue], writable=False)
@@ -1684,8 +1732,10 @@ class HostExtensions(HostObject):
 
     PATH = "extensions"
 
-    def __init__(self, link: HostLink, window: str | None = None) -> None:
-        super().__init__(link, window)
+    def __init__(
+        self, link: HostLink, window: str | None = None, session: str | None = None
+    ) -> None:
+        super().__init__(link, window, session)
         self.installed: Property[list[ExtensionInfo]] = Property(self, "installed", list[ExtensionInfo], writable=False)
         """Every installed extension."""
         self.state_changed: Signal[ExtensionStateChange] = Signal("extension.state-changed", ExtensionStateChange)
@@ -1700,8 +1750,10 @@ class HostHooks(HostObject):
 
     PATH = "hooks"
 
-    def __init__(self, link: HostLink, window: str | None = None) -> None:
-        super().__init__(link, window)
+    def __init__(
+        self, link: HostLink, window: str | None = None, session: str | None = None
+    ) -> None:
+        super().__init__(link, window, session)
         self.details: Property[list[JsonValue]] = Property(self, "details", list[JsonValue], writable=False)
         """Every hook."""
         self.changed: Signal[CollectionChange] = Signal("hooks.changed", CollectionChange)
@@ -1720,8 +1772,10 @@ class HostPermissions(HostObject):
 
     PATH = "permissions"
 
-    def __init__(self, link: HostLink, window: str | None = None) -> None:
-        super().__init__(link, window)
+    def __init__(
+        self, link: HostLink, window: str | None = None, session: str | None = None
+    ) -> None:
+        super().__init__(link, window, session)
         self.mode: Property[str] = Property(self, "mode", str, writable=False)
         """`default`, `plan`, `acceptEdits` or `bypassPermissions`."""
         self.mode_changed: Signal[PermissionModeChange] = Signal("permissions.mode_changed", PermissionModeChange)
@@ -1740,8 +1794,10 @@ class HostPolicy(HostObject):
 
     PATH = "policy"
 
-    def __init__(self, link: HostLink, window: str | None = None) -> None:
-        super().__init__(link, window)
+    def __init__(
+        self, link: HostLink, window: str | None = None, session: str | None = None
+    ) -> None:
+        super().__init__(link, window, session)
         self.pack: Property[JsonValue] = Property(self, "pack", JsonValue, writable=False)
         """The group's policy pack."""
 
@@ -1750,8 +1806,10 @@ class HostAccount(HostObject):
 
     PATH = "account"
 
-    def __init__(self, link: HostLink, window: str | None = None) -> None:
-        super().__init__(link, window)
+    def __init__(
+        self, link: HostLink, window: str | None = None, session: str | None = None
+    ) -> None:
+        super().__init__(link, window, session)
         self.status: Property[Account] = Property(self, "status", Account, writable=False)
         """Who is signed in."""
         self.changed: Signal[Account] = Signal("account.changed", Account)
@@ -1770,8 +1828,10 @@ class HostNotifications(HostObject):
 
     PATH = "notifications"
 
-    def __init__(self, link: HostLink, window: str | None = None) -> None:
-        super().__init__(link, window)
+    def __init__(
+        self, link: HostLink, window: str | None = None, session: str | None = None
+    ) -> None:
+        super().__init__(link, window, session)
         self.list: Property[list[NotificationEntry]] = Property(self, "list", list[NotificationEntry], writable=False)
         """Newest first."""
         self.unread: Property[NotificationCounts] = Property(self, "unread", NotificationCounts, writable=False)
@@ -1792,8 +1852,10 @@ class HostSelf(HostObject):
 
     PATH = "self"
 
-    def __init__(self, link: HostLink, window: str | None = None) -> None:
-        super().__init__(link, window)
+    def __init__(
+        self, link: HostLink, window: str | None = None, session: str | None = None
+    ) -> None:
+        super().__init__(link, window, session)
         self.id: Property[str] = Property(self, "id", str, writable=False)
         """Its manifest id."""
         self.settings: Property[dict[str, JsonValue]] = Property(self, "settings", dict[str, JsonValue], writable=True)
@@ -1820,32 +1882,34 @@ class Host(HostObject):
 
     PATH = ""
 
-    def __init__(self, link: HostLink, window: str | None = None) -> None:
-        super().__init__(link, window)
-        self.app = HostApp(link, window)
-        self.windows = HostWindows(link, window)
-        self.ui = HostUi(link, window)
-        self.sessions = HostSessions(link, window)
-        self.chat = HostChat(link, window)
-        self.plan = HostPlan(link, window)
-        self.tasks = HostTasks(link, window)
-        self.loop = HostLoop(link, window)
-        self.commands = HostCommands(link, window)
-        self.agents = HostAgents(link, window)
-        self.workflows = HostWorkflows(link, window)
-        self.scheduler = HostScheduler(link, window)
-        self.processes = HostProcesses(link, window)
-        self.workspace = HostWorkspace(link, window)
-        self.models = HostModels(link, window)
-        self.mcp = HostMcp(link, window)
-        self.plugins = HostPlugins(link, window)
-        self.extensions = HostExtensions(link, window)
-        self.hooks = HostHooks(link, window)
-        self.permissions = HostPermissions(link, window)
-        self.policy = HostPolicy(link, window)
-        self.account = HostAccount(link, window)
-        self.notifications = HostNotifications(link, window)
-        self.self = HostSelf(link, window)
+    def __init__(
+        self, link: HostLink, window: str | None = None, session: str | None = None
+    ) -> None:
+        super().__init__(link, window, session)
+        self.app = HostApp(link, window, session)
+        self.windows = HostWindows(link, window, session)
+        self.ui = HostUi(link, window, session)
+        self.sessions = HostSessions(link, window, session)
+        self.chat = HostChat(link, window, session)
+        self.plan = HostPlan(link, window, session)
+        self.tasks = HostTasks(link, window, session)
+        self.loop = HostLoop(link, window, session)
+        self.commands = HostCommands(link, window, session)
+        self.agents = HostAgents(link, window, session)
+        self.workflows = HostWorkflows(link, window, session)
+        self.scheduler = HostScheduler(link, window, session)
+        self.processes = HostProcesses(link, window, session)
+        self.workspace = HostWorkspace(link, window, session)
+        self.models = HostModels(link, window, session)
+        self.mcp = HostMcp(link, window, session)
+        self.plugins = HostPlugins(link, window, session)
+        self.extensions = HostExtensions(link, window, session)
+        self.hooks = HostHooks(link, window, session)
+        self.permissions = HostPermissions(link, window, session)
+        self.policy = HostPolicy(link, window, session)
+        self.account = HostAccount(link, window, session)
+        self.notifications = HostNotifications(link, window, session)
+        self.self = HostSelf(link, window, session)
         self.changed: Signal[Change] = Signal("changed", Change)
         """Anything changed. Carries the member's path and its new value."""
 

@@ -176,6 +176,8 @@ export interface HostRequestMessage {
   path: string;
   /** A window other than this page's own, for `host.windows.ui(id)`. */
   window?: string | null;
+  /** A session other than the one on screen, for `host.sessions.chat(id)`. */
+  session?: string | null;
   params?: Record<string, unknown>;
   value?: unknown;
   /** Signal wire names, for subscribe and unsubscribe. */
@@ -302,6 +304,9 @@ export function isGuestMessage(data: unknown): data is GuestMessage {
         (m.window === undefined ||
           m.window === null ||
           typeof m.window === "string") &&
+        (m.session === undefined ||
+          m.session === null ||
+          typeof m.session === "string") &&
         (m.params === undefined ||
           (typeof m.params === "object" &&
             m.params !== null &&

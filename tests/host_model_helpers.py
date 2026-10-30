@@ -34,6 +34,7 @@ from ember_code.backend.session_pool import SessionRuntime
 from ember_code.backend.session_stamping_transport import SessionStampingTransport
 from ember_code.core.config.schemas.display import DisplayConfig
 from ember_code.core.session.event_log_schema import SessionEvent
+from ember_code.core.session.schemas import PersistResult
 from ember_code.extensions.host.channel import HostChannel
 from ember_code.extensions.host.model import HostModel
 from ember_code.extensions.host.wire import Op, Request
@@ -97,6 +98,7 @@ class FakeSession:
         self.skill_names = ["review"]
         self.workflow_runner = None
         self.run_release: asyncio.Event | None = None
+        self.titles: list[str] = []
 
     # ── Lifecycle the pool and dispatcher touch ───────────────────
 
@@ -163,6 +165,10 @@ class FakeSession:
         return msg.SessionListResult(
             sessions=[msg.SessionListEntry(session_id=self.session_id, name="First", run_count=1)]
         )
+
+    async def title_session(self, name: str) -> PersistResult:
+        self.titles.append(name)
+        return PersistResult(ok=True)
 
     async def switch_session(self, session_id: str) -> msg.Info:
         self.switched_to.append(session_id)
@@ -410,15 +416,25 @@ class HostRig:
         *,
         window: str | None = None,
         home_window: str | None = None,
+        session: str | None = None,
         **params: Any,
     ) -> Any:
         """One request, as a channel would make it. Returns the reply.
 
-        ``to=`` is the value of a ``set``; everything else is a parameter.
+        ``to=`` is the value of a ``set``; ``session=`` addresses a session
+        (``host.sessions.chat(id)``); everything else is a parameter.
         """
         assert self.model is not None
         value = params.pop("to", None)
-        request = Request(id=1, op=Op(op), path=member, window=window, params=params, value=value)
+        request = Request(
+            id=1,
+            op=Op(op),
+            path=member,
+            window=window,
+            session=session,
+            params=params,
+            value=value,
+        )
         return await self.model.handle(extension_id, request, home_window=home_window)
 
     async def window(

@@ -150,6 +150,10 @@ class SessionPersistence:
         """
         return await self._namer.rename(new_name)
 
+    async def title(self, name: str) -> PersistResult:
+        """Name the session, creating its row if it has none yet."""
+        return await self._namer.title(name)
+
     async def get_name(self) -> str:
         """Get the current session's name from the database."""
         return await self._namer.get_name()

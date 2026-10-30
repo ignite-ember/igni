@@ -35,6 +35,7 @@ from ember_code.extensions.host.definition import HOST_SCHEMA
 from ember_code.extensions.host.errors import HostModelError
 from ember_code.extensions.host.grants import HostGrants
 from ember_code.extensions.host.members import ALL_MEMBERS, Call, Impl
+from ember_code.extensions.host.session_target import SessionTargets
 from ember_code.extensions.host.signals import Content, SignalBus, Subscriber
 from ember_code.extensions.host.spec import (
     ErrorCode,
@@ -139,6 +140,8 @@ class HostModel:
         self.windows.on_change(self._window_model_changed)
         self.windows.on_window(self._window_changed)
         self.broadcasts = BroadcastSignals(self)
+        #: Which session a ``host.sessions.chat(id)`` request is about.
+        self.session_targets = SessionTargets(self)
         #: Extensions that said they are working (``self.busy``).
         self.extension_busy = ExtensionBusy()
         self._impl: dict[tuple[str, str], Impl] = {}
@@ -262,7 +265,13 @@ class HostModel:
             raise HostModelError.not_granted(extension_id, f"'{path}'", permission or "")
 
         window = self._window(spec, request, home_window)
-        session_id = self._session_for(window)
+        target = await self.session_targets.resolve(
+            grants=grants,
+            spec=spec,
+            member=member,
+            request=request,
+            on_screen=self._session_for(window),
+        )
         params: dict[str, Any] = {}
         value: Any = None
         if isinstance(member, MethodSpec):
@@ -288,9 +297,10 @@ class HostModel:
             extension_id=extension_id,
             grants=grants,
             window=window,
-            session_id=session_id,
+            session_id=target.session_id,
             params=params,
             value=value,
+            on_screen=target.on_screen,
         )
         result = await impl(call)
         if self.strict and request.op is not Op.SET:

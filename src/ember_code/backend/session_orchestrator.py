@@ -556,21 +556,25 @@ class SessionOrchestrator:
         text: str,
         media: dict[str, str] | None,
         queued: bool,
+        from_service: str = "",
     ) -> None:
         """A message in a session's chat, labelled as an extension's.
 
         The agent answers it as it answers the person — the run streams
         to every window — but nothing about it says the person wrote
         it: every window labels it as the extension's, and the agent is
-        told who sent it.
+        told who sent it. ``from_service`` marks one the extension's
+        service sent (``chat.message_added``'s ``from_service``).
         """
         assert self._pool is not None
         rt = await self._pool.get_or_create(session_id)
         dispatcher = self._dispatcher_for(rt)
         if queued:
-            await dispatcher.queue_from_extension(extension_id, text)
+            await dispatcher.queue_from_extension(extension_id, text, from_service)
             return
-        self._start_dispatch(dispatcher.post_from_extension(extension_id, text, media or {}))
+        self._start_dispatch(
+            dispatcher.post_from_extension(extension_id, text, media or {}, from_service)
+        )
 
     def _dispatcher_for(self, rt: SessionRuntime) -> MessageDispatcher:
         if rt is self._default_runtime and self._default_dispatcher is not None:

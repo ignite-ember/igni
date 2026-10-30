@@ -1,11 +1,11 @@
-// GENERATED from the igni host schema 1.8.0 by ember_code.extensions.host.codegen — do not edit. Run `make host-sdks` after changing the schema.
+// GENERATED from the igni host schema 1.10.0 by ember_code.extensions.host.codegen — do not edit. Run `make host-sdks` after changing the schema.
 //
 // `bridge.host` as an extension's page sees it. Read
 // `docs/HOST_OBJECT_MODEL.md` in igni for what each object is.
 
 import { HostObject, Property, Signal, type HostLink, type JsonValue } from "./hostModel";
 
-export const SCHEMA_VERSION = "1.8.0";
+export const SCHEMA_VERSION = "1.10.0";
 
 /** One change anywhere in the model, as `host.changed` reports it. */
 export interface Change {
@@ -244,8 +244,10 @@ export interface ChatMessage {
   text: string;
   /** For the next turn rather than now. */
   queued: boolean;
-  /** The extension that posted it; `None` for the person. */
+  /** The extension that posted it, or whose service sent it; `None` for the person. */
   from_extension?: string | null;
+  /** The client id of the service that sent it, when the extension's service did (a message item, posted as sent); `None` for a post an extension made itself and for the person's. */
+  from_service?: string | null;
 }
 
 /** Turns were removed from a session's history. */
@@ -748,8 +750,12 @@ export class HostAppState extends HostObject {
   /** A key was set or deleted. */
   readonly changed: Signal<StateChange>;
 
-  constructor(link: HostLink, window: string | null = null) {
-    super(link, "app.state", window);
+  constructor(
+    link: HostLink,
+    window: string | null = null,
+    session: string | null = null,
+  ) {
+    super(link, "app.state", window, session);
     this.values = new Property(this, "values", false);
     this.changed = new Signal("app.state.changed");
   }
@@ -770,7 +776,7 @@ export class HostAppState extends HostObject {
   }
 }
 
-/** The agent asking to act, and the answers. */
+/** The agent asking to act, and the answers. Through `host.sessions.chat(id)` `waiting` reads that session; an approval is answered only in the session on screen. */
 export class HostChatApprovals extends HostObject {
   static readonly PATH = "chat.approvals";
   /** Requests not yet answered. */
@@ -784,8 +790,12 @@ export class HostChatApprovals extends HostObject {
   /** An approval appeared or went away, whoever answered and whenever — including after a restart. For an app following approvals through the API. */
   readonly changed: Signal<ApprovalChange>;
 
-  constructor(link: HostLink, window: string | null = null) {
-    super(link, "chat.approvals", window);
+  constructor(
+    link: HostLink,
+    window: string | null = null,
+    session: string | null = null,
+  ) {
+    super(link, "chat.approvals", window, session);
     this.waiting = new Property(this, "waiting", false);
     this.requested = new Signal("chat.approvals.requested");
     this.resolved = new Signal("chat.approvals.resolved");
@@ -804,7 +814,7 @@ export class HostChatApprovals extends HostObject {
   }
 }
 
-/** json-render blocks in the transcript — the visualizer's and extensions'. */
+/** json-render blocks in the transcript — the visualizer's and extensions'. Through `host.sessions.chat(id)` `list` reads that session; `dispatch` acts only in the session on screen. */
 export class HostChatViews extends HostObject {
   static readonly PATH = "chat.views";
   /** The views in the current session. */
@@ -814,8 +824,12 @@ export class HostChatViews extends HostObject {
   /** The person used a control in a view. */
   readonly action: Signal<ViewAction>;
 
-  constructor(link: HostLink, window: string | null = null) {
-    super(link, "chat.views", window);
+  constructor(
+    link: HostLink,
+    window: string | null = null,
+    session: string | null = null,
+  ) {
+    super(link, "chat.views", window, session);
     this.list = new Property(this, "list", false);
     this.shown = new Signal("chat.views.shown");
     this.action = new Signal("chat.views.action");
@@ -850,9 +864,13 @@ export class HostApp extends HostObject {
   /** igni started or stopped doing something. */
   readonly activity_changed: Signal<Activity>;
 
-  constructor(link: HostLink, window: string | null = null) {
-    super(link, "app", window);
-    this.state = new HostAppState(link, window);
+  constructor(
+    link: HostLink,
+    window: string | null = null,
+    session: string | null = null,
+  ) {
+    super(link, "app", window, session);
+    this.state = new HostAppState(link, window, session);
     this.display = new Property(this, "display", false);
     this.version = new Property(this, "version", false);
     this.update_available = new Property(this, "update_available", false);
@@ -899,8 +917,12 @@ export class HostWindows extends HostObject {
   /** A window took focus or lost it; `focused` says which. */
   readonly focus_changed: Signal<WindowInfo>;
 
-  constructor(link: HostLink, window: string | null = null) {
-    super(link, "windows", window);
+  constructor(
+    link: HostLink,
+    window: string | null = null,
+    session: string | null = null,
+  ) {
+    super(link, "windows", window, session);
     this.list = new Property(this, "list", false);
     this.focused = new Property(this, "focused", false);
     this.opened = new Signal("windows.opened");
@@ -958,8 +980,12 @@ export class HostUi extends HostObject {
   /** The transcript came to rest somewhere else, or started or stopped following the newest message. */
   readonly scrolled: Signal<Scroll>;
 
-  constructor(link: HostLink, window: string | null = null) {
-    super(link, "ui", window);
+  constructor(
+    link: HostLink,
+    window: string | null = null,
+    session: string | null = null,
+  ) {
+    super(link, "ui", window, session);
     this.route = new Property(this, "route", true);
     this.panel = new Property(this, "panel", true);
     this.sidebar = new Property(this, "sidebar", true);
@@ -1048,7 +1074,7 @@ export class HostUi extends HostObject {
   }
 }
 
-/** The sessions of this project, and which one the active window shows. */
+/** The sessions of this project, and which one the active window shows. Reach any session's chat, without showing it, with `host.sessions.chat(id)`. */
 export class HostSessions extends HostObject {
   static readonly PATH = "sessions";
   /** Every session, newest first. */
@@ -1064,8 +1090,12 @@ export class HostSessions extends HostObject {
   /** A session got its name. */
   readonly named: Signal<SessionNamed>;
 
-  constructor(link: HostLink, window: string | null = null) {
-    super(link, "sessions", window);
+  constructor(
+    link: HostLink,
+    window: string | null = null,
+    session: string | null = null,
+  ) {
+    super(link, "sessions", window, session);
     this.list = new Property(this, "list", false);
     this.current = new Property(this, "current", true);
     this.current_changed = new Signal("session.switched");
@@ -1079,18 +1109,23 @@ export class HostSessions extends HostObject {
     return this.call<SessionChange>("open", { session_id });
   }
 
-  /** Start a new session, in a folder or in this project. */
-  create(project_dir?: string): Promise<SessionAttached> {
-    return this.call<SessionAttached>("create", { project_dir });
+  /** Start a new session, in a folder or in this project. It moves no window unless `focus` is true: reach it with `host.sessions.chat(session_id)`. A `title` names it at once, kept as a service's chat title is, so no auto-name replaces it. */
+  create(project_dir?: string, title?: string, focus?: boolean): Promise<SessionAttached> {
+    return this.call<SessionAttached>("create", { project_dir, title, focus });
   }
 
   /** Make sure a session is live, without showing it. */
   attach(session_id: string, project_dir?: string): Promise<SessionAttached> {
     return this.call<SessionAttached>("attach", { session_id, project_dir });
   }
+
+  /** `host.chat` of any session of this project, by its id, without showing it. The session on screen's id is `host.chat` itself. */
+  chat(sessionId: string): HostChat {
+    return new HostChat(this.link, null, sessionId);
+  }
 }
 
-/** The conversation in the current session. Signals carry the session they happened in, and arrive for every live session. */
+/** The conversation in the current session. Signals carry the session they happened in, and arrive for every live session. `host.sessions.chat(id)` is the same object for any session of this project, without showing it: its properties read that session, and `post`, `queue`, `append` and `replace` write there (with `sessions.post` as well). A message posted there starts a run, or waits for the run already going there — never answering an approval. Its other methods act only on the session on screen. */
 export class HostChat extends HostObject {
   static readonly PATH = "chat";
   readonly approvals: HostChatApprovals;
@@ -1111,7 +1146,7 @@ export class HostChat extends HostObject {
   readonly interrupted_runs: Property<JsonValue[]>;
   /** Token counts and what fills them. */
   readonly context: Property<ContextUsage>;
-  /** A message was posted — by the person or an extension. */
+  /** A message was posted — by the person, an extension, or an extension's service (`from_service`). */
   readonly message_added: Signal<ChatMessage>;
   /** The agent's answer, streaming. */
   readonly content_delta: Signal<ContentDelta>;
@@ -1152,10 +1187,14 @@ export class HostChat extends HostObject {
   /** Turns were truncated or discarded. */
   readonly history_changed: Signal<HistoryChange>;
 
-  constructor(link: HostLink, window: string | null = null) {
-    super(link, "chat", window);
-    this.approvals = new HostChatApprovals(link, window);
-    this.views = new HostChatViews(link, window);
+  constructor(
+    link: HostLink,
+    window: string | null = null,
+    session: string | null = null,
+  ) {
+    super(link, "chat", window, session);
+    this.approvals = new HostChatApprovals(link, window, session);
+    this.views = new HostChatViews(link, window, session);
     this.session_id = new Property(this, "session_id", false);
     this.messages = new Property(this, "messages", false);
     this.pending = new Property(this, "pending", false);
@@ -1186,7 +1225,7 @@ export class HostChat extends HostObject {
     this.history_changed = new Signal("chat.history_changed");
   }
 
-  /** Post a message in the chat, labelled as this extension. The agent sees it and answers in the chat as usual. */
+  /** Post a message in the chat, labelled as this extension. The agent sees it and answers in the chat as usual. In a session that is not on screen it starts a run, or is queued for the run going there (working or waiting on an approval) — then without attachments. */
   post(text: string, attachments?: Record<string, string>): Promise<void> {
     return this.call<void>("post", { text, attachments });
   }
@@ -1255,8 +1294,12 @@ export class HostPlan extends HostObject {
   /** A plan was submitted or decided. */
   readonly changed: Signal<PlanChange>;
 
-  constructor(link: HostLink, window: string | null = null) {
-    super(link, "plan", window);
+  constructor(
+    link: HostLink,
+    window: string | null = null,
+    session: string | null = null,
+  ) {
+    super(link, "plan", window, session);
     this.latest = new Property(this, "latest", false);
     this.changed = new Signal("plan.changed");
   }
@@ -1288,8 +1331,12 @@ export class HostTasks extends HostObject {
   /** The todo list changed. */
   readonly todos_changed: Signal<Todos>;
 
-  constructor(link: HostLink, window: string | null = null) {
-    super(link, "tasks", window);
+  constructor(
+    link: HostLink,
+    window: string | null = null,
+    session: string | null = null,
+  ) {
+    super(link, "tasks", window, session);
     this.todos = new Property(this, "todos", false);
     this.created = new Signal("tasks.created");
     this.updated = new Signal("tasks.updated");
@@ -1307,8 +1354,12 @@ export class HostLoop extends HostObject {
   /** It paused, resumed, advanced or stopped. */
   readonly changed: Signal<LoopStatus>;
 
-  constructor(link: HostLink, window: string | null = null) {
-    super(link, "loop", window);
+  constructor(
+    link: HostLink,
+    window: string | null = null,
+    session: string | null = null,
+  ) {
+    super(link, "loop", window, session);
     this.status = new Property(this, "status", false);
     this.changed = new Signal("loop.changed");
   }
@@ -1346,8 +1397,12 @@ export class HostCommands extends HostObject {
   /** Each skill's details. */
   readonly skill_details: Property<JsonValue[]>;
 
-  constructor(link: HostLink, window: string | null = null) {
-    super(link, "commands", window);
+  constructor(
+    link: HostLink,
+    window: string | null = null,
+    session: string | null = null,
+  ) {
+    super(link, "commands", window, session);
     this.list = new Property(this, "list", false);
     this.skills = new Property(this, "skills", false);
     this.skill_definitions = new Property(this, "skill_definitions", false);
@@ -1368,8 +1423,12 @@ export class HostAgents extends HostObject {
   /** An agent was promoted or discarded. */
   readonly changed: Signal<CollectionChange>;
 
-  constructor(link: HostLink, window: string | null = null) {
-    super(link, "agents", window);
+  constructor(
+    link: HostLink,
+    window: string | null = null,
+    session: string | null = null,
+  ) {
+    super(link, "agents", window, session);
     this.details = new Property(this, "details", false);
     this.changed = new Signal("agents.changed");
   }
@@ -1393,8 +1452,12 @@ export class HostWorkflows extends HostObject {
   /** A workflow run moved on. */
   readonly changed: Signal<CollectionChange>;
 
-  constructor(link: HostLink, window: string | null = null) {
-    super(link, "workflows", window);
+  constructor(
+    link: HostLink,
+    window: string | null = null,
+    session: string | null = null,
+  ) {
+    super(link, "workflows", window, session);
     this.list = new Property(this, "list", false);
     this.changed = new Signal("workflows.changed");
   }
@@ -1418,8 +1481,12 @@ export class HostScheduler extends HostObject {
   /** A task started, finished or changed. */
   readonly event: Signal<SchedulerEvent>;
 
-  constructor(link: HostLink, window: string | null = null) {
-    super(link, "scheduler", window);
+  constructor(
+    link: HostLink,
+    window: string | null = null,
+    session: string | null = null,
+  ) {
+    super(link, "scheduler", window, session);
     this.tasks = new Property(this, "tasks", false);
     this.event = new Signal("scheduler.event");
   }
@@ -1448,8 +1515,12 @@ export class HostProcesses extends HostObject {
   /** A shell started, printed or exited. */
   readonly changed: Signal<ProcessEvent>;
 
-  constructor(link: HostLink, window: string | null = null) {
-    super(link, "processes", window);
+  constructor(
+    link: HostLink,
+    window: string | null = null,
+    session: string | null = null,
+  ) {
+    super(link, "processes", window, session);
     this.list = new Property(this, "list", false);
     this.changed = new Signal("processes.changed");
   }
@@ -1482,8 +1553,12 @@ export class HostWorkspace extends HostObject {
   /** Files changed, as git sees them, within the grant. */
   readonly files_changed: Signal<FilesChanged>;
 
-  constructor(link: HostLink, window: string | null = null) {
-    super(link, "workspace", window);
+  constructor(
+    link: HostLink,
+    window: string | null = null,
+    session: string | null = null,
+  ) {
+    super(link, "workspace", window, session);
     this.root = new Property(this, "root", false);
     this.head = new Property(this, "head", false);
     this.head_changed = new Signal("workspace.head-changed");
@@ -1526,8 +1601,12 @@ export class HostModels extends HostObject {
   /** The model in use changed. */
   readonly changed: Signal<ModelChange>;
 
-  constructor(link: HostLink, window: string | null = null) {
-    super(link, "models", window);
+  constructor(
+    link: HostLink,
+    window: string | null = null,
+    session: string | null = null,
+  ) {
+    super(link, "models", window, session);
     this.registry = new Property(this, "registry", false);
     this.current = new Property(this, "current", true);
     this.changed = new Signal("models.changed");
@@ -1546,8 +1625,12 @@ export class HostMcp extends HostObject {
   /** A server connected, disconnected or changed tools. */
   readonly changed: Signal<CollectionChange>;
 
-  constructor(link: HostLink, window: string | null = null) {
-    super(link, "mcp", window);
+  constructor(
+    link: HostLink,
+    window: string | null = null,
+    session: string | null = null,
+  ) {
+    super(link, "mcp", window, session);
     this.servers = new Property(this, "servers", false);
     this.status = new Property(this, "status", false);
     this.details = new Property(this, "details", false);
@@ -1585,8 +1668,12 @@ export class HostPlugins extends HostObject {
   /** A plugin or marketplace changed. */
   readonly changed: Signal<CollectionChange>;
 
-  constructor(link: HostLink, window: string | null = null) {
-    super(link, "plugins", window);
+  constructor(
+    link: HostLink,
+    window: string | null = null,
+    session: string | null = null,
+  ) {
+    super(link, "plugins", window, session);
     this.installed = new Property(this, "installed", false);
     this.marketplaces = new Property(this, "marketplaces", false);
     this.changed = new Signal("plugins.changed");
@@ -1646,8 +1733,12 @@ export class HostExtensions extends HostObject {
   /** An extension's health moved. */
   readonly state_changed: Signal<ExtensionStateChange>;
 
-  constructor(link: HostLink, window: string | null = null) {
-    super(link, "extensions", window);
+  constructor(
+    link: HostLink,
+    window: string | null = null,
+    session: string | null = null,
+  ) {
+    super(link, "extensions", window, session);
     this.installed = new Property(this, "installed", false);
     this.state_changed = new Signal("extension.state-changed");
   }
@@ -1666,8 +1757,12 @@ export class HostHooks extends HostObject {
   /** Hooks were reloaded. */
   readonly changed: Signal<CollectionChange>;
 
-  constructor(link: HostLink, window: string | null = null) {
-    super(link, "hooks", window);
+  constructor(
+    link: HostLink,
+    window: string | null = null,
+    session: string | null = null,
+  ) {
+    super(link, "hooks", window, session);
     this.details = new Property(this, "details", false);
     this.changed = new Signal("hooks.changed");
   }
@@ -1691,8 +1786,12 @@ export class HostPermissions extends HostObject {
   /** The mode changed. */
   readonly mode_changed: Signal<PermissionModeChange>;
 
-  constructor(link: HostLink, window: string | null = null) {
-    super(link, "permissions", window);
+  constructor(
+    link: HostLink,
+    window: string | null = null,
+    session: string | null = null,
+  ) {
+    super(link, "permissions", window, session);
     this.mode = new Property(this, "mode", false);
     this.mode_changed = new Signal("permissions.mode_changed");
   }
@@ -1714,8 +1813,12 @@ export class HostPolicy extends HostObject {
   /** The group's policy pack. */
   readonly pack: Property<JsonValue>;
 
-  constructor(link: HostLink, window: string | null = null) {
-    super(link, "policy", window);
+  constructor(
+    link: HostLink,
+    window: string | null = null,
+    session: string | null = null,
+  ) {
+    super(link, "policy", window, session);
     this.pack = new Property(this, "pack", false);
   }
 }
@@ -1728,8 +1831,12 @@ export class HostAccount extends HostObject {
   /** Someone signed in or out. */
   readonly changed: Signal<Account>;
 
-  constructor(link: HostLink, window: string | null = null) {
-    super(link, "account", window);
+  constructor(
+    link: HostLink,
+    window: string | null = null,
+    session: string | null = null,
+  ) {
+    super(link, "account", window, session);
     this.status = new Property(this, "status", false);
     this.changed = new Signal("account.changed");
   }
@@ -1755,8 +1862,12 @@ export class HostNotifications extends HostObject {
   /** The counts moved. */
   readonly changed: Signal<NotificationCounts>;
 
-  constructor(link: HostLink, window: string | null = null) {
-    super(link, "notifications", window);
+  constructor(
+    link: HostLink,
+    window: string | null = null,
+    session: string | null = null,
+  ) {
+    super(link, "notifications", window, session);
     this.list = new Property(this, "list", false);
     this.unread = new Property(this, "unread", false);
     this.changed = new Signal("notifications.changed");
@@ -1789,8 +1900,12 @@ export class HostSelf extends HostObject {
   /** Its health moved. */
   readonly state_changed: Signal<ExtensionStateChange>;
 
-  constructor(link: HostLink, window: string | null = null) {
-    super(link, "self", window);
+  constructor(
+    link: HostLink,
+    window: string | null = null,
+    session: string | null = null,
+  ) {
+    super(link, "self", window, session);
     this.id = new Property(this, "id", false);
     this.settings = new Property(this, "settings", true);
     this.state = new Property(this, "state", false);
@@ -1840,32 +1955,36 @@ export class Host extends HostObject {
   /** Anything changed. Carries the member's path and its new value. */
   readonly changed: Signal<Change>;
 
-  constructor(link: HostLink, window: string | null = null) {
-    super(link, "", window);
-    this.app = new HostApp(link, window);
-    this.windows = new HostWindows(link, window);
-    this.ui = new HostUi(link, window);
-    this.sessions = new HostSessions(link, window);
-    this.chat = new HostChat(link, window);
-    this.plan = new HostPlan(link, window);
-    this.tasks = new HostTasks(link, window);
-    this.loop = new HostLoop(link, window);
-    this.commands = new HostCommands(link, window);
-    this.agents = new HostAgents(link, window);
-    this.workflows = new HostWorkflows(link, window);
-    this.scheduler = new HostScheduler(link, window);
-    this.processes = new HostProcesses(link, window);
-    this.workspace = new HostWorkspace(link, window);
-    this.models = new HostModels(link, window);
-    this.mcp = new HostMcp(link, window);
-    this.plugins = new HostPlugins(link, window);
-    this.extensions = new HostExtensions(link, window);
-    this.hooks = new HostHooks(link, window);
-    this.permissions = new HostPermissions(link, window);
-    this.policy = new HostPolicy(link, window);
-    this.account = new HostAccount(link, window);
-    this.notifications = new HostNotifications(link, window);
-    this.self = new HostSelf(link, window);
+  constructor(
+    link: HostLink,
+    window: string | null = null,
+    session: string | null = null,
+  ) {
+    super(link, "", window, session);
+    this.app = new HostApp(link, window, session);
+    this.windows = new HostWindows(link, window, session);
+    this.ui = new HostUi(link, window, session);
+    this.sessions = new HostSessions(link, window, session);
+    this.chat = new HostChat(link, window, session);
+    this.plan = new HostPlan(link, window, session);
+    this.tasks = new HostTasks(link, window, session);
+    this.loop = new HostLoop(link, window, session);
+    this.commands = new HostCommands(link, window, session);
+    this.agents = new HostAgents(link, window, session);
+    this.workflows = new HostWorkflows(link, window, session);
+    this.scheduler = new HostScheduler(link, window, session);
+    this.processes = new HostProcesses(link, window, session);
+    this.workspace = new HostWorkspace(link, window, session);
+    this.models = new HostModels(link, window, session);
+    this.mcp = new HostMcp(link, window, session);
+    this.plugins = new HostPlugins(link, window, session);
+    this.extensions = new HostExtensions(link, window, session);
+    this.hooks = new HostHooks(link, window, session);
+    this.permissions = new HostPermissions(link, window, session);
+    this.policy = new HostPolicy(link, window, session);
+    this.account = new HostAccount(link, window, session);
+    this.notifications = new HostNotifications(link, window, session);
+    this.self = new HostSelf(link, window, session);
     this.changed = new Signal("changed");
   }
 

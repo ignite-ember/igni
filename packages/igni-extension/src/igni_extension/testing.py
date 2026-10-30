@@ -323,6 +323,8 @@ class HostCall(BaseModel):
     op: str
     path: str
     window: str | None = None
+    #: The session, for `host.sessions.chat(id)`.
+    session: str | None = None
     params: dict[str, Any] = {}
     value: Any = None
 
@@ -511,6 +513,7 @@ class FakeHost:
                 op=op,
                 path=path,
                 window=request.get("window"),
+                session=request.get("session"),
                 params=dict(request.get("params") or {}),
                 value=request.get("value"),
             )

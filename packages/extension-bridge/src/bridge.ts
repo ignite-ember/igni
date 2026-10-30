@@ -344,6 +344,7 @@ function build(
         op,
         path,
         window: options.window ?? null,
+        ...(options.session ? { session: options.session } : {}),
         ...(options.params !== undefined ? { params: options.params } : {}),
         ...(op === "set" ? { value: options.value } : {}),
       });

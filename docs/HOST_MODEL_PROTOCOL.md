@@ -60,6 +60,7 @@ SDK → host, any number in flight; replies may arrive in any order.
 {"id": 8, "op": "set",  "path": "sessions.current", "value": "s-2"}
 {"id": 9, "op": "call", "path": "chat.post", "params": {"text": "Done."}}
 {"id": 10, "op": "call", "path": "ui.navigate", "window": "w-2", "params": {"page": "plugins"}}
+{"id": 13, "op": "call", "path": "chat.post", "session": "s-7", "params": {"text": "Indexed."}}
 {"id": 11, "op": "subscribe",   "signals": ["chat.run_completed", "session.switched"]}
 {"id": 12, "op": "unsubscribe", "signals": ["session.switched"]}
 ```
@@ -70,6 +71,11 @@ SDK → host, any number in flight; replies may arrive in any order.
 * `window` — only for a per-window object (`ui`): the window to address.
   Absent, the process's `host.ui` is the active window — the one the
   person last used.
+* `session` — only for a per-session object (`chat` and the objects
+  under it): the session to address, for `host.sessions.chat(id)`.
+  Absent, it is the session on screen — the active window's, or a
+  page's own window's. The host checks the grants and the project; a
+  generated SDK sends it, an author never writes it.
 * `params` — a method's parameters by name. Optional parameters may be
   left out or sent as `null`; an unknown one is refused.
 * `value` — the value of a `set`.

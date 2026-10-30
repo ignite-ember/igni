@@ -16,6 +16,8 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, Protocol
 
+from ember_code.core.session.schemas import PersistResult
+from ember_code.extensions.service_events import UnattendedPost
 from ember_code.protocol.messages import Message
 from ember_code.protocol.rpc import RpcMethod
 
@@ -71,6 +73,24 @@ class HostBackend(Protocol):
         queued: bool,
     ) -> None:
         """A message in the chat, labelled as ``extension_id``, for the agent."""
+        ...
+
+    async def deliver(
+        self,
+        *,
+        session_id: str,
+        extension_id: str,
+        text: str,
+        media: dict[str, str] | None,
+    ) -> UnattendedPost:
+        """The same, for a session nobody may be watching: it starts a run
+        there, or is queued for the run going — working or waiting on an
+        approval — as a service event is (``extensions/service_events.py``)."""
+        ...
+
+    async def title(self, *, session_id: str, title: str) -> PersistResult:
+        """Name a session now — before its first run, too — so no auto-name
+        replaces it, as a service's new chat is titled; every window is told."""
         ...
 
     async def show_view(self, *, session_id: str, payload: dict[str, Any], run_id: str) -> None:

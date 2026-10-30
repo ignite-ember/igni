@@ -45,18 +45,20 @@ export interface HostLink {
     path: string,
     options: {
       window?: string | null;
+      session?: string | null;
       params?: Record<string, unknown>;
       value?: unknown;
     },
   ): Promise<unknown>;
 }
 
-/** One object of the host model: `host.chat`, `host.windows.ui(id)`. */
+/** One object of the host model: `host.chat`, `host.windows.ui(id)`, `host.sessions.chat(id)`. */
 export class HostObject {
   constructor(
     protected readonly link: HostLink,
     readonly path: string,
     protected readonly window: string | null = null,
+    protected readonly session: string | null = null,
   ) {}
 
   /** @internal */
@@ -74,6 +76,11 @@ export class HostObject {
     return this.window;
   }
 
+  /** @internal — for `Property`. */
+  sessionId(): string | null {
+    return this.session;
+  }
+
   protected async call<T>(
     name: string,
     params: Record<string, unknown>,
@@ -84,6 +91,7 @@ export class HostObject {
     }
     return (await this.link.request("call", this.memberPath(name), {
       window: this.window,
+      session: this.session,
       params: sent,
     })) as T;
   }
@@ -104,6 +112,7 @@ export class Property<T> {
   async get(): Promise<T> {
     return (await this.owner.hostLink().request("get", this.path, {
       window: this.owner.windowId(),
+      session: this.owner.sessionId(),
     })) as T;
   }
 
@@ -114,6 +123,7 @@ export class Property<T> {
     }
     await this.owner.hostLink().request("set", this.path, {
       window: this.owner.windowId(),
+      session: this.owner.sessionId(),
       value,
     });
   }

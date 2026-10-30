@@ -46,10 +46,14 @@ class Call:
     grants: HostGrants
     #: The window a per-window member is about, or the caller's window.
     window: str | None
-    #: The session the caller's chat is: its window's, else the default.
+    #: The session the caller's chat is: its window's, else the default —
+    #: or the one ``host.sessions.chat(id)`` named.
     session_id: str
     params: dict[str, Any]
     value: Any = None
+    #: Whether ``session_id`` is the session on screen. ``False`` only
+    #: for ``host.sessions.chat(id)`` of another session.
+    on_screen: bool = True
 
 
 Impl = Callable[[Call], Awaitable[Any]]
@@ -579,9 +583,21 @@ class SessionMembers(Members):
 
     @call("sessions.create")
     async def create(self, c: Call) -> Any:
+        title = c.params.get("title")
+        if title is not None and not str(title).strip():
+            raise HostModelError(ErrorCode.INVALID, "sessions.create(title): an empty title")
         project_dir = c.params.get("project_dir") or str(self.backend.project_dir)
         attached = await self.model.attach("", project_dir)
-        if c.window is not None:
+        if title is not None:
+            # Before anything runs in it, as a service's new chat is
+            # titled, so no auto-name replaces it.
+            titled = await self.backend.title(session_id=attached["session_id"], title=str(title))
+            if not titled.ok:
+                raise HostModelError(
+                    ErrorCode.FAILED,
+                    f"session {attached['session_id']} was created but not titled: {titled.error}",
+                )
+        if c.params.get("focus") and c.window is not None:
             # The folder first: a window moving to the session reads it.
             self.model.windows.write(c.window, "project_dir", attached["project_dir"])
             self.model.windows.write(c.window, "session", attached["session_id"])
@@ -640,6 +656,18 @@ class ChatMembers(Members):
         text = str(c.params["text"])
         if not text.strip():
             raise HostModelError(ErrorCode.INVALID, "an empty message is not posted")
+        if not c.on_screen:
+            # Nobody may be watching: a service event's rules — start a
+            # run, or wait for the one going; never answer an approval.
+            posted = await self.backend.deliver(
+                session_id=c.session_id,
+                extension_id=c.extension_id,
+                text=text,
+                media=c.params.get("attachments") or None,
+            )
+            if not posted.ok:
+                raise HostModelError(ErrorCode.REFUSED, posted.reason)
+            return
         await self.backend.post(
             session_id=c.session_id,
             extension_id=c.extension_id,

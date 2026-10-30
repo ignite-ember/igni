@@ -111,6 +111,7 @@ class BroadcastSignals:
                 "text": m.text,
                 "queued": m.queued,
                 "from_extension": m.extension_id or None,
+                "from_service": m.service_client_id or None,
             },
         )
 

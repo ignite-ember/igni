@@ -71,8 +71,21 @@ class ObjectNaming:
     def per_window(self) -> list[ObjectSpec]:
         return [o for o in self.schema.objects if o.per_window]
 
+    def per_session(self) -> list[ObjectSpec]:
+        """Objects a session owns whose parent it does not: ``host.sessions.chat(id)``.
+
+        Their children follow them, as ``chat.approvals`` follows ``chat``.
+        """
+        owned = {o.path for o in self.schema.objects if o.per_session}
+        return [
+            o
+            for o in self.schema.objects
+            if o.per_session and o.path.rpartition(".")[0] not in owned
+        ]
+
     def check(self) -> None:
-        """No child object may share a name with a member of its parent."""
+        """No child object, nor ``host.sessions``' handle of one, may share a
+        name with a member of the object it hangs from."""
         for spec in self.schema.objects:
             names = {m.name for g in (spec.properties, spec.signals, spec.methods) for m in g}
             for child in self.children(spec.path):
@@ -81,6 +94,14 @@ class ObjectNaming:
                         f"{child.path}: its name collides with a member of "
                         f"{spec.path or 'the root'}"
                     )
+            if spec.path == "sessions":
+                children = {self.attribute(c) for c in self.children(spec.path)}
+                for target in self.per_session():
+                    if self.attribute(target) in names | children:
+                        raise ValueError(
+                            f"sessions.{self.attribute(target)}(id): collides with a member "
+                            "of sessions"
+                        )
 
     def ordered(self) -> list[ObjectSpec]:
         """Deepest first, so a class is defined before its parent uses it."""
@@ -214,13 +235,15 @@ class PythonGenerator:
             "",
             f'    PATH = "{spec.path}"',
             "",
-            "    def __init__(self, link: HostLink, window: str | None = None) -> None:",
-            "        super().__init__(link, window)",
+            "    def __init__(",
+            "        self, link: HostLink, window: str | None = None, session: str | None = None",
+            "    ) -> None:",
+            "        super().__init__(link, window, session)",
         ]
         for child in self.naming.children(spec.path):
             out.append(
                 f"        self.{self.naming.attribute(child)} = "
-                f"{self.naming.class_name(child.path)}(link, window)"
+                f"{self.naming.class_name(child.path)}(link, window, session)"
             )
         for p in spec.properties:
             out.append(
@@ -247,6 +270,18 @@ class PythonGenerator:
                     f"    def {attr}(self, window_id: str) -> {cls}:",
                     f'        """`host.{target.path}` of one window, by its id."""',
                     f"        return {cls}(self._link, window_id)",
+                ]
+        if spec.path == "sessions":
+            for target in self.naming.per_session():
+                cls = self.naming.class_name(target.path)
+                attr = self.naming.attribute(target)
+                out += [
+                    "",
+                    f"    def {attr}(self, session_id: str) -> {cls}:",
+                    f'        """`host.{target.path}` of any session of this project, by its id,',
+                    "        without showing it. The session on screen's id is",
+                    f'        `host.{target.path}` itself."""',
+                    f"        return {cls}(self._link, None, session_id)",
                 ]
         return out
 
@@ -359,13 +394,17 @@ class TypeScriptGenerator:
             out.append(f"  readonly {s.name}: Signal<{self.type(s.type)}>;")
         out += [
             "",
-            "  constructor(link: HostLink, window: string | null = null) {",
-            f'    super(link, "{spec.path}", window);',
+            "  constructor(",
+            "    link: HostLink,",
+            "    window: string | null = null,",
+            "    session: string | null = null,",
+            "  ) {",
+            f'    super(link, "{spec.path}", window, session);',
         ]
         for child in children:
             out.append(
                 f"    this.{self.naming.attribute(child)} = new "
-                f"{self.naming.class_name(child.path)}(link, window);"
+                f"{self.naming.class_name(child.path)}(link, window, session);"
             )
         for p in spec.properties:
             out.append(
@@ -386,6 +425,19 @@ class TypeScriptGenerator:
                     f"  /** `host.{target.path}` of one window, by its id. */",
                     f"  {attr}(windowId: string): {cls} {{",
                     f"    return new {cls}(this.link, windowId);",
+                    "  }",
+                ]
+        if spec.path == "sessions":
+            for target in self.naming.per_session():
+                cls = self.naming.class_name(target.path)
+                attr = self.naming.attribute(target)
+                out += [
+                    "",
+                    f"  /** `host.{target.path}` of any session of this project, by its id, "
+                    "without showing it. The session on screen's id is "
+                    f"`host.{target.path}` itself. */",
+                    f"  {attr}(sessionId: string): {cls} {{",
+                    f"    return new {cls}(this.link, null, sessionId);",
                     "  }",
                 ]
         out += ["}", ""]

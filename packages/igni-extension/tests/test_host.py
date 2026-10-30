@@ -103,6 +103,23 @@ async def test_any_window_is_addressed_by_its_id(host: FakeHost) -> None:
     await ext.aclose()
 
 
+async def test_any_session_is_addressed_by_its_id(host: FakeHost) -> None:
+    ext = IgniExtension("acme.example", environ=host.environment())
+    host.values["chat.approvals.waiting"] = []
+
+    chat = ext.host.sessions.chat("s-2")
+    await chat.post("The index is ready.")
+    await chat.approvals.waiting
+    await ext.host.chat.post("here")
+
+    post, read, on_screen = host.calls
+    assert (post.path, post.session, post.window) == ("chat.post", "s-2", None)
+    assert post.params == {"text": "The index is ready."}
+    assert (read.op, read.path, read.session) == ("get", "chat.approvals.waiting", "s-2")
+    assert on_screen.session is None, "host.chat is the session on screen"
+    await ext.aclose()
+
+
 async def test_a_signal_runs_its_handler_with_the_typed_value(host: FakeHost) -> None:
     ext = IgniExtension("acme.example", environ=host.environment())
     seen: list[str] = []
