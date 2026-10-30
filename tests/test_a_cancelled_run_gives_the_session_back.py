@@ -242,7 +242,9 @@ class _Resolver:
         self._attached = attached
 
     def resolve_text_references(self, text: str) -> ResolvedText:
-        return ResolvedText(text=text, paths=["/project/diagram.png"])
+        return ResolvedText(
+            text=text, paths=["/project/diagram.png"], attachable=["/project/diagram.png"]
+        )
 
     def attach_local_paths(self, paths: list[str]) -> MediaAttachments | None:
         return self._attached

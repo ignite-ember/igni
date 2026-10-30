@@ -104,6 +104,12 @@ class Attachments(ABC):
     def safe_name(cls, filename: str) -> str:
         return cls._SAFE_NAME_RE.sub("_", filename) or "file"
 
+    @staticmethod
+    def directory(project_dir: Path) -> Path:
+        """Where a project's uploads are kept as files: each session's
+        under ``<session_id>/``."""
+        return project_dir / CONFIG_DIR / "attachments"
+
     @abstractmethod
     def save(self, session_id: str, filename: str, chunks: Iterable[bytes]) -> StoredAttachment:
         """Keep the upload, writing each chunk as it comes."""
@@ -145,7 +151,7 @@ class DirectoryAttachments(Attachments):
 
     def _destination(self, session_id: str, filename: str) -> Path:
         safe = self.safe_name(filename)
-        dest_dir = self._project_dir / CONFIG_DIR / "attachments" / session_id
+        dest_dir = self.directory(self._project_dir) / session_id
         dest_dir.mkdir(parents=True, exist_ok=True)
         dest = dest_dir / safe
         if dest.exists():

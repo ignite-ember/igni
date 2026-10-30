@@ -164,10 +164,10 @@ class PromptBuilder:
         resolved = self._resolver.resolve_text_references(text)
         text = resolved.text
         resolved_files = resolved.paths
-        if not resolved_files:
-            return _FileAttachStep(text=text, media=media)
-        if model_cfg.vision:
-            parsed_media = self._resolver.attach_local_paths(resolved_files)
+        if model_cfg.vision and resolved.attachable:
+            # ``attachable``, not ``paths``: an upload is named by its
+            # absolute path, which there is nothing to rewrite in.
+            parsed_media = self._resolver.attach_local_paths(resolved.attachable)
             if parsed_media is not None:
                 if media is None:
                     media = parsed_media
@@ -176,8 +176,10 @@ class PromptBuilder:
                 return _FileAttachStep(
                     text=text,
                     media=media,
-                    info_messages=[msg.Info(text=f"Attached: {len(resolved_files)} file(s)")],
+                    info_messages=[msg.Info(text=f"Attached: {len(resolved.attachable)} file(s)")],
                 )
+        if not resolved_files:
+            return _FileAttachStep(text=text, media=media)
         return _FileAttachStep(
             text=text,
             media=media,

@@ -16,6 +16,16 @@ Two modes, both active. Which one runs depends on the model's
 
 A text-only model (e.g. MiniMax-M2.7) takes path 1 only; the bytes
 stay on disk in ``.igni/attachments/<session_id>/``.
+
+**Which files may be sent.** A path typed in short (relative, ``~``,
+a bare filename the resolver found) is attachable as before. A path
+written out in full — every upload, which the composer names by its
+absolute ``@<path>``, and every file a service's item brings — is
+attachable only when it resolves, symlinks followed, inside an allowed
+root: the project's uploads directory or the workspace (the project
+directory). Any other absolute path stays text: the model can still
+read it with its tools, under their permissions, but its bytes are not
+put on the wire because a message named it.
 """
 
 from __future__ import annotations
@@ -24,6 +34,7 @@ import re
 from pathlib import Path
 from typing import Any
 
+from ember_code.core.utils.attachment_store import Attachments
 from ember_code.core.utils.media_schemas import (
     MediaAttachments,
     MediaKind,
@@ -40,7 +51,10 @@ class MediaResolver:
     bare filenames) plus an optional :class:`MediaTaxonomy` (tests
     can substitute a narrower one) and optional ``search_dirs``
     override (defaults preserve the pre-refactor behavior: project
-    first, then Downloads / Desktop / Documents / home).
+    first, then Downloads / Desktop / Documents / home). Optional
+    ``allowed_roots`` are where a path written out in full must lie to
+    be attached; by default the project's uploads directory and the
+    project itself, and none without a project.
 
     The compiled regexes are built once per instance from the
     taxonomy's ``all_extensions`` — cheap enough that per-turn
@@ -65,10 +79,14 @@ class MediaResolver:
         *,
         taxonomy: MediaTaxonomy | None = None,
         search_dirs: tuple[Path, ...] | None = None,
+        allowed_roots: tuple[Path, ...] | None = None,
     ) -> None:
         self._project_dir = project_dir
         self._taxonomy = taxonomy or MediaTaxonomy.default()
         self._search_dirs = search_dirs if search_dirs is not None else self._DEFAULT_SEARCH_DIRS
+        if allowed_roots is None:
+            allowed_roots = (Attachments.directory(project_dir), project_dir) if project_dir else ()
+        self._allowed_roots = tuple(root.expanduser().resolve() for root in allowed_roots)
 
         # Build regex alternation from all known extensions
         # (without the dot). Compiled per instance so a custom
@@ -77,14 +95,18 @@ class MediaResolver:
         self._url_pattern = re.compile(
             rf"(https?://\S+/\S+\.(?:{ext_alt})(?:\?\S*)?)", re.IGNORECASE
         )
-        # Explicit paths (starts with ~, ., /, or drive letter)
+        # Explicit paths (starts with ~, ., /, or drive letter), optionally
+        # as an ``@`` mention — how the composer names every upload. The
+        # whitespace around a path is looked at, not consumed, so two
+        # side by side (``@/a.png @/b.png``) are both found.
         self._file_pattern = re.compile(
-            rf"(?:^|\s)((?:[~/.]|\w:)[^\s]*\.(?:{ext_alt}))(?:\s|$)",
+            rf"(?:^|(?<=\s))@?((?:[~/.]|\w:)[^\s]*\.(?:{ext_alt}))(?=\s|$)",
             re.IGNORECASE,
         )
-        # Bare filenames without a path prefix ("photo.avif", "report.pdf")
+        # Bare filenames without a path prefix ("photo.avif", "report.pdf"),
+        # optionally as an ``@`` mention.
         self._bare_file_pattern = re.compile(
-            rf"(?:^|\s)([^\s/~.][^\s]*\.(?:{ext_alt}))(?:\s|$)",
+            rf"(?:^|(?<=\s))@?([^\s/~.@][^\s]*\.(?:{ext_alt}))(?=\s|$)",
             re.IGNORECASE,
         )
 
@@ -107,11 +129,21 @@ class MediaResolver:
                 return candidate.resolve()
         return None
 
+    def _allowed(self, path: Path) -> bool:
+        """Whether ``path`` (already resolved) lies in an allowed root."""
+        return any(path.is_relative_to(root) for root in self._allowed_roots)
+
     def resolve_text_references(self, text: str) -> ResolvedText:
         """Resolve file references in user text to absolute paths.
 
         Replaces bare filenames and relative paths with their resolved
         absolute paths so the AI can use Read or other tools on them.
+
+        A path typed in short (relative, ``~``, a bare filename) is
+        :attr:`ResolvedText.attachable` once found, as it always was. A
+        path the text spells out in full — an upload's ``@<path>`` — is
+        attachable only when it resolves inside an allowed root; one
+        outside stays text only.
 
         Explicit paths are processed before bare filenames so a
         message like ``check ./photo.png and report.pdf`` resolves
@@ -122,15 +154,22 @@ class MediaResolver:
         works as a tuple-unpack.
         """
         resolved: list[str] = []
+        attachable: dict[str, None] = {}
         missed: list[str] = []
 
         # Explicit paths (~/..., ./..., /..., C:\...)
         for match in self._file_pattern.finditer(text):
             raw = match.group(1)
             path = Path(raw).expanduser().resolve()
-            if path.is_file() and str(path) != raw:
+            if not path.is_file():
+                continue
+            if str(path) != raw:
                 text = text.replace(raw, str(path))
                 resolved.append(str(path))
+            # Written out in full, it must lie in an allowed root — the
+            # resolved path, so neither ``..`` nor a symlink leaves one.
+            if not Path(raw).is_absolute() or self._allowed(path):
+                attachable[str(path)] = None
 
         # Bare filenames — search common locations
         for match in self._bare_file_pattern.finditer(text):
@@ -139,10 +178,11 @@ class MediaResolver:
             if found:
                 text = text.replace(filename, str(found))
                 resolved.append(str(found))
+                attachable[str(found)] = None
             else:
                 missed.append(filename)
 
-        return ResolvedText(text=text, paths=resolved, missed=missed)
+        return ResolvedText(text=text, paths=resolved, attachable=list(attachable), missed=missed)
 
     # ── Media attachment (vision models) ──────────────────────────────
 
