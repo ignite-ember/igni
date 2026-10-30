@@ -335,6 +335,23 @@ const ASSISTANT_MD_COMPONENTS: Components = {
   pre: MarkdownPre,
 };
 
+/** Markdown as the agent's replies render it: GFM, highlighted code,
+ *  the fenced-block handling in ``MarkdownPre``. No raw-HTML plugin, so
+ *  HTML in the text stays text. Shared by the agent's replies and the
+ *  messages an extension posts, so both are rendered and sanitised
+ *  alike. */
+function ChatMarkdown({ text }: { text: string }) {
+  return (
+    <ReactMarkdown
+      remarkPlugins={[remarkGfm]}
+      rehypePlugins={[rehypeHighlight]}
+      components={ASSISTANT_MD_COMPONENTS}
+    >
+      {normalizeAssistantMarkdown(text)}
+    </ReactMarkdown>
+  );
+}
+
 /** Assistant chat bubble with a hover-revealed copy-response
  *  button. Copies the raw markdown source (``item.text``) — that's
  *  what the user is actually looking at conceptually; copying the
@@ -360,13 +377,7 @@ export const AssistantMessage = memo(function AssistantMessage({
   return (
     <div className="msg-assistant">
       <div className="msg-assistant-body">
-        <ReactMarkdown
-          remarkPlugins={[remarkGfm]}
-          rehypePlugins={[rehypeHighlight]}
-          components={ASSISTANT_MD_COMPONENTS}
-        >
-          {normalizeAssistantMarkdown(item.text)}
-        </ReactMarkdown>
+        <ChatMarkdown text={item.text} />
       </div>
       {item.interrupted && (
         <InterruptedBanner
@@ -1246,6 +1257,36 @@ export function ToolCardView({
   );
 }
 
+/** A json-render card in the chat. One an extension appended is
+ *  labelled with the extension's name, looked up when it renders so a
+ *  reload that reads the history before the extensions are listed
+ *  still ends up with the name. */
+function VisualizationCard({
+  item,
+  onDispatchAction,
+}: {
+  item: Extract<ChatItem, { kind: "visualization" }>;
+  onDispatchAction?: (action: string, params: Record<string, unknown>) => Promise<unknown>;
+}) {
+  const extensionName = useExtensionName(item.fromExtension);
+  const spec = item.spec as Spec | null;
+  // Cheap signature: length of element keys is enough to detect
+  // "a new delta happened" so the boundary can retry.
+  const sig = spec
+    ? `${spec.root}|${Object.keys(spec.elements ?? {}).length}`
+    : "null";
+  return (
+    <VisualizationErrorBoundary specSignature={sig}>
+      <JsonRenderView
+        spec={spec as Spec}
+        title={item.title}
+        sourceAgent={extensionName || item.sourceAgent}
+        onDispatchAction={onDispatchAction}
+      />
+    </VisualizationErrorBoundary>
+  );
+}
+
 const UserMessage = memo(function UserMessage({
   item,
   onEdit,
@@ -1345,7 +1386,14 @@ const UserMessage = memo(function UserMessage({
     );
   }
 
-  const body = mode === "chat" ? renderUserText(item.text) : item.text;
+  // An extension's message is markdown, as the agent's are; a person's
+  // stays as typed, with its pills.
+  const body =
+    mode !== "chat"
+      ? item.text
+      : item.fromExtension
+        ? <div className="msg-user-markdown"><ChatMarkdown text={item.text} /></div>
+        : renderUserText(item.text);
   return (
     <div
       className={`msg-user mode-${mode}${item.fromExtension ? " msg-user-extension" : ""}`}
@@ -1767,23 +1815,12 @@ export const ChatItemView = memo(function ChatItemView({
       return <div className="msg-error">{item.text}</div>;
     case "shell":
       return <ShellBlock item={item} />;
-    case "visualization": {
-      const spec = item.spec as Spec | null;
-      // Cheap signature: length of element keys is enough to detect
-      // "a new delta happened" so the boundary can retry.
-      const sig = spec
-        ? `${spec.root}|${Object.keys(spec.elements ?? {}).length}`
-        : "null";
+    case "visualization":
       return (
-        <VisualizationErrorBoundary specSignature={sig}>
-          <JsonRenderView
-            spec={spec as Spec}
-            title={item.title}
-            sourceAgent={item.sourceAgent}
-            onDispatchAction={onDispatchVisualizationAction}
-          />
-        </VisualizationErrorBoundary>
+        <VisualizationCard
+          item={item}
+          onDispatchAction={onDispatchVisualizationAction}
+        />
       );
-    }
   }
 });

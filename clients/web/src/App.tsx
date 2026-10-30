@@ -26,7 +26,10 @@ import {
   type ChatItem,
   type OrchestrateEvent,
 } from "./chat/model";
-import { applyVisualizationDelta } from "./chat/visualizationStream";
+import {
+  applyVisualizationDelta,
+  visualizationDeltaFromPayload,
+} from "./chat/visualizationStream";
 import { nextObserverBusyState } from "./chat/observerBusy";
 import { planSessionBinding } from "./chat/sessionBinding";
 import { Arrivals } from "./chat/arrival";
@@ -42,6 +45,7 @@ import {
 } from "./chat/pageStack";
 import { Contributions } from "./extensions/contributions";
 import { ExtensionsPanel } from "./components/panels/ExtensionsPanel";
+import { Drawer } from "./components/panels/Drawer";
 import {
   ExtensionPage,
   type ExtensionSummary,
@@ -49,7 +53,6 @@ import {
 import { ExtensionIndicator } from "./extensions/ExtensionIndicator";
 import { useDocumentTheme } from "./extensions/useDocumentTheme";
 import { PageContext } from "./components/PageShell";
-import { Monogram } from "@igni/ui-react";
 import { WorkflowsPage } from "./components/pages/WorkflowsPage";
 import { HelpPage } from "./components/pages/HelpPage";
 import { ContextPage } from "./components/pages/ContextPage";
@@ -85,7 +88,6 @@ import {
 import { FPSCounterOverlay } from "./components/FPSCounter";
 import { HitlDialog, type HitlDecision } from "./components/HitlDialog";
 import {
-  ChevronIcon,
   FlameIcon,
   FolderIcon,
   MenuIcon,
@@ -130,6 +132,7 @@ import { withDetails } from "./chat/hitlDetails";
 import { countOf } from "./lib/plural";
 import { indexOfRun, runAt } from "./chat/runIndex";
 import { ExtensionNamesContext } from "./extensions/extensionNames";
+import { AccountChip } from "./components/AccountChip";
 
 /**
  * What is open over the chat — the window model's `ui.panel`.
@@ -1425,22 +1428,11 @@ export default function App() {
           // this channel as ``{type: "visualization_delta", spec_id,
           // json, final?}`` throttled to ~50ms. We partial-parse the
           // JSON on each delta so the card fills in progressively as
-          // tokens arrive.
-          const rawEv = m.payload as {
-            type?: unknown;
-            spec_id?: unknown;
-            json?: unknown;
-          };
-          if (
-            rawEv.type === "visualization_delta" &&
-            typeof rawEv.spec_id === "string" &&
-            typeof rawEv.json === "string"
-          ) {
-            const specId = rawEv.spec_id;
-            const jsonStr = rawEv.json;
-            setItems((prev) =>
-              applyVisualizationDelta(prev, { spec_id: specId, json: jsonStr }),
-            );
+          // tokens arrive. An extension's ``chat.append`` sends the
+          // same event carrying its ``title`` and ``source``.
+          const delta = visualizationDeltaFromPayload(m.payload);
+          if (delta) {
+            setItems((prev) => applyVisualizationDelta(prev, delta));
             return; // Fully handled; don't fall through to team-card logic
           }
 
@@ -3253,58 +3245,36 @@ export default function App() {
               )}
             </button>
           )}
-          {status?.cloud_connected ? (
-            <button
-              className="chip"
-              title="Account"
-              onClick={() => {
-                const opening = !accountMenu;
-                setAccountMenu(opening);
-                if (opening) {
-                  // Fresh fetch every time the popover opens so seat
-                  // tier changes show up without an app restart. The
-                  // BE proxies to ``/portal/me`` on the cloud.
-                  void client
-                    .rpc<{
-                      tier?: string | null;
-                      full_name?: string | null;
-                      email?: string | null;
-                    } | null>("get_cloud_plan")
-                    .then((info) => {
-                      // The display name only exists on the cloud, so
-                      // it arrives here. Until it does the chip shows
-                      // the address, which is on disk and correct —
-                      // rather than nothing while a request is out.
-                      if (info?.full_name) setCloudName(info.full_name);
-                    })
-                    .catch(() => {
-                      // Offline: the chip keeps showing the address.
-                    });
-                }
-              }}
-            >
-              {/* A monogram, not an avatar: nothing in the product
-                  stores an uploaded picture, and inventing a silhouette
-                  for everybody says less than two letters of their own
-                  name. The portal draws the same thing from the same
-                  source. */}
-              <Monogram name={accountName} />{" "}
-              <span className="chip-label">{accountName}</span>{" "}
-              <ChevronIcon size={9} down />
-            </button>
-          ) : (
-            <button
-              className="chip"
-              style={{
-                background: "var(--ember-gradient)",
-                color: "#fff",
-                border: "none",
-              }}
-              onClick={() => setPanel({ kind: "login" })}
-            >
-              Log in
-            </button>
-          )}
+          <AccountChip
+            status={status}
+            name={accountName}
+            onLogIn={() => setPanel({ kind: "login" })}
+            onOpenAccount={() => {
+              const opening = !accountMenu;
+              setAccountMenu(opening);
+              if (opening) {
+                // Fresh fetch every time the popover opens so seat
+                // tier changes show up without an app restart. The
+                // BE proxies to ``/portal/me`` on the cloud.
+                void client
+                  .rpc<{
+                    tier?: string | null;
+                    full_name?: string | null;
+                    email?: string | null;
+                  } | null>("get_cloud_plan")
+                  .then((info) => {
+                    // The display name only exists on the cloud, so
+                    // it arrives here. Until it does the chip shows
+                    // the address, which is on disk and correct —
+                    // rather than nothing while a request is out.
+                    if (info?.full_name) setCloudName(info.full_name);
+                  })
+                  .catch(() => {
+                    // Offline: the chip keeps showing the address.
+                  });
+              }
+            }}
+          />
           {conn === "replaced" && (
             <button
               className="chip"
@@ -3655,7 +3625,13 @@ export default function App() {
               if (owner === null || owner === "igni") return null;
               const extension = extensions.find((e) => e.id === owner);
               if (extension === undefined) return null;
+              // In the page chrome every other page gets from its
+              // ``Drawer``: positioned over the conversation, with the
+              // trail back to the chat. Mounted bare, the frame sat in
+              // the column's flow at an iframe's default 150px height.
+              // ``titleInBody``: the extension draws its own heading.
               return (
+                <Drawer title={page.label} titleInBody onClose={goChat}>
                 <ExtensionPage
                   extension={extension}
                   kind={page.kind}
@@ -3710,6 +3686,7 @@ export default function App() {
                     client.asExtension(extension.id).rpc(method, args)
                   }
                 />
+                </Drawer>
               );
             })()}
             {page.kind === "mcp" && (

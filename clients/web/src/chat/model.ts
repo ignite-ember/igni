@@ -567,9 +567,13 @@ export type ChatItem =
       spec: unknown;
       /** Optional short label shown above the card. */
       title: string;
-      /** Which agent emitted the spec (currently always ``visualizer``,
-       *  but kept as a string so future callers can attribute). */
+      /** Which agent emitted the spec: ``visualizer``, or the id of
+       *  the extension that appended it. */
       sourceAgent: string;
+      /** Set when an extension appended the card (``host.chat.append``):
+       *  its id. The card shows the extension's name, looked up when it
+       *  renders, as a message the extension posted does. */
+      fromExtension?: string;
     }
   | {
       kind: "stats";
@@ -697,6 +701,7 @@ export function visualizationItem(
   title: string,
   sourceAgent: string,
   specId: string,
+  fromExtension?: string,
 ): ChatItem {
   return {
     kind: "visualization",
@@ -705,6 +710,7 @@ export function visualizationItem(
     spec,
     title,
     sourceAgent,
+    ...(fromExtension ? { fromExtension } : {}),
   };
 }
 
@@ -1159,11 +1165,13 @@ export function restoredItem(turn: Record<string, unknown>): ChatItem | null {
     const spec = turn.spec;
     const specId = String(turn.spec_id ?? "");
     if (!specId || !spec || typeof spec !== "object") return null;
+    const extensionId = String(turn.extension_id ?? "");
     return visualizationItem(
       spec,
-      "",
+      String(turn.title ?? ""),
       String(turn.source_agent ?? "visualizer"),
       specId,
+      extensionId || undefined,
     );
   }
   return null;

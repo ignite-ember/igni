@@ -5581,6 +5581,10 @@ button {
   font-size: var(--text-sm);
   gap: var(--space-2);
   max-width: 160px;
+  /* The hint beside it gives way first. Squeezed, this chip clipped
+     the model's name mid-word — "igni 1.0 4" for 4b — because a
+     flex chip's text takes no ellipsis. */
+  flex-shrink: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -9898,6 +9902,36 @@ button {
   margin-bottom: var(--space-1);
 }
 
+/* Its text is markdown, rendered as the agent's is. The bubble keeps
+   a person's line breaks with pre-wrap; markdown makes its own. */
+.msg-user-markdown {
+  white-space: normal;
+}
+
+.msg-user-markdown > :first-child {
+  margin-top: 0;
+}
+
+.msg-user-markdown > :last-child {
+  margin-bottom: 0;
+}
+
+.msg-user-markdown a {
+  color: var(--accent-blue-text);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.msg-user-markdown code {
+  font-family: var(--font-mono);
+  font-size: 0.9em;
+}
+
+.msg-user-markdown pre {
+  white-space: pre;
+  overflow-x: auto;
+}
+
 /* "Open on the web" — an extension's home page, its service's
    `client_uri`. Shown on its row and above its page when known. */
 .ext-web-link {
@@ -9932,6 +9966,36 @@ button {
 .extension-page > iframe {
   flex: 1;
   min-height: 0;
+}
+
+/* An extension's page is its frame, edge to edge: the page body does
+   not scroll (the frame scrolls itself) and the measure gives up its
+   900px column and padding. Without this the frame kept an iframe's
+   default 300x150. The trail floats over the top of a page with no
+   header row; a frame cannot know to leave room for it, so the body
+   does. */
+.page:has(.extension-frame) .page-body {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  padding-top: var(--crumb-row-h);
+}
+
+.page:has(.extension-frame) .page-measure {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  width: 100%;
+  padding: 0;
+}
+
+.extension-frame {
+  display: block;
+  flex: 1;
+  width: 100%;
+  min-height: 0;
+  border: 0;
 }
 
 .ext-head {
