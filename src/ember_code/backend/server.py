@@ -69,6 +69,7 @@ from ember_code.backend.server_sessions import SessionsController
 from ember_code.backend.team_wiring import TeamWiring
 from ember_code.backend.visualization_action_bus import VisualizationActionBus
 from ember_code.core.config.user_config_store import UserConfigStore
+from ember_code.core.session.schemas import PersistResult
 from ember_code.protocol import messages as msg
 
 if TYPE_CHECKING:
@@ -751,6 +752,10 @@ class BackendServer:
     async def maybe_auto_name_session(self) -> AutoNameResult:
         """See :meth:`SessionsController.maybe_auto_name_session`."""
         return await self.sessions.maybe_auto_name_session()
+
+    async def title_session(self, name: str) -> PersistResult:
+        """See :meth:`SessionsController.title`."""
+        return await self.sessions.title(name)
 
     async def switch_session(self, session_id: str) -> msg.Info:
         """See :meth:`SessionsController.switch_session`."""

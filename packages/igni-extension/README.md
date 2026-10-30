@@ -194,6 +194,20 @@ await ext.host.windows.ui(window_id).navigate("plugins")  # any window
   extension**; the agent is told who sent it and answers as usual.
   `ext.host.chat.append(view)` shows a json-render block that is never
   sent to the model.
+- `ext.host.sessions.chat(session_id)` is the same chat for any session
+  of the project, without switching what the person is looking at.
+  A post there starts a run, or waits for the run already going, and
+  never answers an approval. It needs `sessions.post` as well as
+  `chat.post` (or `chat.append`):
+
+  ```python
+  @ext.on(ext.host.chat.run_completed)
+  async def review(run: Run) -> None:
+      if run.changed_files:
+          # The session the run was in, even if the person has moved on.
+          chat = ext.host.sessions.chat(run.session_id)
+          await chat.post("Two issues in the files you just changed.")
+  ```
 - `await ext.host.notifications.notify(LocalNotification(...))` tells
   the person at this machine something — it never leaves the machine;
   igni opens `target` when it is clicked and shows a repeated `event_key`
@@ -277,26 +291,77 @@ its hooks until it answers again. One handler per event.
 `FakeHost.hook(event, value)` asks a test's extension as igni would, and
 `FakeHost.tell(event, value)` tells it one that decides nothing.
 
-## Your service's events: `@ext.on_service_event`
+## What your service sends: events and messages
 
-Your service can post an event for a producer (igni server's
-`POST /v1/service-events`): "the index is ready", "the build failed".
-igni always starts or resumes that producer's agent run with it — a run
-already going takes it next — whether or not anybody is watching. First
-it asks this extension what the agent should see:
+Your service reaches a producer's igni — on their desktop, or in their
+Fleet VM, woken for it — two ways (igni server's service-identity §15,
+igni's `docs/CLOUD.md` §6). Send a message when the service knows what
+the agent should read; send an event when this extension should decide.
+
+**An event is yours** (`agent.send_event` in `igni-service`). igni hands
+it to your handler for its type and posts nothing. The handler does what
+it wants through its host calls, and the agent runs only if it posts.
+To have the agent work on it in a chat of its own, open one and post
+there:
 
 ```python
 from igni_extension import ServiceEvent
 
 @ext.on_service_event("index.ready")
-async def index_ready(event: ServiceEvent) -> str:
-    return f"The index for {event.payload['repo']} is ready; re-run the review."
+async def index_ready(event: ServiceEvent) -> None:
+    repo = event.payload["repo"]
+    created = await ext.host.sessions.create(title=f"Index: {repo}")
+    await ext.host.sessions.chat(created.session_id).post(
+        f"The index for {repo} is ready; review the open changes."
+    )
 ```
 
-Return `None` to let igni write it from the type and payload. Without a
-type the handler takes every type no other handler names. igni waits up
-to 30 s; delivery is at least once, and igni drops a repeat by
-`event_id`.
+`sessions.create` returns the new session (`created.session_id`) and
+moves no window, so the person stays where they are; the title shows in
+their session list at once, and no auto-name replaces it. Pass
+`focus=True` to show it in the caller's window instead. Creating needs
+the `sessions` grant; posting into a session that is not on screen needs
+`sessions.post` as well as `chat.post`:
+
+```json
+"permissions": {"host": ["sessions", "chat.post", "sessions.post"]}
+```
+
+Without a type the handler takes every type
+no other handler names. An event with no handler for its type, one that
+reaches no running extension, or one whose handler raises is *not
+handled*: your service reads `not_handled`, with the reason, when it
+polls. igni waits up to 10 s; delivery is at least once, and igni drops a
+repeat by `event_id`. A handler that returns text used to have igni post
+it; igni no longer does — the text is ignored, with a warning in the log.
+
+**A message is the agent's** (`agent.send_message`, `new_chat`,
+`chat(thread)`). igni posts it exactly as sent, labelled as this
+extension's, in the chat its thread names or in this extension's own
+chat; no handler is asked, and your extension cannot rewrite, redirect
+or drop it. It sees it, as any post, on `chat.message_added`, with
+`from_extension` set to this extension's id and `from_service` to your
+service's client id. A post this extension made itself has
+`from_service` set to `None`:
+
+```python
+from igni_extension.host_model import ChatMessage
+
+@ext.on(ext.host.chat.message_added)
+async def seen(message: ChatMessage) -> None:
+    if message.from_service is not None:
+        ...  # the service sent it, as a message item
+```
+
+What your service may send beyond a plain event, you declare here:
+
+```json
+"permissions": {"service": ["messages", "attachments", "chats"]}
+```
+
+`messages` lets it post text, `attachments` send files, `chats` name
+threads (each opens a chat), open chats and act on them. The super admin
+approves them with the service, and igni server refuses the rest.
 
 ## Staying awake: `ext.busy`
 

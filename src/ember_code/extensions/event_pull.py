@@ -9,9 +9,11 @@ online — the same shapes and the same two-minute lease:
   most :attr:`PersonEventPull.PAGE`;
 * each goes through the :class:`~ember_code.extensions.service_events.ServiceEventInbox`
   — once, through its extension, into the agent's run;
-* ``POST /v1/me/events/ack`` ``{"event_ids": receipt.acknowledge}`` —
-  delivered now or before. One the session could not take is left to be
-  handed out again when its lease runs out.
+* ``POST /v1/me/events/ack`` ``{"event_ids": receipt.acknowledge,
+  "not_handled": [{event_id, reason}]}`` — delivered now or before, and
+  the events no handler took, which their service reads as
+  ``not_handled``. One the session could not take is left to be handed
+  out again when its lease runs out.
 
 A full page is followed at once by the next; otherwise igni asks again
 after :attr:`PersonEventPull.INTERVAL_SECONDS`. Nobody signed in, or no
@@ -31,7 +33,12 @@ from pydantic import BaseModel, Field, ValidationError
 
 from ember_code.core.activity import background
 from ember_code.core.activity.http import busy_call
-from ember_code.extensions.service_events import DeliveryReceipt, ServiceEvent, ServiceEventInbox
+from ember_code.extensions.service_events import (
+    DeliveryReceipt,
+    NotHandled,
+    ServiceEvent,
+    ServiceEventInbox,
+)
 from ember_code.extensions.service_token import NotSignedIn
 from ember_code.notifications.server_client import SignedInServer
 
@@ -40,6 +47,13 @@ logger = logging.getLogger(__name__)
 
 class PulledEvents(BaseModel):
     events: list[ServiceEvent] = Field(default_factory=list)
+
+
+class Acknowledgement(BaseModel):
+    """``POST /v1/me/events/ack``."""
+
+    event_ids: list[str]
+    not_handled: list[NotHandled] = Field(default_factory=list)
 
 
 class PullRefused(Exception):
@@ -88,7 +102,12 @@ class PersonEventPull:
             raise PullFailed(f"the events are malformed: {exc}") from exc
         receipt = await self._inbox.deliver(pulled.events)
         if receipt.acknowledge:
-            await self._call(self.ACK_PATH, {"event_ids": receipt.acknowledge})
+            await self._call(
+                self.ACK_PATH,
+                Acknowledgement(
+                    event_ids=receipt.acknowledge, not_handled=receipt.not_handled
+                ).model_dump(),
+            )
         return len(pulled.events), receipt
 
     def start(self) -> None:
@@ -138,4 +157,4 @@ class PersonEventPull:
         return response
 
 
-__all__ = ["PersonEventPull", "PullFailed", "PullRefused", "PulledEvents"]
+__all__ = ["Acknowledgement", "PersonEventPull", "PullFailed", "PullRefused", "PulledEvents"]

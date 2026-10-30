@@ -46,6 +46,7 @@ from igni_service.registration import PublishedExtension
 from igni_service.revocations import Revocation, RevocationPage, RevokedKind
 from igni_service.service import IgniService
 from igni_service.settings import IgniSettings
+from igni_service.testing_items import FakeAgents, SentEvent
 from igni_service.tokens import PEOPLE_ONLY, CallerKind
 from igni_service.urls import IgniPaths, ServiceUrl
 
@@ -201,6 +202,12 @@ class FakeIgni:
         self.seen: list[SeenRequest] = []
         self.notify_calls: list[NotifyCall] = []
         self.deliveries: list[Delivery] = []
+        #: The agent channel: items, uploaded files, their states
+        #: (`igni_service.testing_items`).
+        self.agents = FakeAgents(
+            is_member=lambda org_id, user_id: self._member(org_id, user_id) is not None,
+            clock=self.clock.wall,
+        )
         #: Path prefix → status to answer instead, to play igni failing.
         self.failing: dict[str, int] = {}
         self._service_tokens: dict[str, tuple[str, str]] = {}
@@ -226,6 +233,7 @@ class FakeIgni:
         self.seen.clear()
         self.notify_calls.clear()
         self.deliveries.clear()
+        self.agents.reset()
         self.failing.clear()
         self.grants.clear()
         self.revoked.clear()
@@ -534,6 +542,10 @@ class FakeIgni:
         if (
             path.startswith(f"{IgniPaths.DIRECTORY}/")
             or path == IgniPaths.NOTIFICATIONS
+            or path == IgniPaths.SERVICE_EVENTS
+            or path.startswith(f"{IgniPaths.SERVICE_EVENTS}/")
+            or path == IgniPaths.SERVICE_ITEMS
+            or path == IgniPaths.SERVICE_ATTACHMENTS
             or path == IgniPaths.REVOCATIONS
             or path == IgniPaths.SERVED
         ):
@@ -552,6 +564,19 @@ class FakeIgni:
                 return self._served()
             if path == IgniPaths.NOTIFICATIONS:
                 return self._notify(seen, client_id, org_id)
+            if path == IgniPaths.SERVICE_EVENTS and seen.method == "POST":
+                return self.agents.event(seen.body, client_id, org_id)
+            if path == IgniPaths.SERVICE_ITEMS and seen.method == "POST":
+                return self.agents.item(seen.body, client_id, org_id)
+            if path == IgniPaths.SERVICE_ATTACHMENTS and seen.method == "POST":
+                return self.agents.upload(
+                    client_id=client_id,
+                    filename=(seen.query.get("filename") or [""])[0],
+                    content_type=seen.headers.get("content-type", ""),
+                    data=seen.body,
+                )
+            if path.startswith(f"{IgniPaths.SERVICE_EVENTS}/") and seen.method == "GET":
+                return self.agents.status(path.rsplit("/", 1)[1], client_id)
             return self._directory(seen, org_id)
         return httpx.Response(404, json={"detail": "Not Found"})
 
@@ -1007,6 +1032,11 @@ class FakeIgni:
                 delivered += 1
         return httpx.Response(200, json={"delivered": delivered})
 
+    @property
+    def events(self) -> list[SentEvent]:
+        """Every item a service sent (`host.send_event`, `host.agent(...)`), as igni stored it."""
+        return self.agents.items
+
 
 #: What a service's tests import. `BundleArchive` builds a stand-in
 #: bundle so the fake knows an extension's pages; `IgniPaths` names the
@@ -1014,8 +1044,10 @@ class FakeIgni:
 __all__ = [
     "BundleArchive",
     "Delivery",
+    "FakeAgents",
     "FakeIgni",
     "IgniPaths",
     "ManualClock",
     "NotifyCall",
+    "SentEvent",
 ]

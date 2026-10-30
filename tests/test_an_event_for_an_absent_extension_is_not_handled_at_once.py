@@ -1,4 +1,4 @@
-"""An event for an extension that is not here goes to the run at once.
+"""An event for an extension that is not here is reported not handled, at once.
 
 The integration run measured 30.8 s to deliver one event to a VM whose
 extension was not running: igni waited its full 30 s for the process to
@@ -20,19 +20,13 @@ from typing import Any
 import pytest
 
 from ember_code.backend.service_event_delivery import ExtensionEventHandler
-from ember_code.core.db.database import Database
 from ember_code.core.db.urls import DatabaseUrl
 from ember_code.extensions.host.hooks import ExtensionHooks, HookFailure
 from ember_code.extensions.host.wire import HookAnswer, Outcome
 from ember_code.extensions.registry import ExtensionRegistry
-from ember_code.extensions.service_events import (
-    DeliveredEvents,
-    EventPrompt,
-    ServiceEvent,
-    ServiceEventInbox,
-)
+from ember_code.extensions.service_events import EventHandling, ServiceEvent
 from tests.host_model_helpers import manifest
-from tests.storage_backends import Scopes
+from tests.service_item_rig import Inbox
 
 
 def _event(event_id: str = "evt-1", extension_id: str = "acme.indexer") -> ServiceEvent:
@@ -44,22 +38,6 @@ def _event(event_id: str = "evt-1", extension_id: str = "acme.indexer") -> Servi
             "payload": {"repo": "acme/api"},
         }
     )
-
-
-class Session:
-    def __init__(self) -> None:
-        self.posted: list[str] = []
-
-    def busy(self) -> bool:
-        return False
-
-    async def post(self, *, extension_id: str, text: str, queued: bool) -> None:
-        self.posted.append(text)
-
-
-@pytest.fixture
-def delivered(database_url: DatabaseUrl) -> DeliveredEvents:
-    return DeliveredEvents(Database(database_url, scope=Scopes.fresh()))
 
 
 def _hooks(*installed: str) -> ExtensionHooks:
@@ -87,16 +65,17 @@ async def test_one_installed_but_not_connected_is_waited_for_briefly() -> None:
     assert time.perf_counter() - started < 1
 
 
-async def test_the_event_reaches_the_run_at_once_as_it_came(delivered: DeliveredEvents) -> None:
-    session = Session()
-    inbox = ServiceEventInbox(
-        delivered=delivered, session=session, ask_extension=ExtensionEventHandler(_hooks())
-    )
+async def test_the_event_is_not_handled_at_once_and_nothing_is_posted(
+    database_url: DatabaseUrl,
+) -> None:
+    rig = Inbox(database_url, hand=ExtensionEventHandler(_hooks()))
     started = time.perf_counter()
-    receipt = await inbox.deliver([_event()])
+    receipt = await rig.deliver(_event())
     assert time.perf_counter() - started < 1
     assert receipt.acknowledge == ["evt-1"]
-    assert session.posted == [EventPrompt.of(_event())]
+    [missed] = receipt.not_handled
+    assert "not installed" in missed.reason
+    assert rig.desk.posts == []
 
 
 def test_every_wait_is_well_inside_the_gateways_deadline() -> None:
@@ -105,29 +84,27 @@ def test_every_wait_is_well_inside_the_gateways_deadline() -> None:
     assert gateway_deadline / 2 >= ExtensionEventHandler.TIMEOUT_S
 
 
-async def test_a_batch_asks_its_extensions_at_once(delivered: DeliveredEvents) -> None:
-    async def slow(event: ServiceEvent) -> str:
+async def test_a_batch_hands_its_events_over_at_once(database_url: DatabaseUrl) -> None:
+    async def slow(event: ServiceEvent) -> EventHandling:
         await asyncio.sleep(0.3)
-        return f"about {event.event_id}"
+        return EventHandling(handled=True)
 
-    session = Session()
-    inbox = ServiceEventInbox(delivered=delivered, session=session, ask_extension=slow)
+    rig = Inbox(database_url, hand=slow)
     started = time.perf_counter()
-    receipt = await inbox.deliver([_event("e1"), _event("e2"), _event("e3"), _event("e1")])
-    assert time.perf_counter() - started < 0.8, "the slowest answer, not their sum"
+    receipt = await rig.deliver(_event("e1"), _event("e2"), _event("e3"), _event("e1"))
+    assert time.perf_counter() - started < 0.8, "the slowest handler, not their sum"
     assert receipt.delivered == ["e1", "e2", "e3"] and receipt.duplicate == ["e1"]
-    assert session.posted == ["about e1", "about e2", "about e3"], "posted in order"
 
 
-async def test_a_connected_extension_still_answers(delivered: DeliveredEvents) -> None:
+async def test_a_connected_extension_still_answers() -> None:
     hooks = _hooks("acme.indexer")
 
     def send(frame: str) -> None:
         sent: dict[str, Any] = json.loads(frame)
         hooks.answered(
             "acme.indexer",
-            HookAnswer(hook=sent["id"], outcome=Outcome.MODIFY, value={"prompt": "Reindex."}),
+            HookAnswer(hook=sent["id"], outcome=Outcome.ALLOW),
         )
 
     hooks.connect("acme.indexer", send)
-    assert await ExtensionEventHandler(hooks)(_event()) == "Reindex."
+    assert await ExtensionEventHandler(hooks)(_event()) == EventHandling(handled=True)

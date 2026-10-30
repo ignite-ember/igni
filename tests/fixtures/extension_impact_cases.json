@@ -132,6 +132,10 @@
           "PlanSubmit",
           "PreToolUse",
           "SessionStart"
+        ],
+        "service": [
+          "messages",
+          "chats"
         ]
       },
       "name": "Acme A"
@@ -241,6 +245,10 @@
       ],
       "workspace": "read",
       "plugin": "plugin",
+      "service": [
+        "chats",
+        "messages"
+      ],
       "claims": [
         "anchor:A_SCHEMA",
         "command:/a",

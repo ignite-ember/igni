@@ -30,7 +30,7 @@ from ember_code.core.db.urls import DatabaseUrl
 
 #: alembic's head revision for ``ember_code/migrations``. Kept equal to
 #: it by a test; update it with every new migration.
-HEAD_REVISION = "a9c4e2f7d1b6"
+HEAD_REVISION = "b5d8e1c3a7f9"
 
 #: Where the migrator lives. Imported by name, and only when a database
 #: is behind — this is the database layer's one run-time import, the

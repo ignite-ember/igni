@@ -33,10 +33,12 @@ from ember_code.backend.push_bridge import PushNotificationBridge
 from ember_code.backend.rpc_router import RpcRouter
 from ember_code.backend.schemas_rpc import BackendReadyLine
 from ember_code.backend.server import BackendServer
-from ember_code.backend.service_event_delivery import ExtensionEventHandler, MainSession
+from ember_code.backend.service_event_delivery import ExtensionEventHandler
+from ember_code.backend.service_item_desk import HeldPostFlusher, PoolChatDesk
 from ember_code.backend.session_orchestrator import SessionOrchestrator
 from ember_code.backend.supervisor import BackendSupervisor
 from ember_code.backend.workspace_signals import WorkspaceSignals
+from ember_code.core import air_gap
 from ember_code.core.config.settings import Settings, load_settings
 from ember_code.core.db.locator import StorageLocator
 from ember_code.core.db.scope import tenancy
@@ -63,7 +65,10 @@ from ember_code.extensions.profile import DeploymentProfile, DevelopmentFlag
 from ember_code.extensions.python_env import PythonEnvironments
 from ember_code.extensions.registry import ExtensionRegistry
 from ember_code.extensions.rpc import ExtensionRpc
+from ember_code.extensions.service_attachments import ServerAttachments
 from ember_code.extensions.service_events import DeliveredEvents, ServiceEventInbox
+from ember_code.extensions.service_landing import Lander
+from ember_code.extensions.service_threads import HeldPosts, ServiceThreads
 from ember_code.extensions.service_token import (
     CredentialsSession,
     PageServiceTokens,
@@ -166,6 +171,7 @@ class BackendApp:
         self._host_model: HostModel | None = None
         self._host_channel: HostChannel | None = None
         self._event_pull: PersonEventPull | None = None
+        self._held_posts: HeldPostFlusher | None = None
         #: What the deployment layer does around boot and serving (``core/layer.py``).
         self._guest = Layers.current().backend()
 
@@ -228,6 +234,9 @@ class BackendApp:
             os.chdir(self._project_dir)
 
         settings = self._load_settings_with_group_policy()
+        # The processes this backend starts — the decisions service above
+        # all, which reads no settings — inherit the air-gap decision.
+        air_gap.export_to(os.environ, settings.air_gapped)
         # Whose rows a shared database holds: the producer signed in
         # here (docs/CLOUD.md §9). Asked only when ``IGNI_DATABASE_URL``
         # names one — the desktop's files are nobody else's.
@@ -375,27 +384,36 @@ class BackendApp:
         pool = self._orchestrator.setup_pool()
         self._supervisor.set_pool(pool)
         self._start_host_model()
-        # The platform's ``deliver_service_events``: each starts or resumes
-        # the agent's run in the main session, once (``extensions/service_events.py``).
+        # The platform's ``deliver_service_events``, once each: an event to
+        # its extension, which posts if it wants the agent to act; anything
+        # else into its thread's chat, or the extension's own
+        # (``extensions/service_events.py``, ``docs/CLOUD.md`` §6.1).
+        # Its files are fetched as the producer: the person's session here,
+        # the VM's own token in the cloud.
+        producer_db = StorageLocator.from_settings(settings).project_database(self._project_dir)
+        signed_in = SignedInServer(
+            api_url=self._igni_api_url,
+            session=CredentialsSession(settings.auth.credentials_file),
+        )
+        desk = PoolChatDesk(self._orchestrator)
+        held = HeldPosts(producer_db)
+        self._held_posts = HeldPostFlusher(held=held, desk=desk)
         inbox = ServiceEventInbox(
-            delivered=DeliveredEvents(
-                StorageLocator.from_settings(settings).project_database(self._project_dir)
+            delivered=DeliveredEvents(producer_db),
+            lander=Lander(
+                desk=desk,
+                threads=ServiceThreads(producer_db),
+                held=held,
+                files=ServerAttachments(signed_in),
             ),
-            session=MainSession(self._orchestrator),
-            ask_extension=ExtensionEventHandler(),
+            hand_event=ExtensionEventHandler(),
         )
         self._orchestrator.attach_event_inbox(inbox)
         # On the desktop igni also fetches the person's events itself, while
         # online (``extensions/event_pull.py``); a layer may leave that to its
         # platform (the cloud's gateway delivers them).
         self._event_pull = (
-            PersonEventPull(
-                server=SignedInServer(
-                    api_url=self._igni_api_url,
-                    session=CredentialsSession(settings.auth.credentials_file),
-                ),
-                inbox=inbox,
-            )
+            PersonEventPull(server=signed_in, inbox=inbox)
             if Layers.current().fetches_own_events()
             else None
         )
@@ -447,6 +465,8 @@ class BackendApp:
             notifications.start()
             if self._event_pull is not None:
                 self._event_pull.start()
+            if self._held_posts is not None:
+                self._held_posts.start()
             # Probing starts once there is a loop to run it on, and
             # after the installs above, so the first sweep has
             # something to sweep.
@@ -462,6 +482,8 @@ class BackendApp:
         finally:
             if self._event_pull is not None:
                 await self._event_pull.stop()
+            if self._held_posts is not None:
+                await self._held_posts.stop()
             await notifications.stop()
             if self._host_channel is not None:
                 await self._host_channel.stop()

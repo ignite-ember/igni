@@ -7,16 +7,20 @@
 See the package README for the whole surface.
 """
 
+from igni_service.agent_wire import ItemStatus
+from igni_service.agents import Agent, Attachment, Chat
 from igni_service.cors import BearerCors
 from igni_service.directory import Directory, Member, Organisation
 from igni_service.errors import (
     BundleError,
     ConfigurationError,
+    EventRefused,
     IgniError,
     IgniUnavailable,
     KeyStoreError,
     NotificationRefused,
 )
+from igni_service.events import EventAccepted, Producer
 from igni_service.host import Host
 from igni_service.keystore import KeyCipher, KeyStore, MemoryKeyStore, StoredKey
 from igni_service.notifications import Delivered, Notification, Target
@@ -48,6 +52,12 @@ __all__ = [
     "BundleError",
     "ConfigurationError",
     "Delivered",
+    "Agent",
+    "Attachment",
+    "Chat",
+    "EventAccepted",
+    "EventRefused",
+    "ItemStatus",
     "Directory",
     "ExportSection",
     "Host",
@@ -67,6 +77,7 @@ __all__ = [
     "NotificationRefused",
     "Organisation",
     "PEOPLE_ONLY",
+    "Producer",
     "App",
     "Caller",
     "CallerKind",

@@ -232,11 +232,108 @@ the first frame (`igni.person_of`).
   when there is an `event_key`. Raises `IgniUnavailable` when igni stays
   away and `NotificationRefused` when igni says no; catch `IgniError` if
   notifying is best effort for you.
+- `agent = host.agent(producer)` — a person's or an app's agent
+  (`Producer.person(user_id)`, `Producer.app(app_id)`), reached two ways.
+  See *Reaching a producer's agent* below.
+- `await host.send_event(producer, type, payload, event_key=..., expires_at=...)`
+  — `host.agent(producer).send_event(...)`, kept as it was.
 - `host.directory` — `await organisation()` (name, slug, `tenant_number`
   to derive per-organisation stores from, domains), `await
   members(query=..., limit=..., include_former=...)`, `await
   person(user_id)` (`None` for somebody never in the organisation),
   `await resolve([...])` (ids or addresses → members, keyed by both).
+
+## Reaching a producer's agent
+
+A service reaches a producer's igni — on their desktop, or in their
+Fleet VM, woken for it — two ways, through igni server
+(service-identity §15, igni's `docs/CLOUD.md` §6):
+
+- **A message, for the agent.** igni posts it exactly as sent, as this
+  service's extension's message: it starts a run, or waits for the run
+  going. No extension code is involved.
+- **An event, for the extension.** igni hands it to the extension's
+  `@ext.on_service_event(type)` handler and posts nothing; the handler
+  does what it wants through its host calls, and the agent runs only if
+  it posts. An event no handler took reads `not_handled`.
+
+Send a message when you know what the agent should read. Send an event
+when the extension should decide — look something up in the producer's
+igni, choose a chat, post or not.
+
+```python
+from igni_service import Attachment, Producer
+
+agent = igni.host(org_id).agent(Producer.person("u-marieke"))
+
+# A message: posted as sent, in the chat of its thread.
+await agent.send_message(
+    "Claim CL-20431 arrived; assess the damage.",
+    attachments=[Attachment.from_path("damage.jpg"), Attachment.from_bytes("form.pdf", pdf)],
+    thread="claim:CL-20431",
+    event_key="claim:CL-20431:new",
+)
+
+# A chat of its own, and what can be done in it.
+chat = await agent.new_chat("Claim CL-20431", thread="claim:CL-20431")
+await chat.send_message("The adjuster replied: see the report.")
+await chat.queue("When you get to it, check the invoice.")     # the next run; starts nothing
+await chat.show({"root": "r", "elements": {...}})                # json-render; never sent to the model
+await chat.rename("Claim CL-20431 (paid)")
+await chat.cancel()                                              # a working run; never one waiting on an approval
+
+# An event: the extension's to act on.
+accepted = await agent.send_event("index.ready", {"repo": "acme/api"})
+status = await agent.status(accepted.event_id)   # pending, delivered, not_handled, expired, dropped, failed
+```
+
+- **Threads.** `thread` is this service's own key for a conversation.
+  The first item of a thread opens a chat for it in the producer's igni
+  (titled by `title`, else `"<extension>: <thread>"`), and every later
+  one goes there. A message without one goes to this extension's own
+  chat. Nothing a service sends lands in the chat the person has open.
+  `agent.chat(thread)` is a handle on a thread's chat; `new_chat` without
+  a thread makes one up.
+- **Files.** `Attachment.from_bytes(filename, data)` or
+  `Attachment.from_path(path)`: any type igni's composer takes, at most
+  5 MiB each, at most 10 per message. They are uploaded before the
+  message and kept by igni server only as long as the message; the
+  producer's igni imports them into the chat as a person's upload would
+  be. A message with files that arrives during a run waits for the run
+  to end.
+- **What became of it.** `await agent.status(event_id)`: `pending`;
+  `delivered` (a message posted, or an event a handler took);
+  `not_handled` (an event no handler took, with `not_handled_reason`);
+  `expired` (14 days at most); `dropped` (the producer no longer has the
+  extension); `failed` (the platform gave up). Every send answers an
+  `EventAccepted` with its `event_id`; the same `event_key` for one
+  producer is stored once, so a retry is exact with one.
+- **Grants.** Beyond a plain event, the extension declares what its
+  service may send, in its manifest — `"permissions": {"service":
+  ["messages", "attachments", "chats"]}` — and the super admin approves it
+  with the service. igni refuses the rest with `EventRefused` (403):
+  `service.messages` for a message, `service.attachments` for files,
+  `service.chats` for a thread, `new_chat` and a chat's actions.
+
+What a service can do in a chat, against what igni can:
+
+| In igni | From a service | Why not, where not |
+|---|---|---|
+| Post a message that starts or resumes a run | yes, `send_message` | |
+| Queue a message for the next turn | yes, `chat.queue` | |
+| Attach files | yes, any type, 5 MiB each | |
+| Open a new chat, with a title | yes, `new_chat` | one per thread |
+| Rename a chat | its own chats only | a person's chats are theirs to name |
+| Show a view in the chat | yes, `chat.show`, its own chats | |
+| Replace a view | not yet | show a new one |
+| Cancel the run | its own chats, and not a run waiting on an approval | stopping that run would decide the approval |
+| Cancel a sub-agent | no | its run ids never leave igni |
+| Answer an approval, approve or dismiss a plan | **never** | a decision that is a person's |
+| Read the chat, search it, its status or context | no | a service gets an item's status, not the chat's content |
+| Truncate, compact, discard an interrupted run, extract learnings | no | they rewrite a person's history or memory |
+| Open a chat on screen, move the UI | no | a service never moves what a person sees; it notifies |
+| Switch model or permission mode, run a slash command | no | each changes what the agent may do |
+| Post into a chat it did not open | no | its extension may, through its own host calls |
 
 ## Erasure and export
 
@@ -356,3 +453,9 @@ back = fake.authorize(login_redirect, user_id="u-ada", org_id="org-1")  # the po
 assert [d.user_id for d in fake.deliveries] == ["u-ada"]
 assert fake.revoked == [refresh_token]                # what /auth/logout revoked
 ```
+
+What a service sent producers' agents is `fake.events` (every kind) and
+`fake.agents.uploads`; `fake.agents.settle(event_id, "delivered")` plays
+the producer's igni taking one, so `agent.status` reads it, and
+`fake.agents.grants = {"messages"}` plays an extension that declares
+less.

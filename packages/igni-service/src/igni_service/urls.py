@@ -39,10 +39,21 @@ class IgniPaths:
     REVOKE = "/v1/oauth/revoke"
     DIRECTORY = "/v1/directory"
     NOTIFICATIONS = "/v1/service-notifications"
+    #: Waking a producer's agent with an event (service-identity §15).
+    SERVICE_EVENTS = "/v1/service-events"
+    #: Any item for a producer's agent: an event, a message, a chat, an action.
+    SERVICE_ITEMS = "/v1/service-items"
+    #: A file an item then names.
+    SERVICE_ATTACHMENTS = "/v1/service-attachments"
     #: What igni has revoked in an organisation (service-identity §21).
     REVOCATIONS = "/v1/revocations"
     #: Every organisation this service serves (service-identity §21).
     SERVED = "/v1/organisations/served"
+
+    @classmethod
+    def service_event(cls, event_id: str) -> str:
+        """What became of one item this service sent."""
+        return f"{cls.SERVICE_EVENTS}/{event_id}"
 
     @classmethod
     def extension(cls, client_id: str) -> str:

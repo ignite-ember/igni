@@ -415,6 +415,25 @@
               "PlanSubmit"
             ]
           ]
+        },
+        "service": {
+          "type": "array",
+          "description": "What this extension's service may do towards the producer's agent beyond a plain event (docs/CLOUD.md §6.1): `messages` posts text the service wrote, as the extension's message; `attachments` sends files with an item; `chats` names threads (each opens a chat), opens chats and acts on them (show a view, rename, cancel a working run). Approving the service grants them, and igni server checks them on every item. Answering an approval is never among them.",
+          "items": {
+            "enum": [
+              "messages",
+              "attachments",
+              "chats"
+            ]
+          },
+          "default": [],
+          "examples": [
+            [
+              "messages",
+              "attachments",
+              "chats"
+            ]
+          ]
         }
       }
     },

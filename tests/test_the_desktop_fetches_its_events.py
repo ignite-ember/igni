@@ -15,7 +15,7 @@ import pytest
 
 from ember_code.core.layer import Layer
 from ember_code.extensions.event_pull import PersonEventPull, PullFailed, PullRefused
-from ember_code.extensions.service_events import DeliveryReceipt, ServiceEvent
+from ember_code.extensions.service_events import DeliveryReceipt, NotHandled, ServiceEvent
 from ember_code.extensions.service_token import IgniSession, NotSignedIn
 from ember_code.notifications.server_client import SignedInServer
 
@@ -38,6 +38,7 @@ class Igni:
         self.events = events
         self.status = status
         self.acked: list[list[str]] = []
+        self.not_handled: list[list[dict[str, str]]] = []
         self.calls: list[str] = []
 
     def handle(self, request: httpx.Request) -> httpx.Response:
@@ -47,8 +48,10 @@ class Igni:
             return httpx.Response(self.status)
         if request.url.path == PersonEventPull.PULL_PATH:
             return httpx.Response(200, json={"events": self.events})
-        ids = json.loads(request.content)["event_ids"]
+        body = json.loads(request.content)
+        ids = body["event_ids"]
         self.acked.append(ids)
+        self.not_handled.append(body["not_handled"])
         return httpx.Response(200, json={"delivered": len(ids)})
 
 
@@ -59,8 +62,13 @@ class Inbox:
     async def deliver(self, events: list[ServiceEvent]) -> DeliveryReceipt:
         self.got += [e.event_id for e in events]
         return DeliveryReceipt(
-            delivered=[e.event_id for e in events if e.event_id != "bad"],
+            delivered=[e.event_id for e in events if e.event_id not in ("bad", "unseen")],
             failed=[e.event_id for e in events if e.event_id == "bad"],
+            not_handled=[
+                NotHandled(event_id=e.event_id, reason="no handler for index.ready")
+                for e in events
+                if e.event_id == "unseen"
+            ],
         )
 
 
@@ -85,6 +93,14 @@ async def test_pulled_events_are_delivered_and_what_was_taken_acknowledged():
     assert pulled == 3 and inbox.got == ["e1", "bad", "e2"]
     assert igni.acked == [["e1", "e2"]], "the one not taken comes back after its lease"
     assert receipt.failed == ["bad"]
+
+
+async def test_an_event_no_handler_took_is_acknowledged_and_reported_not_handled():
+    igni = Igni([_event("e1"), _event("unseen")])
+    pull, _ = _pull(igni)
+    await pull.once()
+    assert igni.acked == [["e1", "unseen"]]
+    assert igni.not_handled == [[{"event_id": "unseen", "reason": "no handler for index.ready"}]]
 
 
 async def test_nothing_pulled_acknowledges_nothing():

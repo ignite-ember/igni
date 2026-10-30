@@ -146,10 +146,11 @@ class IgniExtension:
     ) -> Callable[[ServiceEventHandler], ServiceEventHandler]:
         """Handle the events this extension's service sends (`igni_extension.service_events`).
 
-        igni starts or resumes the agent's run with every event; the
-        handler may return the text the agent should see, or `None` for
-        igni's own. Without `event_type` it handles every type no other
-        handler names.
+        igni posts nothing for an event: the handler acts through its host
+        calls (`ext.host.sessions.chat(id).post(...)`), and the agent runs
+        only if it posts. An event with no handler for its type is reported
+        to the service as not handled. Without `event_type` it handles every
+        type no other handler names.
         """
         return self._service_events.on(event_type)
 

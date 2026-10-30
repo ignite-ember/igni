@@ -263,6 +263,10 @@ class ExtensionImpact(BaseModel):
     secrets: list[str] = Field(default_factory=list)
     workspace: str = "none"
     plugin: str | None = None
+    #: What its service may send a producer's agent beyond a plain event
+    #: (``docs/CLOUD.md`` §6.1). igni server checks it; listed here so the
+    #: two readings of a manifest stay one.
+    service: list[str] = Field(default_factory=list)
 
     @classmethod
     def of(cls, manifest: ExtensionManifest) -> ExtensionImpact:
@@ -303,6 +307,7 @@ class ExtensionImpact(BaseModel):
             secrets=sorted(permissions.secrets),
             workspace=permissions.workspace.value,
             plugin=contributes.plugin,
+            service=sorted(set(permissions.service)),
         )
 
     def claims(self) -> list[str]:

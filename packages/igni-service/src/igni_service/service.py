@@ -29,10 +29,12 @@ from fastapi import APIRouter, Depends, FastAPI, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 
+from igni_service.agent_wire import AgentWire
 from igni_service.clock import Clock
 from igni_service.cors import BearerCors
 from igni_service.directory import DirectoryClient
 from igni_service.errors import ConfigurationError, IgniUnavailable
+from igni_service.events import EventSender
 from igni_service.host import Host
 from igni_service.jwks import IgniKeys
 from igni_service.keystore import KeyCipher, KeyStore
@@ -150,6 +152,8 @@ class IgniService:
         self.verifier.revocations = self.revocation_feed
         self.directory = DirectoryClient(self.tokens, clock=self.clock)
         self.notifier = Notifier(self.tokens)
+        self.events = EventSender(self.tokens)
+        self.agents = AgentWire(self.tokens, self.events)
         self.web = WebSignIn(
             self.server,
             self.registration,
@@ -382,8 +386,8 @@ class IgniService:
     # ── Talking to igni ─────────────────────────────────────────────
 
     def host(self, org_id: str) -> Host:
-        """igni for one organisation: `notify`, and its `directory`."""
-        return Host(org_id, notifier=self.notifier, directory=self.directory)
+        """igni for one organisation: `notify`, `agent(producer)`, `send_event`, and its `directory`."""
+        return Host(org_id, notifier=self.notifier, directory=self.directory, agents=self.agents)
 
     async def thumbprint(self) -> str:
         """The key's RFC 7638 thumbprint: what a super admin compares."""

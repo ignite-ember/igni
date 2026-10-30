@@ -7,6 +7,8 @@ Below it the split is about what to do next:
   something else. Try again later; nothing about the request was wrong.
 * `NotificationRefused` — igni read the notifications and said no. Trying
   again sends the same refusal.
+* `EventRefused` — igni read the event and said no: the producer is not in
+  the organisation, does not have the extension on, or the event is invalid.
 * `KeyStoreError` — this service cannot keep or read its own key. An
   operator has to fix the configuration.
 * `BundleError` — the extension bundle is unreadable, or cannot be built.
@@ -29,6 +31,15 @@ class NotificationRefused(IgniError):
 
     def __init__(self, status: int, detail: str) -> None:
         super().__init__(f"igni refused the notifications: {status} {detail}")
+        self.status = status
+        self.detail = detail
+
+
+class EventRefused(IgniError):
+    """igni read the event and refused it. Sending it again will not help."""
+
+    def __init__(self, status: int, detail: str) -> None:
+        super().__init__(f"igni refused the event: {status} {detail}")
         self.status = status
         self.detail = detail
 

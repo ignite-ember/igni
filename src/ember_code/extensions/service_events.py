@@ -1,47 +1,45 @@
-"""Events a service sends its extension, for a producer: they start or resume the agent's run.
+"""Items a service sends a producer: events for its extension, messages for the agent.
 
 igni server's ``docs/service-identity.md`` §15 and ``docs/CLOUD.md`` §6.
-A service posts an event for its own extension and a producer; the
+A service sends an item for its own extension and a producer; the
 platform hands it to the producer's igni (in the cloud the gateway pulls
 it with a lease and acknowledges what igni accepted — delivery is at
-least once). Here, for each event:
+least once). Two paths, and nothing in between:
 
-1. **Once.** An event already delivered — the same ``event_id`` handed
-   out again because the acknowledgement was lost — is acknowledged and
-   nothing else: :class:`DeliveredEvents` keeps the ids, in the
-   producer's database, so a restart does not forget them.
-2. **The extension's handler runs.** The extension it is for is asked
-   (``ServiceEvent``, a deciding frame on its host socket; the SDK's
-   ``@ext.on_service_event``) and may answer with the text the agent
-   should see. Without an answer — no handler, not running, too slow —
-   igni writes the text itself from the event's type and payload.
-3. **The agent's run, unattended.** The text goes to the producer's
-   main session as the extension's message (``host.chat.post``, labelled
-   as the extension's, never the person's). With nothing going on it
-   **starts a run**. With a run going — working, or **waiting on an
-   approval** — it is **queued for that run**, as a message typed during
-   a run is (durably, ``queued_messages``): the run takes it after its
-   next step, and a run paused on an approval takes it once the person
-   has decided and the run goes on. Not a second run beside it: two runs
-   in one conversation would race over its history, and an event must
-   never answer, or go round, a decision that is the person's. Approvals
-   the run then hits wait as usual.
+* **An event is the extension's.** It is handed to the extension it is
+  for (``ServiceEvent``, a deciding frame on its host socket; the SDK's
+  ``@ext.on_service_event(type)``), and igni posts nothing for it. The
+  handler acts through explicit host calls — ``host.sessions.create``,
+  ``host.sessions.chat(id).post`` — and the agent runs only if it posts.
+  An event no handler took — none for its type, the extension not
+  running, the handler failing — is **not handled**, and igni server is
+  told so (``DeliveryReceipt.not_handled``), so the service reads it.
+* **A message, a new chat or an action is the agent's**, and lands
+  exactly as the service sent it, in the chat its thread names or in the
+  extension's own chat (:class:`~ember_code.extensions.service_landing.Lander`):
+  a run starts, or it is queued for the run going — working, or
+  **waiting on an approval**, which it never answers. No extension code
+  is involved; the extension only sees it, as ``chat.message_added``
+  with ``from_service``.
 
-Recorded as delivered only after step 3 is durable — the run started
-(its message journalled) or the message queued — so a crash before then
-gets the event handed out again, and a crash after acknowledges the
-repeat.
+**Once.** An item already delivered — the same ``event_id`` handed out
+again because the acknowledgement was lost — is acknowledged and nothing
+else: :class:`DeliveredEvents` keeps the ids, in the producer's
+database, so a restart does not forget them. An item is recorded only
+once its handling is durable — the handler answered, the run started,
+the message queued or held — so a crash before then gets it handed out
+again. An event not handled is not recorded: handed out again, its
+extension is asked again.
 """
 
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
 import time
 from collections.abc import Awaitable, Callable
 from datetime import datetime
-from typing import Any, ClassVar, Protocol
+from typing import Any
 
 from pydantic import BaseModel, Field
 from sqlalchemy import BigInteger, PrimaryKeyConstraint, String, select
@@ -50,26 +48,55 @@ from sqlalchemy.orm import Mapped, mapped_column
 from ember_code.core.db.base import Base
 from ember_code.core.db.database import Database
 from ember_code.core.db.scope import ScopedColumns
+from ember_code.extensions.service_items import ChatAction, ItemAttachment, ItemKind
+from ember_code.extensions.service_landing import Lander
 
 logger = logging.getLogger(__name__)
 
 
 class ServiceEvent(BaseModel):
-    """One event, as the platform hands it out (``/events/pull``)."""
+    """One item, as the platform hands it out (``/events/pull``): an event unless ``kind`` says otherwise."""
 
     event_id: str
     extension_id: str
     client_id: str = ""
-    #: The extension's own word: ``index.ready``.
-    type: str
+    kind: ItemKind = ItemKind.EVENT
+    #: An event's type, the extension's own word: ``index.ready``. For any
+    #: other kind, the kind.
+    type: str = ""
     payload: dict[str, Any] = Field(default_factory=dict)
+    #: The service's key for the chat it goes to; none: the extension's own chat.
+    thread: str | None = None
+    #: A message's text, or a new chat's first message.
+    text: str | None = None
+    #: The title of the chat it opens.
+    title: str | None = None
+    #: False: queued for the chat's next run, starting nothing.
+    start_run: bool = True
+    action: ChatAction | None = None
+    attachments: list[ItemAttachment] = Field(default_factory=list)
     event_key: str | None = None
     created_at: datetime | None = None
     expires_at: datetime | None = None
 
 
+class NotHandled(BaseModel):
+    """An event no handler took, and why: what its service reads."""
+
+    event_id: str
+    reason: str
+
+
+class EventHandling(BaseModel):
+    """What the extension did with an event."""
+
+    handled: bool
+    #: Why not, when it was not.
+    reason: str = ""
+
+
 class DeliveryReceipt(BaseModel):
-    """What became of a batch: acknowledge ``delivered`` and ``duplicate``."""
+    """What became of a batch: acknowledge ``acknowledge``; report ``not_handled``."""
 
     delivered: list[str] = Field(default_factory=list)
     #: Delivered before: acknowledge, nothing else happened.
@@ -77,10 +104,13 @@ class DeliveryReceipt(BaseModel):
     #: Not delivered (the session could not take it): leave unacknowledged,
     #: so it is handed out again.
     failed: list[str] = Field(default_factory=list)
+    #: Events no handler took: acknowledged — nothing will take them by
+    #: being handed out again — and reported as not handled.
+    not_handled: list[NotHandled] = Field(default_factory=list)
 
     @property
     def acknowledge(self) -> list[str]:
-        return [*self.delivered, *self.duplicate]
+        return [*self.delivered, *(n.event_id for n in self.not_handled), *self.duplicate]
 
 
 class DeliveredEventModel(ScopedColumns, Base):
@@ -130,51 +160,37 @@ class DeliveredEvents:
                 )
 
 
-class EventPrompt:
-    """The text the agent sees for an event the extension said nothing about."""
+class UnattendedPost(BaseModel):
+    """What became of an extension's message for a session nobody may be watching.
 
-    #: Payloads are shown whole up to this, then cut.
-    MAX_PAYLOAD_CHARS: ClassVar[int] = 4000
+    Step 3 above, which ``host.sessions.chat(id).post`` follows too: it
+    started a run, or it was queued for the run already going.
+    """
 
-    @classmethod
-    def of(cls, event: ServiceEvent) -> str:
-        payload = json.dumps(event.payload, ensure_ascii=False, sort_keys=True)
-        if len(payload) > cls.MAX_PAYLOAD_CHARS:
-            payload = payload[: cls.MAX_PAYLOAD_CHARS] + " …(cut)"
-        return (
-            f"An event arrived from {event.extension_id}'s service: `{event.type}`.\n"
-            f"Payload: {payload}\n"
-            "Nobody may be watching: act on it if it needs acting on, and say what you did."
-        )
+    ok: bool = True
+    #: Queued for the run already going, rather than starting one.
+    queued: bool = False
+    #: Why it was not posted, when ``ok`` is false.
+    reason: str = ""
 
 
-#: Asks the extension's process what the agent should see; ``None`` for nothing.
-AskExtension = Callable[[ServiceEvent], Awaitable[str | None]]
-
-
-class EventSession(Protocol):
-    """Where an event goes: the producer's main session."""
-
-    def busy(self) -> bool:
-        """A run is going in it — working, or waiting on an approval."""
-        ...
-
-    async def post(self, *, extension_id: str, text: str, queued: bool) -> None: ...
+#: Hands an event to the extension it is for; what it did with it.
+HandEvent = Callable[[ServiceEvent], Awaitable[EventHandling]]
 
 
 class ServiceEventInbox:
-    """Takes delivered events: once each, through the extension, into the agent's run."""
+    """Takes delivered items: once each — an event to its extension, anything else into its chat."""
 
     def __init__(
         self,
         *,
         delivered: DeliveredEvents,
-        session: EventSession,
-        ask_extension: AskExtension | None = None,
+        lander: Lander,
+        hand_event: HandEvent | None = None,
     ) -> None:
         self._delivered = delivered
-        self._session = session
-        self._ask = ask_extension
+        self._lander = lander
+        self._hand = hand_event
 
     async def deliver(self, events: list[ServiceEvent]) -> DeliveryReceipt:
         receipt = DeliveryReceipt()
@@ -186,46 +202,51 @@ class ServiceEventInbox:
                 receipt.duplicate.append(event.event_id)
             else:
                 fresh.append(event)
-        # Every extension asked at once: a batch takes as long as its
-        # slowest answer, not their sum, and stays inside the gateway's
-        # deadline for the delivery.
-        prompts = await asyncio.gather(
-            *(self._prompt(event) for event in fresh), return_exceptions=True
-        )
-        for event, text in zip(fresh, prompts, strict=True):
-            try:
-                if isinstance(text, BaseException):
-                    raise text
-                await self._session.post(
-                    extension_id=event.extension_id, text=text, queued=self._session.busy()
+        # Every extension handed its events at once: a batch takes as long
+        # as its slowest handler, not their sum, and stays inside the
+        # gateway's deadline for the delivery. Everything else then lands
+        # in turn, so two items of one new thread open one chat between them.
+        handlings = await asyncio.gather(*(self._handed(item) for item in fresh))
+        for item, handling in zip(fresh, handlings, strict=True):
+            if handling is not None and not handling.handled:
+                logger.info("event %s was not handled: %s", item.event_id, handling.reason)
+                receipt.not_handled.append(
+                    NotHandled(event_id=item.event_id, reason=handling.reason)
                 )
-            except Exception:
-                logger.exception("event %s could not be delivered", event.event_id)
-                receipt.failed.append(event.event_id)
                 continue
-            self._delivered.record(event)
-            receipt.delivered.append(event.event_id)
+            if handling is None:
+                try:
+                    await self._lander.land(item)
+                except Exception:
+                    logger.exception("item %s could not be delivered", item.event_id)
+                    receipt.failed.append(item.event_id)
+                    continue
+            self._delivered.record(item)
+            receipt.delivered.append(item.event_id)
         return receipt
 
-    async def _prompt(self, event: ServiceEvent) -> str:
-        if self._ask is not None:
-            try:
-                answered = await self._ask(event)
-            except Exception as exc:
-                logger.info("%s did not handle event %s: %s", event.extension_id, event.type, exc)
-                answered = None
-            if answered and answered.strip():
-                return answered
-        return EventPrompt.of(event)
+    async def _handed(self, item: ServiceEvent) -> EventHandling | None:
+        """An event's handling; ``None`` for an item that is not an event."""
+        if item.kind is not ItemKind.EVENT:
+            return None
+        if self._hand is None:
+            return EventHandling(handled=False, reason="this igni hands events to no extension")
+        try:
+            return await self._hand(item)
+        except Exception as exc:
+            return EventHandling(
+                handled=False, reason=f"{item.extension_id} was not reached: {exc}"
+            )
 
 
 __all__ = [
-    "AskExtension",
     "DeliveredEventModel",
     "DeliveredEvents",
     "DeliveryReceipt",
-    "EventPrompt",
-    "EventSession",
+    "EventHandling",
+    "HandEvent",
+    "NotHandled",
     "ServiceEvent",
     "ServiceEventInbox",
+    "UnattendedPost",
 ]

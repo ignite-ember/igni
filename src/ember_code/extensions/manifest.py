@@ -250,6 +250,12 @@ class Permissions(Strict):
     #: Approving the service covers them; several extensions hooking one
     #: event never collide, they are asked in the priority order.
     hooks: list[HookEvent] = Field(default_factory=list)
+    #: What the extension's **service** may do towards the producer's agent
+    #: beyond a plain event (``docs/CLOUD.md`` §6.1): ``messages`` (post
+    #: text it wrote), ``attachments`` (send files), ``chats`` (threads,
+    #: new chats, actions on them). Approving the service grants them;
+    #: igni server checks them on every item.
+    service: list[Literal["messages", "attachments", "chats"]] = Field(default_factory=list)
 
     @model_validator(mode="after")
     def _each_tool_once(self) -> Permissions:

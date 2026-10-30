@@ -264,50 +264,80 @@ Consequences:
   audience-bound to the service as today, so the vendor sees exactly
   what its service already sees.
 
-## 6. Event delivery to a producer
+## 6. What a service sends a producer
 
 A floor capability on igni server (its service-identity document, §15:
-built) and igni (`extensions/service_events.py`: built).
+built) and igni (`extensions/service_events.py`: built). A service reaches
+a producer — a person, or an app — two ways, and nothing in between:
 
-1. A service posts an event for its own extension and a producer
-   (`POST /v1/service-events`), signed as itself. igni server refuses
-   unless the producer has the extension on; it audits, rate-limits per
-   service and keeps the event until delivered or expired (14 days).
-2. **Cloud:** the gateway wakes the producer's VM, pulls its events
+- **An event, for its extension** (`agent.send_event`, `host.send_event`).
+  igni hands it to the extension's `@ext.on_service_event(type)` handler
+  and posts nothing. The handler acts through explicit host calls —
+  `host.sessions.create(title=…)` opens a chat of its own without moving
+  the person's window, `host.sessions.chat(id).post(…)` starts a run in
+  it — and the agent runs only if it posts.
+- **A message, for the agent** (`agent.send_message`, `new_chat`,
+  `chat(thread)`). igni posts it exactly as sent. No extension code is
+  involved.
+
+**When to use which.** Send a message when you know what the agent
+should read: "Claim CL-20431 arrived, here are the photos". Send an event
+when the extension should decide — look something up in the producer's
+igni, pick a chat, post or not: "the index for acme/api is ready".
+
+Both travel the same way:
+
+1. A service posts an item for its own extension and a producer
+   (`POST /v1/service-events` for an event, `POST /v1/service-items` for
+   anything), signed as itself. igni server refuses unless the producer
+   has the extension on, and, beyond a plain event, unless the extension
+   declares the grant (section 6.1); it audits, rate-limits per service
+   and keeps the item until delivered or expired (14 days).
+2. **Cloud:** the gateway wakes the producer's VM, pulls its items
    (`/v1/platform/.../events/pull`, a 2-minute lease) and hands them to
    igni with the `deliver_service_events` RPC (`{events: [...]}`) on its
-   own control stream — igni takes it from nowhere else (below); igni
-   answers which to acknowledge (`acknowledge`: delivered now or before)
-   and the gateway acks those (`/events/ack`). Delivery is at least once;
-   igni keeps every event id it delivered (`delivered_events`, scoped,
-   in the producer's database), so a repeat — after a lost ack, across
+   own control stream — igni takes it from nowhere else (below), and the
+   gateway passes every item through as pulled, whatever fields it
+   carries. igni answers which to acknowledge (`acknowledge`: delivered
+   now or before, and events not handled) and which events no handler
+   took (`not_handled`, each with its reason); the gateway acks those
+   (`/events/ack` `{event_ids, not_handled}`). Delivery is at least once;
+   igni keeps every item id it delivered (`delivered_events`, scoped, in
+   the producer's database), so a repeat — after a lost ack, across
    restarts — is acknowledged and dropped. One igni could not take
    (`failed`) is left unacknowledged and comes back.
-   **Desktop:** igni pulls the person's own events itself while online
+   **Desktop:** igni pulls the person's own items itself while online
    (`extensions/event_pull.py`): `POST /v1/me/events/pull` with their
    session, each through the same inbox, then `POST /v1/me/events/ack`
-   with what to acknowledge; a full page (100) is followed at once by the
+   with the same body; a full page (100) is followed at once by the
    next, otherwise it asks again a minute later. An app's token gets a
    403 and the pull stops; the cloud layer leaves pulling to its gateway
    (`Layer.fetches_own_events`).
-3. For each new event igni asks the extension it is for, over its host
-   socket (`@ext.on_service_event(type)` in the SDK; 30 s), what the
-   agent should see; without an answer it writes it itself from the
-   type and payload.
-4. **The event always starts or resumes the producer's agent run**,
-   unattended, for people and apps alike: it goes to the producer's
-   main session as the extension's message (labelled as the
-   extension's, never the person's). Nothing going on: it **starts a
-   run**. A run going — working, or **waiting on an approval**: it is
-   **queued for that run** (durably, as a message typed during a run):
-   the run takes it after its next step, and a run paused on an approval
-   takes it once the person has decided and the run goes on. Not a
-   second run beside it: two runs in one conversation would race over
-   its history, and an event must never answer, or go round, a decision
-   that is a person's. Approvals the run then meets wait as usual (and a
-   run waiting on one is not busy: the VM may sleep until the decision).
-   An event is recorded as delivered only once it has started its run or
-   been queued, so a crash before then gets it handed out again.
+3. **An event** is handed to the extension it is for, over its host
+   socket (`ServiceEvent`; 10 s at most). igni posts nothing for it. A
+   handler for its type took it: delivered. None for its type, the
+   extension not installed or not running, or the handler raising: **not
+   handled** — acknowledged, reported, and read by the service as
+   `not_handled` with the reason; never a silent default post. An event
+   not handled is not recorded as delivered, so if it is handed out again
+   its extension is asked again. A handler that returns text, as the SDK
+   once invited, has it ignored, with a warning in the log: nothing in
+   these repositories relied on it, so the convention was removed rather
+   than deprecated.
+4. **A message** lands as sent (section 6.1): in the chat its thread
+   names, or the extension's own chat — never whatever chat is open — as
+   the extension's message (labelled as the extension's, never the
+   person's). Nothing going on: it **starts a run**. A run going —
+   working, or **waiting on an approval**: it is **queued for that run**
+   (durably, as a message typed during a run): the run takes it after its
+   next step, and a run paused on an approval takes it once the person has
+   decided and the run goes on. Not a second run beside it: two runs in
+   one conversation would race over its history, and a message must never
+   answer, or go round, a decision that is a person's. Approvals the run
+   then meets wait as usual (and a run waiting on one is not busy: the VM
+   may sleep until the decision). A message is recorded as delivered only
+   once it has started its run, been queued or been held, so a crash
+   before then gets it handed out again.
 5. When the work is done, the microVM snapshots back to disk.
 
 Long work belongs in the service (its own workers). Work that must run
@@ -316,6 +346,105 @@ inside the producer's VM holds it awake with `ext.busy(reason, ttl)`
 renewed, shown in `app.activity` and `activity.json`. An org-set maximum
 from the VM profile, and showing it in the extensions panel, are still
 to come.
+
+### 6.1 Messages: threads, files, chats
+
+A message is one of three item kinds, all posted as sent:
+
+| Kind | What it does in the producer's igni |
+|---|---|
+| `message` | the service's own text, posted as the extension's: starts a run (or is queued for the run going), or, with `start_run: false`, is queued for the chat's next run |
+| `chat` | opens the thread's chat with a title, and optionally posts its first message |
+| `action` | acts on a thread's chat: `show` a json-render view (shown, never sent to the model), `rename` it, `cancel` its run |
+
+```python
+agent = igni.host(org_id).agent(Producer.person("u-marieke"))
+await agent.send_message(
+    "Claim CL-20431 arrived; assess the damage.",
+    attachments=[Attachment.from_path("damage.jpg")],
+    thread="claim:CL-20431",
+)
+```
+
+An event carries no thread and no files: it is the extension's, and what
+it posts is the extension's to choose.
+
+**Threads.** Every message may carry `thread`, the service's own key
+(`claim:CL-20431`). igni keeps a durable map, in the producer's own
+database and scoped like every other row, from (organisation, producer,
+extension, thread) to a session (`service_threads`,
+`extensions/service_threads.py`). The first item of a thread opens a new
+chat titled by the item's `title`, else `"<extension>: <thread>"`; every
+later item goes to that chat. A message without a thread goes to **the
+extension's own chat** for that producer, one per extension (the map's
+empty thread), titled with the extension's id. Nothing a service sends
+lands in the chat a person has open. A new chat is titled before
+anything runs in it (`BackendServer.title_session`), so no auto-name
+replaces the title.
+
+**Attachments.** Whatever a person can attach in the composer, a service
+can attach: any type, at most 5 MiB each (the composer's limit), at most
+10 per item. The service uploads the bytes first
+(`POST /v1/service-attachments`); igni server keeps them in the
+organisation's own database, expiring with the item that names them
+(an attachment no item names expires after a day). Delivering, igni
+fetches each with the producer's own credential
+(`GET /v1/me/events/{item}/attachments/{id}`: the person's session on
+the desktop, the VM's token in the cloud), checks its SHA-256, and
+imports it through the very path a person's upload takes —
+`BackendServer.upload_attachment` into the target chat, then an `@<ref>`
+mention — so the prompt builder treats each exactly as it treats a
+person's upload. A message with files that arrives while its chat's run
+is going is **held** (durably, `held_service_posts`) and posted when that
+run ends, rather than queued into it, where a queued message's files
+reach the agent only as names; it counts as delivered once held.
+
+**The extension only watches.** No extension code sits between a
+message and its chat: it cannot rewrite, redirect or drop one. It sees
+the post as every post is seen, `chat.message_added`, with
+`from_extension` set to its own id and `from_service` to the service's
+client id (host model 1.10.0), so it can tell a message its service sent
+from one it posted itself, whose `from_service` is `None`
+(HOST_OBJECT_MODEL, *Which messages a service sent*).
+
+**Permissions.** A plain event is the floor and needs nothing more. The
+rest is declared in the manifest, `permissions.service`, shown to the
+super admin who approves the service, and enforced by igni server on
+every request (igni's manifest accepts the same three names):
+
+| Grant | Lets the service |
+|---|---|
+| `service.messages` | send `message` items: text it wrote, posted as the extension's |
+| `service.attachments` | upload files and name them on any item |
+| `service.chats` | name a `thread` (each opens a chat), send `chat` and `action` items |
+
+In the manifest: `"permissions": {"service": ["messages", "attachments", "chats"]}`.
+
+**What a service can do in a chat**, against what igni can:
+
+| In igni | From a service | Why not, where not |
+|---|---|---|
+| Post a message that starts or resumes a run (`chat.post`) | yes, `send_message` | |
+| Queue a message for the next turn (`chat.queue`) | yes, `chat.queue` / `start_run=False` | |
+| Attach files (`chat.upload`, the composer) | yes, any type, 5 MiB each | |
+| Open a new chat, with a title (`sessions.create`, `/rename`) | yes, `new_chat` | one per thread |
+| Rename a chat | its own chats only | a person's chats are theirs to name |
+| Show a view in the chat (`chat.append`) | yes, `show(view)`, its own chats | |
+| Replace a view (`chat.replace`) | not yet | needs the view's id back; show a new one |
+| Cancel the run (`chat.cancel`) | its own chats, and not a run waiting on an approval | stopping that run would decide the approval |
+| Cancel a sub-agent (`chat.cancel_agent`) | no | its run ids never leave igni |
+| Answer an approval, approve or dismiss a plan | **never** | a decision that is a person's |
+| Read the chat, search it, its status or context | no | one-way: the producer's data stays in igni; the extension reads it under its own grants |
+| Truncate, compact, discard an interrupted run, extract learnings | no | they rewrite a person's history or memory |
+| Open a chat on screen, move the UI (`sessions.open`, `ui.*`) | no | a service never moves what a person sees; it notifies (service-identity §10) |
+| Switch model or permission mode, run a slash command | no | each changes what the agent may do; a service must not widen its own reach |
+| Post into a chat it did not open | no | only the extension may, through its own host calls (`host.sessions.chat(id).post`), inside the producer's igni |
+
+Approvals and plans are what igni does in a chat that a service must
+never do. Permission modes and slash commands come close: a service that
+could switch to `bypass`, or run `/allow`, would answer every later
+approval in advance. Reading the history is left out on purpose too: a
+service gets an item's status, not the chat's content.
 
 ## 7. Packages and commands in a VM (proposed)
 
@@ -998,10 +1127,16 @@ subnet; 8 GB sparse image, loop device, dm-crypt `aes-xts-plain64`, p50 ms):
    the service sets, at most 24 hours, then dropped and the service told.
 4. **Unattended runs:** may an event start an agent run with nobody
    present, or only for apps (people get posts and notifications)?
-5. **Startup network call:** the backend clones the default plugin
-   marketplace (`DEFAULT_MARKETPLACES` in
-   `src/ember_code/core/plugins/marketplace_store.py`) at every start,
-   which breaks air-gapped installs. Remove the default?
+5. ~~**Startup network call:** the backend clones the default plugin
+   marketplace at every start, which breaks air-gapped installs.~~ —
+   decided and built: the default stays for ordinary installs and has its
+   own off switch, `plugins.default_marketplace: false`. `air_gapped: true`
+   (or `IGNI_AIR_GAPPED=1`, or the same key in managed settings or a
+   group policy) turns it off along with every other outbound flow, and
+   the session-start refresh then touches only local marketplaces and
+   those listed in `plugins.marketplaces`
+   (`src/ember_code/core/plugins/source_policy.py`). See
+   `docs/CONFIGURATION.md`, "Air-gapped mode".
 6. **Linux arm64:** `ripgrep~=15.1.0` has no wheel there, so installing
    needs Rust. Fix before offering Graviton nodes?
 7. **Deploy manifests:** the gateway, the node agent, per-node services
