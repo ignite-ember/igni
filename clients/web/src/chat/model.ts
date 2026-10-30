@@ -374,6 +374,10 @@ export function mergePlanTasks(existing: PlanTask[], todos: unknown): PlanTask[]
  */
 export type AssistantInterrupted = "cancelled" | "errored" | "abandoned";
 
+/** ``rejected``: never ran — refused in the approval dialog, or nobody
+ *  could be asked. Neither a success nor a failure. */
+export type ToolStatus = "running" | "done" | "error" | "rejected";
+
 export const ASSISTANT_INTERRUPTED_LABELS: Record<AssistantInterrupted, string> = {
   cancelled: "Run cancelled",
   errored: "Run stopped",
@@ -385,6 +389,9 @@ export type ChatItem =
       kind: "user";
       id: number;
       text: string;
+      /** The extension that posted it (``host.chat.post``), by name;
+       *  absent for the person's own messages. */
+      fromExtension?: string;
       /** Run that owns this user message. Set on history restore from
        *  the BE; backfilled live when ``run_started`` fires. Required
        *  for the edit/delete operations — both call
@@ -438,7 +445,7 @@ export type ChatItem =
       runId: string;
       name: string;
       args: string;
-      status: "running" | "done" | "error";
+      status: ToolStatus;
       result: string;
       isError: boolean;
       diffRows: DiffRow[] | null;
@@ -560,9 +567,13 @@ export type ChatItem =
       spec: unknown;
       /** Optional short label shown above the card. */
       title: string;
-      /** Which agent emitted the spec (currently always ``visualizer``,
-       *  but kept as a string so future callers can attribute). */
+      /** Which agent emitted the spec: ``visualizer``, or the id of
+       *  the extension that appended it. */
       sourceAgent: string;
+      /** Set when an extension appended the card (``host.chat.append``):
+       *  its id. The card shows the extension's name, looked up when it
+       *  renders, as a message the extension posted does. */
+      fromExtension?: string;
     }
   | {
       kind: "stats";
@@ -690,6 +701,7 @@ export function visualizationItem(
   title: string,
   sourceAgent: string,
   specId: string,
+  fromExtension?: string,
 ): ChatItem {
   return {
     kind: "visualization",
@@ -698,6 +710,7 @@ export function visualizationItem(
     spec,
     title,
     sourceAgent,
+    ...(fromExtension ? { fromExtension } : {}),
   };
 }
 
@@ -720,8 +733,24 @@ export function extractAttachedPaths(content: string): string[] {
   return paths;
 }
 
-export function userItem(text: string): ChatItem {
-  return { kind: "user", id: nid(), text };
+export function userItem(text: string, fromExtension?: string): ChatItem {
+  return fromExtension
+    ? { kind: "user", id: nid(), text, fromExtension }
+    : { kind: "user", id: nid(), text };
+}
+
+/** ``<extension-message from="…">text</extension-message>``, which is how
+ *  a message an extension posted is kept in history — the backend's
+ *  ``ExtensionMessage.wrap``. */
+const EXTENSION_MESSAGE_RE =
+  /^<extension-message from="([^"]+)">\n?([\s\S]*?)\n?<\/extension-message>$/;
+
+/** An extension's message out of its history wrapper, or ``null``. */
+export function parseExtensionMessage(
+  text: string,
+): { from: string; body: string } | null {
+  const found = EXTENSION_MESSAGE_RE.exec(text.trim());
+  return found ? { from: found[1], body: found[2] } : null;
 }
 
 /** Parse a wrapped ``/loop`` iteration prompt. The BE emits a
@@ -1069,6 +1098,8 @@ export function restoredItem(turn: Record<string, unknown>): ChatItem | null {
     if (text.startsWith("<loop-iteration ") || text.startsWith("<loop-iteration\n")) {
       return loopItem(text);
     }
+    const posted = parseExtensionMessage(text);
+    if (posted) return userItem(posted.body, posted.from);
     return userItem(text);
   }
   if (role === "assistant") {
@@ -1090,6 +1121,7 @@ export function restoredItem(turn: Record<string, unknown>): ChatItem | null {
     const args = String(turn.args ?? "");
     const result = content;
     const isError = Boolean(turn.is_error);
+    const isRejected = Boolean(turn.is_rejected);
     const runId = String(turn.run_id ?? "");
     return {
       kind: "tool",
@@ -1097,7 +1129,7 @@ export function restoredItem(turn: Record<string, unknown>): ChatItem | null {
       runId,
       name: friendlyName,
       args,
-      status: isError ? "error" : "done",
+      status: isRejected ? "rejected" : isError ? "error" : "done",
       result,
       isError,
       // No diff rows in restored tool cards — the BE only computes
@@ -1133,11 +1165,13 @@ export function restoredItem(turn: Record<string, unknown>): ChatItem | null {
     const spec = turn.spec;
     const specId = String(turn.spec_id ?? "");
     if (!specId || !spec || typeof spec !== "object") return null;
+    const extensionId = String(turn.extension_id ?? "");
     return visualizationItem(
       spec,
-      "",
+      String(turn.title ?? ""),
       String(turn.source_agent ?? "visualizer"),
       specId,
+      extensionId || undefined,
     );
   }
   return null;
@@ -1197,7 +1231,7 @@ export function applyEvent(items: ChatItem[], msg: ServerMessage): ChatItem[] {
         if (it.kind === "tool" && it.status === "running") {
           const updated: ChatItem = {
             ...it,
-            status: msg.is_error ? "error" : "done",
+            status: msg.is_rejected ? "rejected" : msg.is_error ? "error" : "done",
             result: msg.full_result || msg.summary,
             isError: msg.is_error,
             diffRows: msg.diff_rows ?? null,

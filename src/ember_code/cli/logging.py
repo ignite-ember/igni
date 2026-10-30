@@ -16,6 +16,7 @@ import logging
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
+from ember_code.core.layer import Layers
 from ember_code.core.paths import CONFIG_DIR
 
 
@@ -39,14 +40,18 @@ class DebugLogging:
         the trace.
         """
         log_path = path if path is not None else cls.DEFAULT_PATH
-        log_path.parent.mkdir(parents=True, exist_ok=True)
-
-        handler = RotatingFileHandler(
-            str(log_path),
-            maxBytes=cls._MAX_BYTES,
-            backupCount=cls._BACKUPS,
-        )
-        handler.setFormatter(logging.Formatter(cls._FORMAT))
+        handler: logging.Handler
+        if not Layers.current().log_files():
+            # No debug.log where the layer keeps no log files.
+            handler = Layers.current().log_handler()
+        else:
+            log_path.parent.mkdir(parents=True, exist_ok=True)
+            handler = RotatingFileHandler(
+                str(log_path),
+                maxBytes=cls._MAX_BYTES,
+                backupCount=cls._BACKUPS,
+            )
+            handler.setFormatter(logging.Formatter(cls._FORMAT))
 
         logging.root.handlers.clear()
         logging.root.addHandler(handler)

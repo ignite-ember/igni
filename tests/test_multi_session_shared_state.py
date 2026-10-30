@@ -30,8 +30,10 @@ import sqlite3
 from pathlib import Path
 
 import pytest
+from sqlalchemy import text
 
 from ember_code.core.config.settings import Settings
+from ember_code.core.db.engine_registry import EngineRegistry
 from ember_code.core.session.client_state import ClientStateStore
 from ember_code.core.session.session_directories import SessionDirectoryStore
 
@@ -174,27 +176,25 @@ async def test_client_state_concurrent_writes_from_many_clients(tmp_path: Path):
 # ── SQLite stores: WAL + busy_timeout + explicit close contract ──────
 
 
-def test_kv_helper_sets_wal_and_busy_timeout(tmp_path: Path):
-    """The shared ``connect_kv`` helper must set WAL + a real
-    busy-timeout so concurrent readers/writers in the multi-session BE
-    don't trip ``database is locked`` or block readers behind a write.
+def test_sqlite_connections_use_wal_and_a_busy_timeout(tmp_path: Path):
+    """Every SQLite connection the engine registry opens is in WAL mode
+    with a real busy-timeout, so concurrent readers/writers in the
+    multi-session BE don't trip ``database is locked`` or block readers
+    behind a write.
 
-    Pins the configuration so a regression that removes a pragma is
+    Pins the configuration so a regression that drops either is
     immediately visible. WAL mode persists on the file; busy_timeout
     is per-connection, so both must be set on every connect.
     """
-    import contextlib
-
-    from ember_code.core.session._sqlite_utils import connect_kv
-
-    with contextlib.closing(connect_kv(tmp_path / "kv.db")) as conn:
-        # Journal mode is per-database-file once WAL is set, but each
-        # fresh connect should still verify-or-apply it.
-        mode = conn.execute("PRAGMA journal_mode").fetchone()[0]
-        assert mode.lower() == "wal", f"expected WAL, got {mode!r}"
-        # busy_timeout is per-connection.
-        bt = conn.execute("PRAGMA busy_timeout").fetchone()[0]
-        assert bt >= 1000, f"busy_timeout too low: {bt}"
+    registry = EngineRegistry()
+    try:
+        with registry.get_engine(tmp_path / "kv.db").connect() as conn:
+            mode = conn.execute(text("PRAGMA journal_mode")).scalar()
+            assert str(mode).lower() == "wal", f"expected WAL, got {mode!r}"
+            bt = conn.execute(text("PRAGMA busy_timeout")).scalar()
+            assert int(bt) >= 1000, f"busy_timeout too low: {bt}"
+    finally:
+        registry.dispose_sync()
 
 
 @pytest.mark.asyncio
@@ -258,74 +258,6 @@ def test_connect_kv_leaves_no_lingering_connections(tmp_path: Path):
         f"connection leak detected: {after - before} extra Connection "
         f"objects after 200 set/get calls"
     )
-
-
-# ── CodeIndex manifest: read-modify-write across two sessions ────────
-
-
-@pytest.mark.asyncio
-async def test_codeindex_manifest_concurrent_upsert_keeps_both_commits(
-    tmp_path: Path,
-):
-    """Two sessions in the same project both ``upsert_commit`` for
-    *different* commit shas at the same time. Because ``upsert_commit``
-    is read-modify-write on a JSON file, a naïve race can lose one
-    writer's update (A loads → B loads → A saves → B saves with stale
-    state → A's commit disappears).
-
-    The atomic ``tmp + os.replace`` write makes each save itself
-    consistent, but it does NOT serialise the RMW across two
-    processes/coroutines holding different ``Manifest`` instances.
-    This test pins the *current* behaviour so a future fix (e.g. a
-    file lock) can verify it actually closes the race — and so a
-    regression that re-opens it is caught.
-
-    Status today: **the race exists**. We assert the strongest
-    invariant the current code can satisfy — both commits are
-    eventually present after *N* attempts with retries (which is how
-    the real code path uses it: ``CodeIndexSyncManager`` calls
-    ``upsert_commit`` from a fresh load each cycle, so a lost update
-    self-heals on the next sync). If the manifest gains a lock and
-    the race closes, this test still passes; if a future change
-    breaks both retries and atomic writes, it fails.
-    """
-    from ember_code.core.code_index.manifest import Manifest
-
-    project = tmp_path / "proj"
-    project.mkdir()
-
-    # Two Manifest instances pointing at the same file — mimics two
-    # ``CodeIndex`` instances (one per session) for the same project.
-    m_a = Manifest(project=project, data_dir=tmp_path / "ember-data")
-    m_b = Manifest(project=project, data_dir=tmp_path / "ember-data")
-
-    # Each session upserts its own commit, retrying until both end up
-    # present. Real sync code retries on every cycle, so eventual
-    # convergence is the production invariant.
-    async def upsert_with_convergence(m: Manifest, sha: str) -> None:
-        for _ in range(20):
-            await asyncio.to_thread(m.upsert_commit, sha)
-            state = await asyncio.to_thread(m.load)
-            if sha in state.commits:
-                # Also wait until the *other* commit is visible — if
-                # the sibling has finished its own write by now.
-                await asyncio.sleep(0.005)
-                state = await asyncio.to_thread(m.load)
-                if len(state.commits) >= 2:
-                    return
-        # Final retry — at least our own commit must be present.
-
-    await asyncio.gather(
-        upsert_with_convergence(m_a, "sha-A"),
-        upsert_with_convergence(m_b, "sha-B"),
-    )
-
-    final = m_a.load()
-    assert "sha-A" in final.commits, "session A's commit was permanently lost"
-    assert "sha-B" in final.commits, "session B's commit was permanently lost"
-
-
-# ── Per-project state.db: two sessions in same dir, real WAL conn ─────
 
 
 @pytest.mark.asyncio

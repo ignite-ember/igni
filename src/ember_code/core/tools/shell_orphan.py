@@ -17,9 +17,15 @@ modules:
   live in :mod:`shell_orphan_schemas` (sibling schemas convention).
 
 This module keeps the public re-exports and a thin async
-:func:`rehydrate_orphan_processes` wrapper for the two existing
-call sites (:class:`RehydrateController.orphan_processes` and the
-test suite) so this refactor stays a surgical diff.
+:func:`rehydrate_orphan_processes` wrapper. Nothing in production
+imports it any more: :class:`RehydrateController.orphan_processes`
+went straight to ``build_rehydrator`` + :meth:`OrphanRehydrator.run`
+so it could read the typed :class:`RehydrateResult` instead of this
+wrapper's silent ``return 0``. The one remaining importer is
+``tests/test_process_orphan_rehydrate.py``. The module survives as
+the one-release alias window for ``_OrphanProcess`` /
+``_OrphanProcStub``; when that window closes it should be deleted
+and the test repointed at ``orphan_rehydrator``.
 
 Backward-compat aliases ``_OrphanProcess`` / ``_OrphanProcStub``
 are exposed via a module-level ``__getattr__`` that emits a
@@ -58,11 +64,12 @@ __all__ = [
 async def rehydrate_orphan_processes(project_dir: str | Path | None) -> int:
     """Backward-compat wrapper around :meth:`OrphanRehydrator.run`.
 
-    Preserves the ``int``-returning shape the two existing call
-    sites (``RehydrateController.orphan_processes`` and the test
-    suite) expect. New code should build an
-    :class:`OrphanRehydrator` directly so :class:`RehydrateResult`
-    flows through with its populated ``reason`` field.
+    Preserves the ``int``-returning shape. Its only remaining caller
+    is the test suite — ``RehydrateController.orphan_processes``
+    builds an :class:`OrphanRehydrator` itself precisely to avoid the
+    ``return 0`` below. New code should do the same so
+    :class:`RehydrateResult` flows through with its populated
+    ``reason`` field.
 
     Store-init failures fall through to the "return 0" branch —
     the caller can't distinguish store-init from "no rows" here,
@@ -88,9 +95,13 @@ async def rehydrate_orphan_processes(project_dir: str | Path | None) -> int:
 # to switch instead of silently aliasing.
 
 
-_DEPRECATED_ALIASES: dict[str, type] = {
-    "_OrphanProcess": OrphanProcess,
-    "_OrphanProcStub": OrphanProcStub,
+#: Deprecated name → (public class, module that now owns it). The
+#: module is carried alongside because the warning used to name
+#: ``shell_orphan`` as the new home — i.e. it told callers to keep
+#: importing from the shim they were being moved off.
+_DEPRECATED_ALIASES: dict[str, tuple[type, str]] = {
+    "_OrphanProcess": (OrphanProcess, "ember_code.core.tools.orphan_process"),
+    "_OrphanProcStub": (OrphanProcStub, "ember_code.core.tools.shell_orphan_schemas"),
 }
 
 
@@ -100,12 +111,12 @@ def __getattr__(name: str) -> type:
     ``_OrphanProcStub`` returns the public class + emits a warning
     so importers see the transition in their logs.
     """
-    replacement = _DEPRECATED_ALIASES.get(name)
-    if replacement is None:
+    alias = _DEPRECATED_ALIASES.get(name)
+    if alias is None:
         raise AttributeError(f"module 'shell_orphan' has no attribute {name!r}")
+    replacement, home = alias
     warnings.warn(
-        f"{name} is deprecated; import "
-        f"{replacement.__name__} from ember_code.core.tools.shell_orphan instead",
+        f"{name} is deprecated; import {replacement.__name__} from {home} instead",
         DeprecationWarning,
         stacklevel=2,
     )

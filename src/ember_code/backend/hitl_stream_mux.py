@@ -25,9 +25,11 @@ from ember_code.backend.schemas_pause import (
     MuxDone,
     MuxError,
     MuxEvent,
+    SubagentDetails,
     SubagentPause,
     TeamStreamEvent,
 )
+from ember_code.core.activity import background
 from ember_code.core.text_tags import (
     INITIAL_STATE,
     ThinkParseState,
@@ -120,8 +122,20 @@ class HITLStreamMultiplexer:
         # the team's stream may still have a paused tool we want to
         # drive to completion via ``resolve_hitl``; it naturally
         # exits when the team's stream ends or errors.
-        team_task = asyncio.create_task(self._drain_team(team_stream, agno_queue))
-        sub_task = asyncio.create_task(self._drain_subagent_hitl(sub_hitl, agno_queue))
+        # Counted before either task exists. The team task starts first,
+        # and a tool call that asks for approval at once would otherwise
+        # look for a relay that has not been scheduled yet, find none, and
+        # be refused as "nobody to ask" — a race the model's thinking time
+        # usually hides and a fast tool call does not.
+        sub_hitl.listeners = getattr(sub_hitl, "listeners", 0) + 1
+        # Part of a run, which its session accounts for.
+        team_task = background.daemon(self._drain_team(team_stream, agno_queue), name="hitl-team")
+        sub_task = background.daemon(
+            self._drain_subagent_hitl(sub_hitl, agno_queue), name="hitl-subagents"
+        )
+        # Kept so a nested resume can stand this relay down — see
+        # :meth:`_hand_relay_to_nested`.
+        self._sub_task, self._queue = sub_task, agno_queue
 
         try:
             while True:
@@ -140,6 +154,10 @@ class HITLStreamMultiplexer:
                         len(event.entries),
                     )
                     yield rp
+                    continue
+                if isinstance(event, SubagentDetails):
+                    for requirement_id, details in event.updates:
+                        yield msg.RequirementDetails(requirement_id=requirement_id, details=details)
                     continue
                 # ``TeamStreamEvent`` — the common path.
                 async for m in self._forward_team_event(event.event):
@@ -160,6 +178,7 @@ class HITLStreamMultiplexer:
             # sees a message rather than a stranded stream.
             yield msg.Error(text=str(e))
         finally:
+            sub_hitl.listeners = getattr(sub_hitl, "listeners", 1) - 1
             sub_task.cancel()
             with contextlib.suppress(asyncio.CancelledError, Exception):
                 await sub_task
@@ -194,6 +213,10 @@ class HITLStreamMultiplexer:
                 if entries:
                     await queue.put(SubagentPause(entries=entries))
                     self._tracer.trace(f"_stream_mux: drain enqueued {[rid for rid, _ in entries]}")
+                take_updates = getattr(sub_hitl, "take_detail_updates", None)
+                updates = take_updates() if take_updates else []
+                if updates:
+                    await queue.put(SubagentDetails(updates=updates))
         except asyncio.CancelledError:
             self._tracer.trace("_stream_mux: drain cancelled")
             return
@@ -239,6 +262,46 @@ class HITLStreamMultiplexer:
             except Exception as exc:
                 logger.debug("post-run broadcast drain raised: %s", exc)
 
+    def _hand_relay_to_nested(self) -> None:
+        """Stand this stream's relay down before a nested resume stream starts.
+
+        The resume runs *inside* this stream's loop, so until it ends this
+        loop reads nothing from its own queue. Its relay kept waiting on
+        the shared coordinator all the same, and won the race for the next
+        approval request about half the time — putting it in a queue
+        nobody would read until the resumed run finished, which was itself
+        waiting for that answer. A deadlock, and no dialog: found clicking
+        through Bypass in the real UI, where every shell call is
+        auto-resumed this way.
+
+        Anything already taken is handed back unsurfaced, so the nested
+        stream's relay picks it up.
+        """
+        sub_task = getattr(self, "_sub_task", None)
+        queue = getattr(self, "_queue", None)
+        if sub_task is not None:
+            sub_task.cancel()
+        if queue is None:
+            return
+        handed_back = False
+        kept: list[MuxEvent] = []
+        while not queue.empty():
+            event = queue.get_nowait()
+            if isinstance(event, SubagentPause):
+                for _req_id, entry in event.entries:
+                    entry.surfaced = False
+                handed_back = True
+            elif isinstance(event, SubagentDetails):
+                for req_id, details in event.updates:
+                    self._session.sub_agent_hitl.update_details(req_id, details)
+                handed_back = True
+            else:
+                kept.append(event)
+        for event in kept:
+            queue.put_nowait(event)
+        if handed_back:
+            self._session.sub_agent_hitl.new_arrival.set()
+
     async def _handle_paused(self, event: Any) -> AsyncIterator[msg.Message]:
         """Route a paused team event through the evaluator and
         either resume or forward to the FE."""
@@ -264,6 +327,7 @@ class HITLStreamMultiplexer:
                 result.run_id,
                 len(result.auto_resolved),
             )
+            self._hand_relay_to_nested()
             resume_mux = HITLStreamMultiplexer(
                 session=self._session,
                 store=self._store,
@@ -422,6 +486,10 @@ class HITLStreamMultiplexer:
                     friendly_name=registry.friendly_name(raw_name),
                     tool_args=dict(getattr(tool_exec, "tool_args", {}) if tool_exec else {}),
                     agent_path=list(getattr(entry, "agent_path", []) or []),
+                    # Why the call is being put to the person, when the
+                    # requirement says — the Bypass guard always does.
+                    details=str(getattr(req, "details", "") or ""),
+                    details_pending=bool(getattr(req, "details_pending", False)),
                 )
             )
         # ``run_id`` here is the sub-agent's id; the FE doesn't

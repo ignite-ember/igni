@@ -24,13 +24,39 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from collections.abc import MutableSequence
 from typing import Any
 
 from ember_code.backend.login_coordinator import LoginCoordinator
+from ember_code.core.activity import BusyKind, background
+from ember_code.extensions.registry import ExtensionRefused
+from ember_code.extensions.rpc import ExtensionRpc
 from ember_code.protocol import messages as msg
 from ember_code.protocol.messages import Message
 
 logger = logging.getLogger(__name__)
+
+
+class ExtensionMessage:
+    """How a message an extension posts reads to the agent.
+
+    The agent must never take it for the person's: it says who sent it,
+    in a block the windows strip from display (``<system-context>``),
+    around the text wrapped in a tag the web client reads back on
+    reload to label the bubble (``chat/model.ts``).
+    """
+
+    TAG = "extension-message"
+
+    @classmethod
+    def wrap(cls, extension_id: str, text: str) -> str:
+        return (
+            "<system-context>\n"
+            f"The message below was posted by the igni extension '{extension_id}', "
+            "not typed by the person. Answer it in the chat as you would answer them.\n"
+            "</system-context>\n"
+            f'<{cls.TAG} from="{extension_id}">\n{text}\n</{cls.TAG}>'
+        )
 
 
 class MessageDispatcher:
@@ -48,14 +74,21 @@ class MessageDispatcher:
         backend: Any,
         transport: Any,
         rpc_table: dict,
-        queue: list[str],
+        queue: MutableSequence[str],
         login: LoginCoordinator | None,
+        extensions: ExtensionRpc | None = None,
     ) -> None:
         self._backend = backend
         self._transport = transport
         self._rpc_table = rpc_table
         self._queue = queue
         self._login = login
+        # Optional so every existing construction site keeps working.
+        # Absent, an ``ext.*`` call is refused with the reason rather
+        # than falling through to ``Unknown RPC method``, which is
+        # what it did for as long as the namespace did not exist and
+        # is the least informative thing it could say.
+        self._extensions = extensions
 
     async def dispatch(self, message: Any) -> None:
         req_id = message.id or ""
@@ -117,7 +150,11 @@ class MessageDispatcher:
                     discarded,
                 )
         agent_text = self._maybe_wrap_plan_hint(message.text)
-        async for proto in self._backend.run_message(agent_text, media=message.file_contents):
+        await self._run_turn(agent_text, message.file_contents, req_id)
+
+    async def _run_turn(self, agent_text: str, media: dict[str, str], req_id: str) -> None:
+        """Run one turn and stream it to every view."""
+        async for proto in self._backend.run_message(agent_text, media=media):
             if req_id:
                 proto = proto.model_copy(update={"id": req_id})
             await self._transport.send(proto)
@@ -126,6 +163,44 @@ class MessageDispatcher:
         # First completed run: name the session in the background so
         # a queued follow-up isn't blocked on the naming model call.
         self._spawn_auto_name()
+
+    # ── An extension's messages ──────────────────────────────────
+
+    async def post_from_extension(
+        self, extension_id: str, text: str, media: dict[str, str], from_service: str = ""
+    ) -> None:
+        """``host.chat.post``: a message from an extension, for the agent.
+
+        Every view paints it labelled as the extension's — never as the
+        person's, which an extension cannot post as — and the agent is
+        told who sent it, then answers in the chat as it answers the
+        person. ``from_service`` is the client id of the extension's
+        service when that service sent it (``docs/CLOUD.md`` §6.1).
+        """
+        await self._transport.send(
+            msg.UserMessageReceived(
+                text=text,
+                client_id="",
+                extension_id=extension_id,
+                service_client_id=from_service,
+            )
+        )
+        await self._run_turn(ExtensionMessage.wrap(extension_id, text), media, "")
+
+    async def queue_from_extension(
+        self, extension_id: str, text: str, from_service: str = ""
+    ) -> None:
+        """``host.chat.queue``: the same, for the next turn."""
+        self._queue.append(ExtensionMessage.wrap(extension_id, text))
+        await self._transport.send(
+            msg.UserMessageReceived(
+                text=text,
+                client_id="",
+                queued=True,
+                extension_id=extension_id,
+                service_client_id=from_service,
+            )
+        )
 
     def _maybe_wrap_plan_hint(self, text: str) -> str:
         """One-shot ``/plan`` → ``enter_plan_mode`` nudge.
@@ -172,7 +247,9 @@ class MessageDispatcher:
         if runtime is not None:
             runtime.spawn_auto_name(coro)
         else:
-            asyncio.create_task(coro)
+            background.start(
+                coro, holder="auto-name", reason="naming the session", kind=BusyKind.POST_RUN
+            )
 
     async def _auto_name_coro(self) -> None:
         # ``maybe_auto_name_session`` now returns an ``AutoNameResult``
@@ -255,6 +332,16 @@ class MessageDispatcher:
             await self._login.cancel()
 
     async def _on_rpc_request(self, message: Any, req_id: str) -> None:
+        # The extension namespace is checked before the base table,
+        # not after. A base method could otherwise shadow an
+        # extension's by being named ``ext.something`` — unlikely, but
+        # the failure would be an extension silently served by igni's
+        # own handler, which is the worst shape a routing bug can
+        # take.
+        if ExtensionRpc.owns(message.method):
+            await self._on_extension_rpc(message, req_id)
+            return
+
         handler = self._rpc_table.get(message.method)
         if handler is None:
             await self._transport.send(
@@ -296,6 +383,45 @@ class MessageDispatcher:
         except Exception as exc:
             logger.error("RPC %s failed: %s", message.method, exc, exc_info=True)
             await self._transport.send(msg.RPCResponse.fail(req_id, str(exc)))
+
+    async def _on_extension_rpc(self, message: Any, req_id: str) -> None:
+        """Serve one ``ext.<id>.<method>`` call.
+
+        Separate from :meth:`_on_rpc_request` because the failure
+        modes have nothing in common. A base RPC fails by raising out
+        of a handler; an extension call fails by being refused, and a
+        refusal is a sentence written for the extension's author with
+        the manifest line that would fix it. Folding the two together
+        would mean wrapping refusals in the "is a required argument"
+        machinery above, which is about something else entirely.
+        """
+        if self._extensions is None:
+            await self._transport.send(
+                msg.RPCResponse.fail(
+                    req_id,
+                    f"{message.method}: this backend has no extension support, "
+                    "so nothing can answer the 'ext.' namespace.",
+                )
+            )
+            return
+        try:
+            result = await self._extensions.dispatch(
+                caller=getattr(message, "caller", None),
+                method=message.method,
+                args=message.args,
+            )
+        except ExtensionRefused as exc:
+            # Expected, and not worth a traceback: a refusal is the
+            # system working. Logged at info so an administrator
+            # chasing "why can it not call this" has a record.
+            logger.info("extension rpc %s refused: %s", message.method, exc)
+            await self._transport.send(msg.RPCResponse.fail(req_id, str(exc)))
+            return
+        except Exception as exc:
+            logger.error("extension rpc %s failed: %s", message.method, exc, exc_info=True)
+            await self._transport.send(msg.RPCResponse.fail(req_id, str(exc)))
+            return
+        await self._transport.send(msg.RPCResponse.ok(req_id, _serialize(result)))
 
 
 def _serialize(value: Any) -> Any:

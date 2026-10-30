@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import type { IgniClient } from "../protocol/client";
+import { useWindowField, type ComposerMode, type WindowModel } from "../clientState";
 import { host } from "../lib/host";
 import {
   codePillLabels,
@@ -43,8 +44,6 @@ export const BUILTIN_COMMANDS: SlashCommand[] = [
   { name: "/agents", description: "Agent pool" },
   { name: "/skills", description: "Skill workflows" },
   { name: "/plugins", description: "Installed plugins and marketplaces" },
-  { name: "/knowledge", description: "Project knowledge base" },
-  { name: "/codeindex", description: "Semantic code index" },
   { name: "/hooks", description: "Configured hooks" },
   { name: "/loop", description: "Repeat a prompt until done" },
   { name: "/schedule", description: "Background scheduled tasks" },
@@ -67,10 +66,6 @@ export const BUILTIN_COMMANDS: SlashCommand[] = [
   { name: "/whoami", description: "Show the signed-in account" },
   { name: "/output-style", description: "Switch the agent's output style" },
   { name: "/plugin", description: "Install, update, remove plugins" },
-  {
-    name: "/sync-knowledge",
-    description: "Push project knowledge to igni Cloud",
-  },
   { name: "/evals", description: "Run an evaluation suite" },
   { name: "/bug", description: "Open the bug report form" },
   { name: "/quit", description: "Exit the session" },
@@ -182,9 +177,8 @@ export function Composer({
   skills,
   backendCommands,
   tools,
-  seed,
-  sessionId,
-  clientState,
+  focusRef,
+  windowModel,
   model,
   modelMenuSignal,
   hitlSlot,
@@ -207,15 +201,15 @@ export function Composer({
    *  stands in. */
   backendCommands: SlashCommand[] | null;
   tools: ToolEntry[];
-  /** Pre-fill request (e.g. a skill picked from the panel) — bump
-   *  `n` to re-apply the same text. */
-  seed?: { text: string; n: number } | null;
-  /** Active session id — drafts are persisted per-session so
-   *  switching sessions doesn't trash the in-progress message. */
-  sessionId?: string;
-  /** Per-client state store — used to persist composer drafts on
-   *  the BE so they survive reload from any host (web / IDE plugin). */
-  clientState?: import("../clientState").ClientStateStore;
+  /** Filled in with "hand the person the caret": the App calls it after
+   *  putting text in the composer (a skill picked from a panel). */
+  focusRef?: React.MutableRefObject<(() => void) | null>;
+  /** The window's model. The draft and its mode are ``ui.composer``:
+   *  this composer reads them from there and writes every keystroke
+   *  there (after a short pause on the wire), so an extension sees the
+   *  draft and can set it, and the draft is the session's — it
+   *  survives a reload and follows the session, not the window. */
+  windowModel: WindowModel;
   /** Current model name, shown as a picker chip next to Send. */
   model?: string;
   /** External request to open the model menu (the /model command). */
@@ -245,25 +239,16 @@ export function Composer({
    *  theme gets. See `lib/theme.ts`. */
   brandName?: string;
 }) {
-  const draftKey = sessionId ? `draft:${sessionId}` : "";
-  const [text, setText] = useState("");
-  // Hydrate the draft whenever the session changes. clientState is
-  // already populated by the time the App sets a sessionId, so the
-  // cache hit is synchronous.
-  useEffect(() => {
-    if (!draftKey || !clientState) {
-      setText("");
-      return;
-    }
-    setText(clientState.get(draftKey) || "");
-  }, [draftKey, clientState]);
-  // Mirror text → BE on change (debounced inside clientState). When
-  // the draft empties out, drop the row so the store stays tidy.
-  useEffect(() => {
-    if (!draftKey || !clientState) return;
-    if (text) clientState.set(draftKey, text);
-    else if (clientState.get(draftKey)) clientState.delete(draftKey);
-  }, [text, draftKey, clientState]);
+  // The draft and its mode: the window model's ``ui.composer``.
+  const composer = useWindowField(windowModel, "composer");
+  const text = composer.text;
+  const writeComposer = (next: { text: string; mode: ComposerMode }) =>
+    windowModel.write("composer", { ...next, attachments: [] }, { debounce: true });
+  const setText = (next: string | ((prev: string) => string)) => {
+    const current = windowModel.get("composer");
+    const value = typeof next === "function" ? next(current.text) : next;
+    writeComposer({ text: value, mode: current.mode });
+  };
   /** Files uploaded from the OS (picker / drag / paste). Each one
    *  is shipped to the BE, which writes it to
    *  ``<project>/.ember/attachments/<session>/<name>`` and returns
@@ -372,8 +357,10 @@ export function Composer({
 
   // TUI parity: typing "/" or "$" consumes the prefix into a mode
   // badge — the input shows only the command body. Backspace on an
-  // empty input exits the mode.
-  const [mode, setMode] = useState<"chat" | "command" | "shell">("chat");
+  // empty input exits the mode. The mode is the model's too.
+  const mode = composer.mode;
+  const setMode = (next: ComposerMode) =>
+    writeComposer({ text: windowModel.get("composer").text, mode: next });
   const [menu, setMenu] = useState<MenuState | null>(null);
   const [toolsOpen, setToolsOpen] = useState(false);
   const [modelMenu, setModelMenu] = useState<
@@ -446,14 +433,11 @@ export function Composer({
   /** Set input from a full (prefixed) string, entering the right mode. */
   const setFromFull = (entry: string) => {
     if (entry.startsWith("/")) {
-      setMode("command");
-      setText(entry.slice(1));
+      writeComposer({ text: entry.slice(1), mode: "command" });
     } else if (entry.startsWith("$")) {
-      setMode("shell");
-      setText(entry.slice(1).trimStart());
+      writeComposer({ text: entry.slice(1).trimStart(), mode: "shell" });
     } else {
-      setMode("chat");
-      setText(entry);
+      writeComposer({ text: entry, mode: "chat" });
     }
   };
 
@@ -759,19 +743,23 @@ export function Composer({
     return () => window.removeEventListener("keydown", onKey, true);
   }, [modelMenu]);
 
-  // External pre-fill (skill picked from the panel): set the text and
-  // hand the user the caret so they can append arguments and submit.
+  // External pre-fill (skill picked from the panel): the App put the
+  // text in the model; hand the user the caret so they can append
+  // arguments and submit.
   useEffect(() => {
-    if (!seed) return;
-    setFromFull(seed.text);
-    setMenu(null);
-    setHistIdx(-1);
-    requestAnimationFrame(() => {
-      ref.current?.focus();
-      ref.current?.caretToEnd();
-    });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [seed?.n]);
+    if (!focusRef) return;
+    focusRef.current = () => {
+      setMenu(null);
+      setHistIdx(-1);
+      requestAnimationFrame(() => {
+        ref.current?.focus();
+        ref.current?.caretToEnd();
+      });
+    };
+    return () => {
+      focusRef.current = null;
+    };
+  }, [focusRef]);
 
   return (
     <div

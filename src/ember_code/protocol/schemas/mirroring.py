@@ -49,6 +49,13 @@ class UserMessageReceived(Message):
     text: str = ""
     client_id: str = ""
     queued: bool = False
+    #: Set when an extension posted it (``host.chat.post``): every view
+    #: paints it labelled as that extension's, never as the person's.
+    extension_id: str = ""
+    #: Set when the extension's service sent it, as a message item
+    #: (``docs/CLOUD.md`` §6.1): that service's client id. Posted as the
+    #: extension's all the same — ``extension_id`` is set too.
+    service_client_id: str = ""
 
 
 class RequirementResolved(Message):
@@ -59,9 +66,23 @@ class RequirementResolved(Message):
     requirement_id: str = ""
 
 
+class RequirementDetails(Message):
+    """The reason for an open HITL requirement, sent after its dialog.
+
+    The Bypass safety check raises its dialog with ``details_pending``
+    and no text, then sends this once the model has described the call
+    (or with the plain reason when it could not). Views swap the
+    spinner for ``details`` in place."""
+
+    type: Literal["requirement_details"] = "requirement_details"
+    requirement_id: str = ""
+    details: str = ""
+
+
 __all__ = [
     "Welcome",
     "Typing",
     "UserMessageReceived",
     "RequirementResolved",
+    "RequirementDetails",
 ]

@@ -12,7 +12,7 @@ Hierarchy:
   and an injected :class:`SpawnDeps` bundle) and owns the real
   template :meth:`run` — reserve budget, run preflight, build
   the runnable, fire SubagentStart, emit ``agent_started``
-  progress, delegate the stream inside :func:`asyncio.wait_for`,
+  progress, delegate the stream inside a :class:`SpawnDeadline`,
   fire SubagentStop exactly once, and compose the parent-facing
   response via :meth:`format_result`.
 * :class:`AgentSpawn` — single-agent flavour. Owns a
@@ -44,7 +44,9 @@ import time
 import uuid
 from typing import TYPE_CHECKING, Any
 
+from ember_code.core.hooks.turn_results import TurnResultHook, TurnResultSink
 from ember_code.core.tools.orchestrate_events import (
+    VIS_SPEC_PREFIX,
     AgentBuildResult,
     AgentStartedEvent,
     EventAppender,
@@ -60,6 +62,7 @@ from ember_code.core.tools.orchestrate_events import (
     TeamMode,
 )
 from ember_code.core.tools.orchestrate_sandbox import SpawnSandbox
+from ember_code.core.tools.spawn_context import SpawnCalls, SpawnDeadline
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -75,7 +78,7 @@ class SpawnRunner:
 
     Owns the template :meth:`run` skeleton — depth guard, budget
     reservation, sub-runnable build via :meth:`_build`, hook lifecycle,
-    ``agent_started`` emission, :func:`asyncio.wait_for` timeout, and
+    ``agent_started`` emission, :class:`SpawnDeadline` timeout, and
     the single ``SubagentStop`` fire site (guarded by
     ``_stop_fired`` so subclass overrides can't accidentally fire it
     twice — see the ``fires-exactly-once`` invariant).
@@ -152,24 +155,29 @@ class SpawnRunner:
         :meth:`_render_error` so the failure information is typed at
         the boundary even though the outer return is a string.
         """
-        # Cannot currently fire, and that is structural rather than a missing
-        # increment: ``OrchestrateTools`` is built in one place
-        # (``ToolsBuilder.orchestrate``) with ``current_depth=0``, and a
-        # sub-team's members are pool copies that never receive it — so a
-        # spawned agent has no spawn tools and depth never leaves 0. Kept
-        # because it becomes correct the moment nesting is made reachable;
-        # ``tests/test_nesting_depth_is_unreachable.py`` fails then and says so.
+        # Live since agents declaring ``can_orchestrate`` receive their own
+        # toolkit at ``current_depth + 1`` (see
+        # :meth:`AgentSpawn._grant_nested_orchestration`). Reaching it means a
+        # chain of delegations ran the config's depth out; the spawn budget
+        # caps the same recursion by total count, session-wide.
         if self._current_depth >= self._max_depth:
             return f"Error: Maximum nesting depth ({self._max_depth}) reached."
 
         if err := self._preflight():
             return err
 
-        if limit_err := self._budget.try_reserve(self._reserve_count()):
+        reserved = self._reserve_count()
+        if limit_err := self._budget.try_reserve(reserved):
             return limit_err
 
         build_err = self._build()
         if build_err is not None:
+            # Nothing was spawned — an unknown agent name, a worktree
+            # that could not be created. The slots were reserved a
+            # moment ago only because the cap must be enforced before
+            # work starts; holding them now would charge the session
+            # for an agent that never ran. See ``SpawnBudget.release``.
+            self._budget.release(reserved)
             return build_err
 
         label = self._agent_label()
@@ -185,10 +193,11 @@ class SpawnRunner:
 
         try:
             start = time.monotonic()
-            result, activity = await asyncio.wait_for(
-                self._execute(),
-                timeout=self._spawn_timeout,
-            )
+            # The timeout counts the spawn's own work, not the time a
+            # person takes over an approval it asked for: approvals do
+            # not expire (``SpawnDeadline``).
+            async with SpawnDeadline.running(self._spawn_timeout):
+                result, activity = await self._execute()
             elapsed = time.monotonic() - start
 
             await self._fire_stop_once(
@@ -198,9 +207,7 @@ class SpawnRunner:
                     result_preview=result[:500],
                 )
             )
-            rendered = self.format_result(elapsed=elapsed, result=result, activity=activity)
-            self._on_finally()
-            return rendered
+            return self.format_result(elapsed=elapsed, result=result, activity=activity)
         except asyncio.TimeoutError:
             envelope = SpawnResult(ok=False, message=self._timeout_message())
             await self._fire_stop_once(
@@ -210,8 +217,26 @@ class SpawnRunner:
                     error=envelope.message,
                 )
             )
-            self._on_finally()
             return self._render_error(envelope)
+        except asyncio.CancelledError:
+            # ``CancelledError`` is a ``BaseException``, so the
+            # ``except Exception`` below never saw it and there was no
+            # ``finally``: a cancelled isolated spawn — session teardown,
+            # a client disconnect, an outer ``wait_for`` — left its git
+            # worktree and branch on disk with nothing left holding a
+            # reference to them, and SubagentStop never fired so the FE
+            # card stayed open forever. Announce the stop, let the
+            # ``finally`` clean up, and re-raise so the cancellation
+            # still propagates to whoever asked for it.
+            with contextlib.suppress(Exception):
+                await self._fire_stop_once(
+                    SubagentStopPayload(
+                        session_id=self._session_id,
+                        agent_name=label,
+                        error="Sub-spawn was cancelled.",
+                    )
+                )
+            raise
         except Exception as exc:
             envelope = SpawnResult(ok=False, message=self._exception_message(exc))
             await self._fire_stop_once(
@@ -221,8 +246,12 @@ class SpawnRunner:
                     error=envelope.message,
                 )
             )
-            self._on_finally()
             return self._render_error(envelope)
+        finally:
+            # One call site instead of one per exit branch — the three
+            # explicit calls this replaces covered every branch that
+            # existed and none of the ones that did not (cancellation).
+            self._on_finally()
 
     # ── Extension points ─────────────────────────────────────────
 
@@ -405,8 +434,16 @@ class AgentSpawn(SpawnRunner):
         # every caller. Concurrent spawns of the same specialist race
         # on that state without a per-spawn copy.
         agent = copy.copy(shared)
+        # Its own list: the copy is shallow, and the pool's instance must
+        # not collect a hook per spawn.
+        if isinstance(self._hitl_coordinator, TurnResultSink):
+            agent.tool_hooks = [
+                *(agent.tool_hooks or []),
+                TurnResultHook(self._hitl_coordinator),
+            ]
 
         defn = self._pool.get_definition(self._agent_name)
+        self._grant_nested_orchestration(agent, defn)
 
         # Plugin-shipped agents force their own isolation regardless
         # of what the caller asked for — CC parity row 37.
@@ -433,13 +470,65 @@ class AgentSpawn(SpawnRunner):
             task=setup.task,
         )
 
+    def _grant_nested_orchestration(self, agent: Any, defn: Any) -> None:
+        """Give a spawned agent its own spawn tools, one level down.
+
+        ``can_orchestrate`` was declared in :class:`AgentDefinition`
+        and set deliberately across twenty agent files long before
+        anything read it — only a panel ever did, so an agent marked
+        ``true`` could not in fact delegate. This is the read.
+
+        The depth it is built at is ``current_depth + 1``, which is
+        what makes ``orchestration.max_nesting_depth`` start counting.
+        At the last level the grant is **withheld** rather than made
+        and refused: a manifest carrying a tool whose every call
+        returns "maximum nesting depth reached" is the same defect as
+        a prompt naming a tool that was never registered.
+
+        Nothing is appended in place. ``copy.copy`` above is shallow,
+        so ``agent.tools`` is still the list the pool's cached
+        instance holds — appending would hand the toolkit to every
+        later spawn of that agent, at this spawn's depth.
+        """
+        if defn is None or not getattr(defn, "can_orchestrate", False):
+            return
+        if self._current_depth + 1 >= self._max_depth:
+            return
+
+        # Deferred: ``orchestrate`` imports this module.
+        from ember_code.core.tools.orchestrate import OrchestrateTools
+
+        nested = OrchestrateTools(
+            pool=self._pool,
+            settings=self._settings,
+            current_depth=self._current_depth + 1,
+            hook_executor=self._hook_executor,
+            session_id=self._session_id,
+            hitl_coordinator=self._hitl_coordinator,
+            project_dir=self._project_dir,
+        )
+        # The three collaborators the session wires onto the top-level
+        # toolkit after construction. Without them a nested spawn runs
+        # invisibly — no progress card, nothing in the event log to
+        # replay on reload, and no registry entry, which means ESC
+        # does not reach it. The budget needs no wiring: it is looked
+        # up from the pool by ``session_id``, so every depth draws on
+        # the one session-wide cap.
+        nested.on_progress = self._on_progress
+        nested.event_appender = self._event_appender
+        nested.subagent_registry = self._subagent_registry
+
+        agent.tools = [*(agent.tools or []), nested]
+
     async def _execute(self) -> tuple[str, list[str]]:
         return await self._deps.agent_streamer(
             self._agent,
             self._effective_task,
             on_progress=self._on_progress,
             hitl_coordinator=self._hitl_coordinator,
-            agent_path=[self._agent_name],
+            # Nested spawns name every agent between the main agent and
+            # this one, so the person sees who is asking.
+            agent_path=SpawnCalls.path_to(self._agent_name),
             card_id=self._card_id,
             subagent_registry=self._subagent_registry,
             event_appender=self._event_appender,
@@ -473,7 +562,33 @@ class AgentSpawn(SpawnRunner):
                 "with the partial result if it's sufficient.\n" + "\n".join(run_errors)
             )
         worktree_footer = self._sandbox.finalize() if self._sandbox else ""
-        return f"{header}\n\nResponse:\n{result}{error_section}{worktree_footer}"
+        return (
+            f"{header}\n\nResponse:\n{result}"
+            f"{self._rendered_specs(activity)}{error_section}{worktree_footer}"
+        )
+
+    @staticmethod
+    def _rendered_specs(activity: list[str]) -> str:
+        """Any visualization the sub-agent drew, as a fence.
+
+        Fenced as ``json-render`` rather than handed over as bare
+        JSON because that is the form it has to end up in: a document
+        carrying this fence renders the chart wherever it is shown,
+        and a caller that can copy the block through verbatim cannot
+        get the shape wrong on the way. The alternative asks a model
+        to re-serialise a forty-element spec from a description of
+        it, which is where invented data comes from.
+        """
+        specs = [
+            line[len(VIS_SPEC_PREFIX) :] for line in activity if line.startswith(VIS_SPEC_PREFIX)
+        ]
+        if not specs:
+            return ""
+        blocks = "\n\n".join(f"```json-render\n{spec}\n```" for spec in specs)
+        return (
+            "\n\nRendered for you — the block below is the visualization, "
+            "ready to paste into a document as-is:\n\n" + blocks
+        )
 
     def _header(self, elapsed: float) -> str:
         return (
@@ -484,12 +599,15 @@ class AgentSpawn(SpawnRunner):
         )
 
     def _on_finally(self) -> None:
-        # ``_render_error`` doesn't call this — but the template's
-        # ``_on_finally`` fires from every exit path. The sandbox's
-        # ``finalize()`` is idempotent, so a second call after a
-        # success path's ``format_result`` already finalized is safe.
-        # For the error paths, this is the only finalize.
-        pass
+        # The template's ``finally`` fires this from every exit path,
+        # including cancellation — which is the only path where nothing
+        # else finalizes, and so the one that used to leak the worktree
+        # and its branch. ``format_result`` (success) and
+        # ``_render_error`` (timeout / exception) have already finalized
+        # by the time we get here; ``finalize()`` is documented
+        # idempotent and exception-safe, so the second call is a no-op.
+        if self._sandbox is not None:
+            self._sandbox.finalize()
 
     def _timeout_message(self) -> str:
         return (
@@ -577,31 +695,47 @@ class TeamSpawn(SpawnRunner):
         run — without it, broadcast_* / single_specialist_* cases
         hit "No runs found for run ID …".
         """
+        return self.build_team(
+            pool=self._pool,
+            settings=self._settings,
+            names=self._names,
+            mode=self._mode_raw,
+            depth=self._current_depth + 1,
+            deps=self._deps,
+        )
+
+    @staticmethod
+    def build_team(
+        *, pool: Any, settings: Any, names: list[str], mode: str, depth: int, deps: SpawnDeps
+    ) -> SubTeamBuildResult:
+        """The Agno team a ``spawn_team`` call runs — also how a team a
+        restart cut off is rebuilt to be continued
+        (``backend/cold_spawn_resume.py``)."""
         members = []
-        for name in self._names:
+        for name in names:
             try:
-                members.append(copy.copy(self._pool.get(name)))
+                members.append(copy.copy(pool.get(name)))
             except KeyError as e:
                 return SubTeamBuildResult(team=None, mode=None, error=str(e))
 
-        mode = TeamMode.coerce_or_default(self._mode_raw)
-        team_model = self._deps.model_registry_factory(self._settings).get_model()
+        team_mode = TeamMode.coerce_or_default(mode)
+        team_model = deps.model_registry_factory(settings).get_model()
         team_kwargs: dict[str, Any] = {
-            "name": f"sub-team-depth-{self._current_depth + 1}",
-            "mode": mode.value,
+            "name": f"sub-team-depth-{depth}",
+            "mode": team_mode.value,
             "model": team_model,
             "members": members,
             "markdown": True,
         }
         # Public accessor — replaces the ex ``getattr(pool, "_db")``.
-        pool_db = self._pool.db
+        pool_db = pool.db
         if pool_db is not None:
             team_kwargs["db"] = pool_db
-        if mode is TeamMode.TASKS:
-            team_kwargs["max_iterations"] = self._settings.orchestration.max_task_iterations
+        if team_mode is TeamMode.TASKS:
+            team_kwargs["max_iterations"] = settings.orchestration.max_task_iterations
 
         return SubTeamBuildResult(
-            team=self._deps.team_factory(**team_kwargs), mode=mode.value, error=None
+            team=deps.team_factory(**team_kwargs), mode=team_mode.value, error=None
         )
 
     async def _execute(self) -> tuple[str, list[str]]:

@@ -71,13 +71,16 @@ _TOP_LEVEL_KEY = re.compile(r"^([a-z][a-z0-9_]*):", re.M)
 #: * `ignite-ember` and `Ignite Ember` — the GitHub org and the company;
 #: * `ember-code` / `ember-server` / `ember-iac` — sibling repository
 #:   directory names, and `ember_code` the Python package;
+#: * `ember-dev-…`, `ember-stage-…`, `ember-prod-…` — Google Cloud
+#:   resource names (projects, registries, service accounts) that ember-iac
+#:   created and docs must quote exactly;
 #: * `.ember` — the previous configuration directory, still read when
 #:   the current one is absent, so a document explaining that has to be
 #:   able to name it.
 #:
 #: A bare "ember" anywhere else is not.
 _LEGITIMATE = re.compile(
-    r"ember[-_](?:code|server|iac)|ignite-ember|Ignite Ember|ember_code|\.ember\b"
+    r"ember[-_](?:code|server|iac)|ember-(?:dev|stage|prod|<env>)[-\w]*|ignite-ember|Ignite Ember|ember_code|\.ember\b"
 )
 _EMBER = re.compile(r"\bEmber\b|\bember\b")
 

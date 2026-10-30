@@ -23,11 +23,6 @@ TESTS_DIR = Path(__file__).parent
 #: Every environment variable that can make part of the suite dormant,
 #: with why it exists and what provides it.
 DECLARED_GATES: dict[str, str] = {
-    "NEO4J_TEST_URI": (
-        "A live Neo4j. CI provides one as a service container (see the "
-        "`test` job in ci.yml), so these DO run on every push; locally "
-        "they skip unless you point this at a database."
-    ),
     "IGNI_TEST_LLM_API_KEY": (
         "Live model calls, which cost money per run. Deliberately not "
         "in CI; run locally when touching the model layer."
@@ -40,19 +35,10 @@ DECLARED_GATES: dict[str, str] = {
         "Which model the live tests use. Read alongside the key above; "
         "absent it, those tests skip with it."
     ),
-    "NEO4J_TEST_USER": (
-        "Credentials for NEO4J_TEST_URI. CI sets them with the service "
-        "container; locally they default to neo4j/test."
-    ),
-    "NEO4J_TEST_PASSWORD": (
-        "Credentials for NEO4J_TEST_URI. CI sets them with the service "
-        "container; locally they default to neo4j/test."
-    ),
-    "IGNI_TEST_NEO4J_RUNTIME": (
-        "Spawns real Neo4j subprocesses — needs ~4 GB free RAM, which "
-        "a standard GitHub runner does not reliably have. The service "
-        "container above covers the same code paths against a database "
-        "we did not have to start ourselves."
+    "IGNI_TEST_DATABASE_URL": (
+        "A PostgreSQL server the storage tests may create and drop "
+        "databases on (tests/test_storage_backends.py). The suite runs "
+        "them on SQLite without it; CI's test-postgres job provides one."
     ),
     "IGNI_LIVE_WS": (
         "Drives the Playwright specs against a real backend over a "
@@ -123,7 +109,8 @@ def _gating_variables() -> set[str]:
     of this scanner reported ``HF_HOME`` as a gate.
     """
     found: set[str] = set()
-    for path in sorted(TESTS_DIR.rglob("test_*.py")):
+    # ``conftest.py`` too: a fixture that skips gates every test using it.
+    for path in sorted([*TESTS_DIR.rglob("test_*.py"), *TESTS_DIR.rglob("conftest.py")]):
         if path.name == Path(__file__).name:
             continue
         source = path.read_text(encoding="utf-8")
@@ -171,16 +158,3 @@ def test_every_gate_says_why():
     whether to set it, not merely that they could."""
     for gate, reason in DECLARED_GATES.items():
         assert len(reason) > 40, f"{gate}: say what it needs and why it is not on by default"
-
-
-def test_the_neo4j_gate_is_satisfied_in_ci():
-    """The specific regression this file was written for.
-
-    These tests were dormant everywhere, including CI, which is what
-    let them stay dormant. CI now runs them against a service
-    container; if that wiring is removed, this says so.
-    """
-    ci = (TESTS_DIR.parent / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
-
-    assert "NEO4J_TEST_URI" in ci, "CI no longer provides a Neo4j; 35 tests just went dormant again"
-    assert "neo4j:" in ci

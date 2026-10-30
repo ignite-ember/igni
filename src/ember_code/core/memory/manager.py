@@ -1,9 +1,19 @@
 """Memory and storage setup using Agno backends.
 
-Uses Agno's ``AsyncSqliteDb`` against the per-project ``state.db`` —
-sessions, memories, and learning data all live alongside the rest of
-the project's relational state, so switching projects gives a clean
-slate.
+The backend is chosen by ``storage.database_url``
+(:class:`~ember_code.core.db.locator.StorageLocator`):
+
+* unset (the desktop) — Agno's ``AsyncSqliteDb`` against the per-project
+  ``state.db``: sessions, memories, and learning data live alongside the
+  rest of the project's relational state, so switching projects gives a
+  clean slate;
+* a PostgreSQL URL (the cloud) — :class:`ScopedAsyncPostgresDb` on the
+  shared database, every row kept to the session's scope through Agno's
+  ``user_id`` (see that module for what this does not cover), on the
+  same async engine igni's own stores use.
+
+The one Agno db a session builds is shared by its learning machine and
+its sub-agent pool, so this is the only place one is constructed.
 
 Splitting memories+learning to the global ``ember.db`` while keeping
 sessions per-project would require two ``AsyncBaseDb`` instances and
@@ -17,8 +27,9 @@ import logging
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from ember_code.core.code_index.paths import state_db_path
 from ember_code.core.config.settings import Settings
+from ember_code.core.db.locator import StorageLocator
+from ember_code.core.db.providers import SharedStorages
 
 if TYPE_CHECKING:
     from agno.db.base import AsyncBaseDb
@@ -77,14 +88,30 @@ class StorageManager:
         """
         return cls(settings, project_dir=project_dir).create_memory()
 
+    #: Agno's table names, the same on both backends.
+    SESSION_TABLE = "ember_sessions"
+    MEMORY_TABLE = "ember_memories"
+
     def create_db(self) -> AsyncBaseDb:
-        """Create an Agno ``AsyncSqliteDb`` for agent session persistence."""
-        path = state_db_path(self.project_dir, data_dir=self.settings.storage.data_dir)
-        path.parent.mkdir(parents=True, exist_ok=True)
-        return _agno_sqlite.AsyncSqliteDb(
-            db_file=str(path),
-            session_table="ember_sessions",
-            memory_table="ember_memories",
+        """Create the Agno db for agent session persistence: SQLite on
+        the desktop, scoped PostgreSQL in the cloud."""
+        storage = StorageLocator.from_settings(self.settings)
+        url = storage.project_url(self.project_dir)
+        path = url.file
+        if path is not None and not storage.shared:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            return _agno_sqlite.AsyncSqliteDb(
+                db_file=str(path),
+                session_table=self.SESSION_TABLE,
+                memory_table=self.MEMORY_TABLE,
+            )
+        # A shared database: its dialect's Agno storage, kept to this
+        # scope's rows (``core/db/providers.py``).
+        return SharedStorages.for_url(url).agno_db(
+            url=url,
+            scope=storage.scope(self.project_dir),
+            session_table=self.SESSION_TABLE,
+            memory_table=self.MEMORY_TABLE,
         )
 
     def create_memory(self) -> MemoryManager | None:

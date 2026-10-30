@@ -247,25 +247,12 @@ igni includes a built-in vector knowledge base powered by ChromaDB and a custom 
 
 A custom Agno `Embedder` that calls the igni server's `/v1/embeddings` endpoint, proxying to a text2vec-transformers model (384 dimensions). This keeps embedding generation server-side — no local GPU required.
 
-### KnowledgeManager
+### Documents
 
-Creates an Agno `Knowledge` instance backed by ChromaDB. Manages document ingestion, search, and status. All data models are Pydantic: `KnowledgeAddResult`, `KnowledgeSearchResponse`, `KnowledgeFilter`, `KnowledgeStatus`.
-
-```yaml
-# .igni/config.yaml
-knowledge:
-  enabled: true
-  collection_name: "my_project"
-```
-
-There is no `embedder` key. This example carried one, naming a cloud
-embedder that does not exist either, and `KnowledgeConfig` has no such
-field — embeddings are local
-(all-MiniLM-L6-v2, see `src/ember_code/core/code_index/embedder.py`) and
-not selectable. The real fields are `enabled`, `collection_name`,
-`auto_sync`, `max_results`, `share` and `share_file`.
-
-Add content via `/knowledge add <url|path|text>`, search with `/knowledge search <query>`. Agents can search the knowledge base automatically during execution.
+The document store is the Artifacts extension (igni__artifacts), not part
+of the host: its tools reach its own agents over MCP, and the prompt's
+document sections are switched on by what it declares while it runs
+(`core/prompts/conditionals.py`).
 
 ## Learning & Reasoning
 

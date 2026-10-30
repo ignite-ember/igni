@@ -14,7 +14,7 @@ from typing import TYPE_CHECKING, Any
 import yaml
 from pydantic import BaseModel, model_validator
 
-from ember_code.core.paths import CONFIG_DIR
+from ember_code.core.paths import CONFIG_DIR, home_config_dir
 
 if TYPE_CHECKING:
     from ember_code.core.plugins.installer import PluginError, PluginInstaller
@@ -125,10 +125,15 @@ class GroupPolicyEntry(BaseModel):
     cache treats the entry as "install this plugin from this git URL"
     (via :class:`PluginInstaller`) rather than "write this YAML file
     to disk". The cache also takes them on other kinds for forward
-    compatibility, but the install path only fires for ``plugins``.
+    compatibility.
+
+    There is no ``extensions`` kind. An extension reaches a machine
+    from its service through igni server (its ``docs/service-identity.md``
+    §8), never from a group's policy; an entry of that kind is
+    ignored with a warning.
     """
 
-    kind: str  # agents | mcps | plugins | settings
+    kind: str  # agents | mcps | plugins | settings | hooks | …
     entry_name: str
     content: str
     content_type: str  # markdown | yaml | json
@@ -375,7 +380,7 @@ class GroupPolicyCache:
         If ``o.source_url`` is set, defer to :class:`PluginInstaller`,
         which clones to ``<data_dir>/group-policy/plugins/<name>``.
         On install failure (``GitError`` / network / bad manifest /
-        already installed by another group) we log and continue —
+        already installed) we log and continue —
         one bad plugin must not abort the rest of the pack.
 
         If ``source_url`` is empty, fall back to writing the entry's
@@ -412,7 +417,7 @@ class GroupPolicyCache:
             )
         except PluginError as exc:
             # ``PluginError`` covers manifest-missing, already
-            # installed by another group, etc. Treat "already
+            # installed, etc. Treat "already
             # installed" as success — the installer is idempotent
             # at the manifest level, not at the URL level.
             msg = str(exc).lower()
@@ -501,8 +506,20 @@ class GroupPolicyCache:
             elif o.kind == "plugins":
                 self._materialize_plugin(o)
                 active["plugins"].add(o.entry_name)
+            elif o.kind == "extensions":
+                # Withdrawn: extensions come from their services
+                # through igni, and a policy is somebody else deciding
+                # what runs on this machine. Said, so an admin whose
+                # pack still carries one learns why nothing arrives.
+                logger.warning(
+                    "Group policy entry %r is an extension, and a group policy "
+                    "no longer installs extensions — they arrive from their "
+                    "services through igni server. Ignored.",
+                    o.entry_name,
+                )
 
         self._write_hooks(hooks)
+        self._write_settings(pack)
         self._prune(active)
 
         meta = {
@@ -515,6 +532,142 @@ class GroupPolicyCache:
             "theme": pack.theme,
         }
         (self._cache_dir / "pack_meta.json").write_text(json.dumps(meta), encoding="utf-8")
+
+    #: Where the pack's ``settings`` entries are persisted, merged.
+    SETTINGS_FILE = "group_settings.json"
+
+    def _write_settings(self, pack: GroupPolicyPack) -> None:
+        """Persist the pack's merged ``settings`` entries.
+
+        Every other kind owns files and is written above; ``settings`` fell off
+        the end of that if/elif and was never written anywhere. The docstring
+        said they are "merged as config rather than materialised at all", which
+        is true of the live pack and false across a restart — settings are
+        loaded before the backend holds a token, so the only pack a fetcher can
+        consult at that moment is one on disk. With nothing on disk there was
+        nothing to consult, which is half of why ``GroupPolicyTier`` has never
+        run in production.
+
+        Written even when empty, and removed when the pack carries no settings,
+        so a group that *withdraws* a policy does not leave the last one in
+        force forever.
+        """
+        path = self._cache_dir / self.SETTINGS_FILE
+        merged = pack.to_settings_dict()
+        if not merged:
+            path.unlink(missing_ok=True)
+            return
+        self._cache_dir.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(merged, indent=2, sort_keys=True), encoding="utf-8")
+
+    def cached_settings(self) -> dict:
+        """The last persisted ``settings`` policy, or ``{}``.
+
+        This is the disk-backed half a ``group_policy_fetcher`` needs: settings
+        load runs before any network call is possible, so a fetcher that hits
+        the portal cannot answer in time. Unreadable or malformed cache reads
+        as no policy — a settings load must not fail because a cache file was
+        truncated by a crash.
+
+        A file that is *there* and unusable is logged, and an absent one is
+        not. Both return ``{}``, and without the distinction the logs cannot
+        tell "this person's group publishes no settings" — the ordinary case —
+        from "their policy is on disk and this process could not read it".
+        """
+        path = self._cache_dir / self.SETTINGS_FILE
+        try:
+            raw = path.read_text(encoding="utf-8")
+        except FileNotFoundError:
+            return {}
+        except OSError as exc:
+            logger.warning(
+                "group-policy settings cache %s is unreadable (%s); no org policy applied",
+                path,
+                exc,
+            )
+            return {}
+        try:
+            loaded = json.loads(raw)
+        except ValueError as exc:
+            logger.warning(
+                "group-policy settings cache %s is malformed (%s); no org policy applied",
+                path,
+                exc,
+            )
+            return {}
+        if not isinstance(loaded, dict):
+            logger.warning(
+                "group-policy settings cache %s holds %s, not an object; no org policy applied",
+                path,
+                type(loaded).__name__,
+            )
+            return {}
+        return loaded
+
+    def cached_pack(self) -> GroupPolicyPack | None:
+        """The persisted ``settings`` policy, shaped as a pack, or ``None``.
+
+        :class:`~ember_code.core.config.merge_plan.GroupPolicyTier` takes a
+        pack and asks it for :meth:`GroupPolicyPack.to_settings_dict`, so the
+        cache hands one back rather than a bare dict — one merge path, used by
+        the live pack and the cached one alike.
+
+        Only the settings survive the round trip, and that is the whole
+        contract: the file-shaped kinds were already materialised to disk by
+        :meth:`materialize` and are read by their own loaders, not by the
+        settings merge.
+
+        ``None`` means "no policy to apply" for every reason there is — no
+        cache, no settings in the group's pack, a truncated file, metadata
+        that will not parse. A caller loading settings cannot act on the
+        difference, and must not fail on any of them.
+        """
+        merged = self.cached_settings()
+        if not merged:
+            return None
+
+        meta = self.read_pack_meta() or {}
+        try:
+            return GroupPolicyPack(
+                # Identity is for the log line and the FE, not the merge —
+                # so a pack whose meta went missing still applies its
+                # settings rather than being dropped over a display string.
+                group_id=str(meta.get("group_id") or "unknown"),
+                group_name=str(meta.get("group_name") or "unknown"),
+                fetched_at=self._cached_fetched_at(meta),
+                entries=[
+                    GroupPolicyEntry(
+                        kind="settings",
+                        entry_name=self.SETTINGS_FILE,
+                        content=json.dumps(merged),
+                        content_type="json",
+                    )
+                ],
+            )
+        except Exception as exc:  # noqa: BLE001 — a bad cache is not a fatal one
+            logger.warning(
+                "group-policy settings cache in %s could not be read back as a pack "
+                "(%s); no org policy applied",
+                self._cache_dir,
+                exc,
+            )
+            return None
+
+    @staticmethod
+    def _cached_fetched_at(meta: dict) -> datetime:
+        """When the cached pack arrived, or now if the meta cannot say.
+
+        ``fetched_at`` is required by the model and used for display and
+        staleness, never by the merge — so an unparseable one falls back to
+        the current time instead of costing the group its policy.
+        """
+        raw = meta.get("fetched_at")
+        if isinstance(raw, str):
+            try:
+                return datetime.fromisoformat(raw)
+            except ValueError:
+                pass
+        return datetime.now(timezone.utc)
 
     def _write_plain(self, o: GroupPolicyEntry) -> None:
         """One entry, one file, at the path its loader looks in."""
@@ -767,3 +920,124 @@ async def refresh(
         cache_dir = Path(data_dir).expanduser() / "group-policy"
     cache = GroupPolicyCache(cache_dir=cache_dir, data_dir=data_dir, installer=installer)
     return await cache.refresh_if_stale(token, fetch, force=force)
+
+
+def group_policy_dir(data_dir: Any = None) -> Path:
+    """Where a pack is cached for this install.
+
+    The writer (:func:`refresh`, called by ``AuthController``) derives this
+    from ``settings.storage.data_dir``; the reader below has to land on the
+    same directory or it reads an empty one and reports "no policy" for a
+    group that has one. So the derivation lives here once, and both sides
+    call it.
+
+    A missing or nonsensical ``data_dir`` falls back to
+    :func:`~ember_code.core.paths.home_config_dir` — the same directory
+    ``storage.data_dir`` itself defaults to, and migration-aware, so an
+    install still on ``~/.ember`` is not told it has no policy. Anything that
+    is not a path is *ignored* rather than coerced: a caller holding a stub
+    settings object should get the default, not ``Path('<MagicMock ...>')``.
+    """
+    if isinstance(data_dir, (str, Path)) and str(data_dir).strip():
+        return Path(data_dir).expanduser() / "group-policy"
+    return home_config_dir() / "group-policy"
+
+
+class CachedSettingsFetcher:
+    """The ``group_policy_fetcher`` production hands to ``load_settings``.
+
+    Zero-argument and callable, which is the whole contract
+    :class:`~ember_code.core.config.merge_plan.GroupPolicyTier` asks for.
+
+    ## Why this reads disk instead of the portal
+
+    A settings load runs before the process holds a bearer token — the token
+    is read out of ``Settings``, and ``AuthController`` is constructed with
+    the ``Settings`` this fetcher helped build. A fetcher that called the
+    portal would therefore have nothing to authenticate with, and would make
+    every start-up wait on a network round trip that can hang.
+
+    So the fetch and the read are deliberately in different places. The fetch
+    is ``AuthController._hydrate_group_policy`` — cold start, login, and every
+    ``settings.group_policy.poll_seconds`` — which writes
+    ``group_settings.json`` through :meth:`GroupPolicyCache._write_settings`.
+    The read is here. What that buys, and what it costs:
+
+    * Offline, portal down, token expired, laptop asleep for a week: the last
+      policy that *did* arrive is still applied. For a policy, that is the
+      behaviour an admin wants — a tightening should not evaporate because the
+      network did.
+    * A policy published while igni is running reaches ``Settings`` at the
+      next start. The poll refreshes the cache within ``poll_seconds``, and
+      the file-shaped kinds (agents, hooks, MCP servers) pick it up live; the
+      settings tier is the one that waits, because ``Settings`` is built once
+      and threaded through the session.
+    * A brand-new install applies no policy on its very first run: nothing has
+      been cached yet. It applies from the second start onwards.
+
+    ## Degradation
+
+    Never raises, never blocks, never touches the network. No cache dir, no
+    group, no settings in the group's pack, a file truncated by a crash,
+    metadata that will not parse — all of them are "no policy", and the
+    settings load continues on local configuration alone.
+
+    ## Logging
+
+    One line per process, and it says which way it went: ``INFO`` naming the
+    group and the keys when a policy applies, ``DEBUG`` with the directory
+    when there is none (the ordinary case for everyone outside an org, which
+    would be noise at ``INFO``). :meth:`GroupPolicyCache.cached_settings`
+    warns separately when a cache file exists and cannot be used, so
+    "no policy published" and "policy unreadable" are distinguishable.
+
+    Memoized: the read happens once per fetcher, so a caller that builds one
+    per process pays one small read however many tiers or loads consult it.
+    """
+
+    def __init__(self, data_dir: Any = None, *, cache_dir: Path | None = None) -> None:
+        self._cache_dir = cache_dir if cache_dir is not None else group_policy_dir(data_dir)
+        self._cache = GroupPolicyCache(cache_dir=self._cache_dir)
+        self._pack: GroupPolicyPack | None = None
+        self._read = False
+
+    def __call__(self) -> GroupPolicyPack | None:
+        if not self._read:
+            self._pack = self._read_once()
+            self._read = True
+        return self._pack
+
+    def _read_once(self) -> GroupPolicyPack | None:
+        """Read the cache and say, once, what was found.
+
+        The broad ``except`` is the point of the class: this runs inside
+        ``load_settings``, on the path every session and every CLI invocation
+        takes, and there is no failure here worth refusing to start over.
+        """
+        try:
+            pack = self._cache.cached_pack()
+        except Exception as exc:  # noqa: BLE001 — settings must load regardless
+            logger.warning(
+                "group-policy cache in %s could not be read (%s); "
+                "settings loaded from local configuration only",
+                self._cache_dir,
+                exc,
+            )
+            return None
+
+        if pack is None:
+            logger.debug(
+                "no cached org group policy in %s; settings loaded from local configuration only",
+                self._cache_dir,
+            )
+            return None
+
+        logger.info(
+            "org group policy applied to settings: group %s (%s), settings %s, fetched %s, from %s",
+            pack.group_name,
+            pack.group_id,
+            ", ".join(sorted(pack.to_settings_dict())) or "(none)",
+            pack.fetched_at.isoformat(),
+            self._cache_dir,
+        )
+        return pack

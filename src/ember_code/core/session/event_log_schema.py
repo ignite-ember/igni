@@ -1,7 +1,6 @@
 """Typed schema for the per-session append-only event log.
 
-Complements the code-index typed-op pattern (see
-``core/code_index/delta/ops.py``): every log entry is a Pydantic
+Every log entry is a Pydantic
 model with explicit fields, not a free-form ``dict[str, Any]``.
 
 Wire format is still ``dict`` — persistence.py stores the log in

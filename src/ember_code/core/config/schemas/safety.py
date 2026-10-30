@@ -15,8 +15,21 @@ _DEFAULT_PROTECTED_PATHS: tuple[str, ...] = (
     ".env.*",
     "*.pem",
     "*.key",
+    "*.p12",
+    "*.pfx",
     "credentials.*",
+    "credentials.json",
     "secrets.*",
+    # Private keys and credential/auth stores: never written to by ordinary work.
+    "id_rsa",
+    "id_dsa",
+    "id_ecdsa",
+    "id_ed25519",
+    ".netrc",
+    ".npmrc",
+    ".pypirc",
+    ".git-credentials",
+    "service-account*.json",
 )
 
 _DEFAULT_BLOCKED_COMMANDS: tuple[str, ...] = (
@@ -36,8 +49,25 @@ _DEFAULT_CONFIRM_COMMANDS: tuple[str, ...] = (
 )
 
 
+class BypassGuardConfig(BaseModel):
+    """``safety.bypass_guard``: Bypass mode's last check — see ``core/hooks/bypass_guard.py``."""
+
+    enabled: bool = True
+    #: Laya probability at which a call is put to the person.
+    threshold: float = 0.75
+    #: Off: rules only, no model loaded.
+    use_model: bool = True
+    #: Ask the session's model what a stopped call would do, and show that
+    #: in the dialog once it answers. Off: the stock reason only.
+    explain: bool = True
+    #: Seconds to wait for that answer before keeping the stock reason.
+    explain_timeout: float = 30.0
+
+
 class SafetyConfig(BaseModel):
     protected_paths: list[str] = Field(default_factory=lambda: list(_DEFAULT_PROTECTED_PATHS))
     blocked_commands: list[str] = Field(default_factory=lambda: list(_DEFAULT_BLOCKED_COMMANDS))
     max_file_size_kb: int = 500
     require_confirmation: list[str] = Field(default_factory=lambda: list(_DEFAULT_CONFIRM_COMMANDS))
+    #: Bypass mode's last check — see ``core/hooks/bypass_guard.py``.
+    bypass_guard: BypassGuardConfig = Field(default_factory=BypassGuardConfig)

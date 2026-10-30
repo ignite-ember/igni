@@ -8,10 +8,10 @@ matching :class:`UpdateCacheEntry`) to avoid hitting the network
 on every session; the TTL is configurable via
 ``update_check_ttl`` in settings.
 
-**Set ``update_check_ttl: 0`` to disable it entirely.** An air-gapped
-deployment should: this is the only unconfigured outbound request the
-CLI makes on an ordinary run, and until that switch existed there was
-no way to stop it.
+**Set ``update_check_ttl: 0`` to disable it entirely**, or
+``air_gapped: true``, which disables it along with every other
+outbound flow. An air-gapped deployment should set the second: until
+the first existed there was no way to stop this request.
 
 Architecture — everything is on :class:`UpdateChecker`:
 
@@ -45,6 +45,7 @@ import httpx
 from pydantic import ValidationError
 
 from ember_code import __version__
+from ember_code.core.activity.http import busy_call
 from ember_code.core.config.settings import Settings, load_settings
 from ember_code.core.paths import CONFIG_DIR
 from ember_code.core.utils.update_checker_schemas import (
@@ -197,7 +198,10 @@ class UpdateChecker:
         # the customer's network, and the claim carries the GDPR position.
         # ``0`` now means off, matching the retention settings where 0
         # means the feature does nothing.
-        if ttl <= 0:
+        #
+        # ``air_gapped`` is the same answer for a whole deployment: PyPI is
+        # outside its network whatever the TTL says.
+        if settings.air_gapped or ttl <= 0:
             return UpdateInfo(available=False, current_version=current)
 
         # Cache lane
@@ -217,7 +221,10 @@ class UpdateChecker:
         # Network lane
         pypi_url = f"https://pypi.org/pypi/{self._package.name}/json"
         try:
-            async with httpx.AsyncClient(timeout=self._timeout) as client:
+            async with (
+                busy_call("update-check"),
+                httpx.AsyncClient(timeout=self._timeout) as client,
+            ):
                 resp = await client.get(pypi_url)
                 resp.raise_for_status()
                 payload = resp.json()

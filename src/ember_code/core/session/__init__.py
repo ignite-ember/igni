@@ -2,9 +2,6 @@
 
 from ember_code.core.session.cloud_auth import SessionCloudAuth
 from ember_code.core.session.cloud_catalog import CloudModelCatalog
-from ember_code.core.session.codeindex_availability import (
-    CodeIndexAvailabilityRefresher,
-)
 from ember_code.core.session.compaction import (
     CompactionCoordinator,
     ContextBreakdownReporter,
@@ -14,7 +11,6 @@ from ember_code.core.session.core import Session
 from ember_code.core.session.event_log import SessionEventLog
 from ember_code.core.session.identity import SessionIdentity
 from ember_code.core.session.interactive import run_session_interactive
-from ember_code.core.session.knowledge_ops import SessionKnowledgeManager
 from ember_code.core.session.learning_ops import SessionLearningManager
 from ember_code.core.session.loop_ops import LoopController
 from ember_code.core.session.mcp_ops import McpLifecycleCoordinator, McpLifecycleDeps
@@ -60,7 +56,6 @@ from ember_code.core.session.tool_hook_factory import ToolEventHookFactory
 
 __all__ = [
     "CloudModelCatalog",
-    "CodeIndexAvailabilityRefresher",
     "CompactResult",
     "CompactionCoordinator",
     "ContextBreakdown",
@@ -94,7 +89,6 @@ __all__ = [
     "SessionCloudAuth",
     "SessionEventLog",
     "SessionIdentity",
-    "SessionKnowledgeManager",
     "SessionLearningManager",
     "SessionLifecyclePayload",
     "SessionMemoryManager",

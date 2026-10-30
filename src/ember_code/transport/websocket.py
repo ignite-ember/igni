@@ -28,12 +28,13 @@ import contextlib
 import logging
 import os
 import uuid
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from websockets.asyncio.server import serve
 
+from ember_code.core.layer import Layers
 from ember_code.core.paths import CONFIG_DIR
 from ember_code.protocol.messages import Message, Welcome
 from ember_code.protocol.registry import MessageRegistry
@@ -82,7 +83,6 @@ if os.environ.get("IGNI_CHUNK_TRACE") == "1" and not any(
     _trace_path = Path(
         os.environ.get("IGNI_CHUNK_TRACE_LOG") or (Path.home() / CONFIG_DIR / "chunk_trace.log")
     )
-    _trace_path.parent.mkdir(parents=True, exist_ok=True)
 
     class _FlushingFileHandler(logging.FileHandler):
         """Line-buffer after each emit so a ``tail -f`` shows chunks
@@ -95,8 +95,16 @@ if os.environ.get("IGNI_CHUNK_TRACE") == "1" and not any(
             super().emit(record)
             self.flush()
 
-    _trace_handler = _FlushingFileHandler(str(_trace_path), mode="a")
-    _trace_handler.setFormatter(logging.Formatter("%(asctime)s %(name)s %(levelname)s %(message)s"))
+    _trace_handler: logging.Handler
+    if not Layers.current().log_files():
+        # A layer that keeps no log files (the cloud's): its handler.
+        _trace_handler = Layers.current().log_handler()
+    else:
+        _trace_path.parent.mkdir(parents=True, exist_ok=True)
+        _trace_handler = _FlushingFileHandler(str(_trace_path), mode="a")
+        _trace_handler.setFormatter(
+            logging.Formatter("%(asctime)s %(name)s %(levelname)s %(message)s")
+        )
     _trace_handler._ember_chunk_trace = True  # type: ignore[attr-defined]
     logger.addHandler(_trace_handler)
     logger.setLevel(logging.DEBUG)
@@ -133,6 +141,8 @@ class WebSocketServerTransport(ListeningTransport):
         # drains it. ``None`` is the close sentinel — enqueued only by
         # ``close()``, never on client disconnect.
         self._inbox: asyncio.Queue[Message | None] = asyncio.Queue()
+        # Told ``(event, client_id)`` when a view attaches or detaches.
+        self._connection_watchers: list[Callable[[str, str], None]] = []
 
     @property
     def port(self) -> int:
@@ -162,27 +172,78 @@ class WebSocketServerTransport(ListeningTransport):
         GUI shells may open the webview long after spawning the BE."""
         await asyncio.wait_for(self._connected.wait(), timeout=timeout)
 
+    def forget_past_connections(self) -> None:
+        """Clients that came and went no longer count: the next is the first.
+
+        :meth:`wait_for_connection` waits again and the event sequence
+        starts over — for a connection made only to exercise the path
+        (the cloud's warm base practises its first answer). Nothing
+        changes while a client is attached.
+        """
+        if self._conns:
+            return
+        self._connected.clear()
+        self._event_seq = 0
+
+    #: The header a platform's own connection carries (``X-Igni-Gateway: control``).
+    #: In the cloud the node agent adds it to the gateway's control streams and
+    #: strips it from every other, so the connection's own request says it.
+    CONTROL_HEADER = "X-Igni-Gateway"
+    CONTROL_VALUE = "control"
+
+    @classmethod
+    def is_control(cls, conn: Any) -> bool:
+        request = getattr(conn, "request", None)
+        headers = getattr(request, "headers", None)
+        if headers is None:
+            return False
+        return str(headers.get(cls.CONTROL_HEADER, "")).strip().lower() == cls.CONTROL_VALUE
+
+    def watch_connections(self, watcher: Callable[[str, str], None]) -> None:
+        """Be told ``("attached" | "detached", client_id)`` for every view.
+
+        How the host object model knows a window went away: a window
+        says who it is when it reads its state, and its connection
+        closing is the only word it gets to say when it leaves.
+        """
+        self._connection_watchers.append(watcher)
+
+    def _tell_watchers(self, event: str, client_id: str) -> None:
+        for watcher in list(self._connection_watchers):
+            try:
+                watcher(event, client_id)
+            except Exception:
+                logger.exception("a connection watcher failed on %s %s", event, client_id)
+
     async def _handler(self, conn: ServerConnection) -> None:
         client_id = f"ws-{uuid.uuid4().hex[:8]}"
         client = MirroredClient(client_id=client_id, conn=conn)
         self._conns[client_id] = client
         self._connected.set()
-        logger.info("FE client %s attached (%d total)", client_id, len(self._conns))
+        control = self.is_control(conn)
         try:
             # Tell the client who it is so it can recognise its own
-            # broadcast echoes.
+            # broadcast echoes. First — before logging it, too: whatever
+            # watches attachments can wait until the client has heard
+            # back (on a cloud VM just restored, every line of code run
+            # before the welcome is memory it waits for).
             await conn.send(Welcome(client_id=client_id).model_dump_json())
+            logger.info("FE client %s attached (%d total)", client_id, len(self._conns))
+            self._tell_watchers("attached", client_id)
             async for raw in conn:
                 if isinstance(raw, bytes):
                     raw = raw.decode()
                 msg = self._registry.deserialize(raw)
                 if msg is not None:
+                    if control:
+                        msg.mark_control()
                     await self._inbox.put(msg)
         except Exception as exc:
             logger.info("WS client %s ended: %s", client_id, exc)
         finally:
             self._conns.pop(client_id, None)
             logger.info("FE client %s detached (%d left)", client_id, len(self._conns))
+            self._tell_watchers("detached", client_id)
 
     async def send(self, message: Message) -> None:
         """Broadcast to every attached client concurrently; drop dead /

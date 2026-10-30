@@ -176,8 +176,12 @@ class MarketplaceGitSubdirSource(BaseModel):
     sha: str | None = None
 
 
-class MarketplacePluginEntry(BaseModel):
+class MarketplaceCatalogEntry(BaseModel):
     """One row in a marketplace's catalog.
+
+    The question it answers: *where do I clone this from, and which
+    part of it do I want?* :meth:`resolved_source` is the fifty lines
+    that answer it.
 
     Mirrors Claude Code's ``marketplace.json#plugins[*]`` schema.
     ``source`` is a discriminated union over the three supported
@@ -261,8 +265,19 @@ class MarketplacePluginEntry(BaseModel):
         return None
 
 
+class MarketplacePluginEntry(MarketplaceCatalogEntry):
+    """A ``plugins[*]`` row — agents, skills, hooks, prompts."""
+
+
 class MarketplaceCatalog(BaseModel):
-    """The ``.claude-plugin/marketplace.json`` shape."""
+    """The ``.claude-plugin/marketplace.json`` shape.
+
+    Plugins only. Extensions have no marketplace: they reach a
+    machine from their services through igni server
+    (igni server's ``docs/service-identity.md`` §8). A catalog that still carries
+    an ``extensions`` array parses — ``extra="allow"`` keeps it — and
+    nothing reads it.
+    """
 
     model_config = ConfigDict(extra="allow")
 
@@ -290,6 +305,19 @@ class MarketplaceEntry(BaseModel):
         Encapsulated so the timestamp shape has one owner."""
         self.cached = catalog
         self.last_fetched = datetime.now(timezone.utc).isoformat(timespec="seconds")
+
+    def fetched_within(self, seconds: float, *, now: datetime | None = None) -> bool:
+        """Whether the cached catalog was fetched less than ``seconds`` ago."""
+        if self.cached is None or not self.last_fetched:
+            return False
+        try:
+            fetched = datetime.fromisoformat(self.last_fetched)
+        except ValueError:
+            return False
+        if fetched.tzinfo is None:
+            fetched = fetched.replace(tzinfo=timezone.utc)
+        current = now if now is not None else datetime.now(timezone.utc)
+        return (current - fetched).total_seconds() < seconds
 
     def update_from_catalog(self, url: str, catalog: MarketplaceCatalog) -> None:
         """Re-add path: point the entry at a (possibly new) URL and

@@ -1,4 +1,4 @@
-"""Cloud auth RPCs — login, credential reload/clear, plan fetch.
+"""Cloud auth RPCs — login, credential reload/clear.
 
 Exposes a single class, :class:`AuthController`, constructed with
 ``(session, settings, status_provider)``:
@@ -8,16 +8,12 @@ Exposes a single class, :class:`AuthController`, constructed with
   :class:`CloudCredentials` on the session (post-login) and rebuild
   the main team.
 * :meth:`AuthController.clear_cloud_credentials` — logout inverse.
-* :meth:`AuthController.get_cloud_plan` — hit ``/portal/me`` for
-  the user's tier + org name.
 
-Wire schemas :class:`~ember_code.backend.schemas_rpc.CloudPlan` +
-:class:`~ember_code.backend.schemas_rpc.LoginResult` live in
-``schemas_rpc.py`` beside the sibling :class:`LoginStarted` — every
-backend wire shape belongs in ``schemas_*.py``. They are re-exported
-from this module to preserve the ``from ember_code.backend.server_auth
-import CloudPlan`` import path for the ``server.py`` TYPE_CHECKING
-consumer.
+Wire schema :class:`~ember_code.backend.schemas_rpc.LoginResult` lives
+in ``schemas_rpc.py`` beside the sibling :class:`LoginStarted` — every
+backend wire shape belongs in ``schemas_*.py``. It is re-exported from
+this module to preserve the ``from ember_code.backend.server_auth
+import LoginResult`` import path.
 """
 
 from __future__ import annotations
@@ -32,13 +28,17 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from ember_code.backend.schemas_rpc import CloudPlan, LoginResult
+from ember_code.core.activity import background
 from ember_code.core.auth.credentials import (
     CloudCredentials,
     Credentials,
     CredentialsStore,
 )
+from ember_code.core.auth.discovery import discover, is_safe_url
 from ember_code.core.auth.portal_client import PortalClient
 from ember_code.core.auth.schemas import JwtClaims
+from ember_code.core.config.user_config_store import UserConfigStore
+from ember_code.core.plugins.source_policy import PluginSourcePolicy
 from ember_code.protocol import messages as msg
 
 logger = logging.getLogger(__name__)
@@ -49,9 +49,8 @@ logger = logging.getLogger(__name__)
 #: startup on a slow network would undo it.
 _NEW_DIALOGUE_REVALIDATE_TIMEOUT = 3.0
 
-# Re-exported so ``from ember_code.backend.server_auth import CloudPlan``
-# keeps working (server.py TYPE_CHECKING import) — the canonical
-# definition now lives in ``schemas_rpc``.
+# Re-exported so ``from ember_code.backend.server_auth import LoginResult``
+# keeps working — the canonical definition lives in ``schemas_rpc``.
 __all__ = ["AuthController", "CloudPlan", "LoginResult"]
 
 
@@ -86,7 +85,7 @@ class _StatusForwarder:
         # Coroutine callbacks are scheduled fire-and-forget so the
         # login flow doesn't have to await status echoes.
         if asyncio.iscoroutine(result):
-            asyncio.ensure_future(result)
+            background.start(result, holder="auth", reason="a status callback")
 
 
 class AuthController:
@@ -115,7 +114,15 @@ class AuthController:
         # URLs are read once from ``settings`` and reused across
         # login / plan-fetch calls instead of threading them through
         # every free-function default.
-        self._portal = PortalClient(api_url=self._settings.api_url)
+        # ``portal_url`` is passed through rather than left to the
+        # derivation, which only rewrites host labels and so cannot
+        # express a portal that differs from the API by port. Empty
+        # keeps the derivation, which is right wherever it was right
+        # before.
+        self._portal = PortalClient(
+            api_url=self._settings.api_url,
+            portal_url=self._settings.portal_url or None,
+        )
         # One :class:`CredentialsStore` per controller so the login
         # write + the :class:`CloudCredentials` read below share a
         # single path source (previously two independent free-function
@@ -148,7 +155,12 @@ class AuthController:
             except RuntimeError:
                 loop = None
             if loop is not None:
-                loop.create_task(self._hydrate_group_policy(existing_token, force=True))
+                background.start(
+                    self._hydrate_group_policy(existing_token, force=True),
+                    holder="group-policy",
+                    reason="reading the group's policy",
+                    loop=loop,
+                )
                 self.start_group_policy_polling()
 
     def start_group_policy_polling(self) -> None:
@@ -172,7 +184,9 @@ class AuthController:
             loop = asyncio.get_running_loop()
         except RuntimeError:
             return
-        self._poll_task = loop.create_task(self._poll_group_policy(interval))
+        self._poll_task = background.daemon(
+            self._poll_group_policy(interval), name="group-policy-poll", loop=loop
+        )
 
     def stop_group_policy_polling(self) -> None:
         """Cancel the timer. Idempotent; safe on a loop that has gone."""
@@ -277,7 +291,11 @@ class AuthController:
         from ember_code.core.plugins.installer import PluginInstaller
 
         data_dir = Path(self._settings.storage.data_dir).expanduser()
-        installer = PluginInstaller(data_dir=data_dir)
+        # A group's plugin sources are the admin's, but an air-gapped install
+        # still fetches only from inside its network.
+        installer = PluginInstaller(
+            data_dir=data_dir, source_policy=PluginSourcePolicy.from_settings(self._settings)
+        )
 
         # Serialize concurrent hydrations (cold-start + login race) so
         # two parallel ``refresh`` calls don't trample each other's
@@ -391,3 +409,63 @@ class AuthController:
         if not result.ok or result.user is None:
             return None
         return CloudPlan.from_user_info(result.user)
+
+    # ── Which server this install talks to ───────────────────────────
+
+    async def discover_server(self, email: str) -> dict[str, str]:
+        """Where this address's organisation runs igni.
+
+        Read from a record the organisation publishes on its own
+        domain — see
+        :mod:`ember_code.core.auth.discovery` for why nothing
+        vendor-run is asked.
+
+        Never raises, and "nothing published" is not a failure: most
+        domains have no record, and the screen offers an address field
+        instead. ``reason`` is there for when somebody asks why.
+        """
+        found = await discover(email)
+        return {
+            "api_url": found.api_url,
+            "portal_url": found.portal_url,
+            "source": found.source,
+            "reason": found.reason,
+        }
+
+    def set_server(self, api_url: str, portal_url: str = "") -> dict[str, str]:
+        """Write the server down, so the next launch knows it.
+
+        Refused unless the URL is one discovery would have accepted.
+        This is reachable with a hand-typed address — the fallback for
+        a deployment that publishes no record — and "the user typed it"
+        is not a reason to write a plaintext host into a config file
+        that decides where sign-in codes are sent.
+
+        ``portal_url`` is optional and empty means "derive it", which
+        is right wherever the derivation was right before.
+        """
+        chosen = (api_url or "").strip().rstrip("/")
+        portal = (portal_url or "").strip().rstrip("/")
+        if not chosen:
+            return {"error": "Name the server to connect to."}
+        if not is_safe_url(chosen):
+            return {"error": f"{chosen} is not an https address."}
+        if portal and not is_safe_url(portal):
+            return {"error": f"{portal} is not an https address."}
+
+        store = UserConfigStore()
+        config = store.read()
+        config["api_url"] = chosen
+        if portal:
+            config["portal_url"] = portal
+        store.write(config)
+        # The settings object this controller was built with is the
+        # one every later call reads, so it has to learn too — a
+        # config file the running process disagrees with is the
+        # confusing half of this operation.
+        self._settings.api_url = chosen
+        if portal:
+            self._settings.portal_url = portal
+        self._portal = PortalClient(api_url=chosen, portal_url=portal or None)
+        logger.info("server set to %s", chosen)
+        return {"api_url": chosen, "portal_url": portal}

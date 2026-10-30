@@ -30,8 +30,10 @@ import logging
 from collections.abc import Awaitable, Callable
 from typing import Any
 
+from ember_code.core.activity import background
 from ember_code.core.hooks.envelope import HookEnvelope
 from ember_code.core.hooks.events import HookEvent
+from ember_code.core.hooks.extension_gate import ExtensionHookGate
 from ember_code.core.hooks.handlers import HookHandlerRegistry, MCPResolver
 from ember_code.core.hooks.matcher import HookMatcher
 from ember_code.core.hooks.merger import HookResultMerger
@@ -59,6 +61,23 @@ __all__ = [
 class HookExecutor:
     """Fan an event out to matching hooks and merge results."""
 
+    #: Events after which nothing else is guaranteed to run on this
+    #: loop, so :meth:`execute` waits for the background hooks it
+    #: just launched instead of leaving them to a later suspension
+    #: point that never comes. Measured before this existed: a
+    #: ``background: true`` SessionEnd hook never executed a single
+    #: line — ``_await_foreground`` returns without suspending when
+    #: the event has no foreground hook, so the freshly-created task
+    #: had not been scheduled once by the time ``cli._run_then_drain``
+    #: cancelled every pending task on its way out.
+    _DRAIN_EVENTS: frozenset[str] = frozenset({HookEvent.SESSION_END.value})
+
+    #: Slack added to the drain deadline on top of the slowest
+    #: registered hook's own ``timeout`` — covers process spawn and
+    #: the handler's own teardown, and bounds the wait so a hook that
+    #: ignores its timeout cannot hold shutdown open.
+    _DRAIN_SLACK_SECONDS = 1.0
+
     def __init__(
         self,
         hooks: dict[str, list[HookDefinition]],
@@ -73,6 +92,38 @@ class HookExecutor:
             mcp_resolver=mcp_resolver,
             rewake_callback=rewake_callback,
         )
+        # Strong references to the fire-and-forget tasks. asyncio only
+        # holds a weak reference to a running task, so a bare
+        # ``create_task(...)`` whose handle is discarded can be
+        # garbage-collected mid-await and vanish without a trace.
+        # Same idiom as core/scheduler/runner.py.
+        self._background: set[asyncio.Task[HookResult]] = set()
+        self._warn_unhandled_types(hooks)
+
+    def _warn_unhandled_types(self, hooks: dict[str, list[HookDefinition]]) -> None:
+        """Name every configured hook whose ``type`` no handler
+        implements, once, at construction.
+
+        ``HookDefinition.type`` is a plain ``str`` on purpose so an
+        unknown value still validates and loads — but dispatch then
+        skips it at DEBUG, which in practice means a misspelt type
+        (or ``"agent"``, which the upstream spec names and this
+        package does not implement) is a hook that appears in
+        settings, appears in the hooks panel, and never runs.
+        """
+        known = ", ".join(sorted(self._handler_registry.known_types()))
+        for event, definitions in hooks.items():
+            for hook in definitions:
+                hook_type = getattr(hook, "type", "")
+                if not hook_type or self._handler_registry.supports(hook_type):
+                    continue
+                logger.warning(
+                    "Hook on event %r declares type %r, which no handler "
+                    "implements — it will never run. Known types: %s",
+                    event,
+                    hook_type,
+                    known,
+                )
 
     def get_matching_hooks(self, event: str, target: str = "") -> list[HookDefinition]:
         """Delegate to :class:`HookRegistry`.
@@ -84,17 +135,6 @@ class HookExecutor:
         """
         return self._registry.for_event_and_target(event, target)
 
-    def has_hooks_for(self, event: HookEvent) -> bool:
-        """Fast "does anything subscribe to this event?" check.
-
-        Lets :class:`HookFirer` short-circuit before building a
-        typed payload for an event no one listens to. Reads the
-        live ``.hooks`` dict every call — a plugin that hot-reloads
-        hooks gets picked up immediately (no stale flag caching
-        at ``ToolEventHook.__init__``).
-        """
-        return bool(self.hooks.get(event.value))
-
     async def execute(
         self,
         event: str,
@@ -105,19 +145,57 @@ class HookExecutor:
 
         Foreground hooks run in parallel and are awaited — if
         ANY hook blocks (exit 2), the tool call is blocked.
-        Background hooks are fire-and-forget.
+        Background hooks are fire-and-forget, EXCEPT on the
+        terminal events in :attr:`_DRAIN_EVENTS`, where "later" is
+        never and they are drained before this returns.
         """
+        typed_payload = HookPayload.coerce(payload)
+        # Extensions that hook an event deciding nothing hear it here,
+        # wherever it fires; the deciding ones are asked where they fire,
+        # with the real values (:mod:`.extension_gate`).
+        ExtensionHookGate.tell(event, typed_payload.to_wire_dict())
         hooks = self._registry.for_event_and_target(event, target)
         if not hooks:
             return HookResult(should_continue=True)
 
-        typed_payload = HookPayload.coerce(payload)
         fg_hooks = HookRegistry.foreground(hooks)
         bg_hooks = HookRegistry.background(hooks)
 
         self._launch_background(bg_hooks, event, typed_payload)
         self._launch_rewake(fg_hooks, event, typed_payload)
-        return await self._await_foreground(fg_hooks, event, typed_payload)
+        result = await self._await_foreground(fg_hooks, event, typed_payload)
+        if event in self._DRAIN_EVENTS:
+            await self.drain_background(self._drain_deadline(hooks))
+        return result
+
+    async def drain_background(self, timeout: float) -> None:
+        """Wait up to ``timeout`` seconds for the fire-and-forget
+        tasks launched so far.
+
+        Called by :meth:`execute` for terminal events; also public so
+        a shutdown path that fires no hook of its own can still flush
+        what earlier events left running. Bounded on purpose — a hook
+        that hangs must not be able to hold the process open. Tasks
+        still running when the deadline passes are left alone (the
+        caller's own drain cancels them) and named in the log.
+        """
+        pending = {t for t in self._background if not t.done()}
+        if not pending:
+            return
+        _, still_running = await asyncio.wait(pending, timeout=timeout)
+        if still_running:
+            logger.warning(
+                "%d background hook(s) still running after %.1fs — abandoning them",
+                len(still_running),
+                timeout,
+            )
+
+    @staticmethod
+    def _drain_deadline(hooks: list[HookDefinition]) -> float:
+        """Drain budget for this event: the slowest registered hook's
+        own ``timeout`` (milliseconds in settings) plus slack."""
+        slowest_ms = max((h.timeout for h in hooks), default=0)
+        return slowest_ms / 1000 + HookExecutor._DRAIN_SLACK_SECONDS
 
     # ── Subclass override point (see tests/test_hook_events_new.py) ─
 
@@ -166,7 +244,7 @@ class HookExecutor:
         for hook in bg_hooks:
             coro = self._dispatch(hook, event, payload)
             if coro is not None:
-                asyncio.create_task(coro)
+                self._spawn(coro)
 
     def _launch_rewake(
         self,
@@ -184,7 +262,20 @@ class HookExecutor:
                 continue
             coro = self._dispatch(hook, event, payload)
             if coro is not None:
-                asyncio.create_task(coro)
+                self._spawn(coro)
+
+    def _spawn(self, coro: Awaitable[HookResult]) -> asyncio.Task[HookResult]:
+        """Schedule ``coro`` and keep a strong reference to the task.
+
+        The reference is the point: the event loop only weakly
+        references running tasks, so a discarded handle lets the
+        garbage collector take the task mid-execution. The set also
+        gives :meth:`drain_background` something to wait on.
+        """
+        task = background.start(coro, holder="hook", reason="an async hook")
+        self._background.add(task)
+        task.add_done_callback(self._background.discard)
+        return task
 
     async def _await_foreground(
         self,

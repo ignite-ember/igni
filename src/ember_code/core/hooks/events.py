@@ -26,18 +26,31 @@ class HookEvent(str, Enum):
     # (export-before-compact, conditional summarisation, etc.).
     PRE_COMPACT = "PreCompact"
     POST_COMPACT = "PostCompact"
-    # Observability for hierarchical rules loading — fired once at
-    # session init after ``load_project_context`` resolves, and from
-    # ``RulesIndex.consume_path`` when subdir / path-scoped rules
-    # surface lazily. Payload: ``{source, files: [str], bytes: int}``
-    # where ``source`` is ``"session_init"`` or ``"rules_index"``.
+    # Observability for hierarchical rules loading. One fire site:
+    # ``RulesSuffixer._emit``, after ``RulesIndex.consume_path``
+    # surfaces subdir / path-scoped rules for a path a tool just
+    # touched. Payload: ``{source: "rules_index", files: [str],
+    # bytes: int}``.
+    #
+    # ``source`` is a discriminator with one value today. A second,
+    # ``"session_init"``, was documented here and in docs/HOOKS.md
+    # but never implemented — ``SessionCore._init_project_context``
+    # builds the ``RulesIndex`` and returns without firing — so a
+    # plugin branching on it only ever saw one arm. Firing it there
+    # is a live option; until someone does, this comment and the
+    # page must not promise it.
     INSTRUCTIONS_LOADED = "InstructionsLoaded"
-    # Scheduler / loop task lifecycle. Fires from
-    # ``core/tools/schedule.py`` around scheduler-managed tasks
-    # (cron + one-shot, the surface behind ``/schedule``). Payload:
-    #   TaskCreated   → {task_id, description, scheduled_at, recurrence?}
-    #   TaskCompleted → {task_id, status: "completed"|"cancelled"|"error",
-    #                    result?, error?, duration_seconds?}
+    # Scheduler task lifecycle. Fired by
+    # ``backend/server_scheduler.py`` (``SchedulerController.
+    # _TaskHookBridge``) as the scheduler starts and finishes a due
+    # task — cron + one-shot, the surface behind ``/schedule``.
+    # Payload (see ``backend/schemas_scheduler.py``):
+    #   TaskCreated   → {session_id, task_id, description}
+    #   TaskCompleted → {session_id, task_id, description,
+    #                    status: "completed"|"error"}
+    # ``TaskCreated`` fires at task START, not at scheduling time,
+    # so there is no ``scheduled_at`` / ``recurrence`` on it, and
+    # ``TaskCompleted`` carries no result / error / duration.
     # Distinct from ``SubagentStart``/``SubagentStop`` which cover
     # within-turn agent dispatch; ``TaskCreated``/``Completed``
     # cover the longer-lived scheduled-execution layer.
@@ -58,3 +71,10 @@ class HookEvent(str, Enum):
     #   {session_id, tool_name, tool_args, rule?: str, reason?: str}
     PERMISSION_REQUEST = "PermissionRequest"
     PERMISSION_DENIED = "PermissionDenied"
+    # The agent is about to put a plan to the person (``exit_plan_mode``).
+    # Fired by ``PlanTransactionCoordinator.submit`` before the plan is
+    # stored or broadcast. Payload: ``{session_id, plan, attempt}`` —
+    # ``attempt`` counts the plans rejected since plan mode was entered.
+    # A block (exit 2, ``continue: false``) sends the plan back to the
+    # agent with the hook's message; it may submit again.
+    PLAN_SUBMIT = "PlanSubmit"

@@ -53,6 +53,9 @@ class TestBackendServerCommands:
             server._session = MagicMock()
             server._session.cloud_connected = True
             server._session.cloud_org_name = "Test Org"
+            # The header names the account, not just the org, so the
+            # status push carries the address too.
+            server._session.cloud_email = "maya@acme.test"
             server._session.last_input_tokens = 1234
             # ``Session.permission_mode_value`` is the wire-safe string
             # StatusUpdate needs — MagicMock returns another MagicMock
@@ -66,6 +69,7 @@ class TestBackendServerCommands:
         assert isinstance(status, msg.StatusUpdate)
         assert status.model == "test-model"
         assert status.cloud_connected is True
+        assert status.cloud_email == "maya@acme.test"
         assert status.cloud_org == "Test Org"
         assert status.max_context == 128_000
         assert status.context_tokens == 1234
@@ -240,15 +244,6 @@ class TestBackendServerRealConstruction:
         from ember_code.core.config.settings import load_settings
 
         settings = load_settings(project_dir=tmp_path)
-        # KB disabled so the Chroma index doesn't need to boot for
-        # this test — we're validating BackendServer wiring, not KB
-        # behaviour. Same story for other heavy subsystems that key
-        # off settings flags.
-        settings = settings.model_copy(
-            update={
-                "knowledge": settings.knowledge.model_copy(update={"enabled": False}),
-            }
-        )
 
         backend = BackendServer(settings, project_dir=tmp_path)
 
@@ -265,7 +260,7 @@ class TestBackendServerRealConstruction:
         assert status.model == settings.models.default
 
     def test_phase_methods_populate_expected_attributes(self, tmp_path):
-        """Verify each of the 9 `_init_*` phase methods populates its
+        """Verify each of the 8 `_init_*` phase methods populates its
         expected attribute set on the ``Session``. This is the smoke
         test that catches a phase method silently dropping a field
         assignment — the exact class of bug the audit's C-grade
@@ -273,7 +268,7 @@ class TestBackendServerRealConstruction:
 
         One assertion per phase method, in boot order:
         ``_init_loop_state`` → ``_init_per_session_scratch`` →
-        ``_init_knowledge`` → ``_init_codeindex`` →
+        ``_init_codeindex`` →
         ``_init_project_context`` →
         ``_init_plugins_output_styles_hooks`` →
         ``_init_agent_and_skill_pools`` →
@@ -282,11 +277,6 @@ class TestBackendServerRealConstruction:
         from ember_code.core.config.settings import load_settings
 
         settings = load_settings(project_dir=tmp_path)
-        settings = settings.model_copy(
-            update={
-                "knowledge": settings.knowledge.model_copy(update={"enabled": False}),
-            }
-        )
         backend = BackendServer(settings, project_dir=tmp_path)
         session = backend._session
 
@@ -300,7 +290,6 @@ class TestBackendServerRealConstruction:
         assert session.todo_store is not None
         assert session.plan_store is not None
         assert session.event_log == []
-        assert session._plan_mode_attempt == 0
         # BroadcastBus is composed in ``__init__`` — the class
         # invariant that replaces the old raw-list init.
         from ember_code.core.session.broadcast import BroadcastBus
@@ -308,15 +297,6 @@ class TestBackendServerRealConstruction:
         assert isinstance(session.broadcast_bus, BroadcastBus)
         assert not session.broadcast_bus.has_callbacks
         assert session.broadcast_bus.pending_count == 0
-
-        # _init_knowledge — KB disabled path yields None + ready flag set.
-        assert session.knowledge is None
-        assert session._knowledge_ready.is_set()
-
-        # _init_codeindex — CodeIndex + sync manager + availability flag.
-        assert session.code_index is not None
-        assert session.code_index_sync is not None
-        assert isinstance(session._codeindex_available, bool)
 
         # _init_project_context — project_instructions + rules_index.
         assert isinstance(session.project_instructions, str)

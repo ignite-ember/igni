@@ -6,7 +6,7 @@ inside the handler, reaching into ``session.settings`` and calling
 the free ``load_credentials`` directly. :class:`ConfigView` now
 owns every rendered field so the coordinator becomes
 ``ConfigView.from_session(session).to_command_result()`` — mirrors
-the :mod:`schemas_codeindex` pattern.
+the :mod:`schemas_context` pattern.
 
 The credentials read routes through a
 :class:`~ember_code.core.auth.credentials.CredentialsStore` (default
@@ -54,7 +54,6 @@ class ConfigView(BaseModel):
     guardrail_pii: bool
     guardrail_injection: bool
     guardrail_moderation: bool
-    knowledge_enabled: bool
     max_agents: int
     max_depth: int
     session_id: str
@@ -91,7 +90,6 @@ class ConfigView(BaseModel):
             guardrail_pii=s.guardrails.pii_detection,
             guardrail_injection=s.guardrails.prompt_injection,
             guardrail_moderation=s.guardrails.moderation,
-            knowledge_enabled=s.knowledge.enabled,
             max_agents=s.orchestration.max_total_agents,
             max_depth=s.orchestration.max_nesting_depth,
             session_id=session.session_id,
@@ -117,7 +115,6 @@ class ConfigView(BaseModel):
             f"- **Learning:** {'enabled' if self.learning_enabled else 'disabled'}\n"
             f"- **Reasoning tools:** {'enabled' if self.reasoning_enabled else 'disabled'}\n"
             f"- **Guardrails:** {guardrails_bits}\n"
-            f"- **Knowledge:** {'enabled' if self.knowledge_enabled else 'disabled'}\n"
             f"- **Compression:** enabled\n"
             f"- **Session summaries:** enabled\n"
             f"- **Max agents:** {self.max_agents}\n"

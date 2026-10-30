@@ -22,24 +22,36 @@ import {
   shouldSkipTruncateRpc,
   shellItem,
   userItem,
-  visualizationItem,
   workflowItem,
   type ChatItem,
   type OrchestrateEvent,
 } from "./chat/model";
-import { applyVisualizationDelta } from "./chat/visualizationStream";
+import {
+  applyVisualizationDelta,
+  visualizationDeltaFromPayload,
+} from "./chat/visualizationStream";
 import { nextObserverBusyState } from "./chat/observerBusy";
 import { planSessionBinding } from "./chat/sessionBinding";
+import { Arrivals } from "./chat/arrival";
 import {
   current as currentPage,
   openRoot,
   pop as popPage,
-  restore as restorePages,
-  serialise as serialisePages,
+  basePages,
   truncateTo,
+  visible as visiblePages,
   type PageKind,
   type PageRoute,
 } from "./chat/pageStack";
+import { Contributions } from "./extensions/contributions";
+import { ExtensionsPanel } from "./components/panels/ExtensionsPanel";
+import { Drawer } from "./components/panels/Drawer";
+import {
+  ExtensionPage,
+  type ExtensionSummary,
+} from "./extensions/ExtensionPage";
+import { ExtensionIndicator } from "./extensions/ExtensionIndicator";
+import { useDocumentTheme } from "./extensions/useDocumentTheme";
 import { PageContext } from "./components/PageShell";
 import { WorkflowsPage } from "./components/pages/WorkflowsPage";
 import { HelpPage } from "./components/pages/HelpPage";
@@ -54,12 +66,18 @@ import {
   shouldShowSpinner,
   type RunPhase,
 } from "./chat/runPhase";
-import { ClientStateStore, ensureClientId } from "./clientState";
+import {
+  WindowModel,
+  ensureClientId,
+  useWindowField,
+  type ComposerMode,
+  type Panel,
+} from "./clientState";
+import { useExtensionTraffic } from "./extensions/useExtensionTraffic";
 import { Virtuoso, type VirtuosoHandle } from "react-virtuoso";
 import { ChatItemView } from "./components/ChatItems";
 import { ChatSearchBar } from "./components/ChatSearchBar";
 import { Composer, type SlashCommand } from "./components/Composer";
-import { CodeIndexIndicator } from "./components/CodeIndexIndicator";
 import { GroupIndicator } from "./components/GroupIndicator";
 import { WatcherIndicator } from "./components/WatcherIndicator";
 import {
@@ -70,21 +88,24 @@ import {
 import { FPSCounterOverlay } from "./components/FPSCounter";
 import { HitlDialog, type HitlDecision } from "./components/HitlDialog";
 import {
-  ChevronIcon,
-  CloudIcon,
   FlameIcon,
   FolderIcon,
   MenuIcon,
 } from "./components/Icons";
+// Aliased: ``Icons`` exports a ``MenuIcon`` too, and that one is the
+// hamburger. This is the glyph set the panels draw from.
+import { MenuIcon as Glyph } from "@igni/ui-react";
+import { NotificationsPanel } from "./components/NotificationsPanel";
+import { unreadFor, useNotificationCounts } from "./notifications/model";
 import { ScrollIndicator } from "./components/ScrollIndicator";
+import { SignInWall } from "./components/SignInWall";
 import { Sidebar, type SessionEntry } from "./components/Sidebar";
 import { AgentsPanel } from "./components/panels/AgentsPanel";
-import { CodeIndexPanel } from "./components/panels/CodeIndexPanel";
 import { FilePreview } from "./components/FilePreview";
 import { FirstRunSetup } from "./components/FirstRunSetup";
 import { HooksPanel } from "./components/panels/HooksPanel";
-import { KnowledgePanel } from "./components/panels/KnowledgePanel";
-import { Toasts, type Toast } from "./components/Toasts";
+import { Toasts } from "./components/Toasts";
+import { HostDialog } from "./components/HostDialog";
 import { UpdatePrompt } from "./components/UpdatePrompt";
 import { RetryBanner } from "./components/RetryBanner";
 import { host } from "./lib/host";
@@ -97,25 +118,56 @@ import { LoopPanel } from "./components/panels/LoopPanel";
 import { McpPanel } from "./components/panels/McpPanel";
 import { WatcherPanel } from "./components/panels/WatcherPanel";
 import { SchedulePanel } from "./components/panels/SchedulePanel";
-import { IgniClient, pickNativeDirectory, type ConnectionState } from "./protocol/client";
-import type { HITLRequest, ServerMessage, StatusUpdate } from "./protocol/messages";
+import {
+  IgniClient,
+  pickNativeDirectory,
+  type ConnectionState,
+} from "./protocol/client";
+import type {
+  HITLRequest,
+  ServerMessage,
+  StatusUpdate,
+} from "./protocol/messages";
+import { withDetails } from "./chat/hitlDetails";
 import { countOf } from "./lib/plural";
+import { indexOfRun, runAt } from "./chat/runIndex";
+import { ExtensionNamesContext } from "./extensions/extensionNames";
+import { AccountChip } from "./components/AccountChip";
 
 /**
- * The things that are dialogs.
+ * What is open over the chat — the window model's `ui.panel`.
  *
  * Everything the app could open used to live in this one slot and
  * render as a centre-screen modal. The destinations moved out to
  * ``chat/pageStack.ts`` — they are places you browse, and a single
- * slot cannot hold a trail. What is left is what a dialog actually
- * is: pick one thing and go (``dir-picker``), get through a flow
- * (``login``), or glance at a status and act on it (``loop``).
+ * slot cannot hold a trail. What is left is one thing at a time over
+ * the chat: pick one thing and go (``dir-picker``), get through a flow
+ * (``login``), glance at what is waiting (``notifications``), or find
+ * in the conversation (``search``).
  *
  * The HITL prompt is not here either, and never was — it renders as
  * ``hitlSlot`` inside the Composer, anchored to the run it is asking
- * about.
+ * about. Dialogs that ask the person something are `ui.dialog`.
  */
-type PanelState = { kind: "none" } | { kind: "login" } | { kind: "dir-picker" };
+type PanelState =
+  | { kind: "none" }
+  | { kind: "login" }
+  | { kind: "dir-picker" }
+  | { kind: "notifications" }
+  | { kind: "search" };
+
+/** `ui.panel` as the render code below reads it. */
+function panelState(panel: Panel | null): PanelState {
+  return panel ? ({ kind: panel.kind } as PanelState) : { kind: "none" };
+}
+
+/** A composer pre-fill, split into the mode its prefix asks for — the
+ *  same rule as typing it (`/` a command, `$` a shell line). */
+function composerFrom(entry: string): { text: string; mode: ComposerMode } {
+  if (entry.startsWith("/")) return { text: entry.slice(1), mode: "command" };
+  if (entry.startsWith("$")) return { text: entry.slice(1).trimStart(), mode: "shell" };
+  return { text: entry, mode: "chat" };
+}
 
 interface UpdateInfo {
   available: boolean;
@@ -130,21 +182,25 @@ interface UpdateInfo {
  * it: places, not conversations. Three and not thirteen — the rest
  * keep their place in `TOOLS_MENU` below, and these are the ones you
  * go back to while working rather than configure once. */
-const SIDEBAR_LINKS: { kind: PageKind; label: string }[] = [
+
+const BASE_SIDEBAR_LINKS: { kind: PageKind; label: string }[] = [
   { kind: "plugins", label: "Plugins" },
   { kind: "mcp", label: "MCPs" },
-  { kind: "knowledge", label: "Knowledge" },
+  { kind: "extensions", label: "Extensions" },
 ];
 
 /** Entries for the header tools menu — each opens its feature's UI
  * directly (no slash command visible to the user). */
-const TOOLS_MENU: { label: string; command: string; desc: string }[] = [
+const BASE_TOOLS_MENU: { label: string; command: string; desc: string }[] = [
   { label: "MCP servers", command: "/mcp", desc: "connect external tools" },
-  { label: "CodeIndex", command: "/codeindex", desc: "semantic code search" },
   { label: "Agents", command: "/agents", desc: "agent pool" },
   { label: "Skills", command: "/skills", desc: "slash-command workflows" },
   { label: "Plugins", command: "/plugins", desc: "marketplaces & installs" },
-  { label: "Knowledge", command: "/knowledge", desc: "project knowledge base" },
+  {
+    label: "Extensions",
+    command: "/extensions",
+    desc: "installed extensions & their settings",
+  },
   { label: "Hooks", command: "/hooks", desc: "pre/post tool hooks" },
   { label: "Loop", command: "/loop", desc: "recurring prompt status" },
   {
@@ -175,6 +231,21 @@ const TOOLS_MENU: { label: string; command: string; desc: string }[] = [
   { label: "Help", command: "/help", desc: "all commands" },
 ];
 
+/**
+ * The app's navigation, with whatever is installed folded in.
+ *
+ * Module scope, because it outlives any one render and because the
+ * two lists above were module scope for the same reason. What is
+ * contributed to it comes from the extensions the backend reports —
+ * see the ``list_extensions`` effect below, which folds each one in
+ * as it arrives and takes it back out when it goes.
+ */
+const contributions = new Contributions(
+  BASE_SIDEBAR_LINKS,
+  BASE_TOOLS_MENU,
+  basePages,
+);
+
 /** Walk back from a ``stats`` item's index to find the assistant
  *  text that closes the same run. The inline copy-response button on
  *  the stats line copies this text. We stop at the previous user
@@ -193,27 +264,26 @@ function findAssistantTextForStats(
   return undefined;
 }
 
-/** Pretty label for ``Tier`` values from ember-server
- *  (lite / pro / max / codeindex). The DB stores lowercase, the UI
- *  wants title-case; ``codeindex`` is the special-purpose CodeIndex-
- *  only tier so we spell it out for clarity. */
-function formatPlanName(tier: string): string {
-  switch (tier.toLowerCase()) {
-    case "lite":
-      return "Lite";
-    case "pro":
-      return "Pro";
-    case "max":
-      return "Max";
-    case "codeindex":
-      return "CodeIndex";
-    default:
-      return tier;
-  }
-}
-
 export default function App() {
   const client = useMemo(() => new IgniClient(), []);
+  // This window's model: the page it is on, the panel over its chat,
+  // its sidebar, the preview, the selection, the composer, toasts, the
+  // dialog, where the transcript is, focus, and the session it shows.
+  // The host owns it (``host.ui`` to an extension); the views below
+  // bind to it and write to it, and keep no copy of their own. See
+  // ``clientState.ts``.
+  //
+  // Keyed by ``host.viewKey`` so two Tauri windows — which share an
+  // origin, and so share localStorage — are two distinct windows with
+  // two distinct models, rather than one fighting itself.
+  const windowModel = useMemo(
+    () =>
+      new WindowModel(client, ensureClientId(host.viewKey), 250, host.kind, {
+        // Until the model answers: a wide window with its sidebar out.
+        sidebar: { open: window.innerWidth > 700, width: null, section: null },
+      }),
+    [client],
+  );
   const [conn, setConn] = useState<ConnectionState>("connecting");
   const [items, setItems] = useState<ChatItem[]>([]);
   // Mirror of ``items`` for callbacks whose deps don't include
@@ -244,22 +314,70 @@ export default function App() {
   const [runPhase, setRunPhaseState] = useState<RunPhase>("idle");
   const [status, setStatus] = useState<StatusUpdate | null>(null);
   const [hitl, setHitl] = useState<HITLRequest[] | null>(null);
-  const [panel, setPanel] = useState<PanelState>({ kind: "none" });
-  // Where this window is. Empty means the chat is showing. Persisted
-  // per window under PAGE_KEY — see the hydrate block below.
-  const [pages, setPages] = useState<PageRoute[]>([]);
-  const [composerSeed, setComposerSeed] = useState<{
-    text: string;
-    n: number;
-  } | null>(null);
+  const panel = panelState(useWindowField(windowModel, "panel"));
+  const setPanel = useCallback(
+    (next: PanelState) =>
+      windowModel.write("panel", next.kind === "none" ? null : { kind: next.kind }),
+    [windowModel],
+  );
+  // Where this window is: ``ui.route``. Empty means the chat is showing.
+  const route = useWindowField(windowModel, "route");
+  /**
+   * The installed extensions, as the backend reports them.
+   *
+   * Held in state as well as folded into {@link contributions}
+   * because the nav only needs the labels and a page needs the rest
+   * — the origin to frame, the grant list, the state and its reason.
+   */
+  const [extensions, setExtensions] = useState<ExtensionSummary[]>([]);
+  // Read by the message handler, which is not rebuilt when this changes.
+  const extensionsRef = useRef(extensions);
+  extensionsRef.current = extensions;
+  // Names to label an extension's chat messages with — they carry its id.
+  const extensionNames = useMemo(
+    () => new Map(extensions.map((e) => [e.id, e.name])),
+    [extensions],
+  );
+  // The part of the route this window can draw — an extension's page
+  // appears once its extension is listed.
+  const pages = useMemo(
+    () => visiblePages(route, contributions.pages),
+    // ``extensions`` is what changes ``contributions.pages``.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [route, extensions],
+  );
+  // Followed rather than read once: the app keeps its theme on the
+  // document, so without this an extension frame would be told the
+  // theme at mount and never again.
+  const frameTheme = useDocumentTheme();
+  // Put text in the composer and hand the person the caret: a skill
+  // picked from a panel, a selection sent from the IDE. The text is the
+  // model's (``ui.composer``); the caret is the editor's, reached
+  // through the handle the Composer fills in.
+  const composerFocus = useRef<(() => void) | null>(null);
+  const seedComposer = useCallback(
+    (entry: string) => {
+      windowModel.write(
+        "composer",
+        { ...composerFrom(entry), attachments: [] },
+        { force: true },
+      );
+      composerFocus.current?.();
+    },
+    [windowModel],
+  );
   // Plain-browser fallback for host.openFile — bridge-equipped hosts
-  // (Tauri / VSCode / JetBrains) handle the open themselves and never
-  // set this. Tracked at the App level so any panel can call
-  // host.openFile and get a consistent result.
-  const [previewPath, setPreviewPath] = useState<string | null>(null);
+  // (Tauri / VSCode / JetBrains) handle the open themselves. The
+  // preview is ``ui.preview``, so an extension can open one too.
+  const preview = useWindowField(windowModel, "preview");
   useEffect(() => {
-    host.setPreviewFallback((p) => setPreviewPath(p));
-  }, []);
+    host.setPreviewFallback((p) => windowModel.write("preview", { path: p }));
+    // A file opened — in the editor or in the preview — is the file
+    // picked: ``ui.selection.file``.
+    return host.onOpen((p) =>
+      windowModel.write("selection", { ...windowModel.get("selection"), file: p }),
+    );
+  }, [windowModel]);
 
   // Host-aware CSS hook. The Tauri shell sets these via its
   // ``initialization_script`` at page-load time, but Tauri 2 doesn't
@@ -309,13 +427,10 @@ export default function App() {
             ? `:${line}${endLine != null && endLine !== line ? `-${endLine}` : ""}`
             : "";
         const ref = path ? `@${path}${range}\n` : "";
-        setComposerSeed({
-          text: `${ref}\`\`\`\n${text}\n\`\`\``,
-          n: Date.now(),
-        });
+        seedComposer(`${ref}\`\`\`\n${text}\n\`\`\``);
       } else if (type === "ember:attachFile") {
         const path = payload.path ? String(payload.path) : null;
-        if (path) setComposerSeed({ text: `@${path}`, n: Date.now() });
+        if (path) seedComposer(`@${path}`);
       } else if (type === "ember:menu") {
         // Native-menu items routed through the host bridge. Tauri
         // and (future) JetBrains menu hooks both emit these. ``id``
@@ -402,15 +517,24 @@ export default function App() {
   // Toast stack — non-conversational notifications (scheduled tasks
   // completing, background runs finishing) land here so they survive
   // conversation switches and don't pollute the active chat. Persists
-  // top-right; auto-dismiss inside each card.
-  const [toasts, setToasts] = useState<Toast[]>([]);
-  const toastIdRef = useRef(1);
-  const addToast = useCallback((toast: Omit<Toast, "id">) => {
-    setToasts((prev) => [...prev, { id: toastIdRef.current++, ...toast }]);
-  }, []);
-  const dismissToast = useCallback((id: number) => {
-    setToasts((prev) => prev.filter((t) => t.id !== id));
-  }, []);
+  // top-right; auto-dismiss inside each card. ``ui.toasts``: an
+  // extension's toasts arrive in the same stack.
+  const toasts = useWindowField(windowModel, "toasts");
+  const addToast = useCallback(
+    (toast: { title: string; body?: string; target?: PageRoute }) => {
+      windowModel.toast({
+        text: toast.title,
+        kind: "info",
+        body: toast.body ?? null,
+        target: toast.target ?? null,
+      });
+    },
+    [windowModel],
+  );
+  const dismissToast = useCallback(
+    (id: string) => windowModel.dismissToast(id),
+    [windowModel],
+  );
   // Single dispatch for user-facing notifications. Tries the native
   // host bridge first (Tauri → macOS Notification Center; VSCode →
   // ``window.showInformationMessage``; JetBrains → balloon). Only
@@ -420,7 +544,8 @@ export default function App() {
     async (payload: {
       title: string;
       body?: string;
-      onClick?: () => void;
+      /** Where clicking the in-app toast goes. */
+      target?: PageRoute;
       data?: Record<string, unknown>;
     }) => {
       const delivered = await host.notify({
@@ -432,17 +557,20 @@ export default function App() {
       addToast({
         title: payload.title,
         body: payload.body,
-        onClick: payload.onClick,
+        target: payload.target,
       });
     },
     [addToast],
   );
-  // In-app modal sheet for the update action surface. The
-  // alerting surface is the host OS notification — see
-  // ``announceUpdate``. ``null`` means no update pending or the
-  // user picked "Later".
+  // The update waiting, as the last check reported it. The in-app
+  // sheet for acting on it is a dialog (``ui.dialog``); the alerting
+  // surface is the host OS notification — see ``announceUpdate``.
   const [pendingUpdate, setPendingUpdate] = useState<UpdateInfo | null>(null);
-  const [showUpdateModal, setShowUpdateModal] = useState(false);
+  const dialog = useWindowField(windowModel, "dialog");
+  const showUpdate = useCallback(
+    (info: UpdateInfo) => windowModel.openDialog({ kind: "update", ...info }),
+    [windowModel],
+  );
   // Ref to the latest ``checkForUpdate`` closure so the once-mounted
   // ``ember-host`` listener (deps ``[]``) can call the current version.
   const checkForUpdateRef = useRef<
@@ -451,7 +579,7 @@ export default function App() {
   const announceUpdate = useCallback((info: UpdateInfo) => {
     if (info.available) {
       setPendingUpdate(info);
-      setShowUpdateModal(true);
+      showUpdate(info);
       // OS-level alert so the user sees it even if the app is
       // backgrounded. The modal sheet takes over once they
       // refocus the window.
@@ -460,7 +588,7 @@ export default function App() {
         body: `igni ${info.latest_version} is ready to install.`,
       });
     }
-  }, []);
+  }, [showUpdate]);
   // Re-runnable update check used by the native "Check for Updates…"
   // menu item and the version chip click. ``silent=false`` surfaces
   // an OS notification when there's no update, so the menu click
@@ -515,49 +643,57 @@ export default function App() {
       download_url: "https://github.com/ignite-ember/igni/releases/latest",
     });
   }, [announceUpdate]);
-  // Per-client UI state — hydrated from the BE on connect. Lives in
-  // a memoized store so all three keys (session-id, sidebar, draft)
-  // round-trip the same way regardless of host (browser / VSCode /
-  // JetBrains). See clientState.ts.
-  //
-  // Keyed by ``host.viewKey`` so two Tauri windows — which share an
-  // origin, and so share localStorage — are two distinct clients
-  // bound to two distinct sessions, rather than one client fighting
-  // itself over the session binding and the composer draft.
-  const clientState = useMemo(
-    () => new ClientStateStore(client, ensureClientId(host.viewKey)),
-    [client],
-  );
-  const SESSION_KEY = "session-id";
-  // The folder the stored session belongs to. Stored so a window
-  // label reused across app runs can tell "my session" from "some
-  // other repo's session that had this label last time".
-  const PROJECT_DIR_KEY = "project-dir";
-  // Which page this window is on. Per-window because it is keyed by
-  // client_id like everything else here: two windows on one session
-  // navigate independently, and a reused ``w-2`` label comes back
-  // where it left off.
-  const PAGE_KEY = "page";
-  const SIDEBAR_KEY = "sidebar-open";
   // The folder this window was opened onto, from New Window. Empty
   // for the first window, which uses the backend's default session.
   const windowProjectDir = useMemo(
     () => new URLSearchParams(window.location.search).get("dir") ?? "",
     [],
   );
-  const [sidebarOpen, setSidebarOpenState] = useState(window.innerWidth > 700);
+  // A page to open, from the link that opened this window
+  // (`?open=<page>&…`, see `chat/arrival.ts`) — an extension's service
+  // links to its own page this way. Read once: following a link is an
+  // arrival, and re-reading the URL later would reopen the page every
+  // time the app re-rendered.
+  const arrival = useMemo(() => Arrivals.fromSearch(window.location.search), []);
+
+  // And taken out of the address bar once it has been read — after
+  // sign-in, because before it the link is still where this window is
+  // going.
+  //
+  // A link is an arrival, not a place. Left in the URL it went on
+  // being true for ever: every reload read it again and put the window
+  // back on that page, so navigating anywhere else and refreshing
+  // undid the navigation. ``replaceState`` rather than a push: the URL
+  // with the parameter is not a step in this window's history, it is
+  // how the window opened. ``dir`` stays: it says which folder this
+  // window belongs to, which stays true for as long as the window does.
+  useEffect(() => {
+    if (!arrival || !status?.cloud_email) return;
+    const url = new URL(window.location.href);
+    window.history.replaceState(
+      null,
+      "",
+      `${url.pathname}${Arrivals.withoutArrival(url.search)}${url.hash}`,
+    );
+  }, [arrival, status?.cloud_email]);
+  const sidebar = useWindowField(windowModel, "sidebar");
+  const sidebarOpen = sidebar.open;
   const setSidebarOpen = useCallback(
     (next: boolean | ((prev: boolean) => boolean)) => {
-      setSidebarOpenState((prev) => {
-        const resolved = typeof next === "function" ? next(prev) : next;
-        clientState.set(SIDEBAR_KEY, String(resolved));
-        return resolved;
-      });
+      const current = windowModel.get("sidebar");
+      const resolved = typeof next === "function" ? next(current.open) : next;
+      windowModel.write("sidebar", { ...current, open: resolved });
     },
-    [clientState],
+    [windowModel],
   );
   const [sessions, setSessions] = useState<SessionEntry[]>([]);
-  const [sessionId, setSessionId] = useState("");
+  // The session this window shows — ``sessions.current`` to an
+  // extension. The model's, so an extension can move the window.
+  const sessionId = useWindowField(windowModel, "session");
+  const setSessionId = useCallback(
+    (id: string) => windowModel.write("session", id),
+    [windowModel],
+  );
   const [skills, setSkills] = useState<SlashCommand[]>([]);
   // What the backend says exists. `null` until the RPC answers (or
   // for a backend too old to have it), which is the signal for the
@@ -570,15 +706,53 @@ export default function App() {
     null,
   );
   const [accountMenu, setAccountMenu] = useState(false);
-  // Plan tier (``lite`` / ``pro`` / ``max`` / ``codeindex``) fetched
-  // on demand whenever the account popover opens — the BE calls
-  // ``/portal/me`` on the cloud and returns the tier from the user's
-  // active org membership. Refreshing on each open ensures the UI
-  // reflects seat-tier reassignments without an app restart.
-  const [cloudPlan, setCloudPlan] = useState<string | null>(null);
-  // Live draft from another attached view (mirroring).
-  // The directory this session is locked to (tools + shell cwd).
-  const [projectDir, setProjectDir] = useState("");
+  // The signed-in person's display name, fetched when the account
+  // popover opens (the BE proxies ``/portal/me``). Billing tiers are
+  // retired, so nothing else from that call is shown.
+  const [cloudName, setCloudName] = useState<string>("");
+  // Best thing we can currently say about who is signed in, in
+  // descending order of how much it sounds like a person. The org is
+  // last because it is not a person at all — it was the only thing
+  // this header ever showed, which is the bug.
+  const accountName =
+    cloudName || status?.cloud_email || status?.cloud_org || "Account";
+
+  // ── Signed in, or nothing ───────────────────────────────────────
+  //
+  // igni is self-hosted: every document, version and comment lives on
+  // the server an organisation runs, so a session with no account has
+  // nowhere to put any of it. The app does not open behind a prompt
+  // that can be dismissed — there is nothing behind it to use.
+  //
+  // Waited on rather than assumed. ``status`` is null until the first
+  // push arrives, and treating that as signed-out would flash the
+  // wall at somebody who is signed in, on every launch.
+  const signedIn = Boolean(status?.cloud_email);
+  const knowYet = status !== null;
+
+  // ── What is waiting on you ──────────────────────────────────────
+  //
+  // The floor's notifications (igni server's
+  // ``docs/service-identity.md`` §10): what igni server delivered to
+  // whoever is signed in, and what extensions on this machine told the
+  // backend, counted per extension. The bell is the total; each
+  // extension's sidebar entry and chip carry its own share. No
+  // extension computes a count of its own any more, and neither does
+  // this — the backend pushes ``notifications_changed`` whenever
+  // either path moves, and this only listens.
+  const [notificationCounts, setNotificationCounts] = useNotificationCounts(
+    client,
+    conn === "connected",
+  );
+  const waiting = notificationCounts.unread;
+
+  // The directory this window's session is locked to (tools + shell
+  // cwd) — the window model's, beside the session.
+  const projectDir = useWindowField(windowModel, "project_dir");
+  const setProjectDir = useCallback(
+    (dir: string) => windowModel.write("project_dir", dir),
+    [windowModel],
+  );
 
   // Tauri title-bar bridge. macOS Finder convention: the window
   // title is the folder name; the org goes after a middle dot.
@@ -720,7 +894,7 @@ export default function App() {
     } catch {
       /* older BE */
     }
-  }, [client]);
+  }, [client, setProjectDir]);
 
   // Tracks an acceptEdits flip that was triggered by the HITL
   // dialog's *"Accept all edits during this session"* shortcut. The
@@ -750,6 +924,12 @@ export default function App() {
       }
       if (m.type === "run_paused") {
         setHitl(m.requirements);
+        return;
+      }
+      if (m.type === "requirement_details") {
+        // Arrives on the run stream, where the safety check's question
+        // was raised — not as a broadcast.
+        setHitl((prev) => withDetails(prev, m));
         return;
       }
       if (m.type === "status_update") {
@@ -970,19 +1150,32 @@ export default function App() {
       if (s === "connected") {
         void (async () => {
           try {
-            // Hydrate per-client state from the BE before any
-            // session-binding decisions — the stored session-id is
-            // what tells us whether to attach to an existing session
-            // or fall through to the BE's default.
-            await clientState.hydrate();
-            const storedSidebar = clientState.get(SIDEBAR_KEY);
-            if (storedSidebar === "true") setSidebarOpenState(true);
-            else if (storedSidebar === "false") setSidebarOpenState(false);
-            // Put the window back on the page it was on. ``restore``
-            // yields an empty stack for anything it cannot read, so a
-            // value written by an older release opens the chat rather
-            // than failing the whole hydrate.
-            setPages(restorePages(clientState.get(PAGE_KEY)));
+            // Read this window's model before any session-binding
+            // decision — the session it shows is what tells us whether
+            // to attach to an existing session or fall through to the
+            // BE's default. The page it was on, its sidebar and its
+            // draft come back with it.
+            await windowModel.hydrate();
+            // Nothing stored for the sidebar: a wide window opens with
+            // it out, a narrow one without.
+            if (windowModel.unset().includes("sidebar")) {
+              windowModel.write("sidebar", {
+                ...windowModel.get("sidebar"),
+                open: window.innerWidth > 700,
+              });
+            }
+            // A link wins over wherever this window was last. Somebody
+            // following one asked for that page; putting them back on
+            // the chat they had open a week ago answers a question
+            // nobody asked, and the page they came for is then two
+            // clicks away with no sign it is there.
+            if (arrival) {
+              windowModel.write("route", [
+                { kind: arrival.page, label: arrival.page, params: arrival.params },
+              ]);
+            }
+            // Say whether this window has focus, now that it is open.
+            windowModel.write("focused", document.hasFocus());
             // Adopt a session for this view. An already-bound
             // sessionId wins outright (reconnect mid-session — don't
             // churn it); otherwise the plan comes from the window's
@@ -992,8 +1185,8 @@ export default function App() {
             if (!client.sessionId) {
               const plan = planSessionBinding({
                 wantedDir: windowProjectDir,
-                storedSession: clientState.get(SESSION_KEY) ?? "",
-                storedDir: clientState.get(PROJECT_DIR_KEY) ?? "",
+                storedSession: windowModel.get("session"),
+                storedDir: windowModel.get("project_dir"),
               });
               const attach = async (args: Record<string, string>) => {
                 const res = await client.rpc<{
@@ -1002,7 +1195,6 @@ export default function App() {
                 }>("attach_session", args);
                 client.sessionId = res.session_id;
                 setProjectDir(res.project_dir);
-                clientState.set(PROJECT_DIR_KEY, res.project_dir);
               };
               try {
                 switch (plan.kind) {
@@ -1029,7 +1221,6 @@ export default function App() {
                 client.sessionId = await client.rpc<string>("get_session_id");
               }
             }
-            clientState.set(SESSION_KEY, client.sessionId);
             setSessionId(client.sessionId);
             // Resumed BE session (--resume-session / crash restart):
             // show its history instead of an empty welcome. The
@@ -1113,6 +1304,15 @@ export default function App() {
         return;
       }
       if (m.type === "user_message_received") {
+        // An extension's message (``host.chat.post``) is nobody's echo:
+        // every view paints it, labelled as the extension's.
+        if (m.extension_id) {
+          // Its id, as a reload restores it; the bubble shows the name.
+          append(userItem(m.text, m.extension_id));
+          if (m.queued)
+            append(infoItem("Queued — will run after the current turn."));
+          return;
+        }
         // Another view submitted — paint its bubble here. Our own
         // echo is skipped (we already painted on submit).
         if (m.client_id !== client.clientId) {
@@ -1131,6 +1331,11 @@ export default function App() {
           );
           return left.length ? left : null;
         });
+        return;
+      }
+
+      if (m.type === "requirement_details") {
+        setHitl((prev) => withDetails(prev, m));
         return;
       }
 
@@ -1189,10 +1394,24 @@ export default function App() {
           void notifyHost({
             title,
             body,
-            onClick: () =>
-              goPage({ kind: "schedule", label: "Scheduled tasks" }),
+            target: { kind: "schedule", label: "Scheduled tasks" },
             data: { channel: m.channel, task_id: m.payload.task_id },
           });
+        } else if (m.channel === "open_external") {
+          // An extension asked this window to open a link
+          // (``host.app.open_external``); the backend checked it, and
+          // ``openExternal`` checks it again.
+          if (m.payload.window === windowModel.clientId) {
+            void host.openExternal(String(m.payload.url ?? ""));
+          }
+        } else if (m.channel === "window_model_changed") {
+          // A change to a window's model — this window's own echo,
+          // another window's, or an extension's through ``host.ui``.
+          // The model applies what is about this window; the views
+          // re-render from it.
+          windowModel.applyPush(
+            m.payload as unknown as Parameters<WindowModel["applyPush"]>[0],
+          );
         } else if (m.channel === "file_edited") {
           // BE edit_file / edit_file_replace_all / create_file just
           // wrote to disk. Forward to the host (JetBrains for now)
@@ -1209,22 +1428,11 @@ export default function App() {
           // this channel as ``{type: "visualization_delta", spec_id,
           // json, final?}`` throttled to ~50ms. We partial-parse the
           // JSON on each delta so the card fills in progressively as
-          // tokens arrive.
-          const rawEv = m.payload as {
-            type?: unknown;
-            spec_id?: unknown;
-            json?: unknown;
-          };
-          if (
-            rawEv.type === "visualization_delta" &&
-            typeof rawEv.spec_id === "string" &&
-            typeof rawEv.json === "string"
-          ) {
-            const specId = rawEv.spec_id;
-            const jsonStr = rawEv.json;
-            setItems((prev) =>
-              applyVisualizationDelta(prev, { spec_id: specId, json: jsonStr }),
-            );
+          // tokens arrive. An extension's ``chat.append`` sends the
+          // same event carrying its ``title`` and ``source``.
+          const delta = visualizationDeltaFromPayload(m.payload);
+          if (delta) {
+            setItems((prev) => applyVisualizationDelta(prev, delta));
             return; // Fully handled; don't fall through to team-card logic
           }
 
@@ -1392,7 +1600,11 @@ export default function App() {
         } else if (m.channel === "http_retry_attempt") {
           // HTTP request is being retried. Dispatch a window event
           // so the RetryBanner can listen and display progress.
-          const payload = m.payload as { attempt?: number; delay_seconds?: number; url?: string };
+          const payload = m.payload as {
+            attempt?: number;
+            delay_seconds?: number;
+            url?: string;
+          };
           window.dispatchEvent(
             new CustomEvent("ember:http_retry_attempt", {
               detail: {
@@ -1456,59 +1668,6 @@ export default function App() {
                 : it,
             ),
           );
-        } else if (m.channel === "visualization") {
-          // Visualizer sub-agent emitted a json-render spec via
-          // ``VisualizeTools.visualize``. Payload shape:
-          // ``{ spec: {...}, spec_id: str, title?: string, source_agent?: string }``.
-          //
-          // Dedup by ``spec_id``: the visualizer's toolkit generates a
-          // stable id per sub-agent run, so repeated calls within a
-          // single run UPDATE the same card instead of appending a
-          // new one. That's the on-ramp for streaming — one card per
-          // stream, updated in place as data arrives.
-          const p = m.payload as {
-            spec?: unknown;
-            spec_id?: unknown;
-            title?: unknown;
-            source_agent?: unknown;
-          };
-          const spec = p.spec;
-          if (
-            spec &&
-            typeof spec === "object" &&
-            "root" in (spec as Record<string, unknown>) &&
-            "elements" in (spec as Record<string, unknown>)
-          ) {
-            const specId =
-              typeof p.spec_id === "string" && p.spec_id ? p.spec_id : "";
-            const title = typeof p.title === "string" ? p.title : "";
-            const sourceAgent =
-              typeof p.source_agent === "string"
-                ? p.source_agent
-                : "visualizer";
-            setItems((prev) => {
-              // Find an existing visualization card with the same
-              // spec_id; if present, replace its spec/title in place.
-              const idx = specId
-                ? prev.findIndex(
-                    (it) => it.kind === "visualization" && it.specId === specId,
-                  )
-                : -1;
-              if (idx >= 0) {
-                const next = prev.slice();
-                const existing = next[idx] as Extract<
-                  ChatItem,
-                  { kind: "visualization" }
-                >;
-                next[idx] = { ...existing, spec, title, sourceAgent };
-                return next;
-              }
-              return [
-                ...prev,
-                visualizationItem(spec, title, sourceAgent, specId),
-              ];
-            });
-          }
         }
       } else {
         // Cross-view busy-indicator update. The state machine —
@@ -1548,20 +1707,89 @@ export default function App() {
     return () => clearInterval(t);
   }, [conn, refreshStatus]);
 
-  // Navigation. Every mutation goes through these so the persisted
-  // copy cannot drift from the rendered one — the same reason
-  // ``setRunPhase`` exists rather than setting the phase directly.
-  // One writer. The state updater stays pure — StrictMode invokes it
-  // twice in development, and a ``clientState.set`` inside it would
-  // fire twice with it.
+  // Events and host-model signals for installed extensions. One push
+  // each for all of them; the payload says which frame it is for, and
+  // nothing is posted into a frame it was not addressed to.
+  const extensionTraffic = useExtensionTraffic(client, conn === "connected");
+
+  /**
+   * What is installed, and its contributions folded into the nav.
+   *
+   * Runs on connect rather than once on mount: extensions live in the
+   * backend, so a reconnect to a backend that has installed or
+   * removed one has to be noticed. The registry is module scope and
+   * outlives this effect, which is why the cleanup uninstalls —
+   * without it a reconnect would fold the same pages in twice and
+   * every one of them would be refused as a collision with itself.
+   */
+  useEffect(() => {
+    if (conn !== "connected") return;
+    let alive = true;
+    const owners: string[] = [];
+
+    void client
+      .rpc<{ extensions: ExtensionSummary[] }>("list_extensions")
+      .then((result) => {
+        if (!alive) return;
+        setExtensions(result.extensions);
+        for (const extension of result.extensions) {
+          // A FAILED extension still contributes its sidebar entry.
+          // The page it opens says what went wrong, which is the
+          // thing an administrator is looking for — an entry that
+          // silently vanishes is a worse answer than one that
+          // explains itself.
+          const refusals = contributions.install(extension.id, {
+            pages: extension.pages,
+            menu: extension.menu,
+          });
+          owners.push(extension.id);
+          for (const refusal of refusals) {
+            console.warn(`[extensions] ${refusal.owner}: ${refusal.reason}`);
+          }
+        }
+        // A page a link opened before its extension was listed carries
+        // its kind for a label (see ``arrival``); it has a name now.
+        const named = new Map(
+          result.extensions.flatMap((e) => e.pages.map((p) => [p.kind, p.label] as const)),
+        );
+        const route = windowModel.get("route");
+        if (route.some((r) => r.label === r.kind && named.has(r.kind))) {
+          windowModel.write(
+            "route",
+            route.map((r) =>
+              r.label === r.kind && named.has(r.kind) ? { ...r, label: named.get(r.kind) ?? r.label } : r,
+            ),
+          );
+        }
+      })
+      .catch((error: unknown) => {
+        // A backend without extension support, or an older one that
+        // has never heard of the method. Not worth a banner: the
+        // absence of extensions is indistinguishable from none being
+        // installed, which is the common case.
+        console.info("[extensions] not listed:", error);
+      });
+
+    return () => {
+      alive = false;
+      for (const owner of owners) contributions.uninstall(owner);
+    };
+  }, [client, conn, windowModel]);
+
+  // Navigation. Every move is a write of ``ui.route`` — the window's
+  // model, which an extension's ``navigate`` writes too — so what is
+  // rendered, what is stored and what is signalled cannot drift.
   const navigate = useCallback(
-    (next: PageRoute[]) => {
-      clientState.set(PAGE_KEY, serialisePages(next));
-      setPages(next);
-    },
-    [clientState],
+    (next: PageRoute[]) => windowModel.write("route", next),
+    [windowModel],
   );
 
+  // "Take me to X" means the top of X, even when X is already on
+  // screen showing one of its own sub-views. The write counts even
+  // when the route is the same (see ``pageHome``): without that the
+  // sidebar link for the page you are on is a control that does
+  // nothing, and Add source or a document you were reading stays
+  // exactly where it was.
   const goPage = useCallback(
     (route: PageRoute) => navigate(openRoot(route)),
     [navigate],
@@ -1678,18 +1906,41 @@ export default function App() {
   // the view glued to the tail whenever the user is already there;
   // when they've scrolled up to read history it leaves the position
   // alone (no jumping mid-read).
-  const [stickToBottom, setStickToBottom] = useState(true);
+  //
+  // Where the transcript is, is ``ui.scroll``: whether it follows the
+  // newest message, and the message at the top once it comes to rest.
+  // Both are told to the model as they happen — a transition, a
+  // settle — never per pixel.
+  const scroll = useWindowField(windowModel, "scroll");
+  const stickToBottom = scroll.at_bottom;
   const virtuosoRef = useRef<VirtuosoHandle>(null);
+  // The scroller element, for the indicator to measure: a DOM handle,
+  // not something the window shows.
   const [scrollEl, setScrollEl] = useState<HTMLElement | null>(null);
   // Keep the legacy ``scrollRef`` populated so anything still reaching
   // for it (debug, tests) sees the real scroller.
   useEffect(() => {
     scrollRef.current = scrollEl as HTMLDivElement | null;
   }, [scrollEl]);
+  // The first item in view, as Virtuoso last reported it — measured,
+  // and told to the model when scrolling stops.
+  const topIndexRef = useRef(0);
+  const itemsForScroll = useRef(items);
+  itemsForScroll.current = items;
+  const tellScroll = useCallback(
+    (atBottom: boolean) =>
+      windowModel.write("scroll", {
+        message_id: atBottom
+          ? null
+          : runAt(itemsForScroll.current, topIndexRef.current),
+        at_bottom: atBottom,
+      }),
+    [windowModel],
+  );
   const scrollToBottom = useCallback(() => {
     virtuosoRef.current?.scrollToIndex({ index: "LAST", behavior: "auto" });
-    setStickToBottom(true);
-  }, []);
+    tellScroll(true);
+  }, [tellScroll]);
 
   // ── Boot scroll: land the resumed session at its most recent
   // message instead of the very first user prompt. Fires once,
@@ -1706,14 +1957,13 @@ export default function App() {
     scrollToBottom();
   }, [items.length, scrollToBottom]);
   // Find-in-conversation. Cmd/Ctrl+F opens the bar; a small icon
-  // button near the chat header opens it too. ``highlightedItemId``
-  // applies a pulse class to the jumped-to message via the new
-  // ChatItemView prop so the user's eye lands on it after the scroll.
-  const [searchOpen, setSearchOpen] = useState(false);
-  const [highlightedItemId, setHighlightedItemId] = useState<number | null>(
-    null,
-  );
-  const highlightTimerRef = useRef<number | null>(null);
+  // button near the chat header opens it too. It is the ``search``
+  // panel of ``ui.panel``.
+  const searchOpen = panel.kind === "search";
+  const toggleSearch = useCallback(() => {
+    const open = windowModel.get("panel")?.kind === "search";
+    windowModel.write("panel", open ? null : { kind: "search" });
+  }, [windowModel]);
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const cmdLike = e.metaKey || e.ctrlKey;
@@ -1721,12 +1971,45 @@ export default function App() {
         // Only intercept when there's something to search.
         if (items.length === 0) return;
         e.preventDefault();
-        setSearchOpen((v) => !v);
+        toggleSearch();
       }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [items.length]);
+  }, [items.length, toggleSearch]);
+
+  // The picked-out message is ``ui.selection.message_id`` — a search
+  // result jumped to, or an extension's ``select``. When it changes the
+  // row pulses, so the eye lands on it; the pulse is an animation with
+  // a timer, and so the view's own (``pulsingItemId``).
+  const selection = useWindowField(windowModel, "selection");
+  const [pulsingItemId, setPulsingItemId] = useState<number | null>(null);
+  const pulseTimerRef = useRef<number | null>(null);
+  const pulse = useCallback((itemId: number) => {
+    setPulsingItemId(itemId);
+    if (pulseTimerRef.current !== null) window.clearTimeout(pulseTimerRef.current);
+    pulseTimerRef.current = window.setTimeout(() => setPulsingItemId(null), 2400);
+  }, []);
+  // Set when this window pulsed the row itself (a search jump lands on
+  // the hit, which may be the answer rather than the question).
+  const pulsedRunRef = useRef<string | null>(null);
+  useEffect(() => {
+    const run = selection.message_id;
+    if (!run) return;
+    if (pulsedRunRef.current === run) {
+      pulsedRunRef.current = null;
+      return;
+    }
+    const index = indexOfRun(itemsForScroll.current, run);
+    if (index >= 0) pulse(itemsForScroll.current[index].id);
+  }, [selection.message_id, pulse]);
+  useEffect(
+    () => () => {
+      if (pulseTimerRef.current !== null)
+        window.clearTimeout(pulseTimerRef.current);
+    },
+    [],
+  );
   const onSearchJump = useCallback(
     (itemIndex: number) => {
       virtuosoRef.current?.scrollToIndex({
@@ -1735,25 +2018,73 @@ export default function App() {
         behavior: "auto",
       });
       const target = items[itemIndex];
-      if (target) {
-        setHighlightedItemId(target.id);
-        if (highlightTimerRef.current !== null)
-          window.clearTimeout(highlightTimerRef.current);
-        highlightTimerRef.current = window.setTimeout(
-          () => setHighlightedItemId(null),
-          2400,
-        );
+      if (!target) return;
+      const run = runAt(items, itemIndex);
+      // A result in a run is the message picked out; one before any run
+      // (an info line) can only pulse.
+      if (run && windowModel.get("selection").message_id !== run) {
+        pulsedRunRef.current = run;
+        windowModel.write("selection", { ...windowModel.get("selection"), message_id: run });
       }
+      pulse(target.id);
     },
-    [items],
+    [items, pulse, windowModel],
   );
+
+  // An extension's ``scroll_to``: the model says where, this window goes.
   useEffect(
-    () => () => {
-      if (highlightTimerRef.current !== null)
-        window.clearTimeout(highlightTimerRef.current);
-    },
-    [],
+    () =>
+      windowModel.onRemote((change) => {
+        if (change.field !== "scroll") return;
+        const where = change.value as { message_id: string | null; at_bottom: boolean };
+        if (where.at_bottom) {
+          virtuosoRef.current?.scrollToIndex({ index: "LAST", behavior: "auto" });
+          return;
+        }
+        const index = where.message_id
+          ? indexOfRun(itemsForScroll.current, where.message_id)
+          : -1;
+        if (index >= 0) {
+          virtuosoRef.current?.scrollToIndex({ index, align: "start", behavior: "auto" });
+        }
+      }),
+    [windowModel],
   );
+
+  // Text selected in the transcript is ``ui.selection.text``, told when
+  // the gesture that made it ends rather than at every step of a drag.
+  useEffect(() => {
+    const settle = () => {
+      const picked = window.getSelection();
+      const frame = document.querySelector(".conversation-frame");
+      const inside =
+        picked && picked.rangeCount > 0 && frame
+          ? frame.contains(picked.getRangeAt(0).commonAncestorContainer)
+          : false;
+      const text = inside ? picked!.toString().trim() : "";
+      const current = windowModel.get("selection");
+      const next = text || null;
+      if (current.text !== next) windowModel.write("selection", { ...current, text: next });
+    };
+    document.addEventListener("mouseup", settle);
+    document.addEventListener("keyup", settle);
+    return () => {
+      document.removeEventListener("mouseup", settle);
+      document.removeEventListener("keyup", settle);
+    };
+  }, [windowModel]);
+
+  // Whether this window has focus is ``windows.focused``.
+  useEffect(() => {
+    const focus = () => windowModel.write("focused", true);
+    const blur = () => windowModel.write("focused", false);
+    window.addEventListener("focus", focus);
+    window.addEventListener("blur", blur);
+    return () => {
+      window.removeEventListener("focus", focus);
+      window.removeEventListener("blur", blur);
+    };
+  }, [windowModel]);
 
   // Memoize the Virtuoso ``components`` map so its identity is
   // stable across App re-renders that don't change the footer
@@ -2017,15 +2348,12 @@ export default function App() {
     async (assistantItemId: number) => {
       const precedingUser = findPrecedingUserItem(items, assistantItemId);
       if (!precedingUser) return;
-      // Trim first (FE-local), then seed the Composer with the
-      // original prompt text so the user can re-edit it. The
-      // ``n`` counter on the seed makes the Composer's seed-
-      // effect refire even if the user re-uses the same prompt
-      // text twice in a row.
+      // Trim first (FE-local), then put the original prompt back in
+      // the composer so the user can re-edit it.
       await truncateAndTrim(precedingUser);
-      setComposerSeed({ text: precedingUser.text, n: Date.now() });
+      seedComposer(precedingUser.text);
     },
-    [items, truncateAndTrim, setComposerSeed],
+    [items, truncateAndTrim, seedComposer],
   );
 
   // Stable per-item callbacks. The `items.map` below passes these to
@@ -2249,10 +2577,12 @@ export default function App() {
        *  unrelated conversation is its own hazard. */
       const carryDraft = (from: string, to: string) => {
         if (!from || !to || from === to) return;
-        const draft = clientState.get(`draft:${from}`);
-        if (!draft) return;
-        clientState.set(`draft:${to}`, draft);
-        clientState.delete(`draft:${from}`);
+        const draft = windowModel.get("composer");
+        // Binding the new session shows that session's (empty) draft;
+        // the draft is then written onto it — forced, because to this
+        // window's eye it is already showing.
+        setSessionId(to);
+        if (draft.text) windowModel.write("composer", draft, { force: true });
       };
       // ── The window between issuing a view-clearing command and its
       // answer coming back ────────────────────────────────────────────
@@ -2313,9 +2643,8 @@ export default function App() {
               // /clear renews the runtime's session id — rebind so
               // this view follows the fresh conversation.
               renewed = await client.rpc<string>("get_session_id");
-              carryDraft(retiring, renewed);
               client.sessionId = renewed;
-              clientState.set(SESSION_KEY, renewed);
+              carryDraft(retiring, renewed);
               setSessionId(renewed);
             } catch {
               /* ignore */
@@ -2361,9 +2690,9 @@ export default function App() {
             // end of the cloned conversation where they were typed.
             setItems((prev) => prev.filter((it) => it.id > itemBoundary));
             setHistoryIndexToItemIndex([]);
-            carryDraft(client.sessionId, newId);
+            const forkedFrom = client.sessionId;
             client.sessionId = newId;
-            clientState.set(SESSION_KEY, newId);
+            carryDraft(forkedFrom, newId);
             setSessionId(newId);
             try {
               const loaded = await fetchHistoryItems(newId);
@@ -2397,9 +2726,6 @@ export default function App() {
           case "mcp":
             goPage({ kind: "mcp", label: "MCP servers" });
             return;
-          case "codeindex":
-            goPage({ kind: "codeindex", label: "CodeIndex" });
-            return;
           case "loop":
             if (content && echo) append(assistantItem(content));
             goPage({ kind: "loop", label: "Loop" });
@@ -2417,8 +2743,8 @@ export default function App() {
           case "plugins":
             goPage({ kind: "plugins", label: "Plugins" });
             return;
-          case "knowledge":
-            goPage({ kind: "knowledge", label: "Knowledge" });
+          case "extensions":
+            goPage({ kind: "extensions", label: "Extensions" });
             return;
           case "hooks":
             goPage({ kind: "hooks", label: "Hooks" });
@@ -2587,9 +2913,8 @@ export default function App() {
           project_dir: string;
         }>("attach_session", { project_dir: dir });
         client.sessionId = res.session_id;
-        clientState.set(SESSION_KEY, res.session_id);
-        setSessionId(res.session_id);
         setProjectDir(res.project_dir);
+        setSessionId(res.session_id);
         setItems([]);
         setHistoryIndexToItemIndex([]);
         append(infoItem(`Session locked to ${res.project_dir}`));
@@ -2612,7 +2937,6 @@ export default function App() {
         // parallel. First contact can take a few seconds (Session
         // construction), hence the loading note.
         client.sessionId = id;
-        clientState.set(SESSION_KEY, id);
         setSessionId(id);
         setItems([]);
         // Show the first 8 hex chars only — full UUIDs are noisy in
@@ -2631,6 +2955,19 @@ export default function App() {
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [client],
+  );
+
+  // An extension moved this window to another session
+  // (``host.sessions.current``). Everything else it changes is drawn
+  // from the model as it arrives; a session also has a transcript to
+  // load, which is what picking it does.
+  useEffect(
+    () =>
+      windowModel.onRemote((change) => {
+        const id = change.field === "session" ? String(change.value ?? "") : "";
+        if (id && id !== client.sessionId) void pickSession(id);
+      }),
+    [windowModel, client, pickSession],
   );
 
   const pickModel = useCallback(
@@ -2654,8 +2991,49 @@ export default function App() {
       )
     : 0;
 
+  if (knowYet && !signedIn) {
+    return (
+      <>
+        <SignInWall
+          client={client}
+          onSignIn={() => setPanel({ kind: "login" })}
+        />
+        {/* The login dialog belongs to this branch too. It is rendered
+            at the foot of the app below, which this return skips —
+            without it the Sign in button would set a state nothing
+            draws. */}
+        {panel.kind === "login" && (
+          <LoginPanel
+            client={client}
+            onDone={(ok, detail) => {
+              setPanel({ kind: "none" });
+              if (ok) {
+                // The wall is gated on ``status.cloud_email``, which
+                // arrives with the next push. Asked for rather than
+                // waited on, so the app opens as soon as it can.
+                void refreshStatus();
+              } else {
+                append(errorItem(`Login failed: ${detail}`));
+              }
+            }}
+          />
+        )}
+      </>
+    );
+  }
+
   return (
-    <div className="shell">
+    <ExtensionNamesContext.Provider value={extensionNames}>
+    <div
+      className="shell"
+      // ``ui.sidebar.width``: an extension (or a future resize handle)
+      // sizes the sidebar; ``null`` keeps the stylesheet's.
+      style={
+        sidebar.width
+          ? ({ "--sidebar-w": `${sidebar.width}px` } as React.CSSProperties)
+          : undefined
+      }
+    >
       {/* Live FPS overlay — hidden by default. Toggle with
           ``Ctrl+Alt+Shift+F`` (or ``Cmd+Alt+Shift+F`` on macOS).
           State persists per-origin via localStorage so the
@@ -2668,15 +3046,30 @@ export default function App() {
         open={sidebarOpen}
         sessions={sessions}
         currentId={sessionId}
-        links={SIDEBAR_LINKS}
+        links={contributions.sidebar()}
         activeLink={page?.kind}
+        // Each entry an extension contributed carries that extension's
+        // unread count — the floor's, igni server's and this machine's
+        // together.
+        badges={Object.fromEntries(
+          contributions
+            .sidebar()
+            .map((link) => [
+              link.kind,
+              unreadFor(notificationCounts, contributions.pages.ownerOf(link.kind)),
+            ]),
+        )}
         onLink={(kind) => {
-          const link = SIDEBAR_LINKS.find((l) => l.kind === kind);
+          const link = contributions.sidebar().find((l) => l.kind === kind);
           if (link) goPage({ kind: link.kind, label: link.label });
         }}
         onNewChat={() => void runCommand("/clear", false)}
         onPick={(id) => void pickSession(id)}
         onClose={() => setSidebarOpen(false)}
+        section={sidebar.section}
+        onSection={(section) =>
+          windowModel.write("sidebar", { ...windowModel.get("sidebar"), section })
+        }
       />
 
       <div className={`main${page ? " main--paged" : ""}`}>
@@ -2746,7 +3139,7 @@ export default function App() {
               className={`chip chip-search${searchOpen ? " active" : ""}`}
               title="Find in conversation (⌘F)"
               aria-label="Find in conversation"
-              onClick={() => setSearchOpen((v) => !v)}
+              onClick={toggleSearch}
             >
               <svg
                 width="14"
@@ -2822,41 +3215,66 @@ export default function App() {
               </span>
             </button>
           )}
-          {status?.cloud_connected ? (
+          {(status?.cloud_connected || waiting > 0) && (
             <button
-              className="chip"
-              title="Account"
-              onClick={() => {
-                const opening = !accountMenu;
-                setAccountMenu(opening);
-                if (opening) {
-                  // Fresh fetch every time the popover opens so seat
-                  // tier changes show up without an app restart. The
-                  // BE proxies to ``/portal/me`` on the cloud.
-                  void client
-                    .rpc<{ tier?: string | null } | null>("get_cloud_plan")
-                    .then((info) => setCloudPlan(info?.tier ?? null))
-                    .catch(() => setCloudPlan(null));
-                }
-              }}
+              className={
+                waiting ? "chip chip-bell has-waiting" : "chip chip-bell"
+              }
+              title={
+                waiting
+                  ? `${waiting} unread ${waiting === 1 ? "notification" : "notifications"}`
+                  : "Nothing is waiting on you"
+              }
+              aria-label="Notifications"
+              onClick={() =>
+                setPanel(
+                  panel.kind === "notifications"
+                    ? { kind: "none" }
+                    : { kind: "notifications" },
+                )
+              }
             >
-              <CloudIcon />{" "}
-              <span className="chip-label">{status.cloud_org}</span>{" "}
-              <ChevronIcon size={9} down />
-            </button>
-          ) : (
-            <button
-              className="chip"
-              style={{
-                background: "var(--ember-gradient)",
-                color: "#fff",
-                border: "none",
-              }}
-              onClick={() => setPanel({ kind: "login" })}
-            >
-              Log in
+              <Glyph name="bell" />
+              {/* The count, not a dot. "Three people are waiting" and
+                  "somebody is waiting" are different amounts of
+                  urgency and the difference costs one character. */}
+              {!!waiting && (
+                <span className="chip-bell-count">
+                  {waiting > 99 ? "99+" : waiting}
+                </span>
+              )}
             </button>
           )}
+          <AccountChip
+            status={status}
+            name={accountName}
+            onLogIn={() => setPanel({ kind: "login" })}
+            onOpenAccount={() => {
+              const opening = !accountMenu;
+              setAccountMenu(opening);
+              if (opening) {
+                // Fresh fetch every time the popover opens so seat
+                // tier changes show up without an app restart. The
+                // BE proxies to ``/portal/me`` on the cloud.
+                void client
+                  .rpc<{
+                    tier?: string | null;
+                    full_name?: string | null;
+                    email?: string | null;
+                  } | null>("get_cloud_plan")
+                  .then((info) => {
+                    // The display name only exists on the cloud, so
+                    // it arrives here. Until it does the chip shows
+                    // the address, which is on disk and correct —
+                    // rather than nothing while a request is out.
+                    if (info?.full_name) setCloudName(info.full_name);
+                  })
+                  .catch(() => {
+                    // Offline: the chip keeps showing the address.
+                  });
+              }
+            }}
+          />
           {conn === "replaced" && (
             <button
               className="chip"
@@ -2876,18 +3294,17 @@ export default function App() {
               />
               <div className="dropdown" style={{ width: 220 }}>
                 <div className="popup-item" style={{ cursor: "default" }}>
-                  <span className="desc">Signed in to {status?.cloud_org}</span>
-                </div>
-                {cloudPlan && (
-                  <div className="popup-item" style={{ cursor: "default" }}>
-                    <span className="desc">
-                      Plan:{" "}
-                      <span style={{ color: "var(--fg)", fontWeight: 500 }}>
-                        {formatPlanName(cloudPlan)}
-                      </span>
+                  <span className="desc">
+                    Signed in as{" "}
+                    <span style={{ color: "var(--fg)", fontWeight: 500 }}>
+                      {accountName}
                     </span>
-                  </div>
-                )}
+                    {/* The organisation is still worth saying — it
+                        decides which seat and which models — but it is
+                        not the answer to "who am I signed in as". */}
+                    {status?.cloud_org ? ` · ${status.cloud_org}` : ""}
+                  </span>
+                </div>
                 <div
                   className="popup-item"
                   onClick={() => {
@@ -2916,7 +3333,7 @@ export default function App() {
             historyIndexToItemIndex={historyIndexToItemIndex}
             liveItemCount={items.length}
             onJumpTo={onSearchJump}
-            onClose={() => setSearchOpen(false)}
+            onClose={() => setPanel({ kind: "none" })}
           />
         )}
         <div className="conversation-frame">
@@ -2966,15 +3383,13 @@ export default function App() {
                         ],
                         [
                           "/skills",
-                          "Workflows like /commit and /resolve-issues",
+                          "Workflows like /commit and /pr",
                         ],
                         ["/workflows", "Run a CC-style multi-phase workflow"],
-                        ["/codeindex", "Semantic search across your repo"],
                         ["/schedule", "Background tasks that report back"],
                         ["/loop", "Repeat a prompt across a batch until done"],
                         ["/mcp", "Plug in external tools and data sources"],
                         ["/plugins", "Install skills, agents and hooks"],
-                        ["/knowledge", "A knowledge base carried in git"],
                       ] as const
                     ).map(([cmd, desc]) => (
                       <div
@@ -3023,7 +3438,15 @@ export default function App() {
               // "I scrolled up to read history" intent — pinned by
               // ``e2e/chat-scroll.spec.ts``.
               atBottomThreshold={50}
-              atBottomStateChange={setStickToBottom}
+              atBottomStateChange={tellScroll}
+              rangeChanged={(range) => {
+                topIndexRef.current = range.startIndex;
+              }}
+              // Come to rest: where the top of the view is, for
+              // ``ui.scroll``. Told once per stop, not per frame.
+              isScrolling={(moving) => {
+                if (!moving) tellScroll(windowModel.get("scroll").at_bottom);
+              }}
               scrollerRef={(el) => setScrollEl(el as HTMLElement | null)}
               increaseViewportBy={{ top: 400, bottom: 800 }}
               itemContent={(idx, item) => {
@@ -3033,7 +3456,7 @@ export default function App() {
                   processing &&
                   idx === items.length - 1 &&
                   item.kind === "assistant";
-                const isSearchTarget = item.id === highlightedItemId;
+                const isSearchTarget = item.id === pulsingItemId;
                 return (
                   <div
                     className={`chat-row${isStreamingTail ? " streaming" : ""}${isSearchTarget ? " search-target" : ""}`}
@@ -3113,11 +3536,16 @@ export default function App() {
             {page.kind === "plugins" && (
               <PluginsPanel client={client} onClose={goChat} />
             )}
-            {page.kind === "knowledge" && (
-              <KnowledgePanel client={client} onClose={goChat} />
-            )}
-            {page.kind === "codeindex" && (
-              <CodeIndexPanel client={client} onClose={goChat} />
+            {page.kind === "extensions" && (
+              <ExtensionsPanel
+                client={client}
+                extensions={extensions}
+                // `set_extension_settings` answers with the whole
+                // list, so the panel hands it straight back rather
+                // than merging one row into state it does not own.
+                onChanged={setExtensions}
+                onClose={goChat}
+              />
             )}
             {page.kind === "agents" && (
               <AgentsPanel client={client} onClose={goChat} />
@@ -3139,7 +3567,7 @@ export default function App() {
                   // object, and the phase list is what tells you
                   // whether you want this one at all.
                   goChat();
-                  setComposerSeed({ text: command, n: Date.now() });
+                  seedComposer(command);
                 }}
                 onClose={goChat}
               />
@@ -3152,7 +3580,7 @@ export default function App() {
                   // reading help is not deciding to run something, and
                   // several of these take arguments.
                   goChat();
-                  setComposerSeed({ text: name, n: Date.now() });
+                  seedComposer(name);
                 }}
                 onClose={goChat}
               />
@@ -3182,13 +3610,92 @@ export default function App() {
                 }}
               />
             )}
+            {/*
+              An extension's page.
+
+              Matched last and by *ownership* rather than by name: a
+              base page kind is a literal in one of the branches
+              above, and an extension's is whatever its manifest
+              said. Asking the registry who owns the kind is what
+              keeps the two sets from having to know about each
+              other.
+            */}
+            {(() => {
+              const owner = contributions.pages.ownerOf(page.kind);
+              if (owner === null || owner === "igni") return null;
+              const extension = extensions.find((e) => e.id === owner);
+              if (extension === undefined) return null;
+              // In the page chrome every other page gets from its
+              // ``Drawer``: positioned over the conversation, with the
+              // trail back to the chat. Mounted bare, the frame sat in
+              // the column's flow at an iframe's default 150px height.
+              // ``titleInBody``: the extension draws its own heading.
+              return (
+                <Drawer title={page.label} titleInBody onClose={goChat}>
+                <ExtensionPage
+                  extension={extension}
+                  kind={page.kind}
+                  // Launch params — a notification's target.params,
+                  // when one is what opened it.
+                  params={page.params}
+                  theme={frameTheme}
+                  signals={extensionTraffic.signals[extension.id]}
+                  // `bridge.host…`: the host object model, as this
+                  // extension, from the window it is framed in — the
+                  // backend checks its `permissions.host`.
+                  onHost={(request) =>
+                    client
+                      .asExtension(extension.id)
+                      .rpc<{
+                        ok: boolean;
+                        result?: unknown;
+                        error?: { code: string; message: string };
+                      }>(
+                        "host_model",
+                        { ...request, home_window: windowModel.clientId },
+                        // A dialog waits on the person, for as long as
+                        // they take.
+                        request.path === "ui.show_dialog" ? 24 * 3_600_000 : undefined,
+                      )
+                  }
+                  // `bridge.service`: a token for this extension's own
+                  // service. Asked as this extension, so the backend
+                  // decides the audience — never the frame.
+                  onServiceToken={() =>
+                    client
+                      .asExtension(extension.id)
+                      .rpc<{
+                        ok: boolean;
+                        access_token?: string;
+                        expires_in?: number;
+                        error?: string;
+                      }>("extension_service_token", {})
+                      .then((reply) => ({
+                        ok: reply.ok,
+                        token: reply.access_token,
+                        expiresIn: reply.expires_in,
+                        error: reply.error,
+                      }))
+                  }
+                  onClose={goChat}
+                  // Every call carries its caller, which is what lets
+                  // the backend enforce this extension's
+                  // `permissions.rpc` rather than trusting this
+                  // process to have done it.
+                  onCall={(method, args) =>
+                    client.asExtension(extension.id).rpc(method, args)
+                  }
+                />
+                </Drawer>
+              );
+            })()}
             {page.kind === "mcp" && (
               <McpPanel
                 client={client}
                 onClose={goChat}
                 onAddServer={(seed) => {
                   goChat();
-                  setComposerSeed({ text: seed, n: Date.now() });
+                  seedComposer(seed);
                 }}
               />
             )}
@@ -3200,7 +3707,7 @@ export default function App() {
                   // the user can add arguments and send when ready. No
                   // trailing space, so the autocomplete menu stays open.
                   goChat();
-                  setComposerSeed({ text: cmd, n: Date.now() });
+                  seedComposer(cmd);
                 }}
                 onClose={goChat}
               />
@@ -3237,10 +3744,9 @@ export default function App() {
           processing={processing}
           skills={skills}
           backendCommands={backendCommands}
-          tools={TOOLS_MENU}
-          seed={composerSeed}
-          sessionId={sessionId}
-          clientState={clientState}
+          tools={contributions.tools()}
+          focusRef={composerFocus}
+          windowModel={windowModel}
           model={status?.model}
           modelMenuSignal={modelMenuSignal}
           onPickModel={(name) => void pickModel(name)}
@@ -3316,15 +3822,33 @@ export default function App() {
                   picker itself — the left half tints per mode
                   so the user gets the at-a-glance signal
                   without a separate footer chip. */}
-              <CodeIndexIndicator
-                client={client}
-                onOpen={() => goPage({ kind: "codeindex", label: "CodeIndex" })}
-              />
               <WatcherIndicator
                 client={client}
                 onOpen={() => goPage({ kind: "watcher", label: "Watcher" })}
               />
               <GroupIndicator client={client} />
+              {/*
+                Installed extensions' own chips, beside igni's two.
+                Data rather than frames: a chip is twenty pixels. The
+                extension decides what it says and the host draws it.
+              */}
+              {extensions.flatMap((extension) =>
+                extension.indicators.map((indicator) => (
+                  <ExtensionIndicator
+                    key={indicator.id}
+                    extensionId={extension.id}
+                    indicator={indicator}
+                    unread={unreadFor(notificationCounts, extension.id)}
+                    onCall={(method, args) =>
+                      client.asExtension(extension.id).rpc(method, args)
+                    }
+                    onOpen={(kind) => {
+                      const page = extension.pages.find((p) => p.kind === kind);
+                      if (page) goPage({ kind: page.kind, label: page.label });
+                    }}
+                  />
+                )),
+              )}
             </>
           )}
           {pendingUpdate && (
@@ -3332,7 +3856,7 @@ export default function App() {
               type="button"
               className="brand-update"
               title={`Update to v${pendingUpdate.latest_version}`}
-              onClick={() => setShowUpdateModal(true)}
+              onClick={() => showUpdate(pendingUpdate)}
             >
               Update to v{pendingUpdate.latest_version}
             </button>
@@ -3340,19 +3864,31 @@ export default function App() {
         </div>
       </div>
 
-      {previewPath && (
+      {preview && (
         <FilePreview
           client={client}
-          path={previewPath}
-          onClose={() => setPreviewPath(null)}
+          path={preview.path}
+          onClose={() => windowModel.write("preview", null)}
         />
       )}
-      <Toasts items={toasts} onDismiss={dismissToast} />
+      <Toasts items={toasts} onDismiss={dismissToast} onOpen={goPage} />
       <RetryBanner />
-      {showUpdateModal && pendingUpdate && (
+      {dialog?.spec.kind === "update" && (
         <UpdatePrompt
-          info={pendingUpdate}
-          onDismiss={() => setShowUpdateModal(false)}
+          info={dialog.spec as unknown as UpdateInfo}
+          onDismiss={() => windowModel.answerDialog(dialog.id, null)}
+        />
+      )}
+      {dialog?.spec.kind === "extension" && (
+        <HostDialog
+          key={dialog.id}
+          dialog={dialog}
+          sourceName={
+            extensions.find((e) => e.id === dialog.source)?.name ??
+            dialog.source ??
+            ""
+          }
+          onAnswer={(answer) => windowModel.answerDialog(dialog.id, answer)}
         />
       )}
       {panel.kind === "dir-picker" && (
@@ -3362,6 +3898,34 @@ export default function App() {
           initialPath={projectDir}
           onSelect={(dir) => void attachInFolder(dir)}
           onCancel={() => setPanel({ kind: "none" })}
+        />
+      )}
+      {panel.kind === "notifications" && (
+        <NotificationsPanel
+          client={client}
+          sourceName={(source) =>
+            extensions.find((e) => e.id === source)?.name ?? source
+          }
+          canOpen={(kind) => contributions.pages.has(kind)}
+          // Marking something read moves every badge, and the push
+          // that says so may land after the panel has already read
+          // the new counts — so it reports what it read too.
+          onCountsChanged={setNotificationCounts}
+          onOpenTarget={(target) => {
+            // The extension's own page, with the params the
+            // notification carries: the same route its sidebar entry
+            // opens, so the page arrives through the door it always
+            // does and reads where to go from its launch params.
+            const owner = contributions.pages.ownerOf(target.page);
+            const extension = extensions.find((e) => e.id === owner);
+            const label =
+              extension?.pages.find((p) => p.kind === target.page)?.label ??
+              contributions.sidebar().find((l) => l.kind === target.page)
+                ?.label ??
+              target.page;
+            goPage({ kind: target.page, label, params: target.params });
+          }}
+          onClose={() => setPanel({ kind: "none" })}
         />
       )}
       {panel.kind === "login" && (
@@ -3379,5 +3943,6 @@ export default function App() {
         />
       )}
     </div>
+    </ExtensionNamesContext.Provider>
   );
 }

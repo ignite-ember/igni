@@ -1,43 +1,32 @@
-"""Per-project SQLite-backed store for scheduled tasks (async via SQLAlchemy).
+"""Per-project store for scheduled tasks (async via SQLAlchemy).
 
-Tasks live in ``~/.igni/projects/<project_hash>/state.db`` so each project
-has its own scheduler queue — switching projects doesn't surface another
-project's pending ``/loop`` jobs.
+On the desktop tasks live in ``~/.igni/projects/<project_hash>/state.db``;
+in the cloud in the shared database, filtered by the project's scope.
+Either way each project has its own scheduler queue — switching projects
+doesn't surface another project's pending ``/loop`` jobs.
 """
 
 from __future__ import annotations
 
+import logging
 from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from sqlalchemy import delete, select
+from sqlalchemy import Select, delete, func, select
 
-from ember_code.core.code_index.paths import state_db_path
-from ember_code.core.config.settings import Settings
+from ember_code.core.activity import ActivityRegistry
 from ember_code.core.db.database import Database
-from ember_code.core.paths import DEFAULT_DATA_DIR
+from ember_code.core.db.locator import StorageLocator
 from ember_code.core.scheduler.db_models import ScheduledTaskModel
 from ember_code.core.scheduler.models import ScheduledTask, TaskStatus
+from ember_code.core.scheduler.recurrence import Recurrence
 
-
-def _resolve_db_path(
-    db_path: str | Path | None,
-    project_dir: str | Path | None,
-) -> Path:
-    """Pick a SQLite path. Explicit ``db_path`` wins; otherwise derive from project."""
-    if db_path is not None:
-        return Path(str(db_path)).expanduser()
-    project = project_dir if project_dir is not None else Path.cwd()
-    try:
-        data_dir = Settings().storage.data_dir
-    except Exception:
-        data_dir = DEFAULT_DATA_DIR
-    return state_db_path(project, data_dir=data_dir)
+logger = logging.getLogger(__name__)
 
 
 class TaskStore:
-    """Persists scheduled tasks in a per-project SQLite file (async)."""
+    """Persists scheduled tasks in the project's database (async)."""
 
     def __init__(
         self,
@@ -49,28 +38,57 @@ class TaskStore:
         if db is not None:
             self._db = db
             return
-        path = _resolve_db_path(db_path, project_dir)
-        self._db = Database(path)
+        self._db = StorageLocator.database_for(db_path, project_dir)
 
     async def add(self, task: ScheduledTask) -> None:
         async with self._db.session() as session, session.begin():
-            session.add(_task_to_row(task))
+            row = _task_to_row(task)
+            for column, value in self._db.scope.stamp().items():
+                setattr(row, column, value)
+            session.add(row)
+        # A runner sleeping until the old earliest task looks again.
+        ActivityRegistry.shared().rearm()
 
     async def update_status(
-        self, task_id: str, status: TaskStatus, result: str = "", error: str = ""
-    ) -> None:
+        self,
+        task_id: str,
+        status: TaskStatus,
+        result: str = "",
+        error: str = "",
+        *,
+        unless_cancelled: bool = False,
+    ) -> bool:
+        """Write a task's status. Returns ``True`` if the write landed.
+
+        ``unless_cancelled`` makes the write lose to a cancel that
+        arrived first. The runner needs it: its execution window is up
+        to ``task_timeout`` (300s by default) and a user only reaches
+        for cancel *because* the task is misbehaving, so an
+        unconditional terminal write at the end of that window silently
+        overwrote the ``cancelled`` the user had just set — and the
+        recurring task the cancel promised to stop was then rescheduled.
+        The read and the write share one transaction, so the cancel
+        either commits before it (and wins) or after it (and stands).
+        """
         async with self._db.session() as session, session.begin():
-            row = await session.get(ScheduledTaskModel, task_id)
+            row = (
+                await session.execute(self._select_one(task_id).with_for_update())
+            ).scalar_one_or_none()
             if row is None:
-                return
+                return False
+            if unless_cancelled and row.status == TaskStatus.cancelled.value:
+                return False
             row.status = status.value
             row.result = result
             row.error = error
+            return True
 
     async def remove(self, task_id: str) -> bool:
         async with self._db.session() as session, session.begin():
             result = await session.execute(
-                delete(ScheduledTaskModel).where(ScheduledTaskModel.id == task_id)
+                delete(ScheduledTaskModel).where(
+                    self._db.scope.where(ScheduledTaskModel), ScheduledTaskModel.id == task_id
+                )
             )
             return (result.rowcount or 0) > 0
 
@@ -81,6 +99,7 @@ class TaskStore:
             result = await session.execute(
                 select(ScheduledTaskModel)
                 .where(
+                    self._db.scope.where(ScheduledTaskModel),
                     ScheduledTaskModel.status == TaskStatus.pending.value,
                     ScheduledTaskModel.scheduled_at <= now,
                 )
@@ -88,6 +107,17 @@ class TaskStore:
             )
             rows = result.scalars().all()
         return [_row_to_task(r) for r in rows]
+
+    async def next_pending_at(self) -> datetime | None:
+        """When the earliest pending task is due, or ``None``."""
+        async with self._db.session() as session:
+            result = await session.execute(
+                select(func.min(ScheduledTaskModel.scheduled_at)).where(
+                    self._db.scope.where(ScheduledTaskModel),
+                    ScheduledTaskModel.status == TaskStatus.pending.value,
+                )
+            )
+            return result.scalar_one_or_none()
 
     async def get_all(self, include_done: bool = False) -> list[ScheduledTask]:
         """Get all tasks, optionally including completed/failed/cancelled.
@@ -97,7 +127,11 @@ class TaskStore:
         panel and the agent-facing ``list_scheduled_tasks`` tool
         render the store's order verbatim.
         """
-        stmt = select(ScheduledTaskModel).order_by(ScheduledTaskModel.scheduled_at.desc())
+        stmt = (
+            select(ScheduledTaskModel)
+            .where(self._db.scope.where(ScheduledTaskModel))
+            .order_by(ScheduledTaskModel.scheduled_at.desc())
+        )
         if not include_done:
             stmt = stmt.where(
                 ScheduledTaskModel.status.in_((TaskStatus.pending.value, TaskStatus.running.value))
@@ -109,8 +143,13 @@ class TaskStore:
 
     async def get(self, task_id: str) -> ScheduledTask | None:
         async with self._db.session() as session:
-            row = await session.get(ScheduledTaskModel, task_id)
+            row = (await session.execute(self._select_one(task_id))).scalar_one_or_none()
         return _row_to_task(row) if row else None
+
+    def _select_one(self, task_id: str) -> Select[tuple[ScheduledTaskModel]]:
+        return select(ScheduledTaskModel).where(
+            self._db.scope.where(ScheduledTaskModel), ScheduledTaskModel.id == task_id
+        )
 
 
 def _task_to_row(task: ScheduledTask) -> ScheduledTaskModel:
@@ -126,6 +165,26 @@ def _task_to_row(task: ScheduledTask) -> ScheduledTaskModel:
     )
 
 
+def _canonical_recurrence(raw: str) -> str:
+    """Normalize a persisted recurrence that predates the canonical form.
+
+    Rows written before :class:`ScheduledTask` validated the field hold
+    user-facing phrases like ``daily`` / ``weekly`` — the model's own
+    docstring used to give those as examples. Constructing the model
+    from such a row raises ``ValidationError``, and that error escapes
+    ``get_due_tasks`` into the poll loop's catch-all, so a single legacy
+    row stopped *every* task in the project from running again. Convert
+    what parses, drop what does not, keep the loop alive.
+    """
+    if not raw or Recurrence.from_canonical(raw) is not None:
+        return raw
+    parsed = Recurrence.parse(raw)
+    if parsed is not None:
+        return parsed.recurrence.canonical()
+    logger.warning("Dropping unparseable recurrence %r — task becomes one-shot", raw)
+    return ""
+
+
 def _row_to_task(row: Any) -> ScheduledTask:
     return ScheduledTask(
         id=row.id,
@@ -135,5 +194,5 @@ def _row_to_task(row: Any) -> ScheduledTask:
         status=TaskStatus(row.status),
         result=row.result or "",
         error=row.error or "",
-        recurrence=row.recurrence or "",
+        recurrence=_canonical_recurrence(row.recurrence or ""),
     )

@@ -41,6 +41,15 @@ class RPCRequest(Message):
     type: Literal["rpc_request"] = "rpc_request"
     method: str = ""
     args: dict[str, Any] = Field(default_factory=dict)
+    #: Which extension's frame this came from, if any.
+    #:
+    #: ``None`` is igni's own UI, and igni's own UI may not call the
+    #: ``ext.*`` namespace — an extension reaches its own service and
+    #: no other, and without a caller there is nothing to check that
+    #: against. The field is optional so a client that predates it
+    #: keeps working: it simply cannot make extension calls, which is
+    #: what it could do before.
+    caller: str | None = None
 
 
 class RPCResponse(Message):

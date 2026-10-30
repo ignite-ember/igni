@@ -60,6 +60,9 @@ class QueuePersisterHook(AgnoCallableAdapter):
         for message in self._buffer.snapshot():
             run_output.messages.append(
                 Message(
+                    # The id a durable queue knows it by: a backend that
+                    # restarts finds it here and does not offer it again.
+                    id=message.id,
                     role="user",
                     content=message.text,
                     add_to_agent_memory=True,

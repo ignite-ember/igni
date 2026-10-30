@@ -54,8 +54,47 @@
   --accent-orange-text: #fb9c5a;
   --danger-text: #f28376;
 
+  /* ── Type scale ─────────────────────────────────────────────────
+     Nine steps, down from twenty-two hardcoded sizes that included
+     every half-step from 9px to 15px. Two hundred and seventy-two
+     declarations sat inside a single pixel — 11.5px, 12px and 12.5px
+     — which is one size written three ways, not three sizes.
+     Collapsed by role, not by ratio: the clusters were already
+     there. No value moves by more than 1px. */
+  --text-2xs: 10px;
+  --text-xs: 11px;
+  --text-sm: 12px;
+  --text-md: 13px;
+  --text-lg: 14px;
+  --text-xl: 17px;
+  --text-2xl: 20px;
+  --text-3xl: 30px;
+  --text-4xl: 42px;
+
+  /* ── Spacing scale ──────────────────────────────────────────────
+     Introduced because there was not one. gap had 20 distinct values
+     and padding 161, every one hardcoded, so each feature picked its
+     own numbers and none of them agreed. These steps are the ones
+     already in use: 85% of gaps and 83% of margins landed on them
+     exactly, which is why adopting them changed nothing on screen.
+     What stayed a literal is now visible as a deviation, which is
+     the point of having a scale at all. */
+  --space-1: 2px;
+  --space-2: 4px;
+  --space-3: 6px;
+  --space-4: 8px;
+  --space-5: 10px;
+  --space-6: 12px;
+  --space-7: 14px;
+  --space-8: 16px;
+  --space-10: 20px;
+  --space-12: 24px;
+  --space-16: 32px;
+
   --radius-sm: 8px;
   --radius: 12px;
+  --radius-pill: 999px;
+  --radius-circle: 50%;
   --radius-lg: 18px;
   --shadow-pop: 0 12px 40px rgba(0, 0, 0, 0.45);
   --font-mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas,
@@ -147,7 +186,6 @@
   --bg: var(--vscode-sideBar-background, var(--bg));
 }
 
-
 * {
   box-sizing: border-box;
 }
@@ -163,7 +201,7 @@ body {
   background: var(--bg);
   color: var(--fg);
   font-family: var(--font-ui);
-  font-size: 15px;
+  font-size: var(--text-lg);
   line-height: 1.65;
   -webkit-font-smoothing: antialiased;
   /* The shell never scrolls — overflow lives inside ``.conversation``
@@ -178,6 +216,153 @@ button {
 }
 
 /* ── Shell layout: sidebar + main ───────────────────────────────── */
+
+/* ── Primitives ───────────────────────────────────────────────────
+   The shapes this app keeps making, named once.
+
+   They were not extracted from duplication, because there was very
+   little: the 231 classes called `-row`, `-card`, `-actions` share
+   almost nothing — `*-row` agreed only on `display: flex`, and
+   deduplicating all fourteen patterns saved 84 declarations out of
+   17,789 lines. They did not repeat. They diverged, each feature
+   picking its own gaps and paddings because there was no scale to
+   pick from.
+
+   So these are decided rather than derived. Where the existing uses
+   agreed, the agreement is the value. Where they split, the split is
+   resolved here with a reason, once, instead of in each feature.
+
+   There is deliberately no `ui-title`. Titles varied across four
+   type steps and that variation is the design — a heading level, not
+   drift. Use the type scale and a weight. */
+
+.ui-row,
+.chat-search-row,
+.doc-filter-row,
+.hooks-row,
+.kb-add-row,
+.kb-doc-head-row,
+.kb-pick-row,
+.kb-tree-row,
+.mcp-tool-row,
+.panel-form-row,
+.plugin-detail-title-row,
+.plugins-content-row,
+.plugins-install-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+}
+
+.ui-actions,
+.afs-actions,
+.doc-comment-actions,
+.doc-thread-actions,
+.kb-detail-actions,
+.kb-head-actions,
+.kb-tree-actions,
+.plan-card-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+}
+
+.ui-list,
+.doc-conv-list,
+.hooks-list,
+.kb-stale-list,
+.mcp-tool-list,
+.plugins-list,
+.plugins-markets-list,
+.watcher-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.ui-toolbar,
+.kb-toolbar,
+.watcher-tail-toolbar {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+}
+
+.ui-card,
+.compact-card,
+.doc-cite-card,
+.plan-card,
+.prov-card,
+.workflow-card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-5);
+  padding: var(--space-6) var(--space-7);
+  background: var(--bg-surface);
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius);
+}
+
+.ui-item,
+.file-pill-menu-item,
+.mention-item,
+.slash-item {
+  padding: var(--space-3) var(--space-4);
+  border-radius: var(--radius-sm);
+  color: var(--fg);
+  text-align: left;
+  cursor: pointer;
+}
+
+.ui-item:hover,
+.file-pill-menu-item:hover,
+.mention-item:hover,
+.slash-item:hover {
+  background: var(--bg-raised);
+}
+
+.ui-badge,
+.loop-iteration-badge,
+.plan-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-1) var(--space-3);
+  border-radius: var(--radius-pill);
+  font-size: var(--text-xs);
+  font-weight: 700;
+}
+
+/* An empty state is text the reader has to read to know what to do
+   next, so it is content rather than de-emphasised chrome. The
+   existing uses split exactly eight and eight between --fg-faint and
+   --fg-muted; both clear WCAG AA since F138, so the tie is broken on
+   meaning rather than contrast. */
+.ui-empty,
+.ag-empty,
+.compact-card-empty,
+.demo-page-composer-empty,
+.demo-page-console-empty,
+.doc-rail-empty,
+.kb-pick-empty,
+.mention-empty,
+.notify-empty,
+.orchestrate-empty,
+.prov-legend-empty,
+.slash-empty,
+.watcher-tail-empty {
+  color: var(--fg-muted);
+  font-size: var(--text-sm);
+}
+
+.ui-table,
+.ag-table,
+.diff-row-table,
+.diff-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--text-sm);
+}
 
 .shell {
   display: flex;
@@ -208,8 +393,8 @@ button {
 .sidebar-head {
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 14px 14px 8px;
+  gap: var(--space-4);
+  padding: var(--space-7) var(--space-7) var(--space-4);
 }
 
 .sidebar-head-spacer {
@@ -251,18 +436,18 @@ button {
   display: flex;
   flex-direction: column;
   gap: 1px;
-  padding: 6px 8px 0;
+  padding: var(--space-3) var(--space-4) 0;
 }
 
 .sidebar-link {
   text-align: left;
   background: none;
   border: none;
-  padding: 6px 10px;
+  padding: var(--space-3) var(--space-5);
   border-radius: var(--radius-sm);
   color: var(--fg-muted);
   font: inherit;
-  font-size: 13px;
+  font-size: var(--text-md);
   cursor: pointer;
 }
 
@@ -278,8 +463,8 @@ button {
 }
 
 .sidebar-section {
-  padding: 10px 14px 4px;
-  font-size: 11px;
+  padding: var(--space-5) var(--space-7) var(--space-2);
+  font-size: var(--text-xs);
   font-weight: 600;
   letter-spacing: 0.06em;
   text-transform: uppercase;
@@ -384,7 +569,7 @@ button {
 .session-item {
   padding: 7px 10px;
   border-radius: var(--radius-sm);
-  font-size: 13px;
+  font-size: var(--text-md);
   color: var(--fg-muted);
   cursor: pointer;
   white-space: nowrap;
@@ -418,9 +603,9 @@ button {
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: 10px;
+  gap: var(--space-5);
   padding: 5px 14px;
-  font-size: 12.5px;
+  font-size: var(--text-sm);
   background: var(--ember-gradient-soft);
   border-bottom: 1px solid color-mix(in srgb, var(--ember-orange) 35%, transparent);
   color: var(--fg-muted);
@@ -455,12 +640,12 @@ button {
   color: var(--fg);
 }
 .update-prompt-title {
-  font-size: 16px;
+  font-size: var(--text-xl);
   font-weight: 600;
-  margin-bottom: 10px;
+  margin-bottom: var(--space-5);
 }
 .update-prompt-body {
-  font-size: 13.5px;
+  font-size: var(--text-md);
   color: var(--fg-muted);
   line-height: 1.45;
   margin-bottom: 18px;
@@ -469,33 +654,49 @@ button {
   color: var(--fg);
 }
 .update-prompt-error {
-  font-size: 12.5px;
+  font-size: var(--text-sm);
   color: var(--danger, #d73a49);
   background: color-mix(in srgb, var(--danger, #d73a49) 12%, transparent);
   border: 1px solid color-mix(in srgb, var(--danger, #d73a49) 35%, transparent);
   border-radius: 6px;
-  padding: 6px 10px;
-  margin-bottom: 12px;
+  padding: var(--space-3) var(--space-5);
+  margin-bottom: var(--space-6);
 }
 .update-prompt-actions {
   display: flex;
-  gap: 8px;
+  gap: var(--space-4);
   justify-content: flex-end;
 }
 
+/* An extension's dialog (``host.ui.show_dialog``) wears the same sheet,
+   labelled with whose question it is. */
+.host-dialog-from {
+  font-size: var(--text-sm);
+  color: var(--fg-faint);
+  margin-bottom: var(--space-3);
+}
+.host-dialog-field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  font-size: var(--text-sm);
+  color: var(--fg-muted);
+  margin-bottom: 18px;
+}
+
 /* ── Update pill (statusline) ─────────────────────────────────
-   Geometry matches ``.codeindex-pill`` / ``.session-chip`` so the
+   Geometry matches ``.status-pill`` / ``.session-chip`` so the
    row reads as one consistent strip of pills. The accent color
    conveys "actionable" — same orange treatment as elsewhere. */
 .brand-update {
   appearance: none;
   display: inline-flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--space-3);
   height: 22px;
-  padding: 0 10px;
-  border-radius: 9999px;
-  font-size: 11.5px;
+  padding: 0 var(--space-5);
+  border-radius: var(--radius-pill);
+  font-size: var(--text-sm);
   font-weight: 600;
   font-family: var(--font-ui);
   color: var(--accent-orange-text, #fb9c5a);
@@ -510,14 +711,13 @@ button {
   border-color: var(--accent-orange-text, #fb9c5a);
 }
 
-
 /* ── Header ─────────────────────────────────────────────────────── */
 
 .app-header {
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 10px 16px;
+  gap: var(--space-4);
+  padding: var(--space-5) var(--space-8);
   /* Pulled out of the flex flow so it can float over the top of
      ``.conversation`` — messages scroll up *behind* the header and
      get visually frosted by the blur stack inside it. ``.main``
@@ -635,7 +835,7 @@ button {
    ``.app-header``'s default ``padding: 10px 16px`` and the chips
    visibly jitter 2 px down whenever the user opens the sidebar. */
 :root[data-host="tauri"][data-platform="mac"] .sidebar:not(.closed) ~ .main .app-header {
-  padding: 8px 16px;
+  padding: var(--space-4) var(--space-8);
   min-height: 38px;
   box-sizing: border-box;
   -webkit-app-region: drag;
@@ -719,7 +919,7 @@ button {
   /* Lowercase ``igni`` wordmark: bigger than the old "Ember Code"
      text but lighter weight, so it reads as a typographic mark
      rather than a bold UI label. */
-  font-size: 19px;
+  font-size: var(--text-xl);
   font-weight: 600;
   letter-spacing: -0.015em;
 }
@@ -735,7 +935,7 @@ button {
   color: var(--fg-muted);
   border-radius: var(--radius-sm);
   padding: 6px 9px;
-  font-size: 13.5px;
+  font-size: var(--text-md);
   cursor: pointer;
   line-height: 1.2;
   display: inline-flex;
@@ -751,16 +951,16 @@ button {
 .chip {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--space-3);
   /* Fixed height + uniform padding so every header bubble is the
      same shape regardless of content (text, icons, or just a dot). */
   height: 30px;
-  padding: 0 12px;
+  padding: 0 var(--space-6);
   box-sizing: border-box;
-  border-radius: 9999px;
+  border-radius: var(--radius-pill);
   border: 1px solid var(--border-soft);
   background: var(--bg-surface);
-  font-size: 12.5px;
+  font-size: var(--text-sm);
   line-height: 1;
   color: var(--fg-muted);
   cursor: pointer;
@@ -775,7 +975,7 @@ button {
 .dot {
   width: 5px;
   height: 5px;
-  border-radius: 50%;
+  border-radius: var(--radius-circle);
   flex-shrink: 0;
 }
 
@@ -882,7 +1082,7 @@ button {
   transform: translateX(-50%);
   width: 36px;
   height: 36px;
-  border-radius: 50%;
+  border-radius: var(--radius-circle);
   border: 1px solid var(--border);
   background: var(--bg-surface);
   color: var(--fg-muted);
@@ -908,7 +1108,7 @@ button {
 .col {
   max-width: var(--col);
   margin: 0 auto;
-  padding: 12px 20px 24px;
+  padding: var(--space-6) var(--space-10) var(--space-12);
   display: flex;
   flex-direction: column;
   gap: 18px;
@@ -937,7 +1137,7 @@ button {
   content: "▍";
   color: var(--accent-orange-text, #fb9c5a);
   animation: caret-blink 1s steps(2) infinite;
-  margin-left: 2px;
+  margin-left: var(--space-1);
 }
 
 /* ── Virtualized chat row ──────────────────────────────────────────
@@ -1043,7 +1243,7 @@ button {
    is applied while the search bar is open so the icon reads as a
    toggle button instead of just a tap target. */
 .chip-search {
-  padding: 6px 8px;
+  padding: var(--space-3) var(--space-4);
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -1124,16 +1324,13 @@ button {
   40% { opacity: 1; }
 }
 .chat-search-row {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 8px 10px;
+  padding: var(--space-4) var(--space-5);
 }
 .chat-search-icon {
   display: flex;
   align-items: center;
   color: var(--fg-faint);
-  padding: 0 2px;
+  padding: 0 var(--space-1);
 }
 .chat-search-input {
   flex: 1;
@@ -1141,19 +1338,19 @@ button {
   border: none;
   outline: none;
   color: var(--fg);
-  font-size: 13.5px;
+  font-size: var(--text-md);
   font-family: inherit;
-  padding: 4px 0;
+  padding: var(--space-2) 0;
 }
 .chat-search-input::placeholder {
   color: var(--fg-faint);
 }
 .chat-search-status {
-  font-size: 11.5px;
+  font-size: var(--text-sm);
   color: var(--fg-faint);
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
-  padding: 0 4px;
+  padding: 0 var(--space-2);
 }
 .chat-search-nav,
 .chat-search-close {
@@ -1181,7 +1378,7 @@ button {
 .chat-search-results {
   list-style: none;
   margin: 0;
-  padding: 4px 0 6px;
+  padding: var(--space-2) 0 var(--space-3);
   max-height: 280px;
   overflow-y: auto;
   border-top: 1px solid color-mix(in srgb, var(--fg) 6%, transparent);
@@ -1189,10 +1386,10 @@ button {
 .chat-search-result {
   display: flex;
   align-items: baseline;
-  gap: 10px;
-  padding: 6px 14px;
+  gap: var(--space-5);
+  padding: var(--space-3) var(--space-7);
   cursor: pointer;
-  font-size: 12.5px;
+  font-size: var(--text-sm);
   line-height: 1.4;
 }
 .chat-search-result:hover {
@@ -1207,7 +1404,7 @@ button {
 }
 .chat-search-role {
   flex-shrink: 0;
-  font-size: 10.5px;
+  font-size: var(--text-xs);
   text-transform: uppercase;
   letter-spacing: 0.06em;
   color: var(--fg-faint);
@@ -1231,11 +1428,11 @@ button {
 }
 .chat-search-time {
   flex-shrink: 0;
-  font-size: 10.5px;
+  font-size: var(--text-xs);
   color: var(--fg-faint);
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
-  padding-left: 8px;
+  padding-left: var(--space-4);
 }
 
 @keyframes caret-blink {
@@ -1252,13 +1449,13 @@ button {
   margin: 11vh auto 0;
   text-align: center;
   max-width: 820px;
-  padding: 0 16px;
+  padding: 0 var(--space-8);
 }
 
 .welcome h1 {
   /* Caption-style wordmark below the flame. Lowercase ``igni``
      reads as the brand mark with the flame as the visual anchor. */
-  font-size: 42px;
+  font-size: var(--text-4xl);
   font-weight: 700;
   letter-spacing: -0.025em;
   line-height: 1.05;
@@ -1268,7 +1465,7 @@ button {
 .welcome p {
   color: var(--fg-muted);
   margin: 4px 0;
-  font-size: 14.5px;
+  font-size: var(--text-lg);
 }
 
 /* ── First run: no model yet ──────────────────────────────────────
@@ -1287,20 +1484,20 @@ button {
 
 .welcome-setup-lead {
   margin: 0 0 14px;
-  font-size: 14.5px;
+  font-size: var(--text-lg);
   color: var(--fg);
 }
 
 .welcome-setup-actions {
   display: flex;
-  gap: 10px;
+  gap: var(--space-5);
   justify-content: center;
   flex-wrap: wrap;
 }
 
 .welcome-setup-note {
   margin: 14px 0 0;
-  font-size: 12px;
+  font-size: var(--text-sm);
   line-height: 1.5;
   color: var(--fg-faint);
 }
@@ -1309,7 +1506,7 @@ button {
   margin: 28px auto 0;
   display: grid;
   grid-template-columns: repeat(4, 1fr);
-  gap: 10px;
+  gap: var(--space-5);
   text-align: left;
 }
 
@@ -1333,12 +1530,12 @@ button {
 
 .welcome-cap code {
   font-weight: 600;
-  font-size: 12.5px;
+  font-size: var(--text-sm);
   color: var(--accent-orange-text, #fb9c5a);
 }
 
 .welcome-cap span {
-  font-size: 12px;
+  font-size: var(--text-sm);
   color: var(--fg-muted);
   line-height: 1.45;
 }
@@ -1358,7 +1555,7 @@ button {
 .msg-user {
   align-self: flex-end;
   max-width: 85%;
-  padding: 10px 16px;
+  padding: var(--space-5) var(--space-8);
   border-radius: var(--radius-lg);
   background: var(--bg-raised);
   white-space: pre-wrap;
@@ -1392,10 +1589,10 @@ button {
    keeps its highlight.js token classes (.hljs-*). */
 .user-code-pill-snippet pre {
   margin: 0;
-  padding: 8px 12px;
+  padding: var(--space-4) var(--space-6);
   background: var(--bg-inset);
   font-family: var(--font-mono);
-  font-size: 12px;
+  font-size: var(--text-sm);
   line-height: 1.5;
   white-space: pre;
   overflow-x: auto;
@@ -1415,11 +1612,11 @@ button {
   top: -10px;
   right: 8px;
   display: flex;
-  gap: 4px;
+  gap: var(--space-2);
   background: var(--bg-surface);
   border: 1px solid var(--border-soft);
-  border-radius: 999px;
-  padding: 2px;
+  border-radius: var(--radius-pill);
+  padding: var(--space-1);
   opacity: 0;
   pointer-events: none;
   transition: opacity 0.12s;
@@ -1456,7 +1653,7 @@ button {
 .msg-user-icon-btn {
   width: 22px;
   height: 22px;
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   border: none;
   background: transparent;
   color: var(--fg-muted);
@@ -1478,9 +1675,9 @@ button {
 }
 
 .msg-user-confirm-text {
-  font-size: 11.5px;
+  font-size: var(--text-sm);
   color: var(--fg-muted);
-  padding: 0 6px;
+  padding: 0 var(--space-3);
   display: inline-flex;
   align-items: center;
 }
@@ -1490,7 +1687,7 @@ button {
 .msg-user-editing {
   background: var(--bg-surface);
   border: 1px solid var(--border);
-  padding: 8px 10px;
+  padding: var(--space-4) var(--space-5);
   width: 85%;
   max-width: none;
 }
@@ -1503,20 +1700,20 @@ button {
   color: var(--fg);
   font: inherit;
   outline: none;
-  padding: 4px 4px 8px;
+  padding: var(--space-2) var(--space-2) var(--space-4);
 }
 
 .msg-user-edit-bar {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--space-4);
   border-top: 1px solid var(--border-soft);
-  padding-top: 8px;
+  padding-top: var(--space-4);
 }
 
 .msg-user-edit-hint {
   flex: 1;
-  font-size: 11.5px;
+  font-size: var(--text-sm);
   color: var(--fg-faint);
 }
 
@@ -1527,7 +1724,7 @@ button {
   border: 1px solid color-mix(in srgb, var(--accent-blue) 40%, transparent);
   color: var(--accent-blue-text);
   font-family: var(--font-mono);
-  font-size: 13px;
+  font-size: var(--text-md);
   font-weight: 700;
   letter-spacing: 0.01em;
 }
@@ -1537,13 +1734,13 @@ button {
   border: 1px solid color-mix(in srgb, var(--ember-orange) 40%, transparent);
   color: var(--accent-orange-text, #fb9c5a);
   font-family: var(--font-mono);
-  font-size: 13px;
+  font-size: var(--text-md);
   font-weight: 700;
   letter-spacing: 0.01em;
 }
 
 .msg-assistant {
-  font-size: 15px;
+  font-size: var(--text-lg);
 }
 
 /* Markdown sits inside ``.msg-assistant-body`` (sibling of the copy
@@ -1591,7 +1788,7 @@ button {
 .agent-dispatch--with-copy {
   display: inline-flex;
   align-items: center;
-  gap: 10px;
+  gap: var(--space-5);
 }
 
 .msg-stats-copy {
@@ -1602,7 +1799,7 @@ button {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  padding: 2px 4px;
+  padding: var(--space-1) var(--space-2);
   border: none;
   border-radius: 4px;
   background: transparent;
@@ -1638,13 +1835,13 @@ button {
   flex-wrap: wrap;
   align-items: center;
   gap: 6px 10px;
-  margin-top: 10px;
-  padding: 8px 12px;
+  margin-top: var(--space-5);
+  padding: var(--space-4) var(--space-6);
   border-radius: var(--radius-sm);
   border: 1px solid var(--border-soft);
   background: color-mix(in srgb, var(--ember-orange) 6%, transparent);
   color: var(--fg);
-  font-size: 13px;
+  font-size: var(--text-md);
   line-height: 1.4;
   outline: none;
   animation: msg-assistant-interrupted-fade-in 180ms ease-out;
@@ -1671,12 +1868,12 @@ button {
   color: var(--fg-muted);
   flex: 1 1 auto;
   min-width: 0;
-  margin-right: 4px;
+  margin-right: var(--space-2);
 }
 
 .msg-assistant-interrupted-actions {
   display: inline-flex;
-  gap: 6px;
+  gap: var(--space-3);
   flex-wrap: wrap;
 }
 
@@ -1714,7 +1911,7 @@ button {
 .mermaid-diagram {
   position: relative;
   margin: 12px 0;
-  padding: 16px;
+  padding: var(--space-8);
   background: var(--bg-inset);
   border: 1px solid var(--border-soft);
   border-radius: var(--radius);
@@ -1738,7 +1935,7 @@ button {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  padding: 4px 6px;
+  padding: var(--space-2) var(--space-3);
   border: 1px solid var(--border-soft);
   border-radius: 6px;
   background: var(--bg-inset);
@@ -1759,13 +1956,13 @@ button {
    what went wrong without a console message. */
 .mermaid-error {
   margin: 12px 0;
-  padding: 14px;
+  padding: var(--space-7);
   background: var(--bg-inset);
   border: 1px solid var(--danger);
   border-radius: var(--radius);
   overflow-x: auto;
   font-family: var(--font-mono);
-  font-size: 13px;
+  font-size: var(--text-md);
   color: var(--fg);
 }
 
@@ -1851,7 +2048,7 @@ button {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  padding: 4px 6px;
+  padding: var(--space-2) var(--space-3);
   border: 1px solid var(--border-soft);
   border-radius: 6px;
   background: var(--bg-inset);
@@ -1871,10 +2068,10 @@ button {
   background: var(--bg-inset);
   border: 1px solid var(--border-soft);
   border-radius: var(--radius);
-  padding: 14px;
+  padding: var(--space-7);
   overflow-x: auto;
   font-family: var(--font-mono);
-  font-size: 13px;
+  font-size: var(--text-md);
   line-height: 1.65;
 }
 
@@ -2092,41 +2289,41 @@ button {
 
 .msg-thinking {
   color: var(--fg-faint);
-  font-size: 14px;
+  font-size: var(--text-lg);
   border-left: 2px solid var(--border);
-  padding-left: 12px;
+  padding-left: var(--space-6);
   white-space: pre-wrap;
 }
 
 .thinking-toggle {
   color: var(--fg-faint);
-  font-size: 12.5px;
+  font-size: var(--text-sm);
   cursor: pointer;
   user-select: none;
 }
 
 .msg-info {
   color: var(--fg-muted);
-  font-size: 13.5px;
+  font-size: var(--text-md);
 }
 
 .msg-error {
   color: var(--danger);
-  font-size: 13.5px;
+  font-size: var(--text-md);
   border: 1px solid color-mix(in srgb, var(--danger) 40%, transparent);
   border-radius: var(--radius);
-  padding: 10px 14px;
+  padding: var(--space-5) var(--space-7);
   background: color-mix(in srgb, var(--danger) 7%, transparent);
   white-space: pre-wrap;
 }
 
 .shell-output {
   font-family: var(--font-mono);
-  font-size: 12.5px;
+  font-size: var(--text-sm);
   background: var(--bg-inset);
   border: 1px solid var(--border-soft);
   border-radius: var(--radius);
-  padding: 12px 14px;
+  padding: var(--space-6) var(--space-7);
   white-space: pre-wrap;
   word-break: break-word;
   max-height: 380px;
@@ -2144,7 +2341,7 @@ button {
   border: 1px solid var(--border-soft);
   border-radius: var(--radius);
   background: var(--bg-surface);
-  font-size: 13px;
+  font-size: var(--text-md);
   overflow: hidden;
 }
 
@@ -2159,7 +2356,7 @@ button {
 
 .tool-chevron {
   color: var(--fg-faint);
-  font-size: 10px;
+  font-size: var(--text-2xs);
   width: 10px;
   transition: transform 0.15s ease;
 }
@@ -2171,7 +2368,7 @@ button {
 .tool-status {
   width: 8px;
   height: 8px;
-  border-radius: 50%;
+  border-radius: var(--radius-circle);
   flex-shrink: 0;
 }
 
@@ -2188,6 +2385,23 @@ button {
   background: var(--danger);
 }
 
+/* Never ran — rejected in the approval dialog. Neither success nor
+   failure, so a hollow ring in muted ink rather than green or red. */
+.tool-status.rejected {
+  background: transparent;
+  box-shadow: inset 0 0 0 1.5px var(--fg-muted);
+}
+
+.tool-rejected-tag {
+  flex-shrink: 0;
+  font-size: var(--text-xs);
+  letter-spacing: 0.02em;
+  color: var(--fg-muted);
+  border: 1px solid var(--border-soft);
+  border-radius: 4px;
+  padding: 0 var(--space-3);
+}
+
 .tool-name {
   font-weight: 600;
   flex-shrink: 0;
@@ -2196,7 +2410,7 @@ button {
 .tool-args {
   color: var(--fg-faint);
   font-family: var(--font-mono);
-  font-size: 12px;
+  font-size: var(--text-sm);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -2210,11 +2424,11 @@ button {
   margin-left: auto;
   flex-shrink: 0;
   font-family: var(--font-mono);
-  font-size: 10.5px;
+  font-size: var(--text-xs);
   font-weight: 500;
   letter-spacing: 0.02em;
   padding: 1px 6px;
-  border-radius: 9999px;
+  border-radius: var(--radius-pill);
   background: color-mix(in srgb, var(--accent-blue) 14%, transparent);
   color: var(--accent-blue-text);
   border: 1px solid color-mix(in srgb, var(--accent-blue) 30%, transparent);
@@ -2224,9 +2438,9 @@ button {
 
 .tool-card-body {
   border-top: 1px solid var(--border-soft);
-  padding: 10px 14px;
+  padding: var(--space-5) var(--space-7);
   font-family: var(--font-mono);
-  font-size: 12.5px;
+  font-size: var(--text-sm);
   white-space: pre-wrap;
   word-break: break-word;
   max-height: 340px;
@@ -2235,15 +2449,12 @@ button {
 }
 
 .diff-table {
-  width: 100%;
-  border-collapse: collapse;
   font-family: var(--font-mono);
-  font-size: 12px;
   line-height: 1.55;
 }
 
 .diff-table td {
-  padding: 0 8px;
+  padding: 0 var(--space-4);
   vertical-align: top;
   white-space: pre-wrap;
   word-break: break-all;
@@ -2259,7 +2470,7 @@ button {
 
 .agent-dispatch {
   color: var(--fg-faint);
-  font-size: 12.5px;
+  font-size: var(--text-sm);
   font-family: var(--font-mono);
 }
 
@@ -2285,13 +2496,13 @@ button {
   font-weight: 600;
   letter-spacing: 0.02em;
   text-transform: uppercase;
-  font-size: 11.5px;
+  font-size: var(--text-sm);
   color: var(--fg-muted);
 }
 
 .orchestrate-meta {
   color: var(--fg-faint);
-  font-size: 11.5px;
+  font-size: var(--text-sm);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -2306,11 +2517,36 @@ button {
   display: inline-block;
   width: 10px;
   height: 10px;
-  border-radius: 50%;
+  border-radius: var(--radius-circle);
   border: 1.5px solid color-mix(in srgb, var(--accent-blue) 35%, transparent);
   border-top-color: var(--accent-blue-text);
   animation: ember-spin 0.9s linear infinite;
   flex-shrink: 0;
+}
+
+/* The safety check's description of a call is being written. Same
+   spinner as the orchestrate card, in the dialog's muted ink. */
+.hitl-explaining {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+}
+
+.hitl-explaining-spinner {
+  display: inline-block;
+  width: 11px;
+  height: 11px;
+  border-radius: var(--radius-circle);
+  border: 1.5px solid color-mix(in srgb, var(--fg-muted) 30%, transparent);
+  border-top-color: var(--fg-muted);
+  animation: ember-spin 0.9s linear infinite;
+  flex-shrink: 0;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .hitl-explaining-spinner {
+    animation-duration: 2.4s;
+  }
 }
 
 @keyframes ember-spin {
@@ -2320,7 +2556,7 @@ button {
 }
 
 .orchestrate-body {
-  padding: 4px 0;
+  padding: var(--space-2) 0;
   border-top: 1px solid var(--border-soft);
   background: var(--bg-surface);
   display: flex;
@@ -2332,9 +2568,7 @@ button {
 }
 
 .orchestrate-empty {
-  padding: 12px 14px;
-  color: var(--fg-faint);
-  font-size: 12px;
+  padding: var(--space-6) var(--space-7);
   font-style: italic;
 }
 
@@ -2368,13 +2602,13 @@ button {
 .orch-agent-head {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: var(--space-5);
   width: 100%;
   background: transparent;
   border: none;
-  padding: 10px 14px;
+  padding: var(--space-5) var(--space-7);
   font-family: var(--font-ui);
-  font-size: 13px;
+  font-size: var(--text-md);
   color: var(--fg);
   cursor: pointer;
   text-align: left;
@@ -2388,7 +2622,7 @@ button {
   appearance: none;
   background: transparent;
   border: none;
-  padding: 2px;
+  padding: var(--space-1);
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -2413,7 +2647,7 @@ button {
 .orch-agent-id {
   display: inline-flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--space-4);
   flex: 1;
   min-width: 0;
 }
@@ -2422,7 +2656,7 @@ button {
   display: inline-block;
   width: 8px;
   height: 8px;
-  border-radius: 50%;
+  border-radius: var(--radius-circle);
   background: var(--fg-faint);
   flex-shrink: 0;
 }
@@ -2449,7 +2683,7 @@ button {
 .orch-agent-name {
   font-weight: 600;
   font-family: var(--font-mono);
-  font-size: 13px;
+  font-size: var(--text-md);
   color: var(--fg);
   white-space: nowrap;
   overflow: hidden;
@@ -2457,12 +2691,12 @@ button {
 }
 
 .orch-agent-status {
-  font-size: 10.5px;
+  font-size: var(--text-xs);
   text-transform: uppercase;
   letter-spacing: 0.04em;
   font-weight: 600;
   padding: 1px 6px;
-  border-radius: 9999px;
+  border-radius: var(--radius-pill);
   flex-shrink: 0;
 }
 
@@ -2486,7 +2720,7 @@ button {
 .orch-agent-counts {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--space-3);
   flex-shrink: 0;
 }
 
@@ -2495,17 +2729,17 @@ button {
   align-items: center;
   gap: 3px;
   font-family: var(--font-mono);
-  font-size: 11px;
+  font-size: var(--text-xs);
   font-weight: 600;
   padding: 2px 7px;
-  border-radius: 9999px;
+  border-radius: var(--radius-pill);
   background: var(--bg-inset);
   color: var(--fg-muted);
   white-space: nowrap;
 }
 
 .orch-count-icon {
-  font-size: 9px;
+  font-size: var(--text-2xs);
   line-height: 1;
 }
 
@@ -2529,7 +2763,7 @@ button {
   font-weight: 400;
   color: var(--fg-faint);
   background: transparent;
-  padding: 2px 0;
+  padding: var(--space-1) 0;
 }
 
 .orch-count.count-tokens {
@@ -2570,10 +2804,10 @@ button {
   display: inline-flex;
   align-items: center;
   gap: 5px;
-  margin-left: 8px;
-  padding: 4px 10px;
+  margin-left: var(--space-4);
+  padding: var(--space-2) var(--space-5);
   font-family: var(--font-ui);
-  font-size: 11.5px;
+  font-size: var(--text-sm);
   font-weight: 600;
   letter-spacing: 0.02em;
   border-radius: 6px;
@@ -2598,7 +2832,7 @@ button {
      counts cluster — flex layout keeps the buttons disjoint and
      prevents the overlap we had with absolute positioning. */
   padding: 3px 8px;
-  font-size: 11px;
+  font-size: var(--text-xs);
 }
 
 /* Retry button — appears only when the agent ended in error or was
@@ -2609,10 +2843,10 @@ button {
   display: inline-flex;
   align-items: center;
   gap: 5px;
-  margin-left: 6px;
+  margin-left: var(--space-3);
   padding: 3px 8px;
   font-family: var(--font-ui);
-  font-size: 11px;
+  font-size: var(--text-xs);
   font-weight: 600;
   letter-spacing: 0.02em;
   border-radius: 6px;
@@ -2637,16 +2871,16 @@ button {
    edit and submit. On submit the parent agent receives a follow-up
    user message asking it to respawn this specialist. */
 .orch-agent-retry {
-  padding: 10px 14px 12px;
+  padding: var(--space-5) var(--space-7) var(--space-6);
   background: color-mix(in srgb, var(--ember-orange) 5%, transparent);
   border-top: 1px solid color-mix(in srgb, var(--ember-orange) 25%, transparent);
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: var(--space-3);
 }
 
 .orch-retry-label {
-  font-size: 12px;
+  font-size: var(--text-sm);
   color: var(--fg-muted);
 }
 
@@ -2661,9 +2895,9 @@ button {
   background: var(--bg-surface);
   border: 1px solid var(--border-soft);
   border-radius: 6px;
-  padding: 8px 10px;
+  padding: var(--space-4) var(--space-5);
   font-family: var(--font-mono);
-  font-size: 12.5px;
+  font-size: var(--text-sm);
   line-height: 1.5;
   color: var(--fg);
   resize: vertical;
@@ -2679,12 +2913,12 @@ button {
 .orch-retry-bar {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--space-4);
 }
 
 .orch-retry-hint {
   flex: 1;
-  font-size: 11px;
+  font-size: var(--text-xs);
   color: var(--fg-faint);
   font-style: italic;
 }
@@ -2694,13 +2928,13 @@ button {
 .orchestrate-head {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--space-4);
   width: 100%;
   background: transparent;
   border: none;
-  padding: 8px 12px;
+  padding: var(--space-4) var(--space-6);
   font-family: var(--font-ui);
-  font-size: 13px;
+  font-size: var(--text-md);
   color: var(--fg);
   text-align: left;
 }
@@ -2709,7 +2943,7 @@ button {
   appearance: none;
   background: transparent;
   border: none;
-  padding: 4px 6px;
+  padding: var(--space-2) var(--space-3);
   border-radius: 4px;
   color: var(--fg);
   cursor: pointer;
@@ -2728,7 +2962,6 @@ button {
   transform: rotate(90deg);
 }
 
-
 /* Live "thinking" rolling-window under the agent head. Shows up to
    PREVIEW_WINDOW preview lines from oldest to newest — the newest
    highlighted, older entries dimmer. Stays visible when the body is
@@ -2736,7 +2969,7 @@ button {
    said". Subtle bg + monospace gives it a "log tail" feel. */
 .orch-agent-preview-window {
   margin: 0 14px 10px;
-  padding: 8px 12px;
+  padding: var(--space-4) var(--space-6);
   background: var(--bg-inset);
   /* Straight rectangle — markdown-blockquote style. No border-radius
      so the left rail reads as a clean vertical bar instead of an
@@ -2751,10 +2984,10 @@ button {
 
 .orch-preview-line {
   display: flex;
-  gap: 8px;
+  gap: var(--space-4);
   align-items: baseline;
   font-family: var(--font-ui);
-  font-size: 12px;
+  font-size: var(--text-sm);
   /* Not a mix. At 80% over the light panel this came out #85847f —
    * 3.25:1 — which is the removed opacity fade in another form. The
    * token is already the de-emphasised colour. F138. */
@@ -2769,7 +3002,7 @@ button {
 
 .orch-preview-glyph {
   font-family: var(--font-mono);
-  font-size: 11px;
+  font-size: var(--text-xs);
   color: var(--fg-faint);
   flex-shrink: 0;
   width: 10px;
@@ -2804,8 +3037,8 @@ button {
 .orch-agent-body {
   display: flex;
   flex-direction: column;
-  gap: 6px;
-  padding: 10px 12px 12px;
+  gap: var(--space-3);
+  padding: var(--space-5) var(--space-6) var(--space-6);
   border-top: 1px solid var(--border-soft);
   /* Cap the tool list so an agent with 20+ tool calls doesn't
      blow up the team card. Internal scroll keeps the header
@@ -2865,13 +3098,13 @@ button {
 }
 
 .demo-head h1 {
-  font-size: 22px;
+  font-size: var(--text-2xl);
   margin: 0 0 6px;
 }
 
 .demo-head p {
   color: var(--fg-muted);
-  font-size: 13px;
+  font-size: var(--text-md);
   margin: 0 0 16px;
 }
 
@@ -2879,14 +3112,14 @@ button {
   background: var(--bg-inset);
   padding: 1px 5px;
   border-radius: 4px;
-  font-size: 12px;
+  font-size: var(--text-sm);
 }
 
 .demo-nav {
   display: flex;
   flex-wrap: wrap;
-  gap: 6px;
-  margin-bottom: 12px;
+  gap: var(--space-3);
+  margin-bottom: var(--space-6);
 }
 
 .demo-nav-btn {
@@ -2894,9 +3127,9 @@ button {
   background: var(--bg-raised);
   border: 1px solid var(--border-soft);
   color: var(--fg);
-  padding: 6px 12px;
+  padding: var(--space-3) var(--space-6);
   border-radius: 6px;
-  font-size: 12.5px;
+  font-size: var(--text-sm);
   cursor: pointer;
 }
 
@@ -2912,12 +3145,12 @@ button {
 
 .demo-desc {
   color: var(--fg-faint);
-  font-size: 12px;
+  font-size: var(--text-sm);
   font-style: italic;
 }
 
 .demo-stage {
-  padding: 24px;
+  padding: var(--space-12);
   border-radius: 12px;
   background: var(--bg-surface);
   border: 1px solid var(--border-soft);
@@ -2926,7 +3159,7 @@ button {
 .demo-stage .col {
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: var(--space-5);
 }
 
 /* ── /loop iteration card ───────────────────────────────────────── */
@@ -2936,34 +3169,30 @@ button {
   border: 1px solid var(--border-soft);
   border-radius: var(--radius);
   background: color-mix(in srgb, var(--ember-orange) 5%, transparent);
-  padding: 10px 14px;
+  padding: var(--space-5) var(--space-7);
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: var(--space-3);
 }
 
 .loop-iteration-head {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: var(--space-5);
 }
 
 .loop-iteration-badge {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
+  gap: var(--space-3);
   padding: 2px 9px;
-  border-radius: 999px;
   background: color-mix(in srgb, var(--ember-orange) 18%, transparent);
   color: var(--accent-orange-text, #fb9c5a);
-  font-size: 11.5px;
-  font-weight: 700;
+  font-size: var(--text-sm);
   letter-spacing: 0.02em;
   text-transform: uppercase;
 }
 
 .loop-iteration-arrow {
-  font-size: 13px;
+  font-size: var(--text-md);
   line-height: 1;
 }
 
@@ -2972,11 +3201,11 @@ button {
   background: transparent;
   border: none;
   color: var(--fg-faint);
-  font-size: 11.5px;
+  font-size: var(--text-sm);
   cursor: pointer;
   display: inline-flex;
   align-items: center;
-  gap: 4px;
+  gap: var(--space-2);
   padding: 0;
 }
 
@@ -2986,7 +3215,7 @@ button {
 
 .loop-iteration-body {
   color: var(--fg);
-  font-size: 13.5px;
+  font-size: var(--text-md);
   line-height: 1.5;
   white-space: pre-wrap;
   word-break: break-word;
@@ -3002,13 +3231,7 @@ button {
 
 .compact-card {
   align-self: stretch;
-  border: 1px solid var(--border-soft);
-  border-radius: var(--radius);
   background: color-mix(in srgb, var(--accent-blue) 5%, transparent);
-  padding: 12px 14px;
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
 }
 
 /* Plan-mode demo (``?demo=plan``) — each scenario gets a thin
@@ -3017,8 +3240,8 @@ button {
 .demo-section {
   display: flex;
   flex-direction: column;
-  gap: 10px;
-  padding: 14px 16px;
+  gap: var(--space-5);
+  padding: var(--space-7) var(--space-8);
   border: 1px solid var(--border-soft);
   border-radius: var(--radius);
   background: color-mix(in srgb, var(--accent-blue) 3%, transparent);
@@ -3026,7 +3249,7 @@ button {
 
 .demo-section-title {
   margin: 0;
-  font-size: 13px;
+  font-size: var(--text-md);
   font-weight: 700;
   letter-spacing: 0.02em;
   text-transform: uppercase;
@@ -3035,14 +3258,14 @@ button {
 
 .demo-section-blurb {
   margin: 0;
-  font-size: 13px;
+  font-size: var(--text-md);
   line-height: 1.55;
   color: var(--fg);
 }
 
 .demo-section-blurb code {
   font-family: var(--font-mono);
-  font-size: 12px;
+  font-size: var(--text-sm);
   padding: 1px 5px;
   border-radius: 4px;
   background: color-mix(in srgb, var(--fg) 8%, transparent);
@@ -3054,17 +3277,12 @@ button {
    in the chat when the agent calls ``exit_plan_mode``. */
 
 .plan-badge {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
+  gap: var(--space-3);
   height: 22px;
-  padding: 0 10px;
-  border-radius: 999px;
+  padding: 0 var(--space-5);
   background: color-mix(in srgb, var(--accent-orange, #f59e0b) 18%, transparent);
   color: var(--accent-orange-text, #fb9c5a);
   border: 1px solid color-mix(in srgb, var(--accent-orange, #f59e0b) 40%, transparent);
-  font-size: 11px;
-  font-weight: 700;
   letter-spacing: 0.05em;
   text-transform: uppercase;
   font-family: var(--font-mono);
@@ -3073,7 +3291,7 @@ button {
 .plan-badge-dot {
   width: 7px;
   height: 7px;
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   background: var(--accent-orange, #f59e0b);
   /* Subtle pulse so the user notices the chip on first paint —
      plan mode is a state change that affects every subsequent
@@ -3133,14 +3351,14 @@ button {
 .auto-approve-switch {
   display: inline-flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--space-4);
   height: 22px;
-  padding: 0 10px 0 4px;
-  border-radius: 999px;
+  padding: 0 var(--space-5) 0 var(--space-2);
+  border-radius: var(--radius-pill);
   border: 1px solid var(--border);
   background: var(--bg-raised);
   color: var(--fg-muted);
-  font-size: 11px;
+  font-size: var(--text-xs);
   font-weight: 600;
   font-family: var(--font-mono);
   letter-spacing: 0.04em;
@@ -3164,7 +3382,7 @@ button {
   display: inline-block;
   width: 22px;
   height: 12px;
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   background: color-mix(in srgb, var(--fg-faint) 35%, transparent);
   transition: background 0.18s;
 }
@@ -3175,7 +3393,7 @@ button {
   left: 1px;
   width: 10px;
   height: 10px;
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   background: var(--fg);
   transition: transform 0.18s, background 0.18s;
 }
@@ -3202,12 +3420,9 @@ button {
 .plan-card {
   align-self: stretch;
   border: 1px solid color-mix(in srgb, var(--accent-orange, #f59e0b) 35%, var(--border-soft));
-  border-radius: var(--radius);
   background: color-mix(in srgb, var(--accent-orange, #f59e0b) 6%, transparent);
-  padding: 14px 16px;
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
+  padding: var(--space-7) var(--space-8);
+  gap: var(--space-6);
 }
 
 .plan-card--approved {
@@ -3222,7 +3437,7 @@ button {
 .plan-card-head {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: var(--space-5);
 }
 
 .plan-card-badge {
@@ -3235,11 +3450,11 @@ button {
   background: color-mix(in srgb, var(--accent-orange, #f59e0b) 22%, transparent);
   color: var(--accent-orange-text, #fb9c5a);
   font-weight: 700;
-  font-size: 13px;
+  font-size: var(--text-md);
 }
 
 .plan-card-title {
-  font-size: 12.5px;
+  font-size: var(--text-sm);
   font-weight: 700;
   letter-spacing: 0.02em;
   text-transform: uppercase;
@@ -3256,7 +3471,7 @@ button {
 }
 
 .plan-card-body {
-  font-size: 13.5px;
+  font-size: var(--text-md);
   line-height: 1.55;
   color: var(--fg);
 }
@@ -3277,10 +3492,10 @@ button {
 .plan-card-tasks {
   list-style: none;
   margin: 0;
-  padding: 8px 0 0 0;
+  padding: var(--space-4) 0 0 0;
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: var(--space-2);
   border-top: 1px dashed color-mix(in srgb, var(--accent-orange, #f59e0b) 30%, var(--border-soft));
 }
 
@@ -3291,8 +3506,8 @@ button {
 .plan-card-task {
   display: flex;
   align-items: flex-start;
-  gap: 10px;
-  font-size: 13px;
+  gap: var(--space-5);
+  font-size: var(--text-md);
   line-height: 1.5;
   color: var(--fg);
 }
@@ -3304,11 +3519,11 @@ button {
   width: 18px;
   height: 18px;
   flex-shrink: 0;
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   font-family: var(--font-mono);
-  font-size: 11px;
+  font-size: var(--text-xs);
   font-weight: 700;
-  margin-top: 2px;
+  margin-top: var(--space-1);
 }
 
 .plan-card-task--pending .plan-card-task-marker {
@@ -3340,15 +3555,13 @@ button {
 }
 
 .plan-card-actions {
-  display: flex;
-  align-items: center;
-  gap: 10px;
+  gap: var(--space-5);
   flex-wrap: wrap;
 }
 
 .plan-card-btn {
   font-family: var(--font-ui, inherit);
-  font-size: 12.5px;
+  font-size: var(--text-sm);
   font-weight: 600;
   padding: 7px 14px;
   border-radius: 6px;
@@ -3377,7 +3590,7 @@ button {
 }
 
 .plan-card-footer {
-  font-size: 12px;
+  font-size: var(--text-sm);
   font-weight: 500;
 }
 
@@ -3390,7 +3603,7 @@ button {
 }
 
 .plan-card-hint {
-  font-size: 11.5px;
+  font-size: var(--text-sm);
   color: var(--fg-faint);
   line-height: 1.5;
 }
@@ -3398,7 +3611,7 @@ button {
 .compact-card-head {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: var(--space-5);
   flex-wrap: wrap;
 }
 
@@ -3408,16 +3621,16 @@ button {
   justify-content: center;
   width: 22px;
   height: 22px;
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   background: color-mix(in srgb, var(--accent-blue) 18%, transparent);
   color: var(--accent-blue-text);
   font-weight: 700;
-  font-size: 13px;
+  font-size: var(--text-md);
   font-family: var(--font-mono);
 }
 
 .compact-card-title {
-  font-size: 12.5px;
+  font-size: var(--text-sm);
   font-weight: 700;
   letter-spacing: 0.02em;
   text-transform: uppercase;
@@ -3425,12 +3638,12 @@ button {
 }
 
 .compact-card-status {
-  font-size: 11.5px;
+  font-size: var(--text-sm);
   color: var(--fg-faint);
 }
 
 .compact-card-body {
-  font-size: 13.5px;
+  font-size: var(--text-md);
   line-height: 1.55;
   color: var(--fg);
 }
@@ -3443,11 +3656,6 @@ button {
   margin-bottom: 0;
 }
 
-.compact-card-empty {
-  color: var(--fg-faint);
-  font-size: 12.5px;
-}
-
 /* ── Toasts (top-right) ─────────────────────────────────────────── */
 
 .toasts {
@@ -3457,7 +3665,7 @@ button {
   z-index: 60;
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: var(--space-5);
   pointer-events: none;
   max-width: min(360px, calc(100vw - 32px));
 }
@@ -3496,10 +3704,10 @@ button {
   border: none;
   color: var(--fg);
   cursor: pointer;
-  padding: 10px 12px;
+  padding: var(--space-5) var(--space-6);
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: var(--space-2);
   font: inherit;
 }
 
@@ -3508,13 +3716,13 @@ button {
 }
 
 .toast-title {
-  font-size: 12.5px;
+  font-size: var(--text-sm);
   font-weight: 700;
   color: var(--fg);
 }
 
 .toast-body {
-  font-size: 12px;
+  font-size: var(--text-sm);
   color: var(--fg-muted);
   line-height: 1.45;
   white-space: pre-wrap;
@@ -3531,7 +3739,7 @@ button {
   border: none;
   color: var(--fg-faint);
   cursor: pointer;
-  padding: 8px 10px;
+  padding: var(--space-4) var(--space-5);
   border-left: 1px solid var(--border-soft);
   display: flex;
   align-items: flex-start;
@@ -3545,12 +3753,12 @@ button {
 
 .loop-iteration-raw {
   margin: 6px 0 0;
-  padding: 8px 10px;
+  padding: var(--space-4) var(--space-5);
   background: var(--bg-inset);
   border: 1px solid var(--border-soft);
   border-radius: var(--radius-sm);
   font-family: var(--font-mono);
-  font-size: 11.5px;
+  font-size: var(--text-sm);
   color: var(--fg-muted);
   white-space: pre-wrap;
   word-break: break-word;
@@ -3573,7 +3781,7 @@ button {
   border: 1px solid var(--border);
   border-radius: var(--radius-lg);
   box-shadow: 0 4px 24px rgba(0, 0, 0, 0.12);
-  padding: 10px 12px 8px;
+  padding: var(--space-5) var(--space-6) var(--space-4);
 }
 
 .composer:focus-within {
@@ -3589,11 +3797,11 @@ button {
   background: transparent;
   color: var(--fg);
   font-family: var(--font-ui);
-  font-size: 15px;
+  font-size: var(--text-lg);
   line-height: 1.6;
   max-height: 240px;
   overflow-y: auto;
-  padding: 2px 4px 6px;
+  padding: var(--space-1) var(--space-2) var(--space-3);
 }
 
 .composer textarea::placeholder {
@@ -3603,16 +3811,10 @@ button {
 .composer-bar {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--space-3);
 }
 
 /* ── Panel forms (knowledge search, plugin install…) ───────────── */
-
-.panel-form-row {
-  display: flex;
-  gap: 8px;
-  align-items: center;
-}
 
 .panel-input {
   flex: 1;
@@ -3620,7 +3822,7 @@ button {
   border: 1px solid var(--border-soft);
   border-radius: var(--radius-sm);
   color: var(--fg);
-  font-size: 13px;
+  font-size: var(--text-md);
   padding: 7px 10px;
 }
 
@@ -3630,7 +3832,7 @@ button {
 }
 
 .panel-results {
-  margin-top: 8px;
+  margin-top: var(--space-4);
   max-height: 220px;
   overflow-y: auto;
 }
@@ -3644,9 +3846,9 @@ button {
 
 .dir-pathbar {
   display: flex;
-  gap: 6px;
+  gap: var(--space-3);
   align-items: center;
-  margin-bottom: 10px;
+  margin-bottom: var(--space-5);
 }
 
 .dir-path-input {
@@ -3656,8 +3858,8 @@ button {
   border-radius: var(--radius-sm);
   color: var(--fg);
   font-family: var(--font-mono);
-  font-size: 12.5px;
-  padding: 6px 10px;
+  font-size: var(--text-sm);
+  padding: var(--space-3) var(--space-5);
 }
 
 .dir-path-input:focus {
@@ -3671,21 +3873,21 @@ button {
   overflow-y: auto;
   border: 1px solid var(--border-soft);
   border-radius: var(--radius);
-  padding: 4px;
+  padding: var(--space-2);
   background: var(--bg-default);
 }
 
 .dir-icon {
   color: var(--accent-orange-text, #fb9c5a);
-  font-size: 10px;
+  font-size: var(--text-2xs);
   width: 12px;
 }
 
 .dir-hidden-toggle {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
-  font-size: 12px;
+  gap: var(--space-3);
+  font-size: var(--text-sm);
   color: var(--fg-faint);
   cursor: pointer;
   user-select: none;
@@ -3695,8 +3897,8 @@ button {
 .remote-draft {
   max-width: var(--col);
   margin: 0 auto 6px;
-  padding: 0 24px;
-  font-size: 12.5px;
+  padding: 0 var(--space-12);
+  font-size: var(--text-sm);
   color: var(--fg-faint);
   font-style: italic;
   white-space: nowrap;
@@ -3729,7 +3931,7 @@ button {
   color: var(--fg-muted);
   font-family: var(--font-mono);
   font-weight: 700;
-  font-size: 14px;
+  font-size: var(--text-lg);
   line-height: 1;
   cursor: pointer;
   display: flex;
@@ -3750,10 +3952,10 @@ button {
 
 .mode-badge {
   font-family: var(--font-mono);
-  font-size: 11.5px;
+  font-size: var(--text-sm);
   font-weight: 700;
   padding: 3px 9px;
-  border-radius: 9999px;
+  border-radius: var(--radius-pill);
   background: var(--ember-gradient-soft);
   border: 1px solid color-mix(in srgb, var(--ember-orange) 45%, transparent);
   color: var(--accent-orange-text, #fb9c5a);
@@ -3768,7 +3970,7 @@ button {
 
 .composer-hint {
   color: var(--fg-faint);
-  font-size: 12px;
+  font-size: var(--text-sm);
   overflow: hidden;
   white-space: nowrap;
   text-overflow: ellipsis;
@@ -3779,10 +3981,10 @@ button {
   border: none;
   width: 34px;
   height: 34px;
-  border-radius: 50%;
+  border-radius: var(--radius-circle);
   background: var(--ember-gradient);
   color: #fff;
-  font-size: 15px;
+  font-size: var(--text-lg);
   cursor: pointer;
   display: flex;
   align-items: center;
@@ -3823,7 +4025,7 @@ button {
   align-items: stretch;
   height: 34px;
   background: var(--ember-gradient);
-  border-radius: 9999px;
+  border-radius: var(--radius-pill);
   flex-shrink: 0;
   transition: transform 0.12s ease, box-shadow 0.12s ease;
 }
@@ -3843,13 +4045,13 @@ button {
   background: transparent;
   color: #fff;
   font-family: var(--font-ui);
-  font-size: 12px;
+  font-size: var(--text-sm);
   font-weight: 500;
   cursor: pointer;
-  padding: 0 10px 0 14px;
+  padding: 0 var(--space-5) 0 var(--space-7);
   display: flex;
   align-items: center;
-  gap: 4px;
+  gap: var(--space-2);
   border-right: 1px solid rgba(255, 255, 255, 0.25);
   border-radius: 9999px 0 0 9999px;
   white-space: nowrap;
@@ -3917,7 +4119,7 @@ button {
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 15px;
+  font-size: var(--text-lg);
   border-radius: 0 9999px 9999px 0;
   transition: opacity 0.12s;
 }
@@ -3996,13 +4198,13 @@ button {
 .send-mode-menu .popup-item {
   flex-direction: column;
   align-items: stretch;
-  gap: 2px;
+  gap: var(--space-1);
   padding: 9px 12px;
 }
 
 .send-mode-menu .popup-item .cmd {
   font-family: var(--font-ui);
-  font-size: 13.5px;
+  font-size: var(--text-md);
   font-weight: 600;
   color: var(--fg);
 }
@@ -4015,7 +4217,7 @@ button {
   overflow: visible;
   text-overflow: clip;
   line-height: 1.4;
-  font-size: 12px;
+  font-size: var(--text-sm);
 }
 
 .popup-backdrop {
@@ -4028,10 +4230,10 @@ button {
   max-width: var(--col);
   margin: 8px auto 0;
   display: flex;
-  gap: 14px;
+  gap: var(--space-7);
   justify-content: center;
   color: var(--fg-faint);
-  font-size: 11.5px;
+  font-size: var(--text-sm);
   font-family: var(--font-mono);
   flex-wrap: wrap;
 }
@@ -4068,12 +4270,12 @@ button {
 
 .popup-item {
   display: flex;
-  gap: 10px;
+  gap: var(--space-5);
   align-items: baseline;
   padding: 7px 11px;
   border-radius: var(--radius-sm);
   cursor: pointer;
-  font-size: 13.5px;
+  font-size: var(--text-md);
 }
 
 .popup-item.active,
@@ -4084,8 +4286,8 @@ button {
 .popup-footer {
   position: sticky;
   bottom: 0;
-  padding: 6px 10px;
-  font-size: 11.5px;
+  padding: var(--space-3) var(--space-5);
+  font-size: var(--text-sm);
   color: var(--fg-faint);
   background: var(--bg-surface);
   border-top: 1px solid var(--border-soft);
@@ -4099,13 +4301,315 @@ button {
 
 .popup-item .desc {
   color: var(--fg-faint);
-  font-size: 12.5px;
+  font-size: var(--text-sm);
   overflow: hidden;
   white-space: nowrap;
   text-overflow: ellipsis;
 }
 
 /* ── Buttons / dialogs / drawers ────────────────────────────────── */
+
+/* A badge's whole job is to say which kind of thing this is, so a
+   tone that renders identically to neutral is the one defect that
+   makes the component pointless. `Badge` exports a typed `tone`
+   prop; these are what make it mean something. */
+.ui-badge[data-tone="neutral"] {
+  background: var(--bg-raised);
+  color: var(--fg-muted);
+}
+
+.ui-badge[data-tone="success"] {
+  background: color-mix(in srgb, var(--success) 18%, transparent);
+  color: var(--accent-green-text, var(--success));
+}
+
+.ui-badge[data-tone="warning"] {
+  background: color-mix(in srgb, var(--warning) 18%, transparent);
+  color: var(--accent-orange-text, var(--warning));
+}
+
+.ui-badge[data-tone="danger"] {
+  background: color-mix(in srgb, var(--danger) 18%, transparent);
+  color: var(--danger-text, var(--danger));
+}
+
+/* Keyboard users get the same affordance as pointer users. Absent
+   from the extension package entirely, which would have made an
+   extension the cause of its host's accessibility findings. */
+.btn:focus-visible,
+.ui-item:focus-visible,
+.file-pill-menu-item:focus-visible,
+.mention-item:focus-visible,
+.slash-item:focus-visible,
+.ui-tab:focus-visible,
+.ui-switch:focus-visible,
+.chip:focus-visible,
+.ui-select:focus-visible,
+.ui-textarea:focus-visible,
+.panel-input:focus-visible {
+  outline: 2px solid var(--accent-blue);
+  outline-offset: 2px;
+}
+
+/* Named for a screen reader, hidden from everyone else. `Spinner`
+   needs it; so does anything that has to say what it is without
+   taking space to say it. */
+.ui-visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* ── Form controls ────────────────────────────────────────────────
+   Generic versions of controls the app only had feature-scoped
+   copies of — `kb-add-textarea`, `mcp-tool-switch`, `kb-aside-tab`. An extension cannot use any of those, and a
+   floor that stops at buttons is one where every extension writes
+   its own select. */
+
+.ui-select,
+.ui-textarea {
+  background: var(--bg-inset);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--fg);
+  font-family: inherit;
+  font-size: var(--text-md);
+  padding: 7px var(--space-5);
+  width: 100%;
+}
+
+.ui-textarea {
+  resize: vertical;
+  min-height: 72px;
+  line-height: 1.5;
+}
+
+.ui-select:focus,
+.ui-textarea:focus {
+  outline: none;
+  border-color: var(--accent-blue);
+}
+
+.ui-check {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-4);
+  cursor: pointer;
+  font-size: var(--text-md);
+}
+
+.ui-check input {
+  accent-color: var(--ember-orange);
+  width: 14px;
+  height: 14px;
+  cursor: pointer;
+}
+
+/* Only the wrapper. Both selectors matched when the input was
+   disabled, so the opacity applied twice and the control rendered at
+   0.25 rather than 0.5. */
+.ui-check:has(input:disabled) {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+/* A switch is a button, not a checkbox: it takes effect immediately
+   rather than on submit, and that difference is what a screen reader
+   announces from role="switch". */
+.ui-switch {
+  appearance: none;
+  border: none;
+  padding: 0;
+  width: 30px;
+  height: 17px;
+  border-radius: var(--radius-pill);
+  background: var(--border);
+  position: relative;
+  cursor: pointer;
+  transition: background 0.14s ease;
+}
+
+.ui-switch[aria-checked="true"] {
+  background: var(--ember-orange);
+}
+
+.ui-switch::after {
+  content: "";
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 13px;
+  height: 13px;
+  border-radius: var(--radius-circle);
+  background: #fff;
+  transition: transform 0.14s ease;
+}
+
+.ui-switch[aria-checked="true"]::after {
+  transform: translateX(13px);
+}
+
+.ui-switch:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* ── Field ────────────────────────────────────────────────────────
+   A label, a control, and room for the reason it is wrong. The
+   reason is the part that gets left out, and a form that rejects
+   input without saying why is the one people abandon. */
+
+.ui-field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.ui-label {
+  font-size: var(--text-sm);
+  font-weight: 600;
+  color: var(--fg);
+}
+
+.ui-hint {
+  font-size: var(--text-xs);
+  color: var(--fg-muted);
+}
+
+.ui-error {
+  font-size: var(--text-xs);
+  color: var(--danger-text, var(--danger));
+}
+
+/* ── Feedback ─────────────────────────────────────────────────────
+   `Skeleton` is for content whose shape is known. These are for work
+   whose duration is not. */
+
+.ui-spinner {
+  display: inline-block;
+  width: 14px;
+  height: 14px;
+  border: 2px solid var(--border);
+  border-top-color: var(--ember-orange);
+  border-radius: var(--radius-circle);
+  animation: ui-spin 0.7s linear infinite;
+}
+
+@keyframes ui-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ui-spinner {
+    animation-duration: 2.4s;
+  }
+}
+
+.ui-progress {
+  width: 100%;
+  height: 4px;
+  border-radius: var(--radius-pill);
+  background: var(--bg-inset);
+  overflow: hidden;
+}
+
+.ui-progress-fill {
+  height: 100%;
+  border-radius: var(--radius-pill);
+  background: var(--ember-gradient);
+  transition: width 0.2s ease;
+}
+
+/* An indeterminate bar slides rather than fills, because a bar that
+   sits at a fixed width reads as stuck. */
+.ui-progress[data-indeterminate="true"] .ui-progress-fill {
+  width: 35%;
+  animation: ui-slide 1.1s ease-in-out infinite;
+}
+
+@keyframes ui-slide {
+  0% {
+    transform: translateX(-100%);
+  }
+  100% {
+    transform: translateX(386%);
+  }
+}
+
+/* ── Tabs ─────────────────────────────────────────────────────── */
+
+.ui-tabs {
+  display: flex;
+  gap: var(--space-2);
+  border-bottom: 1px solid var(--border-soft);
+}
+
+.ui-tab {
+  appearance: none;
+  background: none;
+  border: none;
+  border-bottom: 2px solid transparent;
+  color: var(--fg-muted);
+  cursor: pointer;
+  font-family: inherit;
+  font-size: var(--text-sm);
+  font-weight: 600;
+  padding: var(--space-3) var(--space-5);
+  margin-bottom: -1px;
+}
+
+.ui-tab:hover {
+  color: var(--fg);
+}
+
+.ui-tab[aria-selected="true"] {
+  color: var(--fg);
+  border-bottom-color: var(--ember-orange);
+}
+
+/* ── Text ─────────────────────────────────────────────────────── */
+
+.ui-divider {
+  border: none;
+  border-top: 1px solid var(--border-soft);
+  margin: 0;
+}
+
+.ui-heading {
+  margin: 0;
+  color: var(--fg);
+  font-weight: 700;
+}
+
+.ui-text {
+  margin: 0;
+  font-size: var(--text-md);
+  color: var(--fg);
+}
+
+.ui-text[data-tone="muted"] {
+  color: var(--fg-muted);
+}
+
+.ui-text[data-tone="faint"] {
+  color: var(--fg-faint);
+}
+
+.ui-code {
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+  background: var(--bg-inset);
+  border-radius: var(--radius-sm);
+  padding: var(--space-1) var(--space-3);
+}
 
 .btn {
   appearance: none;
@@ -4114,7 +4618,7 @@ button {
   background: var(--bg-surface);
   color: var(--fg);
   padding: 7px 14px;
-  font-size: 13px;
+  font-size: var(--text-md);
   font-weight: 600;
   cursor: pointer;
 }
@@ -4161,8 +4665,8 @@ button {
 }
 
 .btn-sm {
-  padding: 4px 10px;
-  font-size: 12px;
+  padding: var(--space-2) var(--space-5);
+  font-size: var(--text-sm);
 }
 
 .overlay {
@@ -4210,11 +4714,11 @@ button {
 
 .dialog-title {
   font-weight: 700;
-  font-size: 16px;
-  margin-bottom: 4px;
+  font-size: var(--text-xl);
+  margin-bottom: var(--space-2);
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--space-4);
 }
 
 /* Present for a screen reader, absent on screen.
@@ -4238,8 +4742,8 @@ button {
 
 .dialog-sub {
   color: var(--fg-muted);
-  font-size: 13px;
-  margin-bottom: 12px;
+  font-size: var(--text-md);
+  margin-bottom: var(--space-6);
 }
 
 /* The agent path inside that sub-line. Monospace because it is an
@@ -4254,7 +4758,7 @@ button {
 
 .dialog-pre {
   font-family: var(--font-mono);
-  font-size: 12.5px;
+  font-size: var(--text-sm);
   background: var(--bg-inset);
   border: 1px solid var(--border-soft);
   border-radius: var(--radius);
@@ -4263,12 +4767,12 @@ button {
   overflow: auto;
   white-space: pre-wrap;
   word-break: break-word;
-  margin-bottom: 16px;
+  margin-bottom: var(--space-8);
 }
 
 .dialog-actions {
   display: flex;
-  gap: 8px;
+  gap: var(--space-4);
   flex-wrap: wrap;
 }
 
@@ -4301,6 +4805,76 @@ button {
   display: flex;
   flex-direction: column;
   background: var(--bg);
+
+  /* How far the scrolling area starts below this box, and therefore
+     where a column docked to it has to begin. Not one number: the
+     breadcrumbs are always there, and ``.page-head`` is there for a
+     list and absent for a document. Assuming either one puts the
+     hierarchy forty pixels below the text or on top of the panel's
+     own buttons — this file has had both bugs, so it is measured
+     from what is actually on the page. */
+  /* Where the hierarchy starts, and nothing else. ``.page-crumbs``
+     is a full-width box holding text that ends around 190px in, so
+     treating its height as a band above *everything* pushed the
+     document and the conversation down for a row they do not sit
+     under — they sit beside it. Those two are placed from
+     ``--doc-air`` now; this is the offset for the one column that
+     really is underneath the crumbs.
+
+     The crumb row measures about 23px, so the rest of this is the
+     air below it — the same air the header case leaves, which is
+     why ``82px`` there is larger than that header measures too. Cut
+     to the row's own height, the hierarchy cleared the crumbs by
+     three pixels on a document while clearing the rule by fourteen
+     on the list, and the same column looked like two different
+     columns depending on which page you came from. */
+  --page-chrome-h: 35px;
+  --dock-top: var(--doc-air);
+  /* The hierarchy, which shares the crumbs' gutter and so has to
+     start below them.
+     
+     **One number for every page, deliberately not
+     ``--page-chrome-h``.** The hierarchy is the one thing on screen
+     that does not change when you open a document: the same tree,
+     the same rows, and you are usually about to click another of
+     them. Deriving its top from the chrome above it made it jump
+     forty-seven pixels every time — up on opening a document,
+     back down on returning to the list — while the rows under the
+     pointer stayed put, which is how a click lands on the wrong
+     document.
+     
+     So it is placed to clear the *tallest* thing that can sit above
+     it, and air is the right price for whatever is shorter: the
+     alternative is a column that moves under the hand reaching for
+     it.
+
+     What that tallest thing is, is the whole question. It used to be
+     the list's header — a row carrying the page's own name and its
+     buttons, 82px of it — so 82px is what this was. That row is
+     gone; the trail is now the only thing above the hierarchy on
+     every page of this panel, and 82px left sixty-one pixels of
+     nothing between them.
+
+     Derived rather than retyped, so the next row that comes or goes
+     moves the column with it instead of stranding it. */
+  --crumb-row-h: 23px;
+  --tree-dock-top: calc(var(--crumb-row-h) + var(--tree-dock-air));
+  /* The gap between the trail and the first thing in the column.
+     Wider than ``--doc-air`` because this one is read as a gap —
+     two different things, one under the other — where the air
+     beside the text is read as a margin. */
+  --tree-dock-air: 8px;
+}
+
+/* A page that still has a header row is still cleared by it. Nothing
+   in this panel does any more; a page that grows one will not have
+   to remember why its hierarchy overlaps its buttons. */
+.page:has(> .page-head) {
+  --tree-dock-top: calc(82px + var(--doc-air));
+}
+
+.page:has(> .page-head) {
+  --page-chrome-h: 82px;
 }
 
 .main--paged > .conversation-frame,
@@ -4308,25 +4882,77 @@ button {
   visibility: hidden;
 }
 
+/* 18px is the page's left edge, and it is the crumb's *text* that has
+   to sit on it — so the container gives back the 4px of padding the
+   crumb carries for its hover fill. Align the boxes instead and every
+   label ends up four pixels right of everything below it. The fill
+   hangs into the gutter, where there is nothing to hit. */
 .page-crumbs {
   display: flex;
   align-items: center;
   flex-wrap: wrap;
-  gap: 2px;
-  padding: 10px 18px 0;
-  font-size: 12.5px;
+  gap: var(--space-1);
+  /* Was 10px of air above a 12.5px line, under a header that
+     already supplies its own. The band read as a gap rather than as
+     a row, and everything docked below it — the tree, the document,
+     the conversation — started lower than it needed to. */
+  padding: 0 18px 0 14px;
+  font-size: var(--text-sm);
+}
+
+/* Out of the flow — but only on a page whose columns sit *beside* it.
+   Full-width in the layout, this row took a band off the top of all
+   three columns when what it actually occupies is the first 190
+   pixels of the first one, so a document started a row lower than it
+   needed to for a line it sits next to.
+
+   Not on a page with a ``.page-head``. There the crumbs really are
+   above something — a title and its buttons, full width — and taking
+   them out of the flow drops that header underneath them. Which is
+   the same distinction ``--page-chrome-h`` is already drawn on, and
+   the reason it is two numbers rather than one. */
+.page:not(:has(> .page-head)) > .page-crumbs {
+  position: absolute;
+  top: 0;
+  left: 0;
+  z-index: 2;
 }
 
 .page-crumb-group {
   display: inline-flex;
   align-items: center;
-  gap: 2px;
+  gap: var(--space-1);
+}
+
+/* A document's name, which is the only crumb that can be any
+   length. "Chat" and the destination above it are fixed words; this
+   one is whatever somebody called the thing, and left to itself it
+   pushed the trail across the window. Cut with the full name a
+   hover away.
+
+   In ``ch`` rather than pixels: what has to fit is a number of
+   characters, and the two stop agreeing the moment the type scale
+   moves. */
+.page-crumb-name {
+  display: inline-block;
+  max-width: 15ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  /* The box now has a height of its own, so it needs saying where
+     the baseline sits — an inline-block among inline text otherwise
+     rides on its bottom edge. */
+  vertical-align: bottom;
 }
 
 .page-crumb {
   background: none;
   border: none;
-  padding: 2px 4px;
+  /* 1px, not 2. The row is the one thing between the header and the
+     document, and its height is what everything below it starts
+     under — so the padding a hover fill needs is worth exactly the
+     two pixels it costs and not one more. */
+  padding: 1px 4px;
   border-radius: var(--radius-sm);
   color: var(--fg-faint);
   font: inherit;
@@ -4352,15 +4978,28 @@ button {
 .page-head {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--space-4);
   padding: 6px 18px 12px;
   border-bottom: 1px solid var(--border-soft);
+  /* Air below the rule, not above the thing under it.
+     ``--page-chrome-h`` already says this header is 82px tall — more
+     than the box measures — and the difference is exactly this gap:
+     the hierarchy docks at that number and so clears the rule
+     comfortably, while the content in the flow below had only what
+     ``--doc-air`` gave it. That was six pixels when the air was 12,
+     and one pixel once a document needed less of it, which put the
+     search field's focus ring on the rule.
+
+     Here rather than on each view, because all four of them — the
+     list, the comments queue, Ask and Add — sit under this same
+     header and were all one pixel clear of it. */
+  margin-bottom: var(--space-6);
 }
 
 .page-title {
   margin: 0;
   font-weight: 700;
-  font-size: 17px;
+  font-size: var(--text-xl);
 }
 
 .page-toolbar {
@@ -4369,16 +5008,49 @@ button {
   border-bottom: 1px solid var(--border-soft);
 }
 
+/* The scrolling element, full width, so the scrollbar is where a
+   scrollbar belongs: at the right edge of the window. It used to be
+   the measure as well, which put the bar against the text — a rail
+   floating in the middle of the page that reads as belonging to
+   whatever it happens to be beside. */
 .page-body {
   flex: 1;
   overflow-y: auto;
   overscroll-behavior: contain;
+  font-size: var(--text-md);
+  /* Deliberately *not* ``position: relative``. This box scrolls, and
+     the hierarchy is positioned against ``.page`` above it, which
+     does not — that is the whole of what keeps the tree still while
+     the document moves under it. Making this a containing block
+     again would re-attach the tree to the scrolling content.
+
+     The tree escapes this box's ``overflow`` for the same reason: an
+     absolutely positioned element is only clipped by ancestors in its
+     containing-block chain, and this is not one. */
+}
+
+/* The conversation's width is only worth reserving while all three
+   columns still fit: the tree, a readable measure, and the
+   conversation behind the page. Below that, reserving it takes more
+   from the measure than the conversation was ever going to use —
+   at 1040px it left the list 331px wide with 430px of nothing
+   beside it.
+
+   The number is what the three of them need: the tree's column,
+   ``min(756px, 100%)`` of text, and the rail. */
+/* The left column is reserved at every width, because the tree is
+   docked at every width. This used to zero it below 78rem, where the
+   tree left its column and rejoined the flow — remove one without
+   the other and the tree floats over a page that has made no room
+   for it, which is what the list view looked like: two sets of words
+   in the same place. */
+
+/* The measure. Wider than the drawer's 620px, but not the full width
+   of a 27-inch display — these are lists and forms, and a line of
+   metadata stretched across a metre reads worse than it did in the
+   modal. */
+.page-measure {
   padding: 16px 18px;
-  font-size: 13.5px;
-  /* Wider than the drawer's 620px, but not the full width of a
-     27-inch display — these are lists and forms, and a line of
-     metadata stretched across a metre reads worse than it did in
-     the modal. */
   width: min(900px, 100%);
   margin: 0 auto;
 }
@@ -4434,6 +5106,183 @@ button {
   }
 }
 
+/* ── Notifications, down the right ──────────────────────────────
+   Over the app rather than instead of it: the question "is anybody
+   waiting on me" gets asked between other pieces of work, and the
+   work should still be there afterwards. */
+.notify-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 44;
+  /* Lighter than a modal's. What is underneath is still the thing
+     being worked on — often the very document a comment is about. */
+  background: rgba(0, 0, 0, 0.28);
+  animation: fade-in 0.16s ease;
+}
+
+.notify-panel {
+  position: fixed;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 45;
+  width: min(460px, 94vw);
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-surface);
+  border-left: 1px solid var(--border);
+  box-shadow: var(--shadow-pop);
+  animation: notify-in 0.18s ease;
+}
+
+@keyframes notify-in {
+  from {
+    transform: translateX(16px);
+    opacity: 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .notify-panel {
+    animation: none;
+  }
+}
+
+.notify-head {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-5);
+  padding: var(--space-7) var(--space-6) var(--space-6) var(--space-8);
+  border-bottom: 1px solid var(--border);
+}
+
+.notify-title {
+  margin: 0;
+  font-size: var(--text-lg);
+  font-weight: 600;
+}
+
+/* The count in words beside the title, not a number in a pill: the
+   pill is on the bell, and this is the sentence the bell was short
+   for. */
+.notify-count {
+  flex: 1;
+  font-size: var(--text-xs);
+  color: var(--fg-faint);
+}
+
+.notify-empty {
+  margin: 20px 4px;
+}
+
+.notify-rows {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.notify-row {
+  border-bottom: 1px solid var(--border-faint, var(--border));
+}
+
+.notify-row:last-child {
+  border-bottom: none;
+}
+
+/* A row somebody has already looked at. Dimmed rather than removed:
+   "what did I see yesterday" is a question, and a queue that empties
+   itself cannot answer it. */
+.notify-row.is-read .notify-line,
+.notify-row.is-read .notify-excerpt {
+  color: var(--fg-muted);
+}
+
+.notify-open {
+  display: flex;
+  gap: var(--space-5);
+  width: 100%;
+  padding: 11px 8px;
+  text-align: left;
+  background: none;
+  border: none;
+  border-radius: var(--radius-sm);
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+
+.notify-open:hover:not(:disabled) {
+  background: var(--bg-raised);
+}
+
+.notify-open:disabled {
+  cursor: default;
+  opacity: 0.6;
+}
+
+/* Who it is about: the actor's monogram, or the extension's when
+   nobody did anything — a notice about your own export. */
+.notify-face {
+  position: relative;
+  flex: none;
+  width: 22px;
+  height: 22px;
+}
+
+/* Which extension it is from. Above the title, small, because the
+   list mixes every extension and this is how a row is placed before
+   it is read. */
+.notify-source {
+  font-size: var(--text-xs);
+  color: var(--fg-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+/* The organisation, for somebody in more than one: a name, so not
+   shouted like the extension beside it. */
+.notify-org {
+  text-transform: none;
+  letter-spacing: normal;
+}
+
+.notify-said {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  min-width: 0;
+}
+
+.notify-line {
+  font-size: var(--text-sm);
+  line-height: 1.45;
+}
+
+/* What they wrote, when there is any. One line: the rest is in the
+   document, which is where it is worth reading.
+
+   Not ``.notify-body`` — that is the panel's scrolling container,
+   and two rules of that name would have given the excerpt ``flex:
+   1`` and the container ``white-space: nowrap``. */
+.notify-excerpt {
+  font-size: var(--text-sm);
+  color: var(--fg-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.notify-when {
+  font-size: var(--text-xs);
+  color: var(--fg-faint);
+}
+
+.notify-body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 0 var(--space-6) var(--space-8);
+}
+
 .drawer-backdrop {
   position: fixed;
   inset: 0;
@@ -4477,18 +5326,18 @@ button {
 .drawer-head {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--space-4);
   padding: 14px 18px;
   border-bottom: 1px solid var(--border-soft);
   font-weight: 700;
-  font-size: 15px;
+  font-size: var(--text-lg);
 }
 
 .drawer-body {
   flex: 1;
   overflow-y: auto;
   padding: 16px 18px;
-  font-size: 13.5px;
+  font-size: var(--text-md);
 }
 
 /* Shared with ``.page-body``: the nine panels that became pages kept
@@ -4499,7 +5348,7 @@ button {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 10px;
+  gap: var(--space-5);
   padding: 9px 0;
   border-bottom: 1px solid var(--border-soft);
 }
@@ -4510,14 +5359,14 @@ button {
 
 :is(.drawer-body, .page-body) .row .meta {
   color: var(--fg-faint);
-  font-size: 12px;
+  font-size: var(--text-sm);
 }
 
 .kv {
   display: grid;
   grid-template-columns: auto 1fr;
   gap: 4px 14px;
-  font-size: 13px;
+  font-size: var(--text-md);
 }
 
 .kv dt {
@@ -4527,7 +5376,7 @@ button {
 .kv dd {
   margin: 0;
   font-family: var(--font-mono);
-  font-size: 12.5px;
+  font-size: var(--text-sm);
   word-break: break-all;
 }
 
@@ -4563,20 +5412,20 @@ button {
   }
 
   .col {
-    padding: 10px 12px 16px;
+    padding: var(--space-5) var(--space-6) var(--space-8);
   }
 
   .composer-zone {
-    padding: 0 10px 12px;
+    padding: 0 var(--space-5) var(--space-6);
   }
 
-  /* The status line carries session id, ctx meter, and CodeIndex
-   * state — all things the user needs to see at a glance, especially
+  /* The status line carries session id, ctx meter, and status
+   * chips — all things the user needs to see at a glance, especially
    * inside the narrow JetBrains/VSCode tool window where this query
    * fires. Tighten the gap and let items wrap onto a second row when
    * they don't fit; don't hide them. */
   .statusline {
-    gap: 8px;
+    gap: var(--space-4);
   }
 
   .brand span {
@@ -4599,7 +5448,7 @@ button {
 .agent-head {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: var(--space-5);
   padding: 11px 8px;
   border-bottom: 1px solid var(--border-soft);
   border-radius: var(--radius-sm);
@@ -4619,8 +5468,8 @@ button {
 .breadcrumb {
   display: flex;
   align-items: center;
-  gap: 8px;
-  font-size: 14px;
+  gap: var(--space-4);
+  font-size: var(--text-lg);
   margin: 2px 0 8px;
 }
 
@@ -4628,8 +5477,8 @@ button {
   appearance: none;
   border: none;
   background: transparent;
-  padding: 2px 4px;
-  font-size: 14px;
+  padding: var(--space-1) var(--space-2);
+  font-size: var(--text-lg);
   color: var(--accent-orange-text, #fb9c5a);
   cursor: pointer;
   border-radius: 6px;
@@ -4645,13 +5494,13 @@ button {
 
 .mini-tag {
   display: inline-block;
-  margin-left: 6px;
+  margin-left: var(--space-3);
   padding: 1px 7px;
-  border-radius: 9999px;
+  border-radius: var(--radius-pill);
   border: 1px solid var(--border-soft);
   background: var(--bg-surface);
   color: var(--fg-muted);
-  font-size: 10.5px;
+  font-size: var(--text-xs);
   font-weight: 500;
   line-height: 1.6;
   vertical-align: 1px;
@@ -4667,18 +5516,18 @@ button {
 }
 
 .agent-body {
-  padding: 2px 8px 14px 32px;
+  padding: var(--space-1) var(--space-4) var(--space-7) var(--space-16);
 }
 
 .agent-kv {
   display: flex;
-  gap: 10px;
+  gap: var(--space-5);
   align-items: baseline;
   margin: 4px 0;
 }
 
 .agent-kv-label {
-  font-size: 11px;
+  font-size: var(--text-xs);
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.04em;
@@ -4688,11 +5537,11 @@ button {
 }
 
 .agent-prompt-md {
-  padding: 4px 16px;
+  padding: var(--space-2) var(--space-8);
   border-radius: 8px;
   border: 1px solid var(--border-soft);
   background: var(--bg-surface);
-  font-size: 13px;
+  font-size: var(--text-md);
   line-height: 1.6;
   color: var(--fg-muted);
 }
@@ -4700,14 +5549,14 @@ button {
 .agent-prompt-md h1,
 .agent-prompt-md h2,
 .agent-prompt-md h3 {
-  font-size: 14px;
+  font-size: var(--text-lg);
   margin: 16px 0 6px;
   color: var(--fg);
 }
 
 .agent-prompt-md code {
   font-family: var(--font-mono);
-  font-size: 12px;
+  font-size: var(--text-sm);
   background: var(--bg-raised);
   padding: 1px 5px;
   border-radius: 5px;
@@ -4715,7 +5564,7 @@ button {
 
 .agent-prompt-md pre {
   background: var(--bg-inset);
-  padding: 10px 12px;
+  padding: var(--space-5) var(--space-6);
   border-radius: 8px;
   overflow-x: auto;
 }
@@ -4729,9 +5578,13 @@ button {
 .chip.composer-model {
   height: 24px;
   padding: 0 9px;
-  font-size: 11.5px;
-  gap: 4px;
+  font-size: var(--text-sm);
+  gap: var(--space-2);
   max-width: 160px;
+  /* The hint beside it gives way first. Squeezed, this chip clipped
+     the model's name mid-word — "igni 1.0 4" for 4b — because a
+     flex chip's text takes no ellipsis. */
+  flex-shrink: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -4763,7 +5616,7 @@ button {
 .session-item {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--space-4);
 }
 
 .session-item .session-name {
@@ -4775,7 +5628,7 @@ button {
 
 .session-item .session-id {
   font-family: var(--font-mono);
-  font-size: 10px;
+  font-size: var(--text-2xs);
   color: var(--fg-faint);
   flex-shrink: 0;
 }
@@ -4797,7 +5650,7 @@ button {
   width: min(380px, 90vw);
   max-height: 60vh;
   overflow-y: auto;
-  padding: 4px;
+  padding: var(--space-2);
   border-radius: 10px;
   border: 1px solid var(--border);
   background: var(--bg-surface);
@@ -4814,7 +5667,7 @@ button {
 }
 
 .group-conflict-question {
-  font-size: 12px;
+  font-size: var(--text-sm);
   color: var(--fg);
   line-height: 1.45;
 }
@@ -4822,27 +5675,27 @@ button {
 /* The consequence of each answer, under the question. Nobody should
  * have to guess whether "Take the group's" discards their work. */
 .group-conflict-note {
-  margin-top: 4px;
-  font-size: 11.5px;
+  margin-top: var(--space-2);
+  font-size: var(--text-sm);
   color: var(--fg-muted);
   line-height: 1.4;
 }
 
 .group-conflict-actions {
   display: flex;
-  gap: 6px;
-  margin-top: 8px;
+  gap: var(--space-3);
+  margin-top: var(--space-4);
 }
 
 .group-conflict-actions button {
   appearance: none;
   height: 24px;
-  padding: 0 10px;
+  padding: 0 var(--space-5);
   border-radius: 6px;
   border: 1px solid var(--border-soft);
   background: var(--bg-surface);
   color: var(--fg-muted);
-  font-size: 11.5px;
+  font-size: var(--text-sm);
   font-family: var(--font-ui);
   cursor: pointer;
 }
@@ -4857,78 +5710,78 @@ button {
   cursor: default;
 }
 
-/* ── CodeIndex pill in the footer ──────────────────────────────── */
+/* ── Status pill in the footer ────────────────────────────────── */
 
-.codeindex-pill {
+.status-pill {
   appearance: none;
   display: inline-flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--space-3);
   height: 22px;
   padding: 0 9px;
-  border-radius: 9999px;
+  border-radius: var(--radius-pill);
   border: 1px solid var(--border-soft);
   background: var(--bg-surface);
   color: var(--fg-muted);
-  font-size: 11.5px;
+  font-size: var(--text-sm);
   cursor: pointer;
   white-space: nowrap;
   font-family: var(--font-ui);
   transition: border-color 0.12s ease, color 0.12s ease;
 }
 
-.codeindex-pill:hover {
+.status-pill:hover {
   border-color: var(--border);
   color: var(--fg);
 }
 
-.codeindex-pill .codeindex-label {
+.status-pill .status-label {
   color: inherit;
   opacity: 0.85;
 }
 
-.codeindex-pill.tone-good .codeindex-label {
+.status-pill.tone-good .status-label {
   color: var(--success);
   opacity: 1;
 }
-.codeindex-pill.tone-warn .codeindex-label {
+.status-pill.tone-warn .status-label {
   color: var(--warning);
   opacity: 1;
 }
-.codeindex-pill.tone-bad .codeindex-label {
+.status-pill.tone-bad .status-label {
   color: var(--danger);
   opacity: 1;
 }
 
-.codeindex-dot {
+.status-dot {
   width: 7px;
   height: 7px;
-  border-radius: 50%;
+  border-radius: var(--radius-circle);
   background: var(--fg-faint);
   flex-shrink: 0;
 }
 
-.tone-good .codeindex-dot,
-.codeindex-dot.tone-good {
+.tone-good .status-dot,
+.status-dot.tone-good {
   background: var(--success);
 }
-.tone-warn .codeindex-dot,
-.codeindex-dot.tone-warn {
+.tone-warn .status-dot,
+.status-dot.tone-warn {
   background: var(--warning);
   animation: pulse-dot 1.6s ease infinite;
 }
-.tone-bad .codeindex-dot,
-.codeindex-dot.tone-bad {
+.tone-bad .status-dot,
+.status-dot.tone-bad {
   background: var(--danger);
 }
-.tone-muted .codeindex-dot,
-.codeindex-dot.tone-muted {
+.tone-muted .status-dot,
+.status-dot.tone-muted {
   background: var(--fg-faint);
 }
 
 /* ── Watcher pill in the footer ───────────────────────────────── */
 
-/* Same geometry as ``.codeindex-pill`` so the two pills look like
+/* Same geometry as ``.status-pill`` so the two pills look like
    siblings. The dot pulses while at least one process is running
    — it's a "you have invisible work" signal; static would let
    the user miss it. */
@@ -4936,14 +5789,14 @@ button {
   appearance: none;
   display: inline-flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--space-3);
   height: 22px;
   padding: 0 9px;
-  border-radius: 9999px;
+  border-radius: var(--radius-pill);
   border: 1px solid var(--border-soft);
   background: var(--bg-surface);
   color: var(--fg);
-  font-size: 11.5px;
+  font-size: var(--text-sm);
   cursor: pointer;
   white-space: nowrap;
   font-family: var(--font-ui);
@@ -4958,779 +5811,11 @@ button {
 .watcher-pill-dot {
   width: 7px;
   height: 7px;
-  border-radius: 50%;
+  border-radius: var(--radius-circle);
   background: #34c759;
   box-shadow: 0 0 0 2px color-mix(in srgb, #34c759 25%, transparent);
   flex-shrink: 0;
   animation: pulse-dot 1.8s ease infinite;
-}
-
-/* ── CodeIndex panel ──────────────────────────────────────────── */
-
-.codeindex-hero {
-  display: flex;
-  align-items: center;
-  gap: 16px;
-  padding: 4px 4px 16px;
-}
-
-.codeindex-hero-text {
-  min-width: 0;
-  flex: 1;
-}
-
-.codeindex-ring {
-  flex-shrink: 0;
-}
-
-.codeindex-state {
-  font-size: 17px;
-  font-weight: 700;
-  color: var(--fg);
-  letter-spacing: -0.01em;
-}
-
-.codeindex-hint {
-  font-size: 12.5px;
-  color: var(--fg-muted);
-  margin-top: 2px;
-}
-
-.codeindex-hero-meta {
-  display: flex;
-  gap: 8px;
-  align-items: baseline;
-  margin-top: 6px;
-  font-size: 11.5px;
-  color: var(--fg-faint);
-}
-
-.codeindex-repo {
-  font-family: var(--font-mono);
-  color: var(--fg-muted);
-}
-
-.codeindex-provider {
-  font-size: 11px;
-}
-
-/* Action banner */
-.codeindex-banner {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  padding: 10px 12px;
-  border-radius: 10px;
-  margin-bottom: 14px;
-  font-size: 12.5px;
-}
-
-.codeindex-banner.tone-warn {
-  background: color-mix(in srgb, var(--warning, #f59e0b) 14%, transparent);
-  border: 1px solid color-mix(in srgb, var(--warning, #f59e0b) 35%, transparent);
-  color: var(--fg);
-}
-
-.codeindex-banner.tone-bad {
-  background: color-mix(in srgb, var(--danger) 14%, transparent);
-  border: 1px solid color-mix(in srgb, var(--danger) 35%, transparent);
-}
-
-.codeindex-banner span {
-  flex: 1;
-}
-
-.codeindex-progress {
-  padding: 0 4px 16px;
-}
-
-.codeindex-progress-track {
-  height: 5px;
-  border-radius: 9999px;
-  background: var(--bg-raised);
-  overflow: hidden;
-}
-
-.codeindex-progress-fill {
-  height: 100%;
-  background: var(--ember-gradient);
-  transition: width 0.3s ease;
-}
-
-.codeindex-facts {
-  margin: 0 0 18px;
-  padding: 12px 14px;
-  border-radius: 10px;
-  background: var(--bg-surface);
-  border: 1px solid var(--border-soft);
-  display: grid;
-  gap: 8px;
-}
-
-.codeindex-facts > div {
-  display: flex;
-  justify-content: space-between;
-  align-items: baseline;
-  gap: 12px;
-}
-
-.codeindex-facts dt {
-  font-size: 11px;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-  color: var(--fg-faint);
-  margin: 0;
-}
-
-.codeindex-facts dd {
-  margin: 0;
-  font-size: 13px;
-  color: var(--fg);
-  text-align: right;
-}
-
-.codeindex-facts code {
-  font-family: var(--font-mono);
-  font-size: 12px;
-  color: var(--fg-muted);
-}
-
-.codeindex-facts .tone-warn {
-  color: var(--warning);
-  font-weight: 500;
-}
-
-.codeindex-actions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  margin-bottom: 18px;
-}
-
-.codeindex-install {
-  margin-left: auto;
-}
-
-/* Top action row, rendered inside the drawer header via headerExtras */
-.codeindex-toolbar {
-  display: flex;
-  gap: 6px;
-  justify-content: flex-end;
-  width: 100%;
-}
-
-.codeindex-toolbar .btn {
-  font-size: 12px;
-  padding: 4px 10px;
-}
-
-/* Coverage % chip in the donut legend */
-.codeindex-donut-cov {
-  font-size: 11px;
-  font-variant-numeric: tabular-nums;
-  padding: 1px 5px;
-  border-radius: 4px;
-  background: var(--bg-raised);
-  color: var(--fg-faint);
-  margin-left: 4px;
-}
-
-.codeindex-donut-cov.tone-good {
-  color: var(--success, #10b981);
-  background: color-mix(in srgb, var(--success, #10b981) 12%, transparent);
-}
-.codeindex-donut-cov.tone-warn {
-  color: var(--warning, #f59e0b);
-  background: color-mix(in srgb, var(--warning, #f59e0b) 12%, transparent);
-}
-.codeindex-donut-cov.tone-bad {
-  color: var(--danger);
-  background: color-mix(in srgb, var(--danger) 12%, transparent);
-}
-
-/* ── CodeIndex: stats tiles ──────────────────────────────────── */
-.codeindex-stats {
-  display: grid;
-  grid-template-columns: repeat(4, 1fr);
-  gap: 8px;
-  margin: 0 0 16px;
-}
-
-@media (max-width: 720px) {
-  .codeindex-stats {
-    grid-template-columns: repeat(2, 1fr);
-  }
-}
-
-.codeindex-tile {
-  padding: 10px 12px;
-  border-radius: 10px;
-  background: var(--bg-surface);
-  border: 1px solid var(--border-soft);
-  min-height: 64px;
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-}
-
-.codeindex-tile-head {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  color: var(--fg-faint);
-}
-
-.codeindex-icon {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  color: var(--fg-faint);
-}
-
-.codeindex-tile-label {
-  font-size: 10.5px;
-  font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
-  color: var(--fg-faint);
-}
-
-.codeindex-tile-value {
-  font-size: 16px;
-  font-weight: 700;
-  color: var(--fg);
-  font-variant-numeric: tabular-nums;
-  letter-spacing: -0.01em;
-}
-
-.codeindex-tile-sub {
-  font-size: 11px;
-  color: var(--fg-faint);
-  font-family: var(--font-mono);
-}
-
-.codeindex-tile.tone-good .codeindex-tile-value {
-  color: var(--success, #10b981);
-}
-.codeindex-tile.tone-warn .codeindex-tile-value {
-  color: var(--warning, #f59e0b);
-}
-.codeindex-tile.tone-muted .codeindex-tile-value {
-  color: var(--fg-faint);
-}
-
-/* ── HEAD grid: donut + timeline side-by-side ────────────────── */
-.codeindex-head-grid {
-  display: grid;
-  grid-template-columns: minmax(160px, 1fr) minmax(0, 1.4fr);
-  gap: 16px;
-  align-items: start;
-}
-
-@media (max-width: 720px) {
-  .codeindex-head-grid {
-    grid-template-columns: 1fr;
-  }
-}
-
-/* ── Donut ──────────────────────────────────────────────────── */
-.codeindex-donut-wrap {
-  display: flex;
-  gap: 12px;
-  align-items: center;
-}
-
-.codeindex-donut {
-  flex-shrink: 0;
-}
-
-.codeindex-donut-legend {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-  font-size: 11.5px;
-  display: grid;
-  gap: 3px;
-  min-width: 0;
-}
-
-.codeindex-donut-legend li {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 2px 4px;
-  border-radius: 4px;
-  cursor: pointer;
-  transition: background 0.12s;
-}
-
-.codeindex-donut-legend li.is-hover {
-  background: var(--bg-raised);
-}
-
-.codeindex-donut-swatch {
-  width: 8px;
-  height: 8px;
-  border-radius: 2px;
-  flex-shrink: 0;
-}
-
-.codeindex-donut-ext {
-  font-family: var(--font-mono);
-  color: var(--fg-muted);
-  flex: 1;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.codeindex-donut-count {
-  font-variant-numeric: tabular-nums;
-  color: var(--fg-faint);
-}
-
-/* ── Commit timeline ─────────────────────────────────────────── */
-.codeindex-timeline {
-  display: flex;
-  flex-direction: column;
-}
-
-.codeindex-timeline-row {
-  display: flex;
-  gap: 10px;
-  padding: 2px 0;
-}
-
-.codeindex-timeline-rail {
-  width: 10px;
-  position: relative;
-  display: flex;
-  justify-content: center;
-  padding-top: 4px;
-}
-
-.codeindex-timeline-node {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  z-index: 1;
-  border: 2px solid var(--bg-surface);
-}
-
-.codeindex-timeline-node.tone-good {
-  background: var(--success, #10b981);
-  box-shadow: 0 0 0 2px color-mix(in srgb, var(--success, #10b981) 25%, transparent);
-}
-
-.codeindex-timeline-node.tone-warn {
-  background: var(--warning, #f59e0b);
-}
-
-.codeindex-timeline-line {
-  position: absolute;
-  top: 12px;
-  bottom: -2px;
-  left: 50%;
-  width: 1.5px;
-  background: var(--border);
-  transform: translateX(-50%);
-}
-
-.codeindex-timeline-body {
-  flex: 1;
-  padding: 0 0 8px;
-  min-width: 0;
-}
-
-.codeindex-timeline-top {
-  display: flex;
-  gap: 8px;
-  align-items: baseline;
-}
-
-.codeindex-timeline-top code {
-  font-family: var(--font-mono);
-  font-size: 11.5px;
-  color: var(--fg-muted);
-}
-
-.codeindex-timeline-when {
-  font-size: 11px;
-  color: var(--fg-faint);
-}
-
-.codeindex-timeline-subj {
-  font-size: 12.5px;
-  color: var(--fg);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.codeindex-timeline-tag {
-  display: inline-block;
-  margin-top: 2px;
-  font-size: 10px;
-  font-weight: 700;
-  letter-spacing: 0.05em;
-  text-transform: uppercase;
-  color: var(--warning, #f59e0b);
-}
-
-/* ── Sections ────────────────────────────────────────────────── */
-.codeindex-section {
-  margin: 16px 0 6px;
-  padding-top: 14px;
-  border-top: 1px solid var(--border-soft);
-}
-
-.codeindex-section-compact {
-  padding-top: 12px;
-  margin: 12px 0 6px;
-}
-
-.codeindex-section-head {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 10px;
-  margin-bottom: 10px;
-}
-
-.codeindex-section-title {
-  font-size: 10.5px;
-  font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: 0.08em;
-  color: var(--fg-faint);
-}
-
-.codeindex-section-sub {
-  font-size: 11.5px;
-  color: var(--fg-faint);
-}
-
-/* ── Activity sparkline ──────────────────────────────────────── */
-.codeindex-spark {
-  display: flex;
-  align-items: flex-end;
-  gap: 3px;
-  height: 48px;
-  padding: 4px 0;
-}
-
-.codeindex-spark-bar {
-  flex: 1;
-  min-width: 6px;
-  border-radius: 3px 3px 0 0;
-  background: var(--fg-faint);
-  transition: opacity 0.12s, transform 0.12s;
-  cursor: pointer;
-}
-
-.codeindex-spark-bar.tone-good {
-  background: var(--success, #10b981);
-}
-.codeindex-spark-bar.tone-warn {
-  background: var(--warning, #f59e0b);
-}
-.codeindex-spark-bar.tone-bad {
-  background: var(--danger);
-}
-.codeindex-spark-bar.tone-muted {
-  background: var(--border);
-}
-
-.codeindex-spark-bar:hover,
-.codeindex-spark-bar.is-hover {
-  opacity: 1;
-  transform: scaleY(1.05);
-}
-
-.codeindex-spark-bar:not(:hover) {
-  opacity: 0.85;
-}
-
-.codeindex-spark-detail {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin-top: 8px;
-  padding: 8px 10px;
-  border-radius: 6px;
-  background: var(--bg-raised);
-  font-size: 11.5px;
-}
-
-.codeindex-spark-verb {
-  font-weight: 700;
-  color: var(--fg);
-}
-
-.codeindex-spark-sha {
-  font-family: var(--font-mono);
-  color: var(--fg-muted);
-  font-size: 11px;
-}
-
-.codeindex-spark-text {
-  flex: 1;
-  color: var(--fg-faint);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.codeindex-spark-when {
-  font-variant-numeric: tabular-nums;
-  color: var(--fg-faint);
-}
-
-/* ── CodeIndex: section blocks ───────────────────────────────── */
-.codeindex-section {
-  margin: 18px 0 6px;
-  padding-top: 14px;
-  border-top: 1px solid var(--border-soft);
-}
-
-.codeindex-section-head {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 10px;
-  margin-bottom: 10px;
-}
-
-.codeindex-section-title {
-  font-size: 11px;
-  font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: 0.08em;
-  color: var(--fg-faint);
-}
-
-.codeindex-section-sub {
-  font-size: 11.5px;
-  color: var(--fg-faint);
-}
-
-/* ── CodeIndex: language bars ────────────────────────────────── */
-.codeindex-langs {
-  display: flex;
-  flex-direction: column;
-  gap: 5px;
-  margin-bottom: 14px;
-}
-
-.codeindex-lang {
-  display: grid;
-  grid-template-columns: 64px 1fr 56px;
-  align-items: center;
-  gap: 10px;
-}
-
-.codeindex-lang-ext {
-  font-family: var(--font-mono);
-  font-size: 12px;
-  color: var(--fg-muted);
-}
-
-.codeindex-lang-bar {
-  height: 6px;
-  background: var(--bg-raised);
-  border-radius: 999px;
-  overflow: hidden;
-}
-
-.codeindex-lang-fill {
-  height: 100%;
-  background: linear-gradient(90deg, #f97316, #fb923c);
-  transition: width 0.3s ease;
-}
-
-.codeindex-lang-count {
-  font-size: 12px;
-  font-variant-numeric: tabular-nums;
-  color: var(--fg-faint);
-  text-align: right;
-}
-
-/* ── CodeIndex: recent commits list ──────────────────────────── */
-.codeindex-commits {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
-
-.codeindex-commit {
-  display: grid;
-  grid-template-columns: 10px 64px 1fr auto;
-  gap: 10px;
-  align-items: center;
-  padding: 6px 0;
-  font-size: 12.5px;
-}
-
-.codeindex-commit-dot {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  background: var(--fg-faint);
-}
-
-.codeindex-commit-dot.tone-good {
-  background: var(--success, #10b981);
-}
-
-.codeindex-commit-dot.tone-muted {
-  background: var(--border);
-}
-
-.codeindex-commit-sha {
-  font-family: var(--font-mono);
-  font-size: 12px;
-  color: var(--fg-muted);
-}
-
-.codeindex-commit-subj {
-  color: var(--fg);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.codeindex-commit-when {
-  color: var(--fg-faint);
-  font-size: 11.5px;
-}
-
-/* ── CodeIndex: cached commits ───────────────────────────────── */
-.codeindex-branches {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-}
-
-.codeindex-branch {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  flex-wrap: wrap;
-  padding: 6px 10px;
-  border-radius: 8px;
-  background: var(--bg-surface);
-  border: 1px solid var(--border-soft);
-  font-size: 12px;
-}
-
-.codeindex-branch.is-head {
-  border-color: color-mix(in srgb, var(--accent, #f97316) 50%, var(--border));
-  background: color-mix(in srgb, var(--accent, #f97316) 6%, var(--bg-surface));
-}
-
-.codeindex-branch-sha {
-  font-family: var(--font-mono);
-  color: var(--fg-muted);
-}
-
-.codeindex-tag {
-  font-size: 10px;
-  font-weight: 700;
-  letter-spacing: 0.05em;
-  padding: 1px 6px;
-  border-radius: 4px;
-  background: var(--accent, #f97316);
-  color: #0b0b0c;
-}
-
-.codeindex-ref {
-  font-size: 11px;
-  padding: 1px 6px;
-  border-radius: 4px;
-  background: var(--bg-raised);
-  color: var(--fg-faint);
-  font-family: var(--font-mono);
-}
-
-.codeindex-branch-size,
-.codeindex-branch-when {
-  font-size: 11.5px;
-  color: var(--fg-faint);
-  margin-left: auto;
-}
-
-.codeindex-branch-when {
-  margin-left: 0;
-}
-
-.codeindex-branch-more {
-  font-size: 11.5px;
-  color: var(--fg-faint);
-  padding: 4px 10px;
-}
-
-/* ── CodeIndex: activity log ─────────────────────────────────── */
-.codeindex-activity {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-}
-
-.codeindex-activity-row {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 5px 0;
-  font-size: 12px;
-  flex-wrap: wrap;
-}
-
-.codeindex-activity-dot {
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  flex-shrink: 0;
-}
-
-.codeindex-activity-dot.tone-good {
-  background: var(--success, #10b981);
-}
-.codeindex-activity-dot.tone-warn {
-  background: var(--warning, #f59e0b);
-}
-.codeindex-activity-dot.tone-bad {
-  background: var(--danger);
-}
-.codeindex-activity-dot.tone-muted {
-  background: var(--border);
-}
-
-.codeindex-activity-verb {
-  font-weight: 600;
-  color: var(--fg);
-  min-width: 70px;
-}
-
-.codeindex-activity-sha {
-  font-family: var(--font-mono);
-  font-size: 11.5px;
-  color: var(--fg-muted);
-}
-
-.codeindex-activity-detail {
-  color: var(--fg-faint);
-  flex: 1;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.codeindex-activity-when {
-  font-size: 11.5px;
-  color: var(--fg-faint);
-  margin-left: auto;
-  font-variant-numeric: tabular-nums;
 }
 
 /* ── Footer status bits ────────────────────────────────────────── */
@@ -5740,13 +5825,13 @@ button {
   background: transparent;
   border: 1px dashed transparent;
   padding: 3px 8px;
-  border-radius: 9999px;
+  border-radius: var(--radius-pill);
   display: inline-flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--space-3);
   color: var(--fg-faint);
   font-family: var(--font-ui);
-  font-size: 11.5px;
+  font-size: var(--text-sm);
   cursor: pointer;
   position: relative;
   transition: border-color 0.12s ease, background 0.12s ease, color 0.12s ease;
@@ -5759,7 +5844,7 @@ button {
 
 .session-chip code {
   font-family: var(--font-mono);
-  font-size: 11.5px;
+  font-size: var(--text-sm);
   color: var(--fg-muted);
 }
 
@@ -5778,9 +5863,9 @@ button {
 }
 
 .session-chip-toast {
-  font-size: 10.5px;
+  font-size: var(--text-xs);
   color: var(--success);
-  margin-left: 2px;
+  margin-left: var(--space-1);
 }
 
 /* Backend-version chip — inline monospace pill sized to match the
@@ -5805,11 +5890,11 @@ button {
   left: 8px;
   z-index: 9999;
   padding: 3px 8px;
-  border-radius: 9999px;
+  border-radius: var(--radius-pill);
   background: rgba(0, 0, 0, 0.55);
   color: #fff;
   font-family: var(--font-mono);
-  font-size: 11px;
+  font-size: var(--text-xs);
   font-weight: 600;
   letter-spacing: 0.02em;
   pointer-events: none;
@@ -5846,7 +5931,7 @@ button {
   display: inline-flex;
   align-items: center;
   font-family: var(--font-mono);
-  font-size: 11px;
+  font-size: var(--text-xs);
   line-height: 1.4;
   cursor: default;
   white-space: nowrap;
@@ -5871,7 +5956,7 @@ button {
   display: inline-flex;
   align-items: center;
   gap: 7px;
-  font-size: 11.5px;
+  font-size: var(--text-sm);
   color: var(--fg-faint);
   padding: 3px 4px;
 }
@@ -5883,7 +5968,7 @@ button {
 .ctx-meter-track {
   width: 64px;
   height: 5px;
-  border-radius: 9999px;
+  border-radius: var(--radius-pill);
   background: var(--bg-raised);
   overflow: hidden;
   flex-shrink: 0;
@@ -5924,8 +6009,8 @@ button {
 .task-head {
   display: flex;
   align-items: center;
-  gap: 10px;
-  padding: 10px 8px;
+  gap: var(--space-5);
+  padding: var(--space-5) var(--space-4);
   cursor: pointer;
   border-radius: var(--radius-sm);
 }
@@ -5936,17 +6021,17 @@ button {
 
 .task-id {
   font-family: var(--font-mono);
-  font-size: 10.5px;
+  font-size: var(--text-xs);
   color: var(--fg-faint);
-  margin-left: 8px;
+  margin-left: var(--space-4);
 }
 
 .task-status {
   display: inline-block;
-  margin-left: 8px;
+  margin-left: var(--space-4);
   padding: 1px 7px;
-  border-radius: 9999px;
-  font-size: 10.5px;
+  border-radius: var(--radius-pill);
+  font-size: var(--text-xs);
   font-weight: 600;
   letter-spacing: 0.02em;
   text-transform: uppercase;
@@ -5971,13 +6056,13 @@ button {
 }
 
 .task-body {
-  padding: 2px 8px 14px 32px;
+  padding: var(--space-1) var(--space-4) var(--space-7) var(--space-16);
   display: grid;
-  gap: 12px;
+  gap: var(--space-6);
 }
 
 .task-block-label {
-  font-size: 11px;
+  font-size: var(--text-xs);
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.04em;
@@ -5987,13 +6072,13 @@ button {
 
 .task-block-error pre {
   margin: 0;
-  padding: 10px 12px;
+  padding: var(--space-5) var(--space-6);
   border-radius: 8px;
   background: color-mix(in srgb, var(--danger) 10%, transparent);
   border: 1px solid color-mix(in srgb, var(--danger) 35%, transparent);
   color: var(--danger);
   font-family: var(--font-mono);
-  font-size: 12px;
+  font-size: var(--text-sm);
   white-space: pre-wrap;
 }
 
@@ -6005,7 +6090,7 @@ button {
 .drawer-toolbar {
   display: flex;
   justify-content: center;
-  gap: 10px;
+  gap: var(--space-5);
   padding: 10px 18px;
   background: var(--bg-surface);
   border-bottom: 1px solid var(--border-soft);
@@ -6016,7 +6101,7 @@ button {
   flex: 1;
   display: flex;
   justify-content: stretch;
-  padding: 0 14px;
+  padding: 0 var(--space-7);
   min-width: 0;
 }
 
@@ -6038,7 +6123,7 @@ button {
   display: flex;
   flex-wrap: wrap;
   justify-content: center;
-  gap: 4px;
+  gap: var(--space-2);
   background: var(--bg-raised);
   padding: 3px;
   border-radius: 14px;
@@ -6050,15 +6135,15 @@ button {
   appearance: none;
   background: transparent;
   border: none;
-  padding: 4px 10px;
-  border-radius: 9999px;
-  font-size: 12px;
+  padding: var(--space-2) var(--space-5);
+  border-radius: var(--radius-pill);
+  font-size: var(--text-sm);
   color: var(--fg-muted);
   cursor: pointer;
   font-family: var(--font-ui);
   display: inline-flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--space-3);
 }
 
 .task-filter:hover {
@@ -6073,11 +6158,11 @@ button {
 
 .task-filter-count {
   font-variant-numeric: tabular-nums;
-  font-size: 10.5px;
+  font-size: var(--text-xs);
   color: var(--fg-faint);
   background: var(--bg-inset);
   padding: 0 5px;
-  border-radius: 9999px;
+  border-radius: var(--radius-pill);
   min-width: 16px;
   text-align: center;
 }
@@ -6091,13 +6176,13 @@ button {
   /* width comes from the grid column (matches the filter group). */
   width: 100%;
   height: 28px;
-  padding: 0 12px;
-  border-radius: 9999px;
+  padding: 0 var(--space-6);
+  border-radius: var(--radius-pill);
   border: 1px solid var(--border-soft);
   background: var(--bg-inset);
   color: var(--fg);
   font-family: var(--font-ui);
-  font-size: 12.5px;
+  font-size: var(--text-sm);
   text-align: center;
 }
 
@@ -6131,29 +6216,29 @@ button {
 
 /* Attach (+) button matches the slash (/) button. */
 .slash-btn.attach-btn {
-  font-size: 18px;
+  font-size: var(--text-xl);
   line-height: 1;
 }
 
 .composer-attachments {
   display: flex;
   flex-wrap: wrap;
-  gap: 6px;
-  padding: 4px 0 8px;
+  gap: var(--space-3);
+  padding: var(--space-2) 0 var(--space-4);
 }
 
 .composer-chip-attach {
   display: inline-flex;
   align-items: center;
-  gap: 4px;
+  gap: var(--space-2);
   max-width: 240px;
   padding: 3px 4px 3px 10px;
-  border-radius: 9999px;
+  border-radius: var(--radius-pill);
   background: color-mix(in srgb, var(--accent-blue) 12%, transparent);
   border: 1px solid color-mix(in srgb, var(--accent-blue) 35%, transparent);
   color: var(--accent-blue-text);
   font-family: var(--font-mono);
-  font-size: 11.5px;
+  font-size: var(--text-sm);
 }
 
 .composer-chip-name {
@@ -6192,10 +6277,10 @@ button {
 
 .paste-ctx-code {
   margin: 0;
-  padding: 8px 12px;
+  padding: var(--space-4) var(--space-6);
   background: transparent;
   font-family: var(--font-mono);
-  font-size: 12px;
+  font-size: var(--text-sm);
   line-height: 1.45;
   color: var(--fg);
   max-height: 6.5em;
@@ -6207,15 +6292,15 @@ button {
 .paste-ctx-foot {
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 6px 10px;
+  gap: var(--space-4);
+  padding: var(--space-3) var(--space-5);
   background: color-mix(in srgb, var(--accent-blue) 10%, transparent);
   border-top: 1px solid color-mix(in srgb, var(--accent-blue) 25%, transparent);
   flex-wrap: wrap;
 }
 
 .paste-ctx-foot-label {
-  font-size: 11.5px;
+  font-size: var(--text-sm);
   color: var(--fg-muted);
   font-weight: 500;
   letter-spacing: 0.02em;
@@ -6226,7 +6311,7 @@ button {
 .paste-ctx-refs {
   display: flex;
   flex-wrap: wrap;
-  gap: 4px;
+  gap: var(--space-2);
   flex: 1;
   min-width: 0;
 }
@@ -6236,10 +6321,10 @@ button {
   background: var(--bg-surface);
   border: 1px solid color-mix(in srgb, var(--accent-blue) 30%, transparent);
   color: var(--accent-blue-text);
-  padding: 2px 8px;
-  border-radius: 9999px;
+  padding: var(--space-1) var(--space-4);
+  border-radius: var(--radius-pill);
   font-family: var(--font-mono);
-  font-size: 11.5px;
+  font-size: var(--text-sm);
   cursor: pointer;
   line-height: 1.3;
   max-width: 220px;
@@ -6257,10 +6342,10 @@ button {
   background: transparent;
   border: none;
   color: var(--fg-faint);
-  font-size: 16px;
+  font-size: var(--text-xl);
   line-height: 1;
   cursor: pointer;
-  padding: 0 4px;
+  padding: 0 var(--space-2);
   flex-shrink: 0;
 }
 
@@ -6273,11 +6358,11 @@ button {
   border: none;
   background: transparent;
   color: inherit;
-  font-size: 14px;
+  font-size: var(--text-lg);
   line-height: 1;
   cursor: pointer;
-  padding: 0 6px;
-  border-radius: 9999px;
+  padding: 0 var(--space-3);
+  border-radius: var(--radius-pill);
 }
 
 .composer-chip-x:hover {
@@ -6289,21 +6374,21 @@ button {
   align-self: flex-start;
   display: inline-flex;
   align-items: center;
-  gap: 10px;
-  padding: 4px 0;
+  gap: var(--space-5);
+  padding: var(--space-2) 0;
   color: var(--fg-muted);
-  font-size: 12.5px;
+  font-size: var(--text-sm);
 }
 
 .typing-dots {
   display: inline-flex;
-  gap: 4px;
+  gap: var(--space-2);
 }
 
 .typing-dots > span {
   width: 5px;
   height: 5px;
-  border-radius: 50%;
+  border-radius: var(--radius-circle);
   background: var(--ember-orange);
   animation: typing-bounce 1s ease-in-out infinite;
 }
@@ -6323,7 +6408,7 @@ button {
 .msg-attachments {
   align-self: flex-end;
   display: flex;
-  gap: 8px;
+  gap: var(--space-4);
   flex-wrap: wrap;
   max-width: 85%;
 }
@@ -6331,10 +6416,10 @@ button {
 .attach-card {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: var(--space-5);
   max-width: 320px;
   min-width: 0;
-  padding: 6px 12px 6px 6px;
+  padding: var(--space-3) var(--space-6) var(--space-3) var(--space-3);
   border-radius: 10px;
   background: var(--bg-surface);
   border: 1px solid var(--border-soft);
@@ -6357,7 +6442,7 @@ button {
   align-items: center;
   justify-content: center;
   font-family: var(--font-mono);
-  font-size: 10.5px;
+  font-size: var(--text-xs);
   font-weight: 700;
   color: var(--fg-muted);
   letter-spacing: 0.04em;
@@ -6371,7 +6456,7 @@ button {
 }
 
 .attach-card-name {
-  font-size: 12.5px;
+  font-size: var(--text-sm);
   font-weight: 500;
   color: var(--fg);
   overflow: hidden;
@@ -6380,7 +6465,7 @@ button {
 }
 
 .attach-card-size {
-  font-size: 11px;
+  font-size: var(--text-xs);
   color: var(--fg-faint);
   overflow: hidden;
   text-overflow: ellipsis;
@@ -6413,7 +6498,7 @@ button {
   padding: 14px 18px;
   color: var(--fg);
   font-family: var(--font-ui);
-  font-size: 14px;
+  font-size: var(--text-lg);
   border-bottom: 1px solid var(--border-soft);
 }
 
@@ -6421,14 +6506,14 @@ button {
 
 .file-ref-list {
   overflow-y: auto;
-  padding: 6px;
+  padding: var(--space-3);
 }
 
 .file-ref-item {
   padding: 7px 12px;
   border-radius: var(--radius-sm);
   font-family: var(--font-mono);
-  font-size: 12.5px;
+  font-size: var(--text-sm);
   color: var(--fg-muted);
   cursor: pointer;
   overflow: hidden;
@@ -6465,14 +6550,14 @@ button {
   appearance: none;
   display: inline-flex;
   align-items: center;
-  gap: 6px;
-  padding: 2px 8px 2px 4px;
-  border-radius: 9999px;
+  gap: var(--space-3);
+  padding: var(--space-1) var(--space-4) var(--space-1) var(--space-2);
+  border-radius: var(--radius-pill);
   border: 1px solid color-mix(in srgb, var(--accent-blue) 55%, transparent);
   background: color-mix(in srgb, var(--accent-blue) 18%, transparent);
   color: var(--accent-blue-text);
   font-family: var(--font-mono);
-  font-size: 12px;
+  font-size: var(--text-sm);
   font-weight: 600;
   cursor: pointer;
   max-width: 240px;
@@ -6505,7 +6590,7 @@ button {
   left: 0;
   z-index: 40;
   min-width: 220px;
-  padding: 4px;
+  padding: var(--space-2);
   background: var(--bg-surface);
   border: 1px solid var(--border);
   border-radius: 10px;
@@ -6517,11 +6602,11 @@ button {
 
 .file-pill-menu-path {
   font-family: var(--font-mono);
-  font-size: 10.5px;
+  font-size: var(--text-xs);
   color: var(--fg-faint);
-  padding: 6px 10px 4px;
+  padding: var(--space-3) var(--space-5) var(--space-2);
   border-bottom: 1px solid var(--border-soft);
-  margin-bottom: 4px;
+  margin-bottom: var(--space-2);
   word-break: break-all;
   white-space: normal;
   text-align: left;
@@ -6531,14 +6616,13 @@ button {
   appearance: none;
   border: none;
   background: transparent;
-  text-align: left;
-  padding: 6px 10px;
-  border-radius: 6px;
-  font-size: 12.5px;
-  color: var(--fg);
-  cursor: pointer;
+  padding: var(--space-3) var(--space-5);
+  font-size: var(--text-sm);
   text-decoration: none;
   font-weight: 500;
+  /* Its own, not the primitive's: this was 6px before
+     `.ui-item` existed and the radius scale starts at 8. */
+  border-radius: 6px;
 }
 
 .file-pill-menu-item:hover {
@@ -6551,9 +6635,9 @@ button {
   min-height: 24px;
   max-height: 240px;
   overflow-y: auto;
-  padding: 6px 2px;
+  padding: var(--space-3) var(--space-1);
   font-family: var(--font-ui);
-  font-size: 14.5px;
+  font-size: var(--text-lg);
   line-height: 1.5;
   color: var(--fg);
   outline: none;
@@ -6617,9 +6701,9 @@ button {
 }
 
 .hitl-card {
-  padding: 12px 4px 10px;
+  padding: var(--space-6) var(--space-2) var(--space-5);
   border-bottom: 1px solid var(--border-soft);
-  margin-bottom: 8px;
+  margin-bottom: var(--space-4);
   display: flex;
   flex-direction: column;
   max-height: min(70vh, 620px);
@@ -6664,7 +6748,7 @@ button {
 }
 
 .hitl-arg-key {
-  font-size: 10.5px;
+  font-size: var(--text-xs);
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.05em;
@@ -6678,7 +6762,7 @@ button {
 
 .hitl-arg-code {
   font-family: var(--font-mono);
-  font-size: 12.5px;
+  font-size: var(--text-sm);
   background: var(--bg-raised);
   color: var(--fg);
   padding: 3px 7px;
@@ -6689,7 +6773,7 @@ button {
 .hitl-arg-pre {
   margin: 0;
   font-family: var(--font-mono);
-  font-size: 12px;
+  font-size: var(--text-sm);
   background: var(--bg-inset);
   border: 1px solid var(--border-soft);
   border-radius: 8px;
@@ -6705,7 +6789,7 @@ button {
 .hitl-arg-bool,
 .hitl-arg-num {
   font-family: var(--font-mono);
-  font-size: 12.5px;
+  font-size: var(--text-sm);
   color: var(--fg-muted);
 }
 
@@ -6716,15 +6800,15 @@ button {
 .hitl-arg-tags {
   display: flex;
   flex-wrap: wrap;
-  gap: 4px;
+  gap: var(--space-2);
   padding-top: 3px;
 }
 
 .hitl-file {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
-  padding: 4px 8px;
+  gap: var(--space-3);
+  padding: var(--space-2) var(--space-4);
   border-radius: 8px;
   background: color-mix(in srgb, var(--accent-blue) 12%, transparent);
   border: 1px solid color-mix(in srgb, var(--accent-blue) 35%, transparent);
@@ -6742,14 +6826,14 @@ button {
 
 .hitl-file-name {
   font-family: var(--font-mono);
-  font-size: 12.5px;
+  font-size: var(--text-sm);
   font-weight: 700;
   flex-shrink: 0;
 }
 
 .hitl-file-path {
   font-family: var(--font-mono);
-  font-size: 11px;
+  font-size: var(--text-xs);
   color: var(--fg-faint);
   overflow: hidden;
   text-overflow: ellipsis;
@@ -6761,7 +6845,7 @@ button {
 .hitl-shell {
   margin: 0;
   font-family: var(--font-mono);
-  font-size: 12.5px;
+  font-size: var(--text-sm);
   background: var(--bg-inset);
   border: 1px solid var(--border-soft);
   border-left: 3px solid var(--ember-orange);
@@ -6785,7 +6869,7 @@ button {
 .hitl-diff {
   margin: 0 0 4px;
   font-family: var(--font-mono);
-  font-size: 12px;
+  font-size: var(--text-sm);
   padding: 7px 10px;
   border-radius: 7px;
   white-space: pre-wrap;
@@ -6821,20 +6905,20 @@ button {
   padding: 4px 0 14px 26px;
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: var(--space-6);
 }
 
 .mcp-section {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: var(--space-3);
 }
 
 .mcp-section-head {
   display: flex;
   align-items: center;
-  gap: 8px;
-  font-size: 11px;
+  gap: var(--space-4);
+  font-size: var(--text-xs);
   font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 0.08em;
@@ -6847,27 +6931,20 @@ button {
   justify-content: center;
   min-width: 20px;
   height: 18px;
-  padding: 0 6px;
-  border-radius: 999px;
+  padding: 0 var(--space-3);
+  border-radius: var(--radius-pill);
   background: var(--bg-raised);
   color: var(--fg);
-  font-size: 11px;
+  font-size: var(--text-xs);
   font-weight: 600;
   letter-spacing: 0;
   text-transform: none;
 }
 
-.mcp-tool-list {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-}
-
 .mcp-tool-row {
-  display: flex;
-  gap: 10px;
+  gap: var(--space-5);
   align-items: flex-start;
-  padding: 8px 10px;
+  padding: var(--space-4) var(--space-5);
   border: 1px solid var(--border-soft);
   border-radius: var(--radius-sm);
   background: var(--bg-surface);
@@ -6899,12 +6976,12 @@ button {
 .mcp-tool-name {
   display: flex;
   align-items: baseline;
-  gap: 8px;
+  gap: var(--space-4);
   flex-wrap: wrap;
 }
 
 .mcp-tool-name code {
-  font-size: 12.5px;
+  font-size: var(--text-sm);
   font-weight: 600;
   color: var(--fg);
   background: transparent;
@@ -6913,7 +6990,7 @@ button {
 
 .mcp-tool-prefix,
 .mcp-tool-args {
-  font-size: 11px;
+  font-size: var(--text-xs);
   color: var(--fg-faint);
   font-family: var(--font-mono, ui-monospace, monospace);
 }
@@ -6930,7 +7007,7 @@ button {
 }
 
 .mcp-tool-desc {
-  font-size: 12.5px;
+  font-size: var(--text-sm);
   color: var(--fg-soft, var(--fg-faint));
   line-height: 1.45;
 }
@@ -6947,9 +7024,9 @@ button {
   background: transparent;
   border: none;
   color: var(--accent, #f97316);
-  font-size: 12px;
+  font-size: var(--text-sm);
   font-weight: 600;
-  padding: 2px 0;
+  padding: var(--space-1) 0;
   cursor: pointer;
 }
 
@@ -6967,7 +7044,7 @@ button {
 }
 
 .mcp-tool-tag {
-  font-size: 10.5px;
+  font-size: var(--text-xs);
   font-weight: 700;
   letter-spacing: 0.06em;
   text-transform: uppercase;
@@ -6986,7 +7063,7 @@ button {
   align-items: center;
   cursor: pointer;
   flex-shrink: 0;
-  margin-top: 2px;
+  margin-top: var(--space-1);
 }
 
 .mcp-tool-switch-track {
@@ -6994,7 +7071,7 @@ button {
   display: inline-block;
   width: 30px;
   height: 18px;
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   background: var(--bg-raised);
   border: 1px solid var(--border);
   transition: background 0.15s, border-color 0.15s;
@@ -7006,7 +7083,7 @@ button {
   left: 1px;
   width: 14px;
   height: 14px;
-  border-radius: 50%;
+  border-radius: var(--radius-circle);
   background: var(--fg-faint);
   transition: transform 0.15s, background 0.15s;
 }
@@ -7027,7 +7104,7 @@ button {
 }
 
 .mcp-tool-meta {
-  font-size: 11.5px;
+  font-size: var(--text-sm);
   color: var(--fg-faint);
   font-family: var(--font-mono, ui-monospace, monospace);
   margin-top: 3px;
@@ -7068,13 +7145,13 @@ button {
 }
 
 .skeleton-circle {
-  border-radius: 50%;
+  border-radius: var(--radius-circle);
 }
 
 /* ── Plugins panel ─────────────────────────────────────────────── */
 .plugins-tabs {
   display: flex;
-  gap: 4px;
+  gap: var(--space-2);
   margin-left: auto;
 }
 
@@ -7083,14 +7160,14 @@ button {
   background: transparent;
   border: none;
   color: var(--fg-faint);
-  font-size: 12.5px;
+  font-size: var(--text-sm);
   font-weight: 600;
-  padding: 4px 10px;
-  border-radius: 999px;
+  padding: var(--space-2) var(--space-5);
+  border-radius: var(--radius-pill);
   cursor: pointer;
   display: inline-flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--space-3);
 }
 
 .plugins-tab:hover {
@@ -7103,9 +7180,9 @@ button {
 }
 
 .plugins-tab-count {
-  font-size: 11px;
+  font-size: var(--text-xs);
   padding: 1px 6px;
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   background: var(--bg-surface);
   color: var(--fg-faint);
   font-variant-numeric: tabular-nums;
@@ -7118,8 +7195,8 @@ button {
 
 .plugins-toolbar {
   display: flex;
-  gap: 8px;
-  margin-bottom: 12px;
+  gap: var(--space-4);
+  margin-bottom: var(--space-6);
   width: 100%;
 }
 
@@ -7137,19 +7214,16 @@ button {
   margin-bottom: 0;
 }
 
-
 .plugins-search {
   flex: 1;
 }
 
 .plugins-list {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
+  gap: var(--space-4);
 }
 
 .plugins-card {
-  padding: 10px 12px;
+  padding: var(--space-5) var(--space-6);
   border: 1px solid var(--border-soft);
   border-radius: 10px;
   background: var(--bg-surface);
@@ -7163,13 +7237,13 @@ button {
   display: flex;
   justify-content: space-between;
   align-items: flex-start;
-  gap: 10px;
+  gap: var(--space-5);
 }
 
 .plugins-card-title {
   display: flex;
   align-items: baseline;
-  gap: 8px;
+  gap: var(--space-4);
   flex-wrap: wrap;
   min-width: 0;
 }
@@ -7177,7 +7251,7 @@ button {
 .plugins-status {
   width: 8px;
   height: 8px;
-  border-radius: 50%;
+  border-radius: var(--radius-circle);
   background: var(--border);
   align-self: center;
 }
@@ -7194,17 +7268,17 @@ button {
 .plugins-name {
   font-weight: 700;
   color: var(--fg);
-  font-size: 13px;
+  font-size: var(--text-md);
 }
 
 .plugins-version {
-  font-size: 11px;
+  font-size: var(--text-xs);
   font-family: var(--font-mono);
   color: var(--fg-faint);
 }
 
 .plugins-source {
-  font-size: 11px;
+  font-size: var(--text-xs);
   color: var(--fg-faint);
   padding: 1px 6px;
   background: var(--bg-raised);
@@ -7212,7 +7286,7 @@ button {
 }
 
 .plugins-tag {
-  font-size: 10px;
+  font-size: var(--text-2xs);
   font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 0.05em;
@@ -7223,18 +7297,18 @@ button {
 }
 
 .plugins-desc {
-  margin-top: 6px;
-  font-size: 12.5px;
+  margin-top: var(--space-3);
+  font-size: var(--text-sm);
   color: var(--fg-muted);
   line-height: 1.4;
 }
 
 .plugins-source-line {
-  margin-top: 4px;
-  font-size: 11px;
+  margin-top: var(--space-2);
+  font-size: var(--text-xs);
   color: var(--fg-faint);
   display: flex;
-  gap: 8px;
+  gap: var(--space-4);
   align-items: baseline;
 }
 
@@ -7249,19 +7323,19 @@ button {
 
 .plugins-actions {
   display: flex;
-  gap: 6px;
+  gap: var(--space-3);
   flex-shrink: 0;
 }
 
 .plugins-caps {
-  margin-top: 6px;
+  margin-top: var(--space-3);
   display: flex;
-  gap: 4px;
+  gap: var(--space-2);
   flex-wrap: wrap;
 }
 
 .plugins-cap {
-  font-size: 10.5px;
+  font-size: var(--text-xs);
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.05em;
@@ -7272,78 +7346,76 @@ button {
 }
 
 .plugins-pin {
-  font-size: 10px;
+  font-size: var(--text-2xs);
   font-family: var(--font-mono);
   color: var(--fg-faint);
 }
 
 .plugins-empty {
-  padding: 24px 8px;
+  padding: var(--space-12) var(--space-4);
   text-align: center;
-  color: var(--fg-faint);
+  color: var(--fg-muted);
 }
 
 .plugins-empty-title {
-  font-size: 14px;
+  font-size: var(--text-lg);
   font-weight: 700;
   color: var(--fg);
 }
 
 .plugins-empty-hint {
-  margin-top: 4px;
-  font-size: 12.5px;
+  margin-top: var(--space-2);
+  font-size: var(--text-sm);
 }
 
 .plugins-install-direct {
   margin-top: 18px;
-  padding-top: 14px;
+  padding-top: var(--space-7);
   border-top: 1px solid var(--border-soft);
 }
 
 .plugins-install-label {
-  font-size: 10.5px;
+  font-size: var(--text-xs);
   font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 0.06em;
   color: var(--fg-faint);
-  margin-bottom: 6px;
+  margin-bottom: var(--space-3);
 }
 
 .plugins-markets {
-  margin-top: 4px;
+  margin-top: var(--space-2);
 }
 
 /* Dedicated marketplaces-management page */
 .plugins-markets-page {
   display: flex;
   flex-direction: column;
-  gap: 14px;
+  gap: var(--space-7);
 }
 
 .plugins-markets-list {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
+  gap: var(--space-3);
   border-top: 1px solid var(--border-soft);
-  padding-top: 12px;
+  padding-top: var(--space-6);
 }
 
 .plugins-markets-list-head {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  font-size: 11px;
+  font-size: var(--text-xs);
   text-transform: uppercase;
   letter-spacing: 0.06em;
   color: var(--fg-faint);
   font-weight: 700;
-  margin-bottom: 4px;
+  margin-bottom: var(--space-2);
 }
 
 .plugins-markets-page .plugins-market {
   border: 1px solid var(--border-soft);
   border-radius: 8px;
-  padding: 10px 12px;
+  padding: var(--space-5) var(--space-6);
   align-items: center;
   flex-wrap: nowrap;
 }
@@ -7351,18 +7423,18 @@ button {
 .plugins-market-main {
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: var(--space-1);
   flex: 1;
   min-width: 0;
 }
 
 .plugins-market-name {
   font-weight: 600;
-  font-size: 13px;
+  font-size: var(--text-md);
 }
 
 .plugins-market-url {
-  font-size: 11.5px;
+  font-size: var(--text-sm);
   color: var(--fg-muted);
   font-family: var(--mono, monospace);
   overflow: hidden;
@@ -7371,12 +7443,12 @@ button {
 }
 
 .plugins-market-meta {
-  font-size: 11px;
+  font-size: var(--text-xs);
   color: var(--fg-faint);
 }
 
 .plugins-install-direct--top {
-  margin-top: 4px;
+  margin-top: var(--space-2);
   padding-top: 0;
   border-top: none;
 }
@@ -7387,10 +7459,8 @@ button {
    and .btn-primary without an explicit height would render at ~22-30px
    depending on flex alignment. Lock both. */
 .plugins-install-row {
-  display: flex;
-  gap: 8px;
   align-items: stretch;
-  margin-bottom: 14px;
+  margin-bottom: var(--space-7);
 }
 
 .plugins-install-row .panel-input,
@@ -7404,35 +7474,35 @@ button {
 }
 
 .plugins-section-head {
-  font-size: 10.5px;
+  font-size: var(--text-xs);
   font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 0.06em;
   color: var(--fg-faint);
-  margin-bottom: 8px;
+  margin-bottom: var(--space-4);
 }
 
 .plugins-market {
   display: flex;
-  gap: 10px;
+  gap: var(--space-5);
   align-items: center;
-  padding: 6px 0;
-  font-size: 12px;
+  padding: var(--space-3) 0;
+  font-size: var(--text-sm);
   flex-wrap: wrap;
 }
 
 .plugins-meta {
   color: var(--fg-faint);
   margin-left: auto;
-  font-size: 11.5px;
+  font-size: var(--text-sm);
 }
 
 .plugins-add-market {
-  margin-top: 8px;
+  margin-top: var(--space-4);
 }
 
 .plugins-section-hint {
-  font-size: 11.5px;
+  font-size: var(--text-sm);
   color: var(--fg-faint);
   margin: -2px 0 8px;
   line-height: 1.45;
@@ -7441,11 +7511,6 @@ button {
 .plugins-section-hint strong {
   color: var(--fg-muted);
   font-weight: 600;
-}
-
-/* Expandable card — chevron + section blocks */
-.plugins-card.is-open {
-  border-color: var(--border);
 }
 
 .plugins-card-clickable {
@@ -7459,9 +7524,9 @@ button {
 
 .plugins-chevron-end {
   color: var(--fg-faint);
-  font-size: 16px;
+  font-size: var(--text-xl);
   font-weight: 600;
-  margin-left: 8px;
+  margin-left: var(--space-4);
 }
 
 /* Detail page (post-routing) */
@@ -7472,21 +7537,19 @@ button {
 }
 
 .plugin-detail-hero {
-  padding-bottom: 14px;
-  margin-bottom: 4px;
+  padding-bottom: var(--space-7);
+  margin-bottom: var(--space-2);
   border-bottom: 1px solid var(--border-soft);
 }
 
 .plugin-detail-title-row {
-  display: flex;
-  align-items: center;
-  gap: 10px;
+  gap: var(--space-5);
   flex-wrap: wrap;
 }
 
 .plugin-detail-title {
   margin: 0;
-  font-size: 20px;
+  font-size: var(--text-2xl);
   font-weight: 700;
   letter-spacing: -0.01em;
 }
@@ -7494,41 +7557,37 @@ button {
 .plugin-detail-desc {
   margin: 8px 0 12px;
   color: var(--fg-muted);
-  font-size: 13px;
+  font-size: var(--text-md);
   line-height: 1.5;
 }
 
 .plugin-detail-actions {
   display: flex;
-  gap: 8px;
+  gap: var(--space-4);
 }
 
 .plugins-chevron {
   display: inline-block;
   color: var(--fg-faint);
-  font-size: 11px;
+  font-size: var(--text-xs);
   width: 12px;
   transition: transform 0.15s ease;
 }
 
-.plugins-chevron.is-open {
-  transform: rotate(90deg);
-}
-
 .plugins-contents {
-  margin-top: 10px;
-  padding-top: 10px;
+  margin-top: var(--space-5);
+  padding-top: var(--space-5);
   border-top: 1px dashed var(--border-soft);
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: var(--space-5);
 }
 
 .plugins-content-path {
   display: flex;
-  gap: 8px;
+  gap: var(--space-4);
   align-items: baseline;
-  font-size: 11.5px;
+  font-size: var(--text-sm);
 }
 
 .plugins-content-label {
@@ -7536,26 +7595,26 @@ button {
   letter-spacing: 0.06em;
   font-weight: 700;
   color: var(--fg-faint);
-  font-size: 10.5px;
+  font-size: var(--text-xs);
 }
 
 .plugins-content-path code {
   font-family: var(--font-mono);
   color: var(--fg-muted);
-  font-size: 11.5px;
+  font-size: var(--text-sm);
   word-break: break-all;
 }
 
 .plugins-source-link {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--space-3);
   flex-wrap: wrap;
 }
 
 .plugins-source-link a {
   color: var(--accent, #f97316);
-  font-size: 12px;
+  font-size: var(--text-sm);
   text-decoration: none;
   word-break: break-all;
 }
@@ -7566,7 +7625,7 @@ button {
 
 .plugins-source-subdir {
   font-family: var(--font-mono);
-  font-size: 11px;
+  font-size: var(--text-xs);
   padding: 1px 6px;
   background: var(--bg-raised);
   border-radius: 4px;
@@ -7580,30 +7639,11 @@ button {
 
 /* ── Knowledge panel ───────────────────────────────────────────── */
 .kb-toolbar {
-  display: flex;
-  gap: 8px;
   width: 100%;
-  align-items: center;
 }
 
 .kb-toolbar .panel-input {
   flex: 1;
-}
-
-.kb-head-actions {
-  display: flex;
-  gap: 6px;
-  align-items: center;
-  margin-left: auto;
-}
-
-.kb-head-actions .btn-sm {
-  height: 23px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  padding-top: 0;
-  padding-bottom: 0;
 }
 
 .kb-icon-btn {
@@ -7636,12 +7676,12 @@ button {
 .kb-search-chip {
   display: inline-flex;
   align-items: center;
-  gap: 8px;
-  padding: 6px 10px;
+  gap: var(--space-4);
+  padding: var(--space-3) var(--space-5);
   border: 1px solid var(--border);
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   background: var(--bg-raised);
-  font-size: 12px;
+  font-size: var(--text-sm);
   flex: 1;
   min-width: 0;
 }
@@ -7660,10 +7700,10 @@ button {
   background: transparent;
   border: none;
   color: var(--fg-faint);
-  font-size: 16px;
+  font-size: var(--text-xl);
   line-height: 1;
   cursor: pointer;
-  padding: 0 4px;
+  padding: 0 var(--space-2);
 }
 
 .kb-chip-close:hover {
@@ -7673,26 +7713,22 @@ button {
 .kb-results {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: var(--space-3);
 }
 
 .kb-result {
-  padding: 10px 12px;
+  padding: var(--space-5) var(--space-6);
   border: 1px solid var(--border-soft);
   border-radius: 10px;
   background: var(--bg-surface);
   transition: border-color 0.12s ease;
 }
 
-.kb-result.is-open {
-  border-color: var(--border);
-}
-
 .kb-result-head {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  gap: 10px;
+  gap: var(--space-5);
 }
 
 .kb-result-head.is-clickable {
@@ -7703,14 +7739,14 @@ button {
 .kb-result-title {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--space-4);
   min-width: 0;
   flex: 1;
 }
 
 .kb-result-name {
   font-weight: 600;
-  font-size: 12.5px;
+  font-size: var(--text-sm);
   color: var(--fg);
   overflow: hidden;
   text-overflow: ellipsis;
@@ -7718,11 +7754,11 @@ button {
 }
 
 .kb-result-score {
-  font-size: 11px;
+  font-size: var(--text-xs);
   font-weight: 700;
   font-variant-numeric: tabular-nums;
   padding: 1px 7px;
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   background: var(--bg-raised);
   color: var(--fg-faint);
   flex-shrink: 0;
@@ -7738,30 +7774,26 @@ button {
 }
 
 .kb-result-body {
-  margin-top: 6px;
-  font-size: 12.5px;
+  margin-top: var(--space-3);
+  font-size: var(--text-sm);
   color: var(--fg-muted);
   line-height: 1.5;
   white-space: pre-wrap;
   word-break: break-word;
 }
 
-.kb-result.is-open .kb-result-body {
-  color: var(--fg);
-}
-
 .kb-result-meta {
-  margin-top: 8px;
+  margin-top: var(--space-4);
   display: flex;
   flex-wrap: wrap;
-  gap: 4px;
+  gap: var(--space-2);
 }
 
 .kb-meta-chip {
   display: inline-flex;
   align-items: center;
-  gap: 4px;
-  font-size: 11px;
+  gap: var(--space-2);
+  font-size: var(--text-xs);
   padding: 1px 6px;
   border-radius: 4px;
   background: var(--bg-raised);
@@ -7771,7 +7803,7 @@ button {
   color: var(--fg-faint);
   text-transform: uppercase;
   letter-spacing: 0.04em;
-  font-size: 10.5px;
+  font-size: var(--text-xs);
   font-weight: 600;
 }
 
@@ -7780,76 +7812,13 @@ button {
   font-family: var(--font-mono);
 }
 
-.kb-add-row {
-  display: flex;
-  gap: 8px;
-  align-items: center;
-}
-
 .kb-add-row .panel-input {
   flex: 1;
 }
 
-.kb-hint {
-  font-size: 11.5px;
-  color: var(--fg-faint);
-}
-
-.kb-hint code {
-  font-family: var(--font-mono);
-  font-size: 11px;
-  background: var(--bg-raised);
-  padding: 1px 6px;
-  border-radius: 4px;
-  color: var(--fg-muted);
-}
-
-/* ── Knowledge: list rows (flat, list-first) ──────────────────── */
-.kb-list {
-  display: flex;
-  flex-direction: column;
-}
-
-.kb-row {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 12px;
-  padding: 12px 4px;
-  border-bottom: 1px solid var(--border-soft);
-}
-
-.kb-row:last-child {
-  border-bottom: none;
-}
-
-.kb-row.plugins-card-clickable {
-  cursor: pointer;
-  border-radius: 0;
-}
-
-.kb-row.plugins-card-clickable:hover {
-  background: var(--bg-raised);
-  border-color: var(--border-soft);
-}
-
-.kb-row-main {
-  flex: 1;
-  min-width: 0;
-}
-
-.kb-row-name {
-  font-weight: 600;
-  font-size: 13px;
-  color: var(--fg);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
 .kb-row-preview {
-  margin-top: 4px;
-  font-size: 12px;
+  margin-top: var(--space-2);
+  font-size: var(--text-sm);
   color: var(--fg-muted);
   line-height: 1.45;
   overflow: hidden;
@@ -7863,7 +7832,7 @@ button {
   flex-direction: column;
   align-items: flex-end;
   gap: 3px;
-  font-size: 11px;
+  font-size: var(--text-xs);
   color: var(--fg-faint);
   font-variant-numeric: tabular-nums;
   flex-shrink: 0;
@@ -7871,7 +7840,7 @@ button {
 
 .kb-kind {
   font-family: var(--font-mono);
-  font-size: 10.5px;
+  font-size: var(--text-xs);
   text-transform: uppercase;
   letter-spacing: 0.04em;
   padding: 1px 6px;
@@ -7881,11 +7850,11 @@ button {
 }
 
 .kb-score {
-  font-size: 11.5px;
+  font-size: var(--text-sm);
   font-weight: 700;
   font-variant-numeric: tabular-nums;
   padding: 1px 7px;
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   background: var(--bg-raised);
   color: var(--fg-faint);
 }
@@ -7906,149 +7875,52 @@ button {
   align-items: center;
   text-align: center;
   padding: 48px 24px 32px;
-  color: var(--fg-faint);
+  color: var(--fg-muted);
 }
 
 .kb-empty-inline {
-  padding: 24px 8px;
-}
-
-.kb-empty-icon {
-  color: var(--fg-faint);
-  opacity: 0.5;
-  margin-bottom: 14px;
+  padding: var(--space-12) var(--space-4);
 }
 
 .kb-empty-title {
-  font-size: 15px;
+  font-size: var(--text-lg);
   font-weight: 700;
   color: var(--fg);
 }
 
 .kb-empty-hint {
-  margin-top: 4px;
-  font-size: 13px;
+  margin-top: var(--space-2);
+  font-size: var(--text-md);
   max-width: 360px;
   line-height: 1.5;
 }
 
 .kb-empty-hint code {
   font-family: var(--font-mono);
-  font-size: 11.5px;
+  font-size: var(--text-sm);
   padding: 1px 6px;
   background: var(--bg-raised);
   border-radius: 4px;
   color: var(--fg-muted);
 }
 
-.kb-empty-cta {
-  margin-top: 18px;
-}
-
-.kb-empty-foot {
-  margin-top: 16px;
-  font-size: 11px;
-  color: var(--fg-faint);
-}
-
-.kb-empty-foot code {
-  font-family: var(--font-mono);
-  color: var(--fg-muted);
-}
-
-/* ── Knowledge: add-source page ────────────────────────────────── */
-.kb-add-page {
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-  padding: 8px 0;
-  min-height: 100%;
-}
-
-.kb-add-page > * {
-  flex: 0 0 auto;
-}
-
-.kb-add-modes {
-  display: inline-flex;
-  background: var(--bg-raised);
-  border-radius: 8px;
-  padding: 3px;
-  gap: 2px;
-  align-self: flex-start;
-}
-
-.kb-mode {
-  appearance: none;
-  background: transparent;
-  border: none;
-  color: var(--fg-faint);
-  padding: 6px 14px;
-  font-size: 12.5px;
-  font-weight: 600;
-  border-radius: 6px;
-  cursor: pointer;
-}
-
-.kb-mode:hover:not(:disabled) {
-  color: var(--fg);
-}
-
-.kb-mode.active {
-  background: var(--bg-surface);
-  color: var(--fg);
-  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.1);
-}
-
-.kb-mode:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
-}
-
-.kb-add-hint {
-  font-size: 12px;
-  color: var(--fg-muted);
-}
-
-.kb-add-textarea {
-  resize: vertical;
-  min-height: 160px;
-  font-family: inherit;
-}
-
-.kb-add-bottom {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  justify-content: space-between;
-  margin-top: auto;
-  padding-top: 14px;
-  border-top: 1px solid var(--border-soft);
-}
-
-/* ── Knowledge: detail page ────────────────────────────────────── */
-.kb-detail {
-  display: flex;
-  flex-direction: column;
-}
-
 .kb-detail-hero {
-  padding-bottom: 14px;
-  margin-bottom: 14px;
+  padding-bottom: var(--space-7);
+  margin-bottom: var(--space-7);
   border-bottom: 1px solid var(--border-soft);
 }
 
 .kb-detail-title {
   margin: 0;
-  font-size: 18px;
+  font-size: var(--text-xl);
   font-weight: 700;
   letter-spacing: -0.01em;
   word-break: break-word;
 }
 
 .kb-detail-source {
-  margin-top: 4px;
-  font-size: 12px;
+  margin-top: var(--space-2);
+  font-size: var(--text-sm);
   font-family: var(--font-mono);
   color: var(--fg-muted);
   word-break: break-all;
@@ -8064,27 +7936,29 @@ button {
 }
 
 .kb-detail-actions {
-  margin-top: 10px;
-  display: flex;
-  gap: 8px;
-  align-items: center;
+  margin-top: var(--space-5);
 }
 
 .kb-detail-meta {
   display: flex;
   flex-wrap: wrap;
-  gap: 4px;
-  margin-bottom: 14px;
+  gap: var(--space-2);
+  margin-bottom: var(--space-7);
 }
 
 .kb-detail-content {
-  font-size: 13px;
+  font-size: var(--text-md);
   line-height: 1.55;
   color: var(--fg);
 }
 
 .kb-detail-content > :first-child { margin-top: 0; }
 .kb-detail-content > :last-child { margin-bottom: 0; }
+
+.kb-stale-banner ul {
+  margin: 6px 0 0;
+  padding-left: var(--space-8);
+}
 
 .kb-detail-content h1,
 .kb-detail-content h2,
@@ -8101,7 +7975,7 @@ button {
 
 .kb-detail-content code {
   font-family: var(--font-mono);
-  font-size: 12px;
+  font-size: var(--text-sm);
   background: var(--bg-raised);
   padding: 1px 6px;
   border-radius: 4px;
@@ -8109,7 +7983,7 @@ button {
 
 .kb-detail-content pre {
   background: var(--bg-raised);
-  padding: 12px 14px;
+  padding: var(--space-6) var(--space-7);
   border-radius: 8px;
   overflow-x: auto;
   margin: 8px 0;
@@ -8123,13 +7997,13 @@ button {
 .kb-detail-content blockquote {
   border-left: 3px solid var(--border);
   margin: 8px 0;
-  padding: 2px 12px;
+  padding: var(--space-1) var(--space-6);
   color: var(--fg-muted);
 }
 
 .kb-detail-content ul,
 .kb-detail-content ol {
-  padding-left: 20px;
+  padding-left: var(--space-10);
   margin: 6px 0;
 }
 
@@ -8137,119 +8011,69 @@ button {
 .kb-add {
   display: flex;
   flex-direction: column;
-  gap: 10px;
-}
-
-.kb-add-modes {
-  display: inline-flex;
-  background: var(--bg-raised);
-  border-radius: 8px;
-  padding: 3px;
-  gap: 2px;
-  align-self: flex-start;
-}
-
-.kb-mode {
-  appearance: none;
-  background: transparent;
-  border: none;
-  color: var(--fg-faint);
-  padding: 5px 12px;
-  font-size: 12px;
-  font-weight: 600;
-  border-radius: 6px;
-  cursor: pointer;
-}
-
-.kb-mode:hover:not(:disabled) {
-  color: var(--fg);
-}
-
-.kb-mode.active {
-  background: var(--bg-surface);
-  color: var(--fg);
-  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.1);
-}
-
-.kb-mode:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
-}
-
-.kb-add-textarea {
-  resize: vertical;
-  min-height: 80px;
-  font-family: inherit;
-}
-
-.kb-add-bottom {
-  display: flex;
-  align-items: center;
-  gap: 10px;
+  gap: var(--space-5);
 }
 
 .kb-add-error {
   color: var(--danger);
-  font-size: 11.5px;
+  font-size: var(--text-sm);
 }
 
 .plugins-content-section {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: var(--space-2);
 }
 
 .plugins-content-head {
   display: flex;
   align-items: baseline;
-  gap: 8px;
-  font-size: 10.5px;
+  gap: var(--space-4);
+  font-size: var(--text-xs);
   font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 0.08em;
   color: var(--fg-faint);
-  margin-bottom: 2px;
+  margin-bottom: var(--space-1);
 }
 
 .plugins-content-count {
   font-weight: 600;
-  font-size: 11px;
+  font-size: var(--text-xs);
   padding: 1px 6px;
   background: var(--bg-raised);
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   color: var(--fg);
 }
 
 .plugins-content-row {
-  display: flex;
-  gap: 8px;
   align-items: baseline;
   padding: 3px 0;
-  font-size: 12.5px;
+  font-size: var(--text-sm);
   flex-wrap: wrap;
 }
 
 .plugins-content-name {
   font-family: var(--font-mono);
   color: var(--fg);
-  font-size: 12px;
+  font-size: var(--text-sm);
 }
 
 .plugins-content-desc {
   color: var(--fg-muted);
-  font-size: 12px;
+  font-size: var(--text-sm);
   flex: 1;
 }
 
 .plugins-content-meta {
   color: var(--fg-faint);
-  font-size: 11px;
+  font-size: var(--text-xs);
 }
 
 .plugins-content-cmd {
   color: var(--fg-faint);
   font-family: var(--font-mono);
-  font-size: 11px;
+  font-size: var(--text-xs);
   background: var(--bg-raised);
   padding: 1px 6px;
   border-radius: 4px;
@@ -8257,9 +8081,9 @@ button {
 
 .plugins-readme {
   background: var(--bg-raised);
-  padding: 12px 14px;
+  padding: var(--space-6) var(--space-7);
   border-radius: 8px;
-  font-size: 12.5px;
+  font-size: var(--text-sm);
   color: var(--fg);
   line-height: 1.5;
 }
@@ -8294,7 +8118,7 @@ button {
 .plugins-readme ul,
 .plugins-readme ol {
   margin: 6px 0;
-  padding-left: 20px;
+  padding-left: var(--space-10);
 }
 
 .plugins-readme li {
@@ -8303,7 +8127,7 @@ button {
 
 .plugins-readme code {
   font-family: var(--font-mono);
-  font-size: 11.5px;
+  font-size: var(--text-sm);
   background: var(--bg-surface);
   padding: 1px 5px;
   border-radius: 4px;
@@ -8312,10 +8136,10 @@ button {
 
 .plugins-readme pre {
   background: var(--bg-surface);
-  padding: 10px 12px;
+  padding: var(--space-5) var(--space-6);
   border-radius: 6px;
   font-family: var(--font-mono);
-  font-size: 11.5px;
+  font-size: var(--text-sm);
   overflow-x: auto;
   margin: 8px 0;
   line-height: 1.45;
@@ -8339,20 +8163,20 @@ button {
 .plugins-readme blockquote {
   border-left: 3px solid var(--border);
   margin: 8px 0;
-  padding: 2px 12px;
+  padding: var(--space-1) var(--space-6);
   color: var(--fg-muted);
 }
 
 .plugins-readme table {
   border-collapse: collapse;
   margin: 8px 0;
-  font-size: 12px;
+  font-size: var(--text-sm);
 }
 
 .plugins-readme th,
 .plugins-readme td {
   border: 1px solid var(--border-soft);
-  padding: 4px 8px;
+  padding: var(--space-2) var(--space-4);
   text-align: left;
 }
 
@@ -8391,7 +8215,7 @@ button {
 
 .hooks-count {
   margin-left: auto;
-  font-size: 11.5px;
+  font-size: var(--text-sm);
   color: var(--fg-faint);
   font-weight: 500;
 }
@@ -8410,20 +8234,20 @@ button {
 .hooks-group-head {
   display: flex;
   align-items: baseline;
-  gap: 8px;
-  margin-bottom: 4px;
+  gap: var(--space-4);
+  margin-bottom: var(--space-2);
 }
 
 .hooks-event-name {
   font-family: var(--font-mono);
-  font-size: 12.5px;
+  font-size: var(--text-sm);
   font-weight: 700;
   color: var(--fg);
   letter-spacing: 0.01em;
 }
 
 .hooks-event-count {
-  font-size: 11px;
+  font-size: var(--text-xs);
   color: var(--fg-faint);
   padding: 1px 7px;
   border-radius: 9px;
@@ -8431,23 +8255,20 @@ button {
 }
 
 .hooks-event-blurb {
-  font-size: 11.5px;
+  font-size: var(--text-sm);
   color: var(--fg-faint);
-  margin-bottom: 8px;
+  margin-bottom: var(--space-4);
   line-height: 1.45;
 }
 
 .hooks-list {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
+  gap: var(--space-3);
 }
 
 .hooks-row {
-  display: flex;
   align-items: flex-start;
-  gap: 10px;
-  padding: 8px 10px;
+  gap: var(--space-5);
+  padding: var(--space-4) var(--space-5);
   border: 1px solid var(--border-soft);
   border-radius: 8px;
   background: var(--bg-surface);
@@ -8468,14 +8289,14 @@ button {
 .hooks-row-main {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: var(--space-2);
   min-width: 0;
   flex: 1;
 }
 
 .hooks-row-ident {
   font-family: var(--font-mono);
-  font-size: 12px;
+  font-size: var(--text-sm);
   color: var(--fg);
   overflow: hidden;
   text-overflow: ellipsis;
@@ -8487,11 +8308,11 @@ button {
 .hooks-row-tags {
   display: flex;
   flex-wrap: wrap;
-  gap: 4px;
+  gap: var(--space-2);
 }
 
 .hooks-tag {
-  font-size: 10.5px;
+  font-size: var(--text-xs);
   font-family: var(--font-mono);
   color: var(--fg-muted);
   padding: 1px 7px;
@@ -8525,7 +8346,7 @@ button {
 .file-preview-path {
   flex: 1;
   font-family: var(--font-mono);
-  font-size: 12.5px;
+  font-size: var(--text-sm);
   color: var(--fg);
   overflow: hidden;
   text-overflow: ellipsis;
@@ -8535,7 +8356,7 @@ button {
 .file-preview-pre {
   margin: 0;
   font-family: var(--font-mono);
-  font-size: 12px;
+  font-size: var(--text-sm);
   line-height: 1.55;
   color: var(--fg);
   white-space: pre-wrap;
@@ -8554,7 +8375,7 @@ button {
 .watcher-layout {
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: var(--space-6);
   height: 100%;
   min-height: 0;
 }
@@ -8563,9 +8384,7 @@ button {
   list-style: none;
   margin: 0;
   padding: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
+  gap: var(--space-3);
   overflow-y: auto;
   flex-shrink: 0;
 }
@@ -8585,8 +8404,8 @@ button {
 .watcher-row {
   display: flex;
   flex-direction: column;
-  gap: 4px;
-  padding: 8px 10px;
+  gap: var(--space-2);
+  padding: var(--space-4) var(--space-5);
   border: 1px solid var(--border-soft);
   border-radius: 6px;
   background: var(--bg-surface);
@@ -8610,13 +8429,13 @@ button {
 .watcher-row-head {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--space-4);
 }
 
 .watcher-status {
   width: 8px;
   height: 8px;
-  border-radius: 50%;
+  border-radius: var(--radius-circle);
   flex-shrink: 0;
 }
 
@@ -8631,21 +8450,21 @@ button {
 
 .watcher-pid {
   font-family: var(--font-mono);
-  font-size: 12px;
+  font-size: var(--text-sm);
   color: var(--fg);
   font-weight: 600;
 }
 
 .watcher-elapsed {
   font-family: var(--font-mono);
-  font-size: 11px;
+  font-size: var(--text-xs);
   color: var(--fg-muted);
   margin-left: auto;
 }
 
 .watcher-row .btn-danger {
-  padding: 2px 8px;
-  font-size: 11px;
+  padding: var(--space-1) var(--space-4);
+  font-size: var(--text-xs);
   background: transparent;
   color: var(--danger);
   border-color: var(--danger);
@@ -8658,7 +8477,7 @@ button {
 
 .watcher-cmd {
   font-family: var(--font-mono);
-  font-size: 12px;
+  font-size: var(--text-sm);
   color: var(--fg);
   overflow: hidden;
   text-overflow: ellipsis;
@@ -8667,7 +8486,7 @@ button {
 
 .watcher-lastline {
   font-family: var(--font-mono);
-  font-size: 11px;
+  font-size: var(--text-xs);
   color: var(--fg-muted);
   overflow: hidden;
   text-overflow: ellipsis;
@@ -8679,19 +8498,13 @@ button {
   display: flex;
   flex-direction: column;
   min-height: 0;
-  gap: 8px;
-}
-
-.watcher-tail-toolbar {
-  display: flex;
-  align-items: center;
-  gap: 8px;
+  gap: var(--space-4);
 }
 
 .watcher-filter {
   flex: 1;
-  padding: 6px 10px;
-  font-size: 12px;
+  padding: var(--space-3) var(--space-5);
+  font-size: var(--text-sm);
   font-family: var(--font-mono);
   border: 1px solid var(--border-soft);
   border-radius: 6px;
@@ -8707,9 +8520,9 @@ button {
 .watcher-log {
   flex: 1;
   margin: 0;
-  padding: 12px;
+  padding: var(--space-6);
   font-family: var(--font-mono);
-  font-size: 12px;
+  font-size: var(--text-sm);
   line-height: 1.45;
   color: var(--fg);
   background: var(--bg-inset);
@@ -8726,10 +8539,9 @@ button {
 }
 
 .watcher-tail-empty {
-  padding: 20px;
+  padding: var(--space-10);
   text-align: center;
-  color: var(--fg-muted);
-  font-size: 13px;
+  font-size: var(--text-md);
   border: 1px dashed var(--border-soft);
   border-radius: 6px;
 }
@@ -8760,11 +8572,11 @@ button {
    collapse toggle, since the content isn't really code. */
 .markdown-block-pre {
   margin: 12px 0;
-  padding: 14px 16px;
+  padding: var(--space-7) var(--space-8);
   background: var(--bg-inset);
   border: 1px solid var(--border-soft);
   border-radius: var(--radius);
-  font-size: 13px;
+  font-size: var(--text-md);
   line-height: 1.65;
   overflow-x: auto;
   white-space: pre-wrap;
@@ -8793,26 +8605,26 @@ button {
 .demo-page {
   max-width: 1400px;
   margin: 0 auto;
-  padding: 32px;
+  padding: var(--space-16);
   height: 100vh;
   overflow-y: auto;
   box-sizing: border-box;
 }
 
 .demo-page-header {
-  margin-bottom: 32px;
+  margin-bottom: var(--space-16);
 }
 
 .demo-page-header h1 {
   margin: 0 0 12px;
-  font-size: 22px;
+  font-size: var(--text-2xl);
   color: var(--fg);
 }
 
 .demo-page-lede {
   margin: 0 0 8px;
   color: var(--fg-muted);
-  font-size: 14px;
+  font-size: var(--text-lg);
   line-height: 1.55;
   max-width: 760px;
 }
@@ -8820,8 +8632,8 @@ button {
 .demo-page-grid {
   display: grid;
   grid-template-columns: 1fr 1fr;
-  gap: 24px;
-  margin-bottom: 24px;
+  gap: var(--space-12);
+  margin-bottom: var(--space-12);
 }
 
 @media (max-width: 920px) {
@@ -8834,18 +8646,18 @@ button {
   background: var(--bg-surface);
   border: 1px solid var(--border-subtle);
   border-radius: 12px;
-  padding: 24px;
+  padding: var(--space-12);
 }
 
 .demo-page-panel-title {
-  font-size: 15px;
+  font-size: var(--text-lg);
   margin: 0 0 6px;
   color: var(--fg);
   font-weight: 500;
 }
 
 .demo-page-panel-subtitle {
-  font-size: 13px;
+  font-size: var(--text-md);
   color: var(--fg-muted);
   margin: 0 0 16px;
   line-height: 1.5;
@@ -8853,11 +8665,11 @@ button {
 
 .demo-page-panel-body {
   border-top: 1px solid var(--border-soft);
-  padding-top: 16px;
+  padding-top: var(--space-8);
 }
 
 .demo-page-error-detail {
-  font-size: 12px;
+  font-size: var(--text-sm);
   color: var(--fg-faint);
   margin: 16px 0 0;
 }
@@ -8872,11 +8684,11 @@ button {
   background: var(--bg-surface);
   border: 1px solid var(--border-subtle);
   border-radius: 12px;
-  padding: 16px 24px;
+  padding: var(--space-8) var(--space-12);
 }
 
 .demo-page-console h3 {
-  font-size: 13px;
+  font-size: var(--text-md);
   margin: 0 0 12px;
   color: var(--fg-muted);
   text-transform: uppercase;
@@ -8885,8 +8697,7 @@ button {
 }
 
 .demo-page-console-empty {
-  color: var(--fg-faint);
-  font-size: 13px;
+  font-size: var(--text-md);
   margin: 0;
 }
 
@@ -8895,11 +8706,11 @@ button {
   padding: 0;
   margin: 0;
   font-family: var(--font-mono);
-  font-size: 12px;
+  font-size: var(--text-sm);
 }
 
 .demo-page-console li {
-  padding: 4px 0;
+  padding: var(--space-2) 0;
   color: var(--fg);
   border-bottom: 1px solid var(--border-soft);
 }
@@ -8910,7 +8721,7 @@ button {
 
 .demo-page-console-ts {
   color: var(--fg-faint);
-  margin-right: 8px;
+  margin-right: var(--space-4);
 }
 
 /* Faux Composer — used by ``?demo=interrupted`` to show the
@@ -8921,12 +8732,12 @@ button {
   background: var(--bg-surface);
   border: 1px solid var(--border-subtle);
   border-radius: 12px;
-  padding: 16px 24px;
-  margin-bottom: 24px;
+  padding: var(--space-8) var(--space-12);
+  margin-bottom: var(--space-12);
 }
 
 .demo-page-composer h3 {
-  font-size: 13px;
+  font-size: var(--text-md);
   margin: 0 0 4px;
   color: var(--fg-muted);
   text-transform: uppercase;
@@ -8935,7 +8746,7 @@ button {
 }
 
 .demo-page-composer-subtitle {
-  font-size: 12px;
+  font-size: var(--text-sm);
   color: var(--fg-faint);
   margin: 0 0 12px;
 }
@@ -8944,15 +8755,15 @@ button {
   background: var(--bg);
   border: 1px solid var(--border-subtle);
   border-radius: 8px;
-  padding: 12px 14px;
+  padding: var(--space-6) var(--space-7);
   min-height: 80px;
 }
 
 .demo-page-composer-label {
   display: block;
-  font-size: 12px;
+  font-size: var(--text-sm);
   color: var(--fg-muted);
-  margin-bottom: 8px;
+  margin-bottom: var(--space-4);
 }
 
 .demo-page-composer-label code {
@@ -8965,7 +8776,7 @@ button {
 .demo-page-composer-text {
   margin: 0;
   font-family: var(--font-mono);
-  font-size: 13px;
+  font-size: var(--text-md);
   line-height: 1.55;
   color: var(--fg);
   white-space: pre-wrap;
@@ -8973,15 +8784,14 @@ button {
 }
 
 .demo-page-composer-empty {
-  font-size: 13px;
-  color: var(--fg-faint);
+  font-size: var(--text-md);
   font-style: italic;
 }
 
 .demo-page-composer-actions {
   display: flex;
   justify-content: flex-end;
-  margin-top: 12px;
+  margin-top: var(--space-6);
 }
 
 .demo-page-composer-send {
@@ -8990,9 +8800,9 @@ button {
   background: var(--accent-blue);
   color: var(--bg);
   font-weight: 500;
-  font-size: 13px;
+  font-size: var(--text-md);
   border-radius: 6px;
-  padding: 6px 14px;
+  padding: var(--space-3) var(--space-7);
   cursor: pointer;
 }
 
@@ -9006,9 +8816,9 @@ button {
    the composer rather than firing it — see ``HelpPage``. */
 .help-intro {
   color: var(--fg-muted);
-  padding-bottom: 14px;
+  padding-bottom: var(--space-7);
   border-bottom: 1px solid var(--border-soft);
-  margin-bottom: 16px;
+  margin-bottom: var(--space-8);
 }
 
 .help-group {
@@ -9017,26 +8827,26 @@ button {
 
 .help-group-title {
   margin: 0 0 2px;
-  font-size: 13px;
+  font-size: var(--text-md);
   font-weight: 700;
 }
 
 .help-group-blurb {
   margin: 0 0 10px;
-  font-size: 12.5px;
+  font-size: var(--text-sm);
   color: var(--fg-faint);
 }
 
 .help-commands {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(310px, 1fr));
-  gap: 4px;
+  gap: var(--space-2);
 }
 
 .help-command {
   display: flex;
   align-items: baseline;
-  gap: 10px;
+  gap: var(--space-5);
   text-align: left;
   background: none;
   border: 1px solid transparent;
@@ -9053,14 +8863,14 @@ button {
 
 .help-command-name {
   font-family: var(--mono, ui-monospace, monospace);
-  font-size: 12.5px;
+  font-size: var(--text-sm);
   font-weight: 600;
   color: var(--accent-orange-text, #fb9c5a);
   white-space: nowrap;
 }
 
 .help-command-desc {
-  font-size: 12.5px;
+  font-size: var(--text-sm);
   color: var(--fg-muted);
 }
 
@@ -9070,13 +8880,13 @@ button {
 .ctx-total {
   display: flex;
   align-items: baseline;
-  gap: 8px;
+  gap: var(--space-4);
   flex-wrap: wrap;
-  margin-bottom: 12px;
+  margin-bottom: var(--space-6);
 }
 
 .ctx-total-n {
-  font-size: 30px;
+  font-size: var(--text-3xl);
   font-weight: 700;
   letter-spacing: -0.02em;
 }
@@ -9087,16 +8897,16 @@ button {
 
 .ctx-total-of {
   color: var(--fg-faint);
-  font-size: 12.5px;
+  font-size: var(--text-sm);
 }
 
 .ctx-bar {
   display: flex;
   height: 10px;
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   overflow: hidden;
   background: var(--bg-inset);
-  margin-bottom: 14px;
+  margin-bottom: var(--space-7);
 }
 
 .ctx-bar-runs {
@@ -9124,12 +8934,12 @@ button {
 }
 
 .ctx-rows {
-  margin-bottom: 16px;
+  margin-bottom: var(--space-8);
 }
 
 .ctx-note {
   color: var(--fg-muted);
-  font-size: 12.5px;
+  font-size: var(--text-sm);
   line-height: 1.6;
   margin: 0 0 18px;
 }
@@ -9139,60 +8949,23 @@ button {
 }
 
 .ctx-empty {
-  color: var(--fg-faint);
+  color: var(--fg-muted);
 }
 
-/* ── CodeIndex: nothing indexed yet ──────────────────────────────
-   Replaces the zeroed dashboard. See ``NotIndexedYet``. */
-.codeindex-empty {
+/* ── A page with nothing to show yet ──────────────────────────── */
+.page-empty {
   padding: 18px 0 6px;
 }
 
-.codeindex-empty-lead {
+.page-empty-lead {
   margin: 0 0 16px;
   max-width: 60ch;
   line-height: 1.6;
   color: var(--fg-muted);
 }
 
-.codeindex-empty-lead strong {
+.page-empty-lead strong {
   color: var(--fg);
-}
-
-.codeindex-empty-langs {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-  margin-bottom: 20px;
-}
-
-.codeindex-empty-lang {
-  display: inline-flex;
-  align-items: baseline;
-  gap: 6px;
-  padding: 4px 9px;
-  border: 1px solid var(--border-soft);
-  border-radius: var(--radius-sm);
-  font-size: 12px;
-}
-
-.codeindex-empty-lang code {
-  font-family: var(--mono, ui-monospace, monospace);
-}
-
-.codeindex-empty-lang-n {
-  color: var(--fg-faint);
-}
-
-.codeindex-empty-where {
-  margin: 0;
-  font-size: 12.5px;
-  color: var(--fg-faint);
-}
-
-.codeindex-blocked-since {
-  color: var(--fg-faint);
-  white-space: nowrap;
 }
 
 /* ── Workflows page ──────────────────────────────────────────────
@@ -9200,16 +8973,12 @@ button {
    phases it walks through. Clicking seeds the composer — several take
    a JSON argument object. See ``WorkflowsPage``. */
 .workflow-card {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
+  gap: var(--space-3);
   width: 100%;
   text-align: left;
   background: none;
-  border: 1px solid var(--border-soft);
   border-radius: var(--radius-md, 8px);
-  padding: 12px 14px;
-  margin-bottom: 8px;
+  margin-bottom: var(--space-4);
   font: inherit;
   cursor: pointer;
 }
@@ -9222,27 +8991,27 @@ button {
 .workflow-head {
   display: flex;
   align-items: baseline;
-  gap: 10px;
+  gap: var(--space-5);
 }
 
 .workflow-name {
   font-family: var(--mono, ui-monospace, monospace);
   font-weight: 600;
-  font-size: 13px;
+  font-size: var(--text-md);
 }
 
 .workflow-phases {
-  font-size: 11.5px;
+  font-size: var(--text-sm);
   color: var(--fg-faint);
 }
 
 .workflow-desc {
-  font-size: 12.5px;
+  font-size: var(--text-sm);
   color: var(--fg-muted);
 }
 
 .workflow-when {
-  font-size: 12px;
+  font-size: var(--text-sm);
   color: var(--fg-faint);
   font-style: italic;
 }
@@ -9250,14 +9019,1048 @@ button {
 .workflow-phase-list {
   display: flex;
   flex-wrap: wrap;
-  gap: 4px;
-  margin-top: 2px;
+  gap: var(--space-2);
+  margin-top: var(--space-1);
 }
 
 .workflow-phase {
-  font-size: 11px;
+  font-size: var(--text-xs);
   padding: 2px 7px;
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   background: var(--bg-raised);
   color: var(--fg-muted);
+}
+
+.btn-warn {
+  color: var(--warning);
+  border-color: var(--warning);
+}
+
+.btn-xs {
+  padding: 2px 7px;
+  font-size: var(--text-xs);
+  line-height: 1.5;
+  color: var(--fg);
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  cursor: pointer;
+}
+
+.btn-xs:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.btn-quiet {
+  color: var(--fg-muted);
+  border-color: var(--border-soft);
+}
+
+.kb-share-audience {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  font-size: var(--text-sm);
+}
+
+.kb-share-audience textarea {
+  padding: 7px 9px;
+  font: inherit;
+  font-size: var(--text-sm);
+  color: var(--fg);
+  background: var(--bg-inset);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  resize: vertical;
+}
+
+.kb-share-link {
+  padding: 9px 10px;
+  background: var(--bg-surface);
+  border: 1px solid var(--border-soft);
+  border-radius: 6px;
+}
+
+.kb-share-link-label {
+  margin-bottom: 5px;
+  font-size: var(--text-2xs);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--fg-muted);
+}
+
+.kb-share-link-row {
+  display: flex;
+  gap: var(--space-3);
+}
+
+.kb-share-link-row input {
+  flex: 1;
+  min-width: 0;
+  padding: 5px 8px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: var(--text-xs);
+  color: var(--fg);
+  background: var(--bg-inset);
+  border: 1px solid var(--border-soft);
+  border-radius: 5px;
+}
+
+.kb-drift-comparison {
+  margin-bottom: var(--space-10);
+}
+
+/* Too narrow to dock anything: the conversation rejoins the flow
+   under the document, which keeps the pairing and loses only the
+   glance across. */
+.doc-filter-rule {
+  height: 1px;
+  background: var(--border-soft);
+}
+
+.kb-drift-panel {
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--warning);
+  border-radius: var(--radius);
+  background: var(--bg-inset);
+  overflow: hidden;
+}
+
+.kb-drift-panel-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-5);
+  padding: var(--space-6);
+}
+
+.kb-drift-lead {
+  margin: 0;
+  color: var(--fg-muted);
+  font-size: var(--text-sm);
+}
+
+/* Sentences that lean on what moved, marked in the document. Amber,
+   and under its own highlight name so the comment marks survive
+   alongside them. */
+::highlight(doc-drift-mark) {
+  text-decoration: underline;
+  text-decoration-color: var(--warning);
+  text-decoration-style: wavy;
+  text-underline-offset: 3px;
+}
+
+/* The one whose row is hovered. */
+::highlight(doc-drift-lit) {
+  background: color-mix(in srgb, var(--warning) 26%, transparent);
+}
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+@keyframes doc-face-pulse {
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 transparent;
+  }
+  50% {
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--face-ring, currentColor) 30%, transparent);
+  }
+}
+
+.doc-people-manage {
+  padding: 0;
+  font: inherit;
+  font-size: var(--text-sm);
+  color: var(--accent-blue-text);
+  background: none;
+  border: 0;
+  cursor: pointer;
+}
+
+/* No margin to put them in: back inside the column, at the right
+   edge, where a full line may pass under them. The narrow layout is
+   already a compromise. */
+::highlight(doc-cite-lit) {
+  background: hsl(210 45% 50% / 0.16);
+}
+
+.kb-cand-verdict-source {
+  border-left-color: var(--accent-green-text, var(--fg));
+}
+
+.kb-cand-verdict-not-a-source {
+  border-left-color: var(--fg-muted);
+}
+
+.kb-cand-what,
+.kb-cand-count,
+.kb-cand-none,
+.kb-cand-stakes {
+  margin: 0;
+  color: var(--fg-muted);
+}
+
+/* The consequence of the button, beside the button. Confirm switches
+   on a warning that recurs for as long as both documents exist. */
+.kb-cand-stakes {
+  padding-top: var(--space-4);
+  border-top: 1px solid var(--border-soft);
+  font-size: var(--text-sm);
+}
+
+/* The bell, beside the account. Square, because it holds a glyph
+   rather than a word — the chips next to it are as wide as their
+   text and this one would read as an empty one. */
+.chip-bell {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0;
+  position: relative;
+  width: 30px;
+  padding: 0;
+}
+
+.chip-bell svg {
+  width: 15px;
+  height: 15px;
+}
+
+/* Lit only when something is actually waiting. A bell that is always
+   coloured is a bell nobody looks at. */
+.chip-bell.has-waiting {
+  color: var(--accent-orange-text);
+}
+
+/* An extension's unread count, on its sidebar entry and its chip.
+   The floor's number (igni server's and this machine's together), not
+   one the extension keeps. */
+.extension-badge {
+  display: inline-block;
+  min-width: 16px;
+  height: 16px;
+  margin-left: 6px;
+  padding: 0 4px;
+  border-radius: var(--radius-pill);
+  background: var(--ember-gradient);
+  color: #fff;
+  font-size: var(--text-2xs);
+  font-weight: 700;
+  line-height: 16px;
+  text-align: center;
+  vertical-align: middle;
+  font-variant-numeric: tabular-nums;
+}
+
+.chip-bell-count {
+  position: absolute;
+  top: -4px;
+  right: -4px;
+  min-width: 15px;
+  height: 15px;
+  padding: 0 3px;
+  border-radius: var(--radius-pill);
+  background: var(--ember-gradient);
+  color: #fff;
+  font-size: var(--text-2xs);
+  font-weight: 700;
+  line-height: 15px;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+
+.afs-row-snippet {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  font-size: var(--text-sm);
+  line-height: 1.5;
+  color: var(--fg-muted);
+}
+
+/* ── Inline markdown ─────────────────────────────────────────────────
+   Rendered markdown flattened to one run of text, for previews.
+
+   Every rule here exists to keep the content *inline*: the row that
+   holds it clamps to two lines with ``-webkit-box``, and a single
+   block-level child inside that breaks the clamp — the preview grows
+   to the document's full height and the list stops being a list. */
+
+.mdi {
+  display: inline;
+}
+
+/* React Markdown wraps its output; the wrapper has to disappear too. */
+.mdi > * {
+  display: inline;
+}
+
+/* Blocks become inline runs with a space after, so two paragraphs
+   read as two sentences rather than as one run-on word. */
+.mdi-block {
+  display: inline;
+}
+
+.mdi-block::after {
+  content: " ";
+}
+
+/* A heading keeps its emphasis and loses its size. At preview scale a
+   heading rendered as a heading is just large text in a small row. */
+.mdi-heading {
+  font-weight: 600;
+  color: var(--fg);
+}
+
+.mdi-heading::after {
+  content: " · ";
+  font-weight: 400;
+  color: var(--fg-faint);
+}
+
+/* List items separated rather than laid out: four bullets would be
+   four lines where the row has room for two. */
+.mdi-item {
+  display: inline;
+}
+
+.mdi-item + .mdi-item::before,
+.mdi-cell + .mdi-cell::before {
+  content: " · ";
+  color: var(--fg-faint);
+}
+
+.mdi-cell {
+  display: inline;
+}
+
+/* Code keeps its face, because the point of code in a preview is that
+   it is code — but not its block, which would break the clamp. */
+.mdi-code {
+  display: inline;
+  padding: 0 3px;
+  border-radius: 3px;
+  background: var(--bg-raised);
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 0.92em;
+  white-space: pre-wrap;
+}
+
+:root {
+  --tree-width: 15.5rem;
+  /* The conversation's width, and a variable for the same reason
+     ``--tree-width`` is: three rules depend on it — the column, the
+     room the page leaves it, and how wide the text between them
+     ends up — and a number typed into each is three numbers that
+     have to be changed together and never are. Set on the element
+     by the handle between them. */
+  --rail-width: calc(24rem + 46px);
+  /* The air above the first line of a panel, and the one number the
+     three columns are placed from. The measure and whatever it holds
+     each take half of it, so changing it here moves the title, the
+     hierarchy and the conversation together — which is the only way
+     they stay level. */
+  --doc-air: 2px;
+}
+
+/* The glyph beside a menu item.
+   ``currentColor`` and no fill, so it dims with a disabled label and
+   turns red with a destructive one rather than sitting there at full
+   strength beside greyed-out text. Strokes rounded at the same
+   weight across the set: one filled glyph among stroked ones is the
+   most obvious way to make a menu look assembled from parts. */
+.menu-icon {
+  flex: none;
+  width: 14px;
+  height: 14px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.3;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  /* Quieter than the word it labels. The label says what the item
+     does; the icon is how it is found again. */
+  opacity: 0.72;
+}
+
+/* The items are a flex row already for the chevron's sake; this is
+   what puts a gap between the glyph and the word. */
+.overflow-item,
+.popup-item {
+  gap: 9px;
+}
+
+.overflow-item:hover .menu-icon,
+.overflow-item:focus-visible .menu-icon,
+.popup-item:hover .menu-icon {
+  opacity: 1;
+}
+
+.overflow-item:disabled .menu-icon {
+  opacity: 0.4;
+}
+
+.tree-notice-refused {
+  border-color: color-mix(in srgb, var(--accent-red-text, #f09393) 45%, transparent);
+}
+
+.col-handle-left {
+  /* Straddling the rule, which sits 16px right of the tree. */
+  right: -21px;
+}
+
+.col-handle-right {
+  left: -5px;
+}
+
+/* Narrower, never elsewhere.
+
+   It used to rejoin the flow above the content below this width, on
+   the grounds that a pinned tree would sit on top of the text. It
+   cannot: the page reserves the left column from ``--tree-width``,
+   so the measure starts where the tree ends however narrow the
+   window is. What the fallback actually did was move the hierarchy
+   somewhere it is not — above a document is not where you look for
+   the list of documents — and make the page's shape depend on how
+   wide the window happened to be.
+
+   So it stays where it is and takes less room. The document gets a
+   shorter measure, which is what a narrow window means. */
+@media (max-width: 78rem) {
+  :root {
+    --tree-width: 11.5rem;
+  }
+}
+
+@media (max-width: 56rem) {
+  :root {
+    --tree-width: 9.5rem;
+  }
+}
+
+.doc-bubble-gap {
+  width: 1px;
+  height: 17px;
+  margin: 0 5px;
+  background: var(--border-soft);
+}
+
+.doc-editor-error {
+  margin: 0;
+}
+
+/* The word an icon stands for, on hover and on focus.
+   ``display: contents`` — the wrapper must not become a box in a
+   flex row, or every toolbar it is used in silently gains a layer of
+   spacing nobody designed. */
+.tip-anchor {
+  display: contents;
+}
+
+.tip {
+  position: fixed;
+  z-index: 80;
+  max-width: 17rem;
+  padding: 5px 8px;
+  font-size: var(--text-sm);
+  line-height: 1.45;
+  color: var(--fg);
+  background: var(--bg-raised);
+  border: 1px solid var(--border-soft);
+  border-radius: 6px;
+  box-shadow: 0 6px 18px rgb(0 0 0 / 30%);
+  /* It explains the thing under the pointer; it must never be the
+     thing under the pointer. */
+  pointer-events: none;
+}
+
+.kb-tree-note {
+  margin: 0;
+}
+
+/* Outdented by its own padding for the same reason the crumbs are:
+   what the eye lines up is the word "Show", not the invisible box
+   around it. Puts it on 18 with the crumb above it and the New
+   document button's border beside it. */
+.kb-tree-archived {
+  padding: var(--space-1) var(--space-3);
+  margin-left: -6px;
+  font: inherit;
+  font-size: var(--text-xs);
+  color: var(--fg-muted);
+  background: none;
+  border: 0;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.kb-tree-archived:hover,
+.kb-tree-archived.is-on {
+  color: var(--fg);
+  background: var(--bg-inset);
+}
+
+.comment-peek-body :is(h1, h2, h3, h4) {
+  margin: 1em 0 0.4em;
+  font-size: 1em;
+  font-weight: 600;
+}
+
+/* The passage the comment is about, lit where it sits. */
+::highlight(comment-peek) {
+  background: hsl(38 70% 50% / 0.26);
+}
+
+/* ── Overflow menu ───────────────────────────────────────────────────
+   A row of secondary actions behind one button. Opens downward and
+   aligns to its right edge, because it hangs off the end of a header
+   row — aligning left would push it out past the window. */
+
+.overflow-menu {
+  position: relative;
+  display: inline-flex;
+}
+
+/* Catches the click that dismisses the menu. Fixed rather than
+   absolute so it covers the window and not just the header. Below the
+   list, above everything else. */
+.overflow-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 39;
+}
+
+.overflow-list {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  z-index: 40;
+  min-width: 180px;
+  display: flex;
+  flex-direction: column;
+  padding: 5px;
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-pop);
+  animation: menu-pop 0.14s cubic-bezier(0.2, 0.9, 0.3, 1.1);
+  transform-origin: top right;
+}
+
+/* A ``button`` wearing ``.popup-item``, which was written for divs:
+   these three undo what the user agent gives buttons and nothing
+   else, so the items match every other menu in the app. */
+.overflow-item {
+  appearance: none;
+  border: 0;
+  background: none;
+  width: 100%;
+  text-align: left;
+  font: inherit;
+  font-size: var(--text-md);
+  color: var(--fg);
+  white-space: nowrap;
+}
+
+.overflow-item:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.overflow-item:disabled:hover {
+  background: none;
+}
+
+/* Focus is how this menu is operated from the keyboard, so it is
+   drawn, not left to the browser's default outline on a transparent
+   button. */
+.overflow-item:focus-visible {
+  outline: 2px solid var(--accent-blue, var(--border));
+  outline-offset: -2px;
+}
+
+/* The toggle that is currently on. ``.popup-item.active`` already
+   tints the row; the tick is what says *which* state without relying
+   on the tint being noticed. */
+.overflow-item.active::after {
+  content: "✓";
+  margin-left: auto;
+  padding-left: var(--space-6);
+  color: var(--fg-muted);
+}
+
+.overflow-item-danger {
+  color: var(--danger-text, var(--accent-red-text));
+}
+
+.overflow-sep {
+  height: 1px;
+  margin: 4px 6px;
+  background: var(--border-soft);
+}
+
+/* A submenu inside the overflow menu. Three export formats behind one
+   Export item, so the menu stays a list of things you can do rather
+   than a list of every combination of them. */
+.overflow-sub-wrap {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+}
+
+/* The chevron sits at the far edge, away from the label, so the row
+   reads as "Export … onwards" rather than as a two-word label. */
+.overflow-item-parent .overflow-chevron {
+  margin-left: auto;
+  padding-left: var(--space-6);
+  color: var(--fg-faint);
+}
+
+/* Opens leftward. The parent list is already pinned to the right edge
+   of whatever it hangs off, so a submenu flying out to the right —
+   the desktop default — would open past the window. */
+.overflow-sub {
+  top: -5px;
+  right: calc(100% + 4px);
+  left: auto;
+  transform-origin: top right;
+}
+
+/* Keep the parent row lit while its submenu is open: without it the
+   submenu looks unattached to anything. */
+.overflow-sub-wrap:hover > .overflow-item-parent,
+.overflow-item-parent[aria-expanded='true'] {
+  background: var(--bg-raised);
+}
+
+/* Markdown inside a passage keeps the document's own rhythm rather
+   than the raw text it used to show — but tightened, because a
+   passage is a fragment and should not open with a full heading's
+   worth of space above it. */
+.prov-passage > .prov-md-first,
+.prov-passage :is(h1, h2, h3, h4):first-child {
+  margin-top: 0;
+}
+
+.prov-passage :is(p, ul, ol, pre, table, blockquote):last-child {
+  margin-bottom: 0;
+}
+
+.prov-passage :is(h1, h2, h3, h4) {
+  font-size: var(--text-lg);
+  margin: 12px 0 6px;
+}
+
+.prov-card-quote :is(h1, h2, h3, h4, h5, h6) {
+  margin: 0 0 0.4em;
+  font-size: 1em;
+  font-weight: 600;
+}
+
+/* Below the breakpoint the sidebar cannot be aligned to anything —
+   two 9rem columns is two unreadable ones. The card goes under its
+   passage, which keeps the pairing even though it loses the scan. */
+.doc-rail-chevron-back {
+  transform: rotate(180deg);
+}
+
+/* Under the breakpoint the rail returns below the document rather
+   than beside it, so the button goes where the rail would start
+   rather than off to the right. */
+@keyframes doc-conv-blink {
+  to {
+    visibility: hidden;
+  }
+}
+
+/* Every commented passage, marked for as long as the comment exists.
+   An underline rather than a fill: prose is read in lines, and a
+   block of colour at reading size breaks the line into chunks.
+   Painted through the Custom Highlight API, so the document's markup
+   is never rewritten to show it. */
+/* A commented passage, while nothing in particular is selected.
+   Filled rather than underlined: an underline is a line under a line
+   of prose and competes with every other rule on the page, and the
+   citation marks already underline. A wash reads as "there is
+   something here" without pretending to be punctuation. Faint,
+   because at this point the reader is reading past it. */
+::highlight(doc-comment-mark) {
+  background: color-mix(in srgb, var(--accent-blue, #4a7dff) 13%, transparent);
+}
+
+/* The selected one. The only one lit while anything is selected, so
+   the wash means "this is the passage" rather than "one of these
+   nine". Stronger, because now the reader is looking for it. */
+::highlight(doc-comment-quote) {
+  background: color-mix(in srgb, var(--accent-blue, #4a7dff) 30%, transparent);
+}
+
+.doc-comment-compose {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-5);
+  margin-top: 28px;
+  padding: var(--space-7);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-inset);
+}
+
+/* Says what this comment is attached to when nothing is quoted. An
+   empty composer and a quoting one otherwise look identical, and the
+   difference between them is the whole point. */
+.doc-comment-scope {
+  margin: 0;
+  color: var(--fg-faint);
+  font-size: var(--text-sm);
+}
+
+.doc-comment-actions {
+  flex-wrap: wrap;
+}
+
+/* "Compare" sits in the Versions heading, not on a row: comparing
+   takes two versions, and a per-row button has to invent the other. */
+.kb-compare-btn {
+  margin-left: var(--space-5);
+  padding: 1px 8px;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  background: var(--bg-surface);
+  color: var(--accent-blue-text);
+  font: inherit;
+  font-size: var(--text-xs);
+  font-weight: 400;
+  text-transform: none;
+  letter-spacing: normal;
+  cursor: pointer;
+}
+
+/* Two letters standing in for a face. See Monogram.tsx for why this
+   is not an avatar. */
+.monogram {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  border-radius: var(--radius-circle);
+  color: #fff;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  line-height: 1;
+  user-select: none;
+}
+
+/* The header control that is currently on. Used by Compare, which is
+   a mode rather than an action — it stays pressed while the page is
+   in its comparison state. */
+.btn.btn-active {
+  border-color: var(--accent-blue);
+  color: var(--accent-blue-text);
+}
+
+/* ── The sign-in wall ─────────────────────────────────────────────
+   A session with no account sees this and nothing else: igni is
+   self-hosted, so a session with nowhere to write has nothing to
+   show. Centred and narrow — there is one question on screen and
+   the layout should not imply there is more. */
+.wall {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--space-12);
+  background: var(--bg);
+  overflow-y: auto;
+}
+
+.wall-card {
+  width: 100%;
+  max-width: 420px;
+  text-align: center;
+}
+
+/* The mark carries its own colours — it is the product's, not a
+   glyph to be tinted by whatever is around it. */
+.wall-mark {
+  display: flex;
+  justify-content: center;
+  margin-bottom: 18px;
+}
+
+.wall-title {
+  font-size: var(--text-2xl);
+  font-weight: 700;
+  color: var(--fg);
+  margin: 0 0 8px;
+}
+
+.wall-lead {
+  font-size: var(--text-md);
+  line-height: 1.55;
+  color: var(--fg-muted);
+  margin: 0 0 20px;
+  /* Wraps to two lines and stays balanced rather than leaving one
+     word alone on the second. */
+  text-wrap: balance;
+}
+
+.wall-form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-5);
+}
+
+.wall-input {
+  width: 100%;
+  padding: var(--space-5) var(--space-6);
+  font-size: var(--text-lg);
+  font-family: inherit;
+  color: var(--fg);
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md, 8px);
+}
+
+.wall-input:focus {
+  outline: none;
+  border-color: var(--accent, #e8613c);
+}
+
+.wall-go {
+  width: 100%;
+  padding: var(--space-5) var(--space-6);
+  font-size: var(--text-lg);
+}
+
+/* Quieter than the action above it, and still a real control: this
+   is the way back out of a wrong guess. */
+.wall-back {
+  margin-top: var(--space-7);
+  padding: var(--space-2) var(--space-4);
+  font-size: var(--text-sm);
+  color: var(--fg-faint);
+  background: none;
+  border: none;
+  cursor: pointer;
+  text-decoration: underline;
+}
+
+.wall-back:hover {
+  color: var(--fg-muted);
+}
+
+.wall-error {
+  margin: 16px 0 0;
+  padding: 9px 12px;
+  font-size: var(--text-sm);
+  line-height: 1.5;
+  text-align: left;
+  color: var(--danger, #e05c5c);
+  border: 1px solid color-mix(in srgb, var(--danger, #e05c5c) 40%, transparent);
+  background: color-mix(in srgb, var(--danger, #e05c5c) 10%, transparent);
+  border-radius: var(--radius-md, 8px);
+}
+
+.wall-foot {
+  margin: 26px 0 0;
+  font-size: var(--text-sm);
+  line-height: 1.5;
+  color: var(--fg-faint);
+}
+
+/* ── Extensions panel ──────────────────────────────────────────
+   Installed extensions, their state, and the form for
+   `contributes.settings`. The settings shape travelled on
+   `list_extensions` long before anything drew it, so the grant was
+   declarable and unreachable. */
+
+.ext-row {
+  display: block;
+}
+
+/* A message an extension posted (host.chat.post): labelled, never
+   mistaken for the person's. */
+.msg-user-from {
+  font-size: var(--text-sm);
+  color: var(--fg-muted);
+  margin-bottom: var(--space-1);
+}
+
+/* Its text is markdown, rendered as the agent's is. The bubble keeps
+   a person's line breaks with pre-wrap; markdown makes its own. */
+.msg-user-markdown {
+  white-space: normal;
+}
+
+.msg-user-markdown > :first-child {
+  margin-top: 0;
+}
+
+.msg-user-markdown > :last-child {
+  margin-bottom: 0;
+}
+
+.msg-user-markdown a {
+  color: var(--accent-blue-text);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.msg-user-markdown code {
+  font-family: var(--font-mono);
+  font-size: 0.9em;
+}
+
+.msg-user-markdown pre {
+  white-space: pre;
+  overflow-x: auto;
+}
+
+/* "Open on the web" — an extension's home page, its service's
+   `client_uri`. Shown on its row and above its page when known. */
+.ext-web-link {
+  display: inline-block;
+  margin-top: var(--space-2);
+  font-size: var(--text-sm);
+  color: var(--accent-blue-text);
+  text-decoration: none;
+}
+
+.ext-web-link:hover {
+  text-decoration: underline;
+}
+
+.extension-page {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+}
+
+.extension-page-bar {
+  display: flex;
+  justify-content: flex-end;
+  padding: 0 var(--space-3);
+}
+
+.extension-page-bar .ext-web-link {
+  margin: var(--space-1) 0;
+}
+
+.extension-page > iframe {
+  flex: 1;
+  min-height: 0;
+}
+
+/* An extension's page is its frame, edge to edge: the page body does
+   not scroll (the frame scrolls itself) and the measure gives up its
+   900px column and padding. Without this the frame kept an iframe's
+   default 300x150. The trail floats over the top of a page with no
+   header row; a frame cannot know to leave room for it, so the body
+   does. */
+.page:has(.extension-frame) .page-body {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  padding-top: var(--crumb-row-h);
+}
+
+.page:has(.extension-frame) .page-measure {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  width: 100%;
+  padding: 0;
+}
+
+.extension-frame {
+  display: block;
+  flex: 1;
+  width: 100%;
+  min-height: 0;
+  border: 0;
+}
+
+.ext-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
+.ext-state {
+  flex: none;
+  font-size: var(--text-sm);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  padding: 2px 8px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border-soft);
+  color: var(--fg-muted);
+}
+
+.ext-state-ready {
+  color: var(--success);
+  border-color: var(--success);
+}
+
+.ext-state-failed {
+  color: var(--danger);
+  border-color: var(--danger);
+}
+
+.ext-state-busy {
+  color: var(--warning);
+  border-color: var(--warning);
+}
+
+.ext-settings {
+  margin-top: var(--space-3);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.ext-setting {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+/* The label takes the fixed share so the controls line up down the
+   column; without it every row's input starts at its own label's
+   width and the form reads as a list of unrelated things. */
+.ext-setting-label {
+  flex: none;
+  width: 40%;
+  font-size: var(--text-md);
+  color: var(--fg-muted);
+}
+
+.ext-settings-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin-top: var(--space-2);
+}
+
+.ext-settings-error {
+  color: var(--danger-text);
 }

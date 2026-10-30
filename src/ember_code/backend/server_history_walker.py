@@ -27,6 +27,7 @@ from ember_code.backend.schemas_history import (
     UserTurn,
 )
 from ember_code.protocol.agno_tool_formatter import default_registry
+from ember_code.protocol.tool_error_conventions import ToolResultErrorDetector
 
 logger = logging.getLogger(__name__)
 
@@ -182,6 +183,7 @@ class RunWalker:
                 args=args_summary,
                 content=content,
                 is_error=view.tool_call_error,
+                is_rejected=ToolResultErrorDetector.default().is_rejected(content),
                 run_id=self.run_id,
                 created_at=view.created_at,
             )

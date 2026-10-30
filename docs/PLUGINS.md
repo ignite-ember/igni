@@ -161,7 +161,15 @@ Changes take effect **on next session start**. Hot-reload across all five extens
 
 Marketplaces are stored at `~/.igni/marketplaces.json` with their cached catalogs. On every session start, all registered catalogs are refreshed in the background (10s per marketplace timeout, log-and-swallow failures) so `@<marketplace>/<plugin>` install refs are always against current data without slowing startup.
 
-No marketplaces are bootstrapped by default — register the ones you want via `/plugin marketplace add`.
+On session start igni registers Anthropic's official marketplace
+(`github.com/anthropics/claude-plugins-official`) and the organisation's own
+marketplaces listed under `plugins.marketplaces` (local paths or git URLs).
+`plugins.default_marketplace: false` stops the first, which is a clone from
+github.com. With `air_gapped: true` it is stopped too, and igni fetches only
+local marketplaces and those on hosts named in `plugins.marketplaces` — see
+"Air-gapped mode" in `CONFIGURATION.md`. Each installed plugin's source URL is
+recorded in `~/.igni/plugins.json` (`sources`), and `/plugin update` checks it
+against the same rule before fetching.
 
 ## Writing your own plugin
 

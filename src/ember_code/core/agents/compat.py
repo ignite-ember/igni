@@ -49,7 +49,6 @@ from ember_code.core.agents.schemas import (
     AgentDefinition,
     Broadcast,
     DbHandle,
-    KnowledgeManager,
     McpClient,
 )
 
@@ -130,7 +129,6 @@ class PoolCompatShim:
         settings: Settings,
         base_dir: str | None = None,
         mcp_clients: dict[str, McpClient] | None = None,
-        knowledge_mgr: KnowledgeManager | None = None,
         db: DbHandle | None = None,
         broadcast: Broadcast | None = None,
     ) -> Agent:
@@ -139,7 +137,7 @@ class PoolCompatShim:
         Wraps the six loose params into an
         :class:`AgentBuildContext` and delegates to
         :meth:`AgentBuilder.build`. The typed :class:`Broadcast`,
-        :class:`KnowledgeManager`, :class:`DbHandle`, and
+        :class:`DbHandle` and
         :class:`McpClient` protocols close the audit AP5 ``Any``
         holes on the public surface.
 
@@ -156,7 +154,6 @@ class PoolCompatShim:
             settings=settings,
             base_dir=base_dir,
             mcp_clients=mcp_clients,
-            knowledge_mgr=knowledge_mgr,
             db=db,
             broadcast=broadcast,
         )

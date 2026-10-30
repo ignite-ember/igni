@@ -56,6 +56,12 @@ class UnixSocketServerTransport(NDJsonStreamTransport, ListeningTransport):
         )
         logger.info("BE listening on %s", self._socket_path)
 
+    @property
+    def client_count(self) -> int:
+        """One while the one client it accepts is connected."""
+        writer = self._writer
+        return 1 if writer is not None and not writer.is_closing() else 0
+
     async def wait_for_connection(self, timeout: float | None = 30.0) -> None:
         """Wait until a client connects."""
         await asyncio.wait_for(self._connected.wait(), timeout=timeout)

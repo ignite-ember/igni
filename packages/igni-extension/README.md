@@ -1,0 +1,539 @@
+# igni-extension
+
+An igni extension's process, as its author writes it: tools igni can
+call, its own service reached as the signed-in person, and the host it
+runs in — without an address, a token or a protocol message in the
+extension's code.
+
+```python
+from igni_extension import IgniExtension, LocalNotification, NotSignedIn, Target, ToolHints
+
+ext = IgniExtension("acme.example")
+
+READS = ToolHints(read_only=True, destructive=False, idempotent=True, open_world=False)
+
+
+@ext.tool(hints=READS)
+async def summarise(slug: str) -> str:
+    """Summarise one of the organisation's documents."""
+    try:
+        response = await ext.service.get(f"/documents/{slug}/summary")
+    except NotSignedIn:
+        return "Sign in to igni to read documents."
+    response.raise_for_status()
+    return response.json()["summary"]
+
+
+@ext.tool(hints=ToolHints(read_only=False, destructive=False, idempotent=False, open_world=False))
+async def export(slug: str) -> str:
+    """Export a document to PDF and say so when it is ready."""
+    export_id = await render_pdf(slug)
+    await ext.host.notifications.notify(
+        LocalNotification(
+            kind="export_ready",
+            title=f"{slug}.pdf",
+            body="Your export is ready",
+            target=Target(page="acme.example", params={"export": export_id}),
+            event_key=f"export:{export_id}",
+        )
+    )
+    return export_id
+
+
+def main() -> None:   # the console script the manifest's `python.entry` names
+    ext.run()
+```
+
+## Tools, and what each says it is
+
+Every tool states MCP's four hints — `read_only`, `destructive`,
+`idempotent`, `open_world` — because igni's permission modes decide on
+them: plan mode runs a read-only tool and refuses one that changes
+things, Accept Edits runs a write that destroys nothing and stays inside
+its own system, the default mode asks before any write, Bypass runs
+everything (igni's `docs/EXTENSIBILITY.md` has the whole table).
+`ext.tool(hints=...)` requires them, and `ext.run()` refuses to start
+while any tool on `ext.mcp` leaves one out (`ToolHintsMissing`) — a tool
+added with `ext.mcp.add_tool` passes `annotations=hints.annotations()`.
+
+A tool the agent calls is also listed in the manifest's
+`permissions.tools`, with the same four:
+
+```json
+{ "name": "acme.example.summarise",
+  "annotations": { "readOnlyHint": true, "destructiveHint": false,
+                   "idempotentHint": true, "openWorldHint": false } }
+```
+
+The manifest's are the ones that count — an administrator approved
+them. igni compares them with what the server reports and shows a
+difference in its extensions panel.
+
+## Installing
+
+From igni's package index, not PyPI. Name the index and pin the package
+to it, so nothing called `igni-extension` is ever taken from anywhere else:
+
+```toml
+[[tool.uv.index]]
+name = "igni"
+url = "https://us-central1-python.pkg.dev/ember-prod-491411/ember-prod-python/simple/"
+explicit = true
+
+[tool.uv.sources]
+igni-extension = { index = "igni" }
+```
+
+```bash
+export UV_INDEX_IGNI_USERNAME=oauth2accesstoken
+export UV_INDEX_IGNI_PASSWORD="$(gcloud auth print-access-token)"   # an hour
+uv add igni-extension
+```
+
+Your Google account needs read access to the index (igni's developers'
+group has it). The versions, the other ways to authenticate, and working
+against an igni checkout instead are in igni's
+`docs/PUBLISHING_THE_SDKS.md`.
+
+## Its service: `ext.service`
+
+An `httpx.AsyncClient` for the extension's own service, as the person
+signed in to igni. Paths are relative to the service. The person's token
+comes from the igni host, is attached to every request, and is renewed
+before it expires — the extension never sees the person's igni session.
+When nobody is signed in to igni, a request raises `NotSignedIn`.
+
+- `ext.service.anonymous` — the same service with no token, for what
+  anyone may read (a public link, a health check). It never asks the host
+  for a token, so it works when nobody is signed in:
+  `await ext.service.anonymous.get(f"/v1/public/{slug}")`.
+- `ext.service.websocket(path)` — a WebSocket to the service, opened with
+  the person's token in its `Authorization` header:
+
+  ```python
+  async with ext.service.websocket(f"/v1/rooms/{slug}") as room:
+      await room.send(json.dumps({"hello": "room"}))
+      async for frame in room: ...
+  ```
+
+- `await ext.tokens.token()` — the token itself, for a client neither of
+  those covers.
+- `ext.tokens.signed_in` — who the last token was for (`user_id`,
+  `org_id`, `email`, `name`), read from it without checking it; `None`
+  before the first token or once nobody is signed in. For showing who is
+  signed in and noticing that it changed — the service checks the token,
+  this never decides anything. Whether anyone is signed in to igni at all
+  is `await ext.host.account.status` (with the `account` grant).
+
+## Whom a call is for: `Caller`
+
+Every call igni makes — a tool call, a page's call, a hook — names whom
+it is for: a person (`kind="person"`, their `id`, `org` and the one
+`group` they belong to) or, later, an app (no group). A tool or hook
+handler that wants it declares a parameter typed `Caller`; the SDK fills
+it from the call, and it is never part of a tool's input:
+
+```python
+from igni_extension import Caller
+
+@ext.tool(hints=ToolHints(read_only=True, destructive=False, idempotent=True, open_world=False))
+async def mine(caller: Caller) -> list[str]:
+    response = await ext.service.for_(caller).get("/v1/things")
+    return response.json()
+```
+
+- **`ext.service.for_(caller)`** — the service as that caller. The token
+  is fetched from the host for them and kept apart from every other
+  caller's. On a machine serving one person, the host gives that
+  person's token and refuses anybody else's (`HostError`, code
+  `refused`).
+- **`caller: Caller`** fails the call when igni sent none;
+  **`caller: Caller | None`** runs with `None` instead.
+- **`Caller.current()`** answers the same anywhere inside the call — in
+  a helper, or a plain `def` running in a worker thread.
+- **Work no caller started** — `on_start`, a reaction — has none, and
+  `ext.service` there is the signed-in person.
+
+The extension never decides who may call it: igni forwards only calls
+the caller may make, to extensions an org admin enabled for them. Its
+job is to serve calls in parallel and keep callers apart — a caller kept
+in a module global is the bug to avoid. `ConcurrencyHarness` (below)
+checks both.
+
+## The host: `ext.host`
+
+`ext.host` is igni as the extension sees it — the **host object model**
+(`docs/HOST_OBJECT_MODEL.md` in igni): one object per part of the app,
+each with properties, signals and methods. An extension can do anything
+igni's own UI can do, and see everything that happens in it.
+
+```python
+from igni_extension.host_model import Run, SessionChange
+
+@ext.on(ext.host.sessions.current_changed)
+async def follow(change: SessionChange) -> None:
+    busy = await ext.host.chat.processing           # read a property
+    ...
+
+@ext.on(ext.host.chat.run_completed)                 # handle a signal
+async def review(run: Run) -> None:
+    if run.changed_files:
+        await ext.host.chat.post("Two issues in the files you just changed.")
+
+await ext.host.sessions.current.set(session_id)      # write a property
+await ext.host.windows.ui(window_id).navigate("plugins")  # any window
+```
+
+- **Properties** read with `await prop` (or `prop.get()`) and, when
+  writable, write with `await prop.set(value)`.
+- **Signals** are handled with `@ext.on(signal)`; the value they carry is
+  typed (`igni_extension.host_model` has every type). A handler may read
+  and write the model while it runs.
+- **Methods** are `async`; their results are typed.
+- `ext.host.chat.post(text)` posts in the chat **labelled as the
+  extension**; the agent is told who sent it and answers as usual.
+  `ext.host.chat.append(view)` shows a json-render block that is never
+  sent to the model.
+- `ext.host.sessions.chat(session_id)` is the same chat for any session
+  of the project, without switching what the person is looking at.
+  A post there starts a run, or waits for the run already going, and
+  never answers an approval. It needs `sessions.post` as well as
+  `chat.post` (or `chat.append`):
+
+  ```python
+  @ext.on(ext.host.chat.run_completed)
+  async def review(run: Run) -> None:
+      if run.changed_files:
+          # The session the run was in, even if the person has moved on.
+          chat = ext.host.sessions.chat(run.session_id)
+          await chat.post("Two issues in the files you just changed.")
+  ```
+- `await ext.host.notifications.notify(LocalNotification(...))` tells
+  the person at this machine something — it never leaves the machine;
+  igni opens `target` when it is clicked and shows a repeated `event_key`
+  once. To tell *other* people, the extension's service uses
+  `host.notify` in `igni-service`.
+
+**Every object needs its grant** in the manifest's `permissions.host`
+(`"host": ["sessions", "chat.read", "chat.post"]`); `host.workspace` is
+granted by `permissions.workspace`. An object not granted raises
+`HostError` with `code == "not_granted"`, and its signals never arrive.
+Other codes: `not_found`, `invalid`, `read_only`, `refused` (the person
+could not have done it either), `stage_2` (defined, not yet built — no
+member today), `failed`.
+
+`ext.host.ui` is the window the person last used: its page, panel,
+sidebar, preview, selection, composer, toasts, dialog and scroll — the
+same model igni's own views bind to, so a write shows in the window and
+whatever the person does there is a signal. A dialog waits for the
+person:
+
+```python
+answer = await ext.host.ui.show_dialog(
+    {"title": "Ship it?", "buttons": [{"id": "yes", "label": "Ship", "primary": True}]}
+)
+if answer and answer["button"] == "yes":
+    await ext.host.ui.toast("Shipping.", "success")
+```
+
+`ext.host` travels on a loopback socket igni gives the process
+(`IGNI_HOST_URL`, `IGNI_HOST_SECRET`). `ext.run()` connects and stays
+connected so signals arrive; a script or test that does not call `run()`
+calls `await ext.connect()`. Run outside igni, `ext.host` raises
+`NotConfigured` — except `notifications.notify`, which then travels as
+the MCP notification igni has always understood.
+
+`igni_extension.host_model` is generated from igni's host schema; its
+`SCHEMA_VERSION` is the model version it was generated for.
+
+## Having a say: `@ext.hook`
+
+igni's hook events (`docs/HOOKS.md` in igni) are where an extension gets
+a say before something happens, in one pipeline with igni's own
+settings-file hooks:
+
+```python
+from igni_extension import Hooks, Modify, Reject
+from igni_extension.hooks import PlanSubmit, PreToolUse
+
+@ext.hook(Hooks.PLAN_SUBMIT)
+async def grounded(plan: PlanSubmit) -> Reject | None:
+    if plan.attempt < 2 and plan.plan.count("src/") < 2:
+        return Reject("Cite the files the plan changes.")   # back to the agent
+    return None                                             # allowed
+
+@ext.hook(Hooks.PRE_TOOL_USE)
+async def quieter(call: PreToolUse) -> Modify | None:
+    if call.tool_name == "run_shell_command":
+        command = call.tool_args.get("command", "") + " --quiet"
+        return Modify(call.model_copy(update={"tool_args": {**call.tool_args, "command": command}}))
+    return None
+```
+
+Five events decide something — `PRE_TOOL_USE` (may change `tool_args`),
+`POST_TOOL_USE` (`result`), `USER_PROMPT_SUBMIT` (`message`), `STOP`,
+`PLAN_SUBMIT` (`plan`). A handler answers `Allow()` (or `None`),
+`Reject(reason)` — the reason reaches the agent or the person, so write
+it for them — or `Modify(value)`: the whole value, with only the fields
+the event lets it change changed. Every other event (`SESSION_START`,
+`SUBAGENT_STOP`, `PRE_COMPACT`, …) is only told: the handler hears it,
+and what it returns is not read.
+
+igni asks only about the events in the manifest's `permissions.hooks`
+(`["PreToolUse", "PlanSubmit"]`), in the super admin's priority order
+of extensions, each handed what the one before left, before igni's own
+configured hooks. igni sets the deadline (two seconds) and decides what
+a silence means: a handler that raises, or is too slow, has not
+answered, and a tool call or a message then does not go ahead, while
+everything else does. Three silences in a row, hooks and tool calls
+alike, make the extension faulty: igni restarts it and stops waiting on
+its hooks until it answers again. One handler per event.
+`FakeHost.hook(event, value)` asks a test's extension as igni would, and
+`FakeHost.tell(event, value)` tells it one that decides nothing.
+
+## What your service sends: events and messages
+
+Your service reaches a producer's igni — on their desktop, or in their
+Fleet VM, woken for it — two ways (igni server's service-identity §15,
+igni's `docs/CLOUD.md` §6). Send a message when the service knows what
+the agent should read; send an event when this extension should decide.
+
+**An event is yours** (`agent.send_event` in `igni-service`). igni hands
+it to your handler for its type and posts nothing. The handler does what
+it wants through its host calls, and the agent runs only if it posts.
+To have the agent work on it in a chat of its own, open one and post
+there:
+
+```python
+from igni_extension import ServiceEvent
+
+@ext.on_service_event("index.ready")
+async def index_ready(event: ServiceEvent) -> None:
+    repo = event.payload["repo"]
+    created = await ext.host.sessions.create(title=f"Index: {repo}")
+    await ext.host.sessions.chat(created.session_id).post(
+        f"The index for {repo} is ready; review the open changes."
+    )
+```
+
+`sessions.create` returns the new session (`created.session_id`) and
+moves no window, so the person stays where they are; the title shows in
+their session list at once, and no auto-name replaces it. Pass
+`focus=True` to show it in the caller's window instead. Creating needs
+the `sessions` grant; posting into a session that is not on screen needs
+`sessions.post` as well as `chat.post`:
+
+```json
+"permissions": {"host": ["sessions", "chat.post", "sessions.post"]}
+```
+
+Without a type the handler takes every type
+no other handler names. An event with no handler for its type, one that
+reaches no running extension, or one whose handler raises is *not
+handled*: your service reads `not_handled`, with the reason, when it
+polls. igni waits up to 10 s; delivery is at least once, and igni drops a
+repeat by `event_id`. A handler that returns text used to have igni post
+it; igni no longer does — the text is ignored, with a warning in the log.
+
+**A message is the agent's** (`agent.send_message`, `new_chat`,
+`chat(thread)`). igni posts it exactly as sent, labelled as this
+extension's, in the chat its thread names or in this extension's own
+chat; no handler is asked, and your extension cannot rewrite, redirect
+or drop it. It sees it, as any post, on `chat.message_added`, with
+`from_extension` set to this extension's id and `from_service` to your
+service's client id. A post this extension made itself has
+`from_service` set to `None`:
+
+```python
+from igni_extension.host_model import ChatMessage
+
+@ext.on(ext.host.chat.message_added)
+async def seen(message: ChatMessage) -> None:
+    if message.from_service is not None:
+        ...  # the service sent it, as a message item
+```
+
+What your service may send beyond a plain event, you declare here:
+
+```json
+"permissions": {"service": ["messages", "attachments", "chats"]}
+```
+
+`messages` lets it post text, `attachments` send files, `chats` name
+threads (each opens a chat), open chats and act on them. The super admin
+approves them with the service, and igni server refuses the rest.
+
+## Staying awake: `ext.busy`
+
+In the cloud igni's VM sleeps when nothing is busy. Work your process
+does on its own — indexing, a sync — says so:
+
+```python
+async with ext.busy_while("indexing"):
+    await index_everything()
+```
+
+`ext.busy(reason, ttl)` takes a lease (at most 600 s) and renews it when
+called again; `ext.done(reason)` lets it go; `busy_while` does both and
+renews in between. A lease nobody renews expires, so a stuck process
+cannot keep the VM up.
+
+## Plain functions run off the loop
+
+The process serves igni on one event loop. A plain `def` you hand the
+SDK — a tool, a hook handler, a reaction (`@ext.on`), a background job
+(`@ext.on_start`) — runs in a worker thread, so a slow one never holds
+the calls that arrive meanwhile; an `async def` is called as it is. A
+tool's schema is FastMCP's, from the function as you wrote it.
+
+Two things this does not do: blocking inside an `async def` still holds
+the loop, and threads share the GIL — CPU-heavy work belongs in a
+process pool you run (`concurrent.futures.ProcessPoolExecutor`). The
+thread pool is anyio's default (40); it is your process, so change it if
+you need to:
+
+```python
+import anyio.to_thread
+
+anyio.to_thread.current_default_thread_limiter().total_tokens = 8
+```
+
+## The agent's prompt: `ext.prompt`
+
+A manifest's `contributes.prompt` overrides a prompt — the main prompt,
+plan mode, any agent — with a whole one of its own, or edits it: appends a
+section, inserts one before or after a named section, replaces a named
+section (an agent's header is the section `frontmatter`). Each may hold
+only while a condition holds (`"when": "index-covers-head"`). The rules —
+what stacks, what collides, what an override leaves out — are in igni's
+`docs/EXTENSIBILITY.md`. Only the extension can judge the condition, so it
+says when it changes:
+Only the extension can judge the condition, so it says when it changes:
+
+```python
+await ext.prompt.hold("index-covers-head", True)
+await ext.prompt.set({"index-covers-head": False, "signed-in": True})
+```
+
+igni rebuilds the agent with the prompt as it now is. It travels on the
+process's own MCP connection (`notifications/igni/conditions`), works
+before igni has finished connecting, and sends only what changed. Nothing
+holds until it is said, and nothing survives a restart: say it again when
+the process starts.
+
+Text a contribution takes from a tool (`"source": "tool"`) is fetched when
+the extension starts, and so is a `promptFragments` anchor's. When what it
+says changes — CodeIndex's project map, when HEAD moves to another indexed
+commit — have igni fetch it again:
+
+```python
+await ext.prompt.refresh()
+```
+
+## Its own work, and its own directory
+
+Work the extension does for as long as it runs — a sync loop, processes it
+starts — goes in `@ext.on_start`. It starts with `ext.run()` and is
+cancelled when igni closes the extension, so it cleans up in its own
+`finally`:
+
+```python
+@ext.on_start
+async def follow_head() -> None:
+    try:
+        await index.start()
+        await asyncio.Event().wait()
+    finally:
+        await index.stop()
+```
+
+igni provides no database, vector store or model to extensions. What one
+keeps on this machine goes in `ext.environment.data_dir`
+(`IGNI_EXTENSION_DATA`): a directory that is this extension's alone and
+survives reinstalls and updates of its bundle.
+
+What it *runs* that is not Python — a database, a JVM, a model — it
+ships, as `assets` in its manifest, so it installs with no network. igni
+checks each against the digest the signed manifest pins and lays it out
+read-only, one directory per asset (`IGNI_EXTENSION_ASSETS`):
+
+```python
+neo4j_home = ext.assets.path("neo4j")                 # an unpacked archive
+model = ext.assets.file("minilm", "model.onnx")       # one file, as shipped
+```
+
+Both raise `NotConfigured` for a name igni did not lay out — one the
+manifest does not declare, or a process running outside igni.
+
+**The process is trusted, not confined.** It is the service's own code;
+`permissions.egress` sets what the extension's *pages* may connect to,
+not where this process may. Approving the service is the decision to
+trust it.
+
+## Testing an extension
+
+**Many callers at once:** `ConcurrencyHarness(ext).run([...])` makes
+every call concurrently, each as its own caller, and raises
+`ConcurrencyProblem` if the event loop was held longer than
+`stall_limit` (0.1 s), or if a tool saw a caller other than the one its
+call was sent with:
+
+```python
+from igni_extension.testing import ConcurrencyHarness, ConcurrentCall
+
+report = await ConcurrencyHarness(ext).run([
+    ConcurrentCall(tool="mine", caller=ada),
+    ConcurrentCall(tool="mine", caller=grace),
+])
+assert report.results[0].result != report.results[1].result
+```
+
+`HostHarness.call(tool, args, caller=...)` calls one tool as igni does,
+for that caller, and `FakeHost.hook(event, value, caller=...)` asks a
+hook the same way.
+
+
+```python
+from igni_extension.testing import FakeHost, FakeHostTokenEndpoint, HostHarness
+
+host_tokens = FakeHostTokenEndpoint()
+ext = IgniExtension(
+    "acme.example",
+    environ=host_tokens.environment(),
+    token_transport=host_tokens.transport,
+    service_transport=httpx.MockTransport(my_fake_service),
+)
+
+async with HostHarness(ext) as host:              # igni's side of the MCP session
+    await host.session.call_tool("export", {"slug": "runbook"})
+    [notification] = await host.received(1)
+```
+
+`FakeHostTokenEndpoint` hands out tokens the way the igni host does, and
+answers as igni does when nobody is signed in (`host_tokens.sign_out()`).
+Its tokens are unsigned JWTs of the person's claims; to test against a
+service that checks signatures, pass `minter`, which is given the
+person's `TokenClaims` and returns the token to hand out:
+
+```python
+igni = FakeIgni(...)                               # igni_service.testing
+host_tokens = FakeHostTokenEndpoint(
+    minter=lambda claims: igni.person_token(claims.sub, org_id=claims.org)
+)
+```
+
+`HostHarness` connects to the extension over the same MCP session
+`ext.run()` serves, and records what it tells the host.
+
+`FakeHost` is igni's host object model on a loopback socket, speaking
+the protocol igni speaks:
+
+```python
+async with FakeHost(values={"chat.processing": False}, answers={"chat.append": "v1"}) as host:
+    ext = IgniExtension("acme.example", environ=host.environment())
+    assert await ext.host.chat.processing is False
+    await ext.connect()
+    await host.wait_subscribed("chat.run_completed")
+    await host.emit("chat.run_completed", {...})   # your handler runs
+    host.calls                                      # everything the extension asked
+```

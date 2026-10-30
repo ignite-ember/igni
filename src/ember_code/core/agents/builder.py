@@ -18,9 +18,10 @@ from ember_code.core.agents.schemas import (
     AgentConstructorArgs,
     AgentDefinition,
 )
+from ember_code.core.agents.tool_audience import ToolAudience
+from ember_code.core.agents.tool_audience import audience as default_audience
 from ember_code.core.config.models import ModelRegistry
 from ember_code.core.config.tool_permissions import ToolPermissions
-from ember_code.core.tools.knowledge import KnowledgeTools
 from ember_code.core.tools.registry import ToolRegistry
 from ember_code.core.tools.schedule import ScheduleTools
 
@@ -33,8 +34,8 @@ class AgentBuilder:
     :class:`Agent`.
 
     Constructor takes an :class:`AgentBuildContext` bundle so the
-    six shared-state params (``settings``, ``base_dir``,
-    ``mcp_clients``, ``knowledge_mgr``, ``db``, ``broadcast``)
+    five shared-state params (``settings``, ``base_dir``,
+    ``mcp_clients``, ``db``, ``broadcast``)
     live on ``self`` — the public :meth:`build` method then takes
     only the definition (what varies per agent).
     """
@@ -91,8 +92,9 @@ class AgentBuilder:
 
         return Agent
 
-    def __init__(self, context: AgentBuildContext) -> None:
+    def __init__(self, context: AgentBuildContext, *, audience: ToolAudience | None = None) -> None:
         self._context = context
+        self._audience = audience or default_audience
 
     @property
     def context(self) -> AgentBuildContext:
@@ -104,7 +106,7 @@ class AgentBuilder:
 
     def replace_context(self, new_context: AgentBuildContext) -> None:
         """Swap the shared context. Used by :class:`AgentPool` after
-        MCP connects or when the knowledge manager attaches."""
+        MCP connects."""
         self._context = new_context
 
     def build(self, definition: AgentDefinition) -> Agent:
@@ -180,20 +182,14 @@ class AgentBuilder:
                 base_dir=ctx.base_dir,
                 permissions=permissions,
                 broadcast=ctx.broadcast,
-                # Same reason as ``settings_permissions`` above: a specialist
-                # built without this got a ``CodeIndexTools`` that self-builds a
-                # runtime-less index, so every query it made answered
-                # ``no_backend``. Measured: the ``data-architect``'s Cypher
-                # failed on every delegated question while the main agent's
-                # worked.
-                code_index_provider=ctx.code_index_provider,
             )
             tools = registry.resolve(definition.tools)
 
         if tools:
             tools.append(ScheduleTools(project_dir=ctx.base_dir))
-        if tools and ctx.knowledge_mgr is not None:
-            tools.append(KnowledgeTools(ctx.knowledge_mgr))
+        # No agent gets a toolkit here by name: an extension's agents
+        # reach its tools over MCP, so the host has no branch that
+        # knows one agent.
 
         agent_mcp: dict[str, Any] = {}
         if tools and ctx.mcp_clients:
@@ -207,6 +203,15 @@ class AgentBuilder:
                 }
             else:
                 agent_mcp = ctx.mcp_clients
+            # Some servers are offered only to the agents their own
+            # extension ships — declared by the extension, checked
+            # here by where this agent's file lives. See
+            # :mod:`ember_code.core.agents.tool_audience`.
+            agent_mcp = {
+                name: client
+                for name, client in agent_mcp.items()
+                if self._audience.allows(name, definition.source_path)
+            }
             for client in agent_mcp.values():
                 if client not in tools:
                     tools.append(client)

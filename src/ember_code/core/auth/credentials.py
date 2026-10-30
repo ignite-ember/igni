@@ -28,12 +28,14 @@ from __future__ import annotations
 import json
 import logging
 import os
+from abc import ABC, abstractmethod
 from datetime import datetime, timezone
 from pathlib import Path
 
 from pydantic import BaseModel
 
 from ember_code.core.auth.schemas import JwtClaims, LoadCredentialsResult
+from ember_code.core.layer import Layers
 from ember_code.core.paths import DEFAULT_DATA_DIR
 
 logger = logging.getLogger(__name__)
@@ -108,8 +110,26 @@ class Credentials(BaseModel):
 LoadCredentialsResult.model_rebuild(_types_namespace={"Credentials": Credentials})
 
 
+class CredentialSource(ABC):
+    """Where a layer keeps credentials instead of ``credentials.json`` (``core/layer.py``)."""
+
+    @abstractmethod
+    def load(self) -> LoadCredentialsResult: ...
+
+    def save(self, creds: Credentials) -> None:
+        """Keeping them is the source's own business; by default nothing is written."""
+        logger.warning("credentials come from %s; not saving them", type(self).__name__)
+
+    def clear(self) -> None:  # noqa: B027 - nothing to remove, unless a source says
+        """Nothing to remove by default."""
+
+
 class CredentialsStore:
     """Read/write coordinator for one credential file.
+
+    A layer may keep them elsewhere (:meth:`Layer.credentials
+    <ember_code.core.layer.Layer.credentials>`); the store then asks it
+    instead of the file.
 
     One instance per file path; the ``save`` / ``load`` / ``clear``
     operations are methods on the instance instead of free
@@ -138,6 +158,10 @@ class CredentialsStore:
         :meth:`Credentials.new` — this method does not do any
         datetime bookkeeping on its own.
         """
+        source = Layers.current().credentials()
+        if source is not None:
+            source.save(creds)
+            return
         fp = self._path
         fp.parent.mkdir(parents=True, exist_ok=True)
         fp.write_text(creds.model_dump_json(indent=2))
@@ -159,6 +183,9 @@ class CredentialsStore:
         Expiry is *not* reported here — call :meth:`Credentials
         .is_expired` on the returned ``creds`` value.
         """
+        source = Layers.current().credentials()
+        if source is not None:
+            return source.load()
         fp = self._path
         if not fp.exists():
             return LoadCredentialsResult(ok=False, reason="no_file")
@@ -181,6 +208,10 @@ class CredentialsStore:
 
     def clear(self) -> None:
         """Delete the credential file if it exists (no-op otherwise)."""
+        source = Layers.current().credentials()
+        if source is not None:
+            source.clear()
+            return
         fp = self._path
         if fp.exists():
             fp.unlink()
@@ -188,7 +219,7 @@ class CredentialsStore:
 
 
 class CloudCredentials:
-    """Read-only view of the user's Ember Cloud credentials.
+    """Read-only view of the user's igni server credentials.
 
     One file read + one JWT decode per instance, cached for the
     instance's lifetime.
@@ -271,6 +302,36 @@ class CloudCredentials:
         if self._claims is None:
             return None
         return self._claims.org_name
+
+    @property
+    def user_id(self) -> str | None:
+        """The signed-in person's id on igni server, from their session."""
+        self._load()
+        if self._claims is None:
+            return None
+        return self._claims.sub
+
+    @property
+    def claims(self) -> JwtClaims | None:
+        """The token's claims, unverified (the server checks the signature)."""
+        self._load()
+        return self._claims
+
+    @property
+    def kind(self) -> str | None:
+        """What the token's subject is — ``person``, ``app`` or ``space`` — if it says."""
+        self._load()
+        if self._claims is None:
+            return None
+        return self._claims.kind
+
+    @property
+    def group(self) -> str | None:
+        """The person's one group as their session token was issued with it."""
+        self._load()
+        if self._claims is None:
+            return None
+        return self._claims.group
 
 
 class EmptyCloudCredentials(CloudCredentials):

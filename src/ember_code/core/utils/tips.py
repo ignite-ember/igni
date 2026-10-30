@@ -99,27 +99,6 @@ class NoProjectContextTip(ContextualTip):
         )
 
 
-class KnowledgeDisabledTip(ContextualTip):
-    id: str = "knowledge_disabled"
-    message: str = (
-        'Enable the knowledge base with "knowledge.enabled: true" to store and search documents.'
-    )
-
-    def matches(self, ctx: TipContext) -> bool:
-        return not ctx.settings.knowledge.enabled
-
-
-class KnowledgeNoShareTip(ContextualTip):
-    id: str = "knowledge_no_share"
-    message: str = (
-        'Turn on "knowledge.share: true" to sync knowledge to git so your team gets it too.'
-    )
-
-    def matches(self, ctx: TipContext) -> bool:
-        k = ctx.settings.knowledge
-        return k.enabled and not k.share
-
-
 class GuardrailsOffTip(ContextualTip):
     id: str = "guardrails_off"
     message: str = (
@@ -190,8 +169,6 @@ class TipRegistry(BaseModel):
         'Use "/agents" to see all loaded agents and their tools.',
         "The Orchestrator picks the best team mode automatically. Just describe your task.",
         'Use "--verbose" to see which agents and team mode the Orchestrator picks.',
-        'Use "/knowledge add <url|path|text>" to add content to your knowledge base.',
-        'Use "/sync-knowledge" to manually sync knowledge between git and the vector DB.',
         "Agents can spawn sub-teams on the fly — no depth limit.",
         'Resume a previous session with "ignite-ember --resume".',
         'Use "/sessions" to browse and resume past sessions.',
@@ -199,7 +176,7 @@ class TipRegistry(BaseModel):
         "Use \"ignite-ember -m 'your task'\" for quick non-interactive tasks.",
         "Pipe mode reads stdin: cat file.log | ignite-ember -p -m 'explain this'.",
         'Use "/memory" to see what the agent remembers about you across sessions.',
-        'Skills are reusable workflows — try "/commit" or "/resolve-issues".',
+        'Skills are reusable workflows — try "/commit".',
     ]
 
     @classmethod
@@ -208,8 +185,6 @@ class TipRegistry(BaseModel):
         return cls(
             contextual=[
                 NoProjectContextTip(),
-                KnowledgeDisabledTip(),
-                KnowledgeNoShareTip(),
                 GuardrailsOffTip(),
                 ReasoningOffTip(),
                 LearningOffTip(),

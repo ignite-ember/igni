@@ -32,14 +32,32 @@ from pydantic import BaseModel, ConfigDict, Field
 USER_NOTE_HEADER = "USER MESSAGE WHILE YOU WERE WORKING"
 
 
+class TakenMessage(BaseModel):
+    """A message taken off a queue: its text, and the id it is known by."""
+
+    id: str
+    text: str
+
+
+@runtime_checkable
+class TakesMessages(Protocol):
+    """A queue whose messages have ids that outlive the process.
+
+    :class:`~ember_code.core.session.queued_messages.DurableMessageQueue`
+    is one: what it hands out stays recorded as taken until the
+    conversation holds it, under that same id.
+    """
+
+    def take(self) -> TakenMessage: ...
+
+
 class InjectedMessage(BaseModel):
     """A single queued message that has been drained during a run.
 
-    The ``id`` / ``created_at`` fields are available for future
-    telemetry — today the persister writes only ``.text`` to the
-    session history. Documented here so the fields don't drift into
-    "fake carrying metadata" territory: they exist, they're stable,
-    they're just not surfaced yet.
+    ``id`` is the id the user message is recorded under in the session
+    history (the persister's ``Message.id``). For a durable queue it is
+    the queue row's id, which is how a backend that restarts tells a
+    message the conversation already holds from one it must offer again.
     """
 
     text: str

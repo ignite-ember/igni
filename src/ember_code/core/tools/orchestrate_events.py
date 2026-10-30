@@ -246,11 +246,15 @@ class HitlCoordinatorProtocol(Protocol):
     :class:`ember_code.core.sub_agent_hitl.SubAgentHITLCoordinator`.
     """
 
-    async def push_requirement(self, req: Any, *, run_id: str, agent_path: list[str]) -> str: ...
+    async def push_requirement(
+        self, req: Any, *, run_id: str, agent_path: list[str], session_id: str = ""
+    ) -> str: ...
 
     async def wait_resolved(self, req_id: str) -> None: ...
 
     def cleanup(self, req_id: str) -> None: ...
+
+    def forget_spawn(self, run_id: str) -> None: ...
 
 
 @runtime_checkable
@@ -272,6 +276,27 @@ class AgnoRunnable(Protocol):
     async def aget_run_output(self, *, run_id: str, session_id: str) -> Any: ...
 
     async def aget_last_run_output(self, *, session_id: str) -> Any: ...
+
+
+# ── Visualizer spec hand-back ───────────────────────────────────────
+
+#: Activity-log prefix carrying a rendered ``json-render`` spec back
+#: to whoever spawned the visualizer.
+#:
+#: The spec is streamed to the client as a chat card, and the caller
+#: used to receive only the visualizer's prose — "Rendered a 6-element
+#: 'Database Migration' card". Fine for an orchestrator that just
+#: wanted the user to see something; useless to an agent that has to
+#: put the spec *in a document*, where the document's viewer renders
+#: the fence live. A description of a chart cannot be stored
+#: as one.
+#:
+#: The activity log is the channel because it already exists and is
+#: already read this way: ``AgentSpawn.format_result`` scans it for
+#: ``RUN ERROR`` and lifts what it finds into the parent's result.
+#: This is the same move with a different prefix, which is why it
+#: needs no signature change anywhere.
+VIS_SPEC_PREFIX: str = "VISUALIZE SPEC "
 
 
 # ── Cancellation registry ───────────────────────────────────────────

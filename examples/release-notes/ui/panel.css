@@ -1,0 +1,35 @@
+/*
+ * What this extension had to style itself.
+ *
+ * Every rule here is a gap in the floor rather than a preference,
+ * which is the point of this example existing. Tokens are igni's,
+ * pushed live over the bridge — that part works, and is why these
+ * follow a theme change without a line about it.
+ */
+
+/*
+ * The split and the prose styling used to be here. Both are
+ * published now — `Split` and `Markdown` — which is what this
+ * example existing was for. What is left is genuinely this
+ * extension's own.
+ */
+
+/* ── Editor ────────────────────────────────────────────────────────
+   `Textarea` is a bare textarea with a `min-height`. A document
+   editor wants the pane. */
+.note-editor {
+  min-height: 24rem;
+  height: 100%;
+  font-family: var(--font-mono, ui-monospace, monospace);
+  line-height: 1.6;
+}
+
+/* ── Comments ──────────────────────────────────────────────────────
+   `Card` is published and the rail that connects a comment to the
+   passage it is about is not — and should not be, since anchoring is
+   this extension's domain object rather than the floor's. */
+.comment {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3, 6px);
+}

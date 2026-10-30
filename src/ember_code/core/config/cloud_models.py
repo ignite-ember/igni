@@ -1,4 +1,4 @@
-"""Discover models available in the Ember Cloud key pool.
+"""Discover models available in the igni server's key pool.
 
 The operator adds AI keys on the portal (per-org overrides or the
 global pool); the server exposes the catalogue at
@@ -35,6 +35,7 @@ from typing import Any
 import httpx
 from pydantic import BaseModel, ConfigDict, Field
 
+from ember_code.core.activity.http import busy_call
 from ember_code.core.config.endpoint import is_configured
 from ember_code.core.config.model_entry import ModelRegistryEntry
 
@@ -122,7 +123,7 @@ class MergeResult(BaseModel):
 
 
 class CloudModelCatalogClient:
-    """Fetch and merge the Ember Cloud key-pool catalogue.
+    """Fetch and merge the igni server key-pool catalogue.
 
     Owns the two implicit subject arguments — ``api_url`` and the
     cloud token — as instance state so the fetch and merge steps
@@ -176,7 +177,10 @@ class CloudModelCatalogClient:
 
         url = f"{self._api_url.rstrip('/')}/v1/chat/models"
         try:
-            with httpx.Client(timeout=self.FETCH_TIMEOUT_SECONDS) as client:
+            with (
+                busy_call("model-catalog"),
+                httpx.Client(timeout=self.FETCH_TIMEOUT_SECONDS) as client,
+            ):
                 resp = client.get(
                     url,
                     headers={"Authorization": f"Bearer {self._cloud_token}"},
@@ -233,7 +237,7 @@ class CloudModelCatalogClient:
         re-fetching.
 
         Every entry is a :class:`ModelRegistryEntry` already wired to
-        route through ``{api_url}/v1`` (the Ember Cloud chat proxy)
+        route through ``{api_url}/v1`` (the igni server chat proxy)
         via :meth:`ModelRegistryEntry.from_cloud_discovery`. Same-name
         entries are skipped — user/project config always wins.
         """

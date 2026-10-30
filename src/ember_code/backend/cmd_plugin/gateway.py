@@ -50,6 +50,7 @@ from ember_code.backend.plugin_schemas import (
 from ember_code.core.plugins import installer as _plugin_installer
 from ember_code.core.plugins import marketplaces as _plugin_marketplaces
 from ember_code.core.plugins.git import GitError
+from ember_code.core.plugins.source_policy import PluginSourcePolicy
 
 # Re-exports so tests can patch either
 # ``ember_code.backend.cmd_plugin.gateway.PluginInstaller`` or the
@@ -87,8 +88,12 @@ class PluginBackendGateway:
     by re-reading settings inside each method.
     """
 
-    def __init__(self, data_dir: str) -> None:
+    def __init__(self, data_dir: str, source_policy: PluginSourcePolicy | None = None) -> None:
         self._data_dir = data_dir
+        #: Which URLs git may be pointed at. Production passes the
+        #: session's (``PluginSourcePolicy.from_settings``); a gateway
+        #: built without one is not air-gapped.
+        self._source_policy = source_policy or PluginSourcePolicy()
 
     # ── Preconditions ───────────────────────────────────────────
 
@@ -101,7 +106,7 @@ class PluginBackendGateway:
         # ``PluginInstaller = _plugin_installer.PluginInstaller``
         # alias — because that alias captures the pre-patch value.
         installer_cls = _plugin_installer.PluginInstaller
-        return installer_cls(data_dir=self._data_dir)
+        return installer_cls(data_dir=self._data_dir, source_policy=self._source_policy)
 
     def is_git_available(self) -> bool:
         """Precondition every install/update path checks. Verbs call
@@ -129,6 +134,8 @@ class PluginBackendGateway:
     def install(self, url: str, *, ref: str | None, subdir: str | None) -> InstallResult:
         """Install a plugin. Wraps :meth:`PluginInstaller.install`
         with the GitError / PluginError branches."""
+        if not self._source_policy.allows(url):
+            return InstallResult(ok=False, error=self._source_policy.refusal(url))
         installer = self._make_installer()
         try:
             manifest = installer.install(url, ref=ref, subdir=subdir)
@@ -169,6 +176,8 @@ class PluginBackendGateway:
         write). Unexpected exception types are NOT swallowed — they
         surface as bugs rather than being rendered as a generic
         failure."""
+        if not self._source_policy.allows(url):
+            return AddMarketplaceResult(ok=False, error=self._source_policy.refusal(url))
         try:
             entry = _plugin_marketplaces.add_marketplace(url, data_dir=self._data_dir)
         except GitError as e:
@@ -196,6 +205,9 @@ class PluginBackendGateway:
         "not registered" (``not_found=True``) from a git failure
         (``ok=False`` + ``error``) so the verb can surface distinct
         messages."""
+        registered = _plugin_marketplaces.load_registry(data_dir=self._data_dir).find(name)
+        if registered is not None and not self._source_policy.allows(registered.url):
+            return RefreshOneResult(ok=False, error=self._source_policy.refusal(registered.url))
         try:
             refreshed = _plugin_marketplaces.refresh_marketplace(name, data_dir=self._data_dir)
         except GitError as e:

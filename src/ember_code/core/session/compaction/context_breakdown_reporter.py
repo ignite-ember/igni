@@ -15,6 +15,7 @@ from typing import TYPE_CHECKING
 from agno.models.message import Message as AgnoMessage
 
 from ember_code.core.session.schemas import ContextBreakdown
+from ember_code.core.session.token_estimate import TokenEstimate
 
 if TYPE_CHECKING:
     from ember_code.core.session.core import Session
@@ -46,9 +47,12 @@ class ContextBreakdownReporter:
         * ``total`` — the full assembled-message figure
           (``total == runs + floor``).
 
-        Returns a zero-filled breakdown on any I/O or tokenizer
-        failure so the ``/ctx`` card renders a well-formed
-        empty state instead of erroring out.
+        ``total`` is the server's own count at the last answer plus an
+        estimate for what came after it; ``runs`` is estimated from the
+        turns' length (nothing counts them apart from the floor).
+        Returns a zero-filled breakdown on any I/O failure so the
+        ``/ctx`` card renders a well-formed empty state instead of
+        erroring out.
         """
         session = self._session
         try:
@@ -62,8 +66,7 @@ class ContextBreakdownReporter:
             return ContextBreakdown.from_totals(total=0, runs=0)
 
         try:
-            all_messages = agno_session.get_messages()
-            total = int(session.main_team.model.count_tokens(all_messages))
+            total = TokenEstimate.of(agno_session.get_messages())
         except Exception:
             total = 0
 
@@ -72,11 +75,6 @@ class ContextBreakdownReporter:
             msgs = getattr(run, "messages", None)
             if msgs:
                 run_messages.extend(msgs)
-        try:
-            runs_tokens = (
-                int(session.main_team.model.count_tokens(run_messages)) if run_messages else 0
-            )
-        except Exception:
-            runs_tokens = 0
+        runs_tokens = min(TokenEstimate.chars(run_messages), total)
 
         return ContextBreakdown.from_totals(total=total, runs=runs_tokens)

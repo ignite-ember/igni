@@ -31,6 +31,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
 import yaml
 
 # Agent definitions live in ``src/ember_code/bundled_agents/`` —
@@ -40,6 +41,15 @@ import yaml
 # ``core.init.sync_bundled_content``. Tests read from the source
 # so they don't depend on the gitignored ``.igni/`` staging dir.
 PROJECT_AGENT_DIR = Path(__file__).resolve().parent.parent / "src" / "ember_code" / "bundled_agents"
+
+# The CodeIndex version ships in CodeIndex's extension plugin and replaces
+# the plain one while it runs. Checked against the sibling checkout.
+CODEINDEX_AGENT_DIR = (
+    Path(__file__).resolve().parents[2] / "igni__code-index" / "extension" / "plugin" / "agents"
+)
+_needs_codeindex = pytest.mark.skipif(
+    not CODEINDEX_AGENT_DIR.is_dir(), reason="no igni__code-index checkout beside this one"
+)
 
 
 def _parse_frontmatter(path: Path) -> dict:
@@ -101,6 +111,7 @@ class TestPlanResearcherFallbackVariant:
             )
 
 
+@_needs_codeindex
 class TestPlanResearcherCodeIndexVariant:
     """``plan_researcher.codeindex.md`` — used when CodeIndex IS
     available. The prompt body tells the agent to use
@@ -109,7 +120,7 @@ class TestPlanResearcherCodeIndexVariant:
     from ``CodeIndexTools`` — see ``tests/test_data_architect_agent.py``
     for the pin), backed by ``Bash`` for shell fallback."""
 
-    AGENT_FILE = PROJECT_AGENT_DIR / "plan_researcher.codeindex.md"
+    AGENT_FILE = CODEINDEX_AGENT_DIR / "plan_researcher.codeindex.md"
 
     def test_agent_file_exists(self):
         assert self.AGENT_FILE.exists()
@@ -136,18 +147,19 @@ class TestPlanResearcherCodeIndexVariant:
             assert forbidden not in tools
 
 
+@_needs_codeindex
 class TestBothVariantsAgree:
     """Cross-variant invariants: both researchers share the same
     role, name, and read-only contract."""
 
     def test_both_share_name(self):
         fallback = _parse_frontmatter(PROJECT_AGENT_DIR / "plan_researcher.md")
-        codeindex = _parse_frontmatter(PROJECT_AGENT_DIR / "plan_researcher.codeindex.md")
+        codeindex = _parse_frontmatter(CODEINDEX_AGENT_DIR / "plan_researcher.codeindex.md")
         assert fallback["name"] == codeindex["name"] == "plan_researcher"
 
     def test_both_are_read_only_tagged(self):
         fallback = _parse_frontmatter(PROJECT_AGENT_DIR / "plan_researcher.md")
-        codeindex = _parse_frontmatter(PROJECT_AGENT_DIR / "plan_researcher.codeindex.md")
+        codeindex = _parse_frontmatter(CODEINDEX_AGENT_DIR / "plan_researcher.codeindex.md")
         assert "read-only" in (fallback.get("tags") or [])
         assert "read-only" in (codeindex.get("tags") or [])
 
@@ -155,6 +167,6 @@ class TestBothVariantsAgree:
         # The researcher must not spawn further sub-agents — it's a
         # leaf in the orchestration tree.
         fallback = _parse_frontmatter(PROJECT_AGENT_DIR / "plan_researcher.md")
-        codeindex = _parse_frontmatter(PROJECT_AGENT_DIR / "plan_researcher.codeindex.md")
+        codeindex = _parse_frontmatter(CODEINDEX_AGENT_DIR / "plan_researcher.codeindex.md")
         assert fallback.get("can_orchestrate") is False
         assert codeindex.get("can_orchestrate") is False

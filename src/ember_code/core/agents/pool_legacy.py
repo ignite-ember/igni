@@ -2,7 +2,7 @@
 
 This module exists ONLY so the existing test suite continues to
 compile without a same-PR migration. It quarantines every
-``pool._definitions[...]`` / ``pool._codeindex_available`` /
+``pool._definitions[...]`` /
 ``pool._ephemeral_count`` / ``pool._max_ephemeral`` /
 ``pool._ephemeral_dir`` / ``pool._load_directory`` reach-in
 behind ONE mixin + ONE adapter class so a follow-up PR has a
@@ -12,9 +12,7 @@ Reach-in call sites still known to depend on this shim (as of the
 audit that spawned this file — grep before deleting):
 
 * ``tests/test_ephemeral_agents.py``          — ``_max_ephemeral``, ``_ephemeral_count``
-* ``tests/test_plugin_agent_restrictions.py`` — ``_definitions``, ``_codeindex_available``, ``_load_directory``
-* ``tests/test_codeindex_availability_refresh.py`` — ``_definitions[...] = (defn, prio)``
-* ``scripts/run_codeindex_eval.py``           — ``pool._definitions[...]``
+* ``tests/test_plugin_agent_restrictions.py`` — ``_definitions``, ``_load_directory``
 
 Two names are exported:
 
@@ -57,12 +55,6 @@ class LegacyAgentPoolMixin:
     The mixin only defines *descriptors* (properties + one method).
     All actual state stays on :class:`AgentPool` itself. Every
     property routes through the pool's public API.
-
-    Data-descriptor precedence means the mixin's ``_codeindex_available``
-    property intentionally shadows any same-named instance field on
-    :class:`AgentPool` — we deliberately keep the raw flag under a
-    different name (``_codeindex_available_flag``) so the shadowing
-    is stable.
     """
 
     # --- _definitions ────────────────────────────────────────────
@@ -93,22 +85,6 @@ class LegacyAgentPoolMixin:
             return
         self._ensure_initialised()
         self.replace_entries_from(value)
-
-    # --- _codeindex_available ────────────────────────────────────
-
-    @property
-    def _codeindex_available(self: AgentPool) -> bool:  # type: ignore[misc]
-        """Legacy read of the last-known codeindex flag.
-
-        Shadows any instance attribute of the same name via
-        data-descriptor precedence — see class docstring.
-        """
-        return bool(getattr(self, "_codeindex_available_flag", False))
-
-    @_codeindex_available.setter
-    def _codeindex_available(self: AgentPool, value: bool) -> None:  # type: ignore[misc]
-        """Legacy write — captured for the next ``_load_directory``."""
-        self._codeindex_available_flag = bool(value)
 
     # --- _ephemeral_count ────────────────────────────────────────
 
@@ -170,7 +146,6 @@ class LegacyAgentPoolMixin:
         loader = AgentDefinitionLoader(
             settings=self._settings_or_bare(),
             project_dir=Path(self._base_dir) if self._base_dir else Path.cwd(),
-            codeindex_available=self._codeindex_available,
             restriction_policy=policy,
         )
         report = loader.load_directory(path, priority, namespace=namespace)

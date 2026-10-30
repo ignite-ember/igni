@@ -31,6 +31,8 @@ import httpx
 from agno.team import Team
 
 from ember_code.backend.schemas_run import HttpClientCloseResult
+from ember_code.core.activity import BusyKind
+from ember_code.core.activity.http import BusyAsyncClient
 
 logger = logging.getLogger(__name__)
 
@@ -82,8 +84,27 @@ class ModelHttpClientManager:
         # old client's connections will eventually time out on their
         # own.
         if model is not None:
-            model.http_client = httpx.AsyncClient(limits=self._limits)
+            model.http_client = self._fresh(client)
         return result
+
+    def _fresh(self, old: Any) -> BusyAsyncClient:
+        """A new client, with the old one's auth and timeout.
+
+        The auth is what puts igni server's current token on each request
+        to its gateway (:class:`~ember_code.core.auth.http_auth.CloudTokenAuth`);
+        a bare client after the first run sent the next one with none.
+        """
+        if isinstance(old, httpx.AsyncClient):
+            return BusyAsyncClient(
+                busy_holder="model",
+                busy_kind=BusyKind.MODEL_CALL,
+                limits=self._limits,
+                auth=old.auth,
+                timeout=old.timeout,
+            )
+        return BusyAsyncClient(
+            busy_holder="model", busy_kind=BusyKind.MODEL_CALL, limits=self._limits
+        )
 
     @staticmethod
     def _extract_model(team: Team) -> Any:

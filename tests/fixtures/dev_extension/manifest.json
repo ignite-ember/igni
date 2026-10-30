@@ -1,0 +1,61 @@
+{
+  "$schema": "https://igni.sh/schema/extension-manifest-1.json",
+  "id": "acme.scanner",
+  "version": "1.0.0",
+  "contract": ">=1.0 <2",
+  "name": "Compliance Scanner (dev)",
+  "trust": "unsigned",
+  "dev": {
+    "command": [
+      "python",
+      "server.py"
+    ]
+  },
+  "permissions": {
+    "rpc": [
+      "ext.acme.scanner.*"
+    ]
+  },
+  "contributes": {
+    "pages": [
+      {
+        "kind": "acme.scan",
+        "label": "Compliance",
+        "sidebar": true
+      }
+    ],
+    "promptFragments": [
+      {
+        "anchor": "ACME_POLICY_SUMMARY",
+        "source": "tool",
+        "from": "policy_summary"
+      }
+    ],
+    "commands": [
+      {
+        "command": "/compliance",
+        "desc": "policy violations in this repository"
+      }
+    ],
+    "settings": [
+      {
+        "key": "failOn",
+        "type": "enum",
+        "label": "Fail a scan at or above",
+        "default": "high",
+        "options": [
+          "critical",
+          "high",
+          "medium",
+          "low"
+        ]
+      },
+      {
+        "key": "notify",
+        "type": "boolean",
+        "label": "Notify on new findings",
+        "default": true
+      }
+    ]
+  }
+}

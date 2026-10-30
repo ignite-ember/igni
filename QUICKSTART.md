@@ -329,37 +329,13 @@ Or use `/sessions` in interactive mode to browse past sessions.
 
 ## Optional Features
 
-### Knowledge Base
+### Documents
 
-Store and search documents via ChromaDB:
-
-```yaml
-# .igni/config.yaml
-knowledge:
-  enabled: true
-  collection_name: "my_project"
-  share: true                    # sync to .igni/knowledge.yaml for git sharing
-```
-
-When `share: true`, knowledge is automatically synced to a YAML file that your team can commit to git. On startup, only new entries are embedded — no redundant work. Use `/sync-knowledge` to manually trigger a sync.
-
-The shared knowledge file (`.igni/knowledge.yaml`) uses this format:
-
-```yaml
-version: 1
-synced_at: "2026-03-14T10:30:00+00:00"
-entries:
-  - id: "a1b2c3d4e5f67890"    # SHA256 content hash (16 chars)
-    content: "API rate limits are 100 req/min per user"
-    source: "docs/api-limits.md"
-    added_at: "2026-03-14T09:00:00+00:00"
-  - id: "f0e1d2c3b4a59876"
-    content: "Deploy to staging before production, always"
-    source: "manual"
-    added_at: "2026-03-14T09:15:00+00:00"
-```
-
-Requires: `pip install ember-code[knowledge]`
+Project documents — runbooks, decisions, conventions the agent should not
+re-derive — are the Artifacts extension's, with its own settings. It arrives
+from your organisation's Artifacts service through igni server once you are
+signed in and a super admin has approved that service; nothing in
+`.igni/config.yaml` turns it on.
 
 ### MCP (IDE Integration)
 

@@ -34,13 +34,16 @@ class InjectedRunBuffer(BaseModel):
 
     items: list[InjectedMessage] = Field(default_factory=list)
 
-    def append(self, text: str) -> InjectedMessage:
+    def append(self, text: str, message_id: str | None = None) -> InjectedMessage:
         """Wrap ``text`` in an :class:`InjectedMessage` and append it.
 
+        ``message_id`` is the queue's id for it, when the queue has one.
         Returns the created message so callers can log / notify with a
         stable id if they need to.
         """
-        message = InjectedMessage(text=text)
+        message = (
+            InjectedMessage(text=text, id=message_id) if message_id else InjectedMessage(text=text)
+        )
         self.items.append(message)
         return message
 

@@ -8,18 +8,20 @@ methods so the historical module-level call surface (``get_engine``,
 ``dispose_all``) becomes a single shared object — not five free functions
 reaching into module globals.
 
-SQLite-only (per-project ``state.db`` files plus a global ``ember.db``).
-Both sync and async flavours are exported. Engines and sessionmakers
-are cached by normalised path so callers can request them freely
-without pool churn — alembic uses the sync flavour under the hood;
-everything in code_index uses the async flavour via ``aiosqlite``.
+Keyed by :class:`~ember_code.core.db.urls.DatabaseUrl`: a SQLite file
+on the desktop (per-project ``state.db`` plus the global ``ember.db``),
+the configured PostgreSQL database in the cloud. Both sync and async
+flavours are exported. Engines and sessionmakers are cached per
+database so callers can request them freely without pool churn —
+alembic and the small key/value stores use the sync flavour; the
+async stores use the async one (``aiosqlite`` / psycopg).
 
 Back-compat: ``database.py``, ``migrations.py``, and existing tests
 import the five names from this module. We keep them working by
 attaching bound-method aliases at import time so legacy
 ``from ember_code.core.db.engine import get_engine`` calls still
 resolve. New callers should ``from ember_code.core.db.engine import
-cache`` and call ``cache.get_engine(path)`` directly.
+cache`` and call ``cache.get_engine(target)`` directly.
 
 The module-level :data:`cache` is a single shared :class:`EngineCache`
 instance — same singleton convention as :data:`migrator` in
@@ -32,28 +34,21 @@ to prevent).
 
 from __future__ import annotations
 
-from pathlib import Path
-
 from sqlalchemy import Engine
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 from sqlalchemy.orm import Session, sessionmaker
 
-from ember_code.core.db.engine_registry import EngineRegistry
-from ember_code.core.db.urls import _ensure_parent, _normalize_path, async_url, sync_url
+from ember_code.core.db.engine_registry import DatabaseTarget, EngineRegistry
 
 __all__ = [
     "EngineCache",
     "EngineRegistry",
-    "_ensure_parent",
-    "_normalize_path",
-    "async_url",
     "cache",
     "dispose_all",
     "get_async_engine",
     "get_async_sessionmaker",
     "get_engine",
     "get_sessionmaker",
-    "sync_url",
 ]
 
 
@@ -77,17 +72,25 @@ class EngineCache:
         replaces the historical ``engine.registry`` module global)."""
         return self._registry
 
-    def get_engine(self, path: str | Path) -> Engine:
-        return self._registry.get_engine(path)
+    def get_engine(self, target: DatabaseTarget) -> Engine:
+        return self._registry.get_engine(target)
 
-    def get_sessionmaker(self, path: str | Path) -> sessionmaker[Session]:
-        return self._registry.get_sessionmaker(path)
+    def get_sessionmaker(self, target: DatabaseTarget) -> sessionmaker[Session]:
+        return self._registry.get_sessionmaker(target)
 
-    def get_async_engine(self, path: str | Path) -> AsyncEngine:
-        return self._registry.get_async_engine(path)
+    def get_async_engine(self, target: DatabaseTarget) -> AsyncEngine:
+        return self._registry.get_async_engine(target)
 
-    def get_async_sessionmaker(self, path: str | Path) -> async_sessionmaker[AsyncSession]:
-        return self._registry.get_async_sessionmaker(path)
+    def get_async_sessionmaker(self, target: DatabaseTarget) -> async_sessionmaker[AsyncSession]:
+        return self._registry.get_async_sessionmaker(target)
+
+    async def close_connections(self) -> None:
+        """Close every pooled connection now (:meth:`EngineRegistry.close_connections`)."""
+        await self._registry.close_connections()
+
+    async def reset_pools(self) -> None:
+        """Drop every pooled connection, keeping the engines (:meth:`EngineRegistry.reset_pools`)."""
+        await self._registry.reset_pools()
 
     def dispose_all(self) -> None:
         """Close every cached engine — used in tests and on shutdown.

@@ -437,12 +437,21 @@ class CompactResult(BaseModel):
     * ``error`` — the underlying error string when the
       summariser raised; ``None`` on success or empty-summary
       branches.
+    * ``history_cleared`` — whether the runs were actually
+      dropped from the DB. Distinct from ``ok``: a pass where
+      the structured summariser raised but the fallback saved
+      the day is ``ok=False`` (the caller should see the error)
+      and ``history_cleared=True``. Callers that mirror the drop
+      — the FE's ``SessionCleared`` push, the PostCompact hook —
+      must gate on THIS field, not on ``ok``, or they announce a
+      clearing that never happened.
     """
 
     ok: bool = True
     status: str = ""
     summary: str = ""
     error: str | None = None
+    history_cleared: bool = False
 
 
 # ── Interactive session payloads ─────────────────────────────

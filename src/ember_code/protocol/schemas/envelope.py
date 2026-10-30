@@ -24,7 +24,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from pydantic import BaseModel
+from pydantic import BaseModel, PrivateAttr
 
 
 class Message(BaseModel):
@@ -47,6 +47,17 @@ class Message(BaseModel):
     # counter also pins the canonical ordering of events in a
     # stream. Empty on FE→BE messages.
     event_seq: int = 0
+    #: Arrived on the platform's own control connection (a gateway's): set
+    #: by the transport from the connection, never read from the message,
+    #: so a client cannot claim it. See :meth:`via_control`.
+    _via_control: bool = PrivateAttr(default=False)
+
+    @property
+    def via_control(self) -> bool:
+        return self._via_control
+
+    def mark_control(self) -> None:
+        self._via_control = True
 
 
 class RunHeader(BaseModel):

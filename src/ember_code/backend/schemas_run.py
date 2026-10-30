@@ -160,6 +160,9 @@ class HookGateResult(BaseModel):
     should_continue: bool
     block_message: str | None = None
     context_message: str | None = None
+    #: The message to run, as the extensions hooking ``UserPromptSubmit``
+    #: left it; ``None`` from a gate that has no message.
+    text: str | None = None
 
 
 class PromptBuildResult(BaseModel):

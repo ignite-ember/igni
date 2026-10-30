@@ -99,6 +99,15 @@ class GitClient:
         result = self._run(["git", "rev-parse", "HEAD"], cwd=repo)
         return result.stdout.strip()
 
+    def remote_url(self, repo: Path) -> str | None:
+        """The ``origin`` URL *repo* fetches from, or ``None``. Local: reads
+        the repository's config, contacts nothing."""
+        try:
+            result = self._run(["git", "config", "--get", "remote.origin.url"], cwd=repo)
+        except GitError:
+            return None
+        return result.stdout.strip() or None
+
     def head_branch(self, repo: Path) -> str:
         """Return the default branch name reported by ``origin/HEAD``.
 

@@ -44,24 +44,31 @@ from typing import Any
 import click
 
 from ember_code import __version__
+from ember_code.cli.ext import ext
 from ember_code.cli.invocation import (
     CliInvocation,
     load_settings_from_options,
 )
+from ember_code.cli.migrate import migrate
 from ember_code.cli.options import CliOptions
+from ember_code.core import air_gap
 from ember_code.core import session as _session_module
 from ember_code.core.paths import DEFAULT_DATA_DIR
 
 logger = stdlib_logging.getLogger(__name__)
 
 
-# A plain command, not a group. This was ``@click.group`` with zero
-# commands registered — nothing anywhere calls ``add_command`` and nothing
-# is decorated with ``@cli.command`` — so Click put ``[COMMAND] [ARGS]...``
-# in the usage line advertising something that did not exist. Every
-# natural first move after reading ``--help`` (``igni help``,
-# ``igni login``, ``igni chat``) produced a usage error instead.
-@click.command()
+# A group that runs without one.
+#
+# This was ``@click.group`` with zero commands registered, which put
+# ``[COMMAND] [ARGS]...`` in the usage line advertising something that
+# did not exist — every natural first move after ``--help`` produced a
+# usage error — so it became a plain command. It is a group again now
+# that there is a command to put in it, and ``invoke_without_command``
+# keeps the old behaviour exactly: ``igni`` and ``igni -m "…"`` still
+# start a session, because the subcommands are words and this command
+# takes no positional argument for one to be mistaken for.
+@click.group(invoke_without_command=True)
 @click.version_option(version=__version__, prog_name="igni")
 @click.option("--model", default=None, help="Model to use")
 @click.option("--verbose", is_flag=True, help="Show routing and reasoning")
@@ -128,8 +135,16 @@ def cli(ctx: click.Context, **_params: object) -> None:
     # The note itself is worth keeping: Click forces a
     # decorator-per-option surface here, so all the logic lives on the
     # invocation object and this callback stays small.
+    # A subcommand handles itself. Falling through would start an
+    # interactive session *and* run it.
+    if ctx.invoked_subcommand is not None:
+        return
+
     options = CliOptions.model_validate(ctx.params)
     settings = load_settings_from_options(options)
+    # A ``-m`` or pipe run starts igni's decisions service itself, and that
+    # process reads no settings: it inherits the air-gap decision instead.
+    air_gap.export_to(os.environ, settings.air_gapped)
 
     invocation = CliInvocation(options, settings, ctx)
     invocation.enable_debug_logging()
@@ -268,3 +283,8 @@ __all__ = ["cli"]
 
 if __name__ == "__main__":
     cli()
+
+
+# Registered after the callback so the module reads top to bottom.
+cli.add_command(ext)
+cli.add_command(migrate)

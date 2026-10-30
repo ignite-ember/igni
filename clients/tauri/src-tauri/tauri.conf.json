@@ -13,7 +13,7 @@
     "windows": [],
     "withGlobalTauri": true,
     "security": {
-      "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self'; connect-src 'self' ipc: http://ipc.localhost ws://127.0.0.1:* ws://localhost:* http://127.0.0.1:* http://localhost:*; object-src 'none'; base-uri 'self'; frame-ancestors 'none'"
+      "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self'; connect-src 'self' ipc: http://ipc.localhost ws://127.0.0.1:* ws://localhost:* http://127.0.0.1:* http://localhost:*; object-src 'none'; base-uri 'self'; frame-ancestors 'none'; frame-src http://127.0.0.1:* http://localhost:*"
     }
   },
   "plugins": {
@@ -46,7 +46,7 @@
     "copyright": "Copyright © 2026 Ignite Ember",
     "macOS": {
       "entitlements": "entitlements.plist",
-      "minimumSystemVersion": "11.0"
+      "minimumSystemVersion": "26.0"
     }
   }
 }

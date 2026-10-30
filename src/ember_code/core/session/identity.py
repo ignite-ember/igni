@@ -84,6 +84,16 @@ class SessionIdentity:
         ``persistence.session_id``) is encapsulated here so
         external callers don't need to know about the three
         writes.
+
+        Everything *else* that needs the live id reads it back through
+        ``Session.session_id`` rather than holding a copy, and must keep
+        doing so — :class:`SessionMessageHandler` held a by-value copy
+        taken at construction and, because it is never rebuilt, went on
+        stamping audit rows and ``UserPromptSubmit`` / ``Stop`` hook
+        payloads with the pre-``/clear`` id for the life of the process.
+        A fourth write here would only have moved that trap; the fix was
+        a ``session_id_ref`` callable, and a new holder should take one
+        too instead of being added to this list.
         """
         self._session_id = new_id
         team = self._main_team_ref()

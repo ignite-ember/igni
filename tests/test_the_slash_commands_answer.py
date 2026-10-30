@@ -1,4 +1,4 @@
-"""Three slash commands that answered wrongly, found by running them.
+"""Slash commands that answered wrongly, found by running them.
 
 Every one was reachable from the composer's menu, and none had a test.
 They were found the only way this kind of thing is found — by typing
@@ -12,36 +12,23 @@ each of the 31 commands into a live app and reading what came back.
   attribute error from a view model, surfaced through the message
   dispatcher's generic catch as a routing failure.
 
-* ``/knowledge`` said "Knowledge base failed to initialize." — no
-  cause, and not true. Nothing failed. The index is *deferred* until a
-  Neo4j runtime attaches, and this session never got one.
-  ``Session._knowledge_error`` was initialised to ``None`` and
-  assigned nowhere in the codebase, so the branch that exists to
-  explain the failure could not run.
-
 * ``/plugin`` did nothing at all — no output, no panel, not even the
   echoed command line. That one is in ``Composer.test.ts``; the
   composer highlighted ``/plugins`` when you typed ``/plugin``, and
   Enter compared the typed text against the highlighted entry.
 
-The pattern across all three: a command whose *output* nobody had
-read. Two of the three fail in a way that looks like infrastructure
-("routing failed", "failed to initialize") rather than like the small
-code defect each actually is, which is why they survived — the error
-text pointed away from the file with the bug in it.
+The pattern: a command whose *output* nobody had read. ``/config``
+failed in a way that looked like infrastructure ("routing failed")
+rather than like the small code defect it was, which is why it
+survived — the error text pointed away from the file with the bug.
 """
 
 from __future__ import annotations
-
-import re
-from pathlib import Path
 
 import pytest
 
 from ember_code.backend.schemas_config import ConfigView
 from ember_code.core.config.schemas.storage_and_paths import StorageConfig
-
-_ROOT = Path(__file__).resolve().parent.parent
 
 
 class _Settings:
@@ -67,7 +54,7 @@ class _Settings:
         prompt_injection = False
         moderation = False
 
-    class knowledge:
+    class artifacts:
         enabled = True
 
     class orchestration:
@@ -113,10 +100,21 @@ class TestConfigRenders:
         assert "backend" not in StorageConfig.model_fields
 
     def test_the_card_names_where_data_lives(self):
-        text = ConfigView.from_session(_Session(), store=_NoCreds()).to_command_result().content
+        """Against the session's own settings, not a fresh ``StorageConfig()``.
+
+        The default is resolved per instance — it reads the filesystem to
+        decide between the pre- and post-rename home (see
+        ``storage_and_paths._home_config_path``) — so a config built inside the
+        test and one built when this module was imported can legitimately name
+        different directories. Comparing the card to a fresh default therefore
+        tests the clock, not the card. What the card owes the user is the
+        directory *this session* is using.
+        """
+        session = _Session()
+        text = ConfigView.from_session(session, store=_NoCreds()).to_command_result().content
 
         assert "**Storage:**" in text
-        assert StorageConfig().data_dir in text
+        assert session.settings.storage.data_dir in text
 
     def test_the_card_is_not_an_error(self):
         """How the user met it: a red line beginning "session routing
@@ -139,57 +137,3 @@ class TestConfigRenders:
         text = ConfigView.from_session(_Session(), store=_NoCreds()).to_command_result().content
 
         assert f"**{field}:**" in text
-
-
-class TestTheKnowledgeErrorIsAssigned:
-    """``_knowledge_error`` had exactly two mentions: the ``= None``
-    that created it and the property that read it.
-
-    That is a whole diagnostic path — a documented one, with its own
-    branch in ``KnowledgeCommand.panel`` — that could not execute. A
-    grep is the honest test for it: the point is not that some
-    particular call site sets the field, it is that *something* does.
-    """
-
-    def _core(self) -> str:
-        return (_ROOT / "src/ember_code/core/session/core.py").read_text()
-
-    def test_something_assigns_it(self):
-        # ``(?::[^=]+)?`` so an annotated assignment counts. The attribute
-        # carries ``: str | None`` because it is assigned a message in the
-        # constructor and cleared to ``None`` when a runtime attaches, and
-        # without the annotation mypy narrows it to ``str`` and calls the clear
-        # an error. A guard that stops matching the moment a type is added
-        # fails for a reason that has nothing to do with what it checks.
-        assignments = re.findall(r"^\s*self\._knowledge_error\s*(?::[^=]+)?=", self._core(), re.M)
-
-        # Three: the initial None, the deferred explanation, and the
-        # clear when a runtime finally attaches.
-        assert len(assignments) >= 2, (
-            "_knowledge_error is initialised and never set, so "
-            "KnowledgeCommand.panel's error branch cannot run and every "
-            "failure reports the causeless fallback."
-        )
-
-    def test_the_deferred_case_explains_itself(self):
-        """The commonest cause, and the one that is not a failure.
-
-        The text has to name Neo4j and point at ``/codeindex``, because
-        "failed to initialize" sent people looking for a crash that had
-        not happened.
-        """
-        core = self._core()
-        deferred = core[
-            core.index("Knowledge: deferred") - 1200 : core.index("Knowledge: deferred")
-        ]
-
-        assert "Neo4j runtime" in deferred
-        assert "/codeindex" in deferred
-
-    def test_attaching_a_runtime_clears_it(self):
-        """Otherwise a working session keeps being told to go and start
-        the runtime it is already using."""
-        core = self._core()
-        attach = core[core.index("Knowledge: switched to neo4j backend") - 900 :]
-
-        assert "self._knowledge_error = None" in attach.split("logger.info")[0]

@@ -4,7 +4,7 @@ Six phase methods (``build_tools`` / ``build_prompt`` /
 ``build_instructions`` / ``build_model`` / ``build_spec`` /
 ``build``) each own one slice of the main-agent construction. All
 Session state is read through the session's public accessors
-(``cloud_access_token``, ``codeindex_available``,
+(``cloud_access_token``,
 ``active_output_style``, ``tool_event_hook()``,
 ``resolve_main_tool_names()``, ``build_agent_catalog()``) so this
 sub-package never reaches into ``session._underscore`` attributes.
@@ -79,8 +79,6 @@ class MainAgentBuilder:
             mcp_manager=s.mcp_manager,
             lsp_manager=s.lsp_manager,
             monitor_manager=s.monitor_manager,
-            knowledge=s.knowledge,
-            knowledge_mgr=s.knowledge_mgr,
             skill_pool=s.skill_pool,
             pool=s.pool,
             hook_executor=s.hook_executor,
@@ -97,7 +95,14 @@ class MainAgentBuilder:
         return PromptBuilder(
             project_dir=s.project_dir,
             settings=s.settings,
-            codeindex_available=s.codeindex_available,
+            # The exact condition under which ``update_user_memory`` is
+            # attached: agno adds the learning-store tools only when
+            # ``agent._learning is not None`` (``agno/agent/_tools.py``),
+            # and the user-memory store only contributes that tool when
+            # ``learning.user_memory`` is on (``to_user_memory_input``
+            # returns ``False`` otherwise). ``learning.enabled=false`` or a
+            # session with no db both leave ``s.learning`` None.
+            user_memory_available=s.learning is not None and s.settings.learning.user_memory,
             agent_catalog=s.build_agent_catalog(),
             skill_descriptions=s.skill_pool.describe(),
             prompt_loader=self._prompt_loader,
@@ -114,7 +119,6 @@ class MainAgentBuilder:
             settings=s.settings,
             output_styles=s.output_styles,
             active_output_style_name=s.active_output_style,
-            codeindex_available=s.codeindex_available,
         ).assemble(prompt)
 
     def build_model(self) -> tuple[Any, int]:
@@ -176,14 +180,16 @@ class MainAgentBuilder:
             add_session_summary_to_context=True,
             stream=True,
             stream_events=True,
-            # Agents reach the index via ``KnowledgeTools``, not
-            # Agno's built-in ``search_knowledge`` — pass nothing.
+            # No Agno knowledge base: what an agent may search arrives
+            # as tools.
             knowledge=None,
             search_knowledge=False,
             pre_hooks=self._guardrails_factory(s.settings),
             learning=s.learning,
             add_learnings_to_context=True,
-            tool_hooks=[tool_event_hook],
+            # In the cloud, memory-file writes reach the database
+            # after every tool call (``Session.memory_sync_hooks``).
+            tool_hooks=[tool_event_hook, *s.memory_sync_hooks()],
         )
 
     def build(self) -> Any:

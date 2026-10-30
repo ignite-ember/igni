@@ -47,7 +47,15 @@ class ToolNameCatalog:
             "list_processes",
         ],
         "WebSearch": ["web_search", "search_news"],
-        "WebFetch": ["ember_web", "fetch_url"],
+        # ``ember_web`` is the *toolkit* name (``WebTools.__init__``
+        # passes ``name="ember_web"`` to Agno) — it never appears in a
+        # tool_call. The two callables it registers are ``fetch_url``
+        # and ``fetch_json`` (see ``core/tools/web.py`` and the
+        # ``agno_function_names`` on ``WebFetchToolSpec``). Listing the
+        # toolkit name here meant the blocklist for ``WebFetch`` only
+        # ever matched ``fetch_url``, so any ``fetch_json`` call slipped
+        # past every anti-case unnoticed.
+        "WebFetch": ["fetch_url", "fetch_json"],
         # All ScheduleTools functions — without this, ``Schedule`` falls
         # through unchanged and the matcher looks for a literal function
         # name "Schedule" that never exists, so positive cases that
@@ -60,15 +68,6 @@ class ToolNameCatalog:
             "list_scheduled_tasks",
             "cancel_scheduled_task",
         ],
-        # KnowledgeTools — pass through individual function names. Listed
-        # here so eval YAMLs can also use the umbrella name "Knowledge"
-        # if a case wants to allow any of the three operations.
-        "Knowledge": [
-            "knowledge_search",
-            "knowledge_add",
-            "knowledge_delete",
-            "knowledge_status",
-        ],
     }
 
     #: Tools that Agno may auto-invoke regardless of what the case asked
@@ -78,12 +77,7 @@ class ToolNameCatalog:
     #: when, e.g., ``update_user_memory`` fires during a tasks-mode run.
     #: Don't add tools here that the case is meant to *test* (file ops,
     #: spawn_*, etc.) — those should be explicit in the case YAML.
-    DEFAULT_ALWAYS_ALLOWED_SYSTEM_TOOLS: ClassVar[tuple[str, ...]] = (
-        "update_user_memory",
-        "knowledge_add",
-        "knowledge_search",
-        "knowledge_status",
-    )
+    DEFAULT_ALWAYS_ALLOWED_SYSTEM_TOOLS: ClassVar[tuple[str, ...]] = ("update_user_memory",)
 
     def __init__(
         self,

@@ -30,12 +30,13 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, MutableSequence
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from agno.agent import Agent  # noqa: F401 — test-patch target
 
+from ember_code.backend.activity import SessionActivity
 from ember_code.backend.backend_bootstrap import BackendBootstrap
 from ember_code.backend.controller_registry import ControllerRegistry, Controllers
 from ember_code.backend.hitl_controller import HitlController
@@ -54,11 +55,9 @@ from ember_code.backend.schemas_pause import PauseHandleResult
 from ember_code.backend.schemas_run import CancelAgentRunResult, MediaAttachments
 from ember_code.backend.schemas_sessions import AutoNameResult
 from ember_code.backend.server_auth import AuthController
-from ember_code.backend.server_codeindex import CodeIndexController
 from ember_code.backend.server_context import ContextController
 from ember_code.backend.server_files import FilesController
 from ember_code.backend.server_history import ChatHistoryRebuilder
-from ember_code.backend.server_knowledge import KnowledgeController
 from ember_code.backend.server_lifecycle import LifecycleController
 from ember_code.backend.server_loop import LoopController
 from ember_code.backend.server_mcp import McpController
@@ -70,17 +69,10 @@ from ember_code.backend.server_sessions import SessionsController
 from ember_code.backend.team_wiring import TeamWiring
 from ember_code.backend.visualization_action_bus import VisualizationActionBus
 from ember_code.core.config.user_config_store import UserConfigStore
+from ember_code.core.session.schemas import PersistResult
 from ember_code.protocol import messages as msg
 
 if TYPE_CHECKING:
-    from ember_code.backend.schemas_codeindex_rpc import (
-        CodeIndexActivityEntry,
-        CodeIndexCleanResult,
-        CodeIndexHeadBreakdown,
-        CodeIndexInstallResult,
-        CodeIndexStatus,
-        CodeIndexSyncResult,
-    )
     from ember_code.backend.schemas_context import (
         DiscardInterruptedRunResult,
         InterruptedRun,
@@ -89,7 +81,6 @@ if TYPE_CHECKING:
     )
     from ember_code.backend.schemas_history import ChatSearchHit
     from ember_code.backend.schemas_hitl import RunRequirement
-    from ember_code.backend.schemas_knowledge import KnowledgeStatus
     from ember_code.backend.schemas_lifecycle import RehydrateOutcome
     from ember_code.backend.schemas_loop import LoopStatusSnapshot
     from ember_code.backend.schemas_mcp import (
@@ -115,12 +106,6 @@ if TYPE_CHECKING:
     from ember_code.backend.server_files import (
         ReadFileResult,
         UploadAttachmentResult,
-    )
-    from ember_code.backend.server_knowledge import (
-        KnowledgeGetResult,
-        KnowledgeHit,
-        KnowledgeListEntry,
-        KnowledgeRemoveResult,
     )
     from ember_code.core.agents import AgentInfo
     from ember_code.core.config.settings import Settings
@@ -174,6 +159,8 @@ class BackendServer:
         self._settings = bootstrap.settings
         self._session_prefs = bootstrap.session_prefs
         self._hitl_store = bootstrap.hitl_store
+        #: Messages typed during a run, durable — the runtime's queue.
+        self.message_queue = bootstrap.message_queue
         self._hitl_tracer = bootstrap.hitl_tracer
         self._pending_store = bootstrap.pending_store
 
@@ -210,6 +197,21 @@ class BackendServer:
     @property
     def project_dir(self) -> Path:
         return self._session.project_dir
+
+    @property
+    def mcp_manager(self) -> Any:
+        """The session's MCP client manager.
+
+        Named here because an extension's service is an MCP server
+        and the pieces that supervise one — the installer and the
+        health monitor — are not session code and should not be
+        reaching through ``_session`` to find it.
+
+        Partial-init tolerant, like :attr:`runtime`: tests build this
+        class through ``__new__`` and never attach a session.
+        """
+        session = getattr(self, "_session", None)
+        return getattr(session, "mcp_manager", None)
 
     # ── Controller accessors (thin properties over Controllers bag) ──
     #
@@ -308,18 +310,6 @@ class BackendServer:
         return cached
 
     @property
-    def knowledge(self) -> KnowledgeController:
-        """Knowledge-base controller."""
-        ctrl = self._controllers_or_partial()
-        if ctrl is not None:
-            return ctrl.knowledge
-        cached = getattr(self, "_knowledge_ctrl", None)
-        if cached is None:
-            cached = KnowledgeController(self._session)
-            self._knowledge_ctrl = cached
-        return cached
-
-    @property
     def files(self) -> FilesController:
         """File-I/O controller."""
         ctrl = self._controllers_or_partial()
@@ -353,18 +343,6 @@ class BackendServer:
         if cached is None:
             cached = PanelsController(self._session)
             self._panels_ctrl = cached
-        return cached
-
-    @property
-    def codeindex(self) -> CodeIndexController:
-        """CodeIndex panel controller."""
-        ctrl = self._controllers_or_partial()
-        if ctrl is not None:
-            return ctrl.codeindex
-        cached = getattr(self, "_codeindex_ctrl", None)
-        if cached is None:
-            cached = CodeIndexController(self._session)
-            self._codeindex_ctrl = cached
         return cached
 
     @property
@@ -546,10 +524,6 @@ class BackendServer:
         """See :meth:`core.session.Session.dismiss_plan`."""
         return await self._session.dismiss_plan(run_id=run_id)
 
-    def start_all_background_services(self) -> None:
-        """Forward to :meth:`Session.start_all_background_services`."""
-        self._session.start_all_background_services()
-
     def start_boot_background_services(self) -> None:
         """Forward to :meth:`Session.start_boot_background_services`."""
         self._session.start_boot_background_services()
@@ -603,6 +577,10 @@ class BackendServer:
     async def _rehydrate_event_log(self) -> RehydrateOutcome:
         """See :meth:`RehydrateController.event_log`."""
         return await self.rehydrate.event_log()
+
+    async def _rehydrate_queued_messages(self) -> RehydrateOutcome:
+        """See :meth:`RehydrateController.queued_messages`."""
+        return await self.rehydrate.queued_messages(getattr(self, "message_queue", None))
 
     async def _rehydrate_orphan_processes(self) -> RehydrateOutcome:
         """See :meth:`RehydrateController.orphan_processes`."""
@@ -775,6 +753,10 @@ class BackendServer:
         """See :meth:`SessionsController.maybe_auto_name_session`."""
         return await self.sessions.maybe_auto_name_session()
 
+    async def title_session(self, name: str) -> PersistResult:
+        """See :meth:`SessionsController.title`."""
+        return await self.sessions.title(name)
+
     async def switch_session(self, session_id: str) -> msg.Info:
         """See :meth:`SessionsController.switch_session`."""
         return await self.sessions.switch_session(session_id)
@@ -838,6 +820,14 @@ class BackendServer:
     def clear_cloud_credentials(self) -> msg.StatusUpdate:
         """See :meth:`AuthController.clear_cloud_credentials`."""
         return self.auth.clear_cloud_credentials()
+
+    async def discover_server(self, email: str) -> dict[str, str]:
+        """See :meth:`AuthController.discover_server`."""
+        return await self.auth.discover_server(email)
+
+    def set_server(self, api_url: str, portal_url: str = "") -> dict[str, str]:
+        """See :meth:`AuthController.set_server`."""
+        return self.auth.set_server(api_url, portal_url)
 
     async def get_cloud_plan(self) -> CloudPlan | None:
         """See :meth:`AuthController.get_cloud_plan`."""
@@ -940,34 +930,6 @@ class BackendServer:
         """See :meth:`SearchController.search_code`."""
         return self.search.search_code(snippet, max_results)
 
-    async def get_knowledge_status(self) -> KnowledgeStatus:
-        """See :meth:`KnowledgeController.status`."""
-        return await self.knowledge.status()
-
-    async def knowledge_search(self, query: str) -> list[KnowledgeHit]:
-        """See :meth:`KnowledgeController.search`."""
-        return await self.knowledge.search(query)
-
-    async def knowledge_add(self, source: str) -> msg.Info:
-        """See :meth:`KnowledgeController.add`."""
-        return await self.knowledge.add(source)
-
-    async def knowledge_list(self) -> list[KnowledgeListEntry]:
-        """See :meth:`KnowledgeController.list`."""
-        return await self.knowledge.list()
-
-    async def knowledge_get(self, entry_id: str) -> KnowledgeGetResult:
-        """See :meth:`KnowledgeController.get`."""
-        return await self.knowledge.get(entry_id)
-
-    async def knowledge_remove(self, entry_id: str) -> KnowledgeRemoveResult:
-        """See :meth:`KnowledgeController.remove`."""
-        return await self.knowledge.remove(entry_id)
-
-    async def auto_sync_knowledge(self) -> str | None:
-        """See :meth:`KnowledgeController.auto_sync`."""
-        return await self.knowledge.auto_sync()
-
     # ── Chat history ──────────────────────────────────────────────
 
     async def get_chat_history(self, session_id: str) -> list[dict]:
@@ -988,9 +950,22 @@ class BackendServer:
             turns = await ChatHistoryRebuilder(session=self._session).rebuild(session_id)
         return [t.model_dump(mode="json") for t in turns]
 
+    async def record_event(self, event_type: str, payload: dict, run_id: str = "") -> None:
+        """Keep an event in the session's log, which a reload replays.
+
+        How a block an extension appends to the transcript
+        (``host.chat.append``) survives a reload: the same log the
+        visualizer's cards are kept in.
+        """
+        await self._session.append_event(event_type, payload, run_id)
+
+    def session_events(self, event_type: str) -> list[Any]:
+        """The session's logged events of one type, oldest first."""
+        return [e for e in self._session.event_log if e.type == event_type]
+
     # ── Team-wiring ───────────────────────────────────────────────
 
-    def wire_queue_hook(self, queue: list) -> None:
+    def wire_queue_hook(self, queue: MutableSequence[str]) -> None:
         """See :meth:`TeamWiring.wire_queue_hook`."""
         self.team_wiring.wire_queue_hook(queue)
 
@@ -1085,6 +1060,14 @@ class BackendServer:
         result = await self.processes.stop(pid)
         return result.model_dump()
 
+    def reload_agents(self) -> bool:
+        """Rebuild this session's agents — what extensions do to them changed.
+
+        Returns whether they were rebuilt; a failure leaves the agents
+        that were working.
+        """
+        return self._session.reload_group_agents()
+
     # ── Read-only accessors ───────────────────────────────────────
 
     @property
@@ -1097,6 +1080,18 @@ class BackendServer:
     @property
     def session_id(self) -> str:
         return self._session.session_id
+
+    def activity(self) -> SessionActivity:
+        """Running, waiting on a person, or idle (``backend/activity.py``)."""
+        coordinator = self._session.sub_agent_hitl
+        waiting = sum(len(m.requirements) for m in self.hitl.waiting_messages())
+        return SessionActivity.of(
+            self.session_id,
+            run_in_progress=self.processing,
+            waiting_approvals=waiting,
+            blocked_spawns=coordinator.waiting_count,
+            active_subagent_runs=self.team_wiring.active_subagent_runs(),
+        )
 
     @property
     def settings(self) -> Settings:
@@ -1152,36 +1147,6 @@ class BackendServer:
     def get_slash_commands(self) -> list[SlashCommandEntry]:
         """See :meth:`PanelsController.slash_commands`."""
         return self.panels.slash_commands()
-
-    # ── CodeIndex ─────────────────────────────────────────────────
-
-    async def codeindex_status(self) -> CodeIndexStatus:
-        """See :meth:`CodeIndexController.status`."""
-        return await self.codeindex.status()
-
-    async def codeindex_sync(self, sha: str | None) -> CodeIndexSyncResult:
-        """See :meth:`CodeIndexController.sync`."""
-        return await self.codeindex.sync(sha)
-
-    async def codeindex_resync(self, sha: str | None) -> CodeIndexSyncResult:
-        """See :meth:`CodeIndexController.resync`."""
-        return await self.codeindex.resync(sha)
-
-    async def codeindex_clean(self) -> CodeIndexCleanResult:
-        """See :meth:`CodeIndexController.clean`."""
-        return await self.codeindex.clean()
-
-    async def codeindex_head_breakdown(self) -> CodeIndexHeadBreakdown:
-        """See :meth:`CodeIndexController.head_breakdown`."""
-        return await self.codeindex.head_breakdown()
-
-    def codeindex_activity(self) -> list[CodeIndexActivityEntry]:
-        """See :meth:`CodeIndexController.activity`."""
-        return self.codeindex.activity()
-
-    def codeindex_install(self) -> CodeIndexInstallResult:
-        """See :meth:`CodeIndexController.install`."""
-        return self.codeindex.install()
 
     # ── Plugins ───────────────────────────────────────────────────
 

@@ -38,11 +38,20 @@ from ember_code.core.config import settings as _settings_module
 from ember_code.core.config.settings import Settings
 from ember_code.core.worktree import WorktreeManager
 
+#: The console script pyproject installs. `ignite-ember` is the other
+#: one and is kept only for backwards compatibility, so it is not what
+#: we tell anybody to type.
+#:
+#: Spelled here rather than inline because this text used to say
+#: `ember`, which has never been an entry point — the first thing a new
+#: installation printed was three commands that do not exist.
+COMMAND = "igni"
+
 _HELP_TEXT = (
-    "igni no longer ships a terminal chat UI. Use one of:\n"
-    '  • ember -m "<message>"        one-shot message\n'
-    "  • ember -p                       pipe mode (stdin → stdout)\n"
-    '  • ember -c -m "<message>"     resume last session, one-shot\n'
+    f"{COMMAND} no longer ships a terminal chat UI. Use one of:\n"
+    f'  • {COMMAND} -m "<message>"         one-shot message\n'
+    f"  • {COMMAND} -p                      pipe mode (stdin → stdout)\n"
+    f'  • {COMMAND} -c -m "<message>"      resume last session, one-shot\n'
     "  • python -m ember_code.backend --socket <path>\n"
     "        start the backend for a React client (web / Tauri /\n"
     "        VSCode / JetBrains) to connect via Unix socket.\n"
@@ -231,4 +240,23 @@ def load_settings_from_options(options: CliOptions) -> Settings:
     # NOT a free function) keeps the assertion shape stable while
     # still going through the typed encoder.
     payload = overrides.to_settings_payload()
-    return _settings_module.load_settings(cli_overrides=payload)
+
+    # Loaded twice, and the second is the one returned. ``-m`` and the pipe
+    # mode run a real session in this process, so an admin's group policy has
+    # to apply here too — otherwise ``{"permissions": {"web_fetch": "deny"}}``
+    # would hold in the app and not on the command line, which is the kind of
+    # half-enforcement a policy cannot have. The cache it is read from lives
+    # under ``storage.data_dir``, which is itself a setting, so the first pass
+    # answers "which directory" from local configuration alone. Both passes
+    # read a handful of small files; neither touches the network.
+    #
+    # The fetcher reads what the backend's ``AuthController`` last cached — a
+    # CLI invocation has no token of its own at settings-load time and must
+    # not stall on a portal call. See ``CachedSettingsFetcher``.
+    from ember_code.core.config.group_policy import CachedSettingsFetcher
+
+    local_only = _settings_module.load_settings(cli_overrides=payload)
+    return _settings_module.load_settings(
+        cli_overrides=payload,
+        group_policy_fetcher=CachedSettingsFetcher(local_only.storage.data_dir),
+    )

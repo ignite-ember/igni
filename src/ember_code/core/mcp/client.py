@@ -30,7 +30,7 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 # Optional deps — ``agno[mcp]`` isn't a hard requirement of the base
 # install. The module still loads without them; ``connect`` reports
@@ -43,6 +43,8 @@ except ImportError:  # pragma: no cover — exercised by test_connect_import_err
 
 from ember_code.core.mcp.approval import MCPApprovalManager
 from ember_code.core.mcp.config import MCPConfigLoader, MCPPolicy, MCPServerConfig
+from ember_code.core.mcp.naming import tool_name_prefix
+from ember_code.core.mcp.notification_tap import McpNotificationRouter
 from ember_code.core.mcp.schemas import (
     MCPConnectResult,
     MCPPrompt,
@@ -55,6 +57,8 @@ from ember_code.core.mcp.tool_state import MCPToolStateStore
 
 if TYPE_CHECKING:
     from agno.tools.mcp import MCPTools
+
+    from ember_code.core.mcp.request_meta import RequestMeta
 
 logger = logging.getLogger(__name__)
 
@@ -102,6 +106,15 @@ class MCPClientManager:
         self._stdio_binding = stdio_binding or StdioMCPBinding(
             StdioMCPBinding.default_errlog_path()
         )
+        #: Notification methods outside the MCP specification, and who
+        #: takes them — ``notifications/igni/notify`` from an extension
+        #: is the first. Applied to every stdio connection opened here.
+        self.notifications = McpNotificationRouter()
+        #: Asked on every tool call to a server whose config says
+        #: ``source == "extension"``, and sent as the call's ``_meta``
+        #: (:mod:`ember_code.core.mcp.request_meta`). The extensions layer
+        #: sets it: it is how an extension learns whom a call is for.
+        self.extension_request_meta: RequestMeta | None = None
 
     # ── Connection gate ───────────────────────────────────────────
 
@@ -123,7 +136,22 @@ class MCPClientManager:
             logger.warning("MCP '%s' blocked by managed policy (not allowed)", name)
             return f"Server '{name}' is not in the allowed list"
 
-        if not self._approval.check_approval(name, config.source_path):
+        # An extension's own service is approved by the install, not
+        # by this prompt. The prompt exists for a threat this is not:
+        # ``.mcp.json`` is a file anyone can commit to a public repo
+        # or ship in a plugin, so cloning a repo must not be enough to
+        # spawn a command. An extension arrives through
+        # ``ExtensionInstaller``, which is an explicit administrative
+        # act against a validated manifest.
+        #
+        # Asking twice would also mean extensions could never start
+        # anywhere without a terminal: ``check_approval`` fails closed
+        # when there is nobody to ask, and a shared backend is exactly
+        # that. Managed policy above still applies, so an
+        # administrator can still block one by name.
+        if config.source != "extension" and not self._approval.check_approval(
+            name, config.source_path
+        ):
             logger.info("MCP '%s' denied by user approval prompt", name)
             return "User denied MCP server connection"
 
@@ -212,11 +240,16 @@ class MCPClientManager:
             # asymmetry was silent: stdio servers were namespaced, SSE servers
             # were not, and nothing in the config hints that the transport
             # decides it.
-            mcp_tools = _MCPTools(url=config.url, transport="sse", tool_name_prefix=f"mcp_{name}")
+            mcp_tools = _MCPTools(
+                url=config.url, transport="sse", tool_name_prefix=tool_name_prefix(name)
+            )
             await mcp_tools.__aenter__()
             return mcp_tools
         if transport == "stdio":
-            return await self._stdio_binding.open(name, config)
+            request_meta = self.extension_request_meta if config.source == "extension" else None
+            return await self._stdio_binding.open(
+                name, config, notifications=self.notifications, request_meta=request_meta
+            )
         return None
 
     async def disconnect_all(self) -> None:
@@ -289,8 +322,7 @@ class MCPClientManager:
         mapping.
 
         Public accessor over the internal ``_clients`` dict —
-        lets collaborators (:class:`MCPToolResolver`,
-        :class:`CodeIndexAvailabilityRefresher`) walk every
+        lets collaborators (:class:`MCPToolResolver`) walk every
         live client without reaching into a private
         attribute. The returned dict is a copy so external
         mutations don't leak into the manager's own state.
@@ -362,6 +394,28 @@ class MCPClientManager:
         re-applies the filter so the change is visible to the
         next agent run."""
         self._tool_filter.set_enabled(server, tool, enabled, self._clients.get(server))
+
+    def require_confirmation(self, server: str, tools: set[str]) -> None:
+        """Pause the agent before each of ``tools`` (registered names), for the permission mode to decide."""
+        self._tool_filter.require_confirmation(server, tools, self._clients.get(server))
+
+    async def tool_annotations(self, name: str) -> dict[str, Any]:
+        """``{server's own tool name: the annotations it reports}``, asked of the server now.
+
+        Empty when the server is not connected or will not say. Agno
+        drops the annotations when it builds its functions, so they
+        are read from the session rather than from the toolkit.
+        """
+        client = self._clients.get(name)
+        session = getattr(client, "session", None) if client is not None else None
+        if session is None:
+            return {}
+        try:
+            listed = await session.list_tools()
+        except Exception as exc:  # noqa: BLE001 — reported as "said nothing", not raised
+            logger.info("MCP '%s' did not list its tools' annotations: %s", name, exc)
+            return {}
+        return {tool.name: tool.annotations for tool in listed.tools}
 
     # ── Resources / prompts (typed wire shapes) ─────────────────
 

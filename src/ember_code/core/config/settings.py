@@ -36,13 +36,17 @@ body.
 from __future__ import annotations
 
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, ClassVar
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
+    from ember_code.core.config.group_policy import GroupPolicyPack
     from ember_code.core.config.models import CliOverrides
 
+from ember_code.core.air_gap import AIR_GAPPED_ENV, air_gapped_by_environment
 from ember_code.core.config.model_entry import CLOUD_TOKEN_SENTINEL, ModelRegistryEntry
 
 # ── Re-exports: schemas from the schemas package ───────────────────
@@ -55,19 +59,18 @@ from ember_code.core.config.model_entry import CLOUD_TOKEN_SENTINEL, ModelRegist
 from ember_code.core.config.schemas import (
     AgentsConfig,
     AuthConfig,
-    CodeIndexConfig,
     ContextConfig,
     DisplayConfig,
     EvalsConfig,
     GroupPolicyConfig,
     GuardrailsConfig,
     HooksConfig,
-    KnowledgeConfig,
     LearningConfig,
     MemoryConfig,
     ModelsConfig,
     OrchestrationConfig,
     PermissionsConfig,
+    PluginsConfig,
     ReasoningConfig,
     RulesConfig,
     SafetyConfig,
@@ -90,13 +93,31 @@ class Settings(BaseModel):
     # parse error deep in httpx, so the empty default comes with a
     # refusal: ``core/config/endpoint.py`` raises with the setting name,
     # the file, and an example. Paths for which no server is a supported
-    # state — local-only models, no CodeIndex — ask ``is_configured``
+    # state — local-only models — ask ``is_configured``
     # and skip quietly instead.
     #
     # The stated future is that this points at the customer's own cloud
     # and igni's routing disappears, at which point there is nothing to
     # default to.
     api_url: str = ""
+    # Where a **person** goes: the portal that serves the sign-in page
+    # and the repository list. Empty means "work it out from
+    # ``api_url``", which is right for the deployments that run both
+    # under one name and tell them apart by a label —
+    # ``api.acme.example`` and ``acme.example``.
+    #
+    # It is not right for the deployments that tell them apart by
+    # **port**, and that includes the one this repository ships: the
+    # API on 7777 and the portal on 3000. The derivation only ever
+    # rewrote host labels, so it handed back the API host unchanged,
+    # and signing in sent people to ``:7777/cli-auth`` — a 404 on a
+    # server that has no such page, with no setting anywhere that
+    # could have corrected it. ``PortalClient`` has accepted a
+    # ``portal_url`` argument the whole time; nothing ever passed one.
+    #
+    # DEC-14 made the wrong *default* configurable. This is the other
+    # half: a way to say so when the guess is wrong.
+    portal_url: str = ""
     # Seconds between update checks. ``0`` disables them entirely, and
     # is what an air-gapped deployment should set. See DP-5 in
     # ember-server's docs/COMPLIANCE_TRACKER.md.
@@ -126,6 +147,34 @@ class Settings(BaseModel):
     # mirror can serve a different version but not a different build.
     # HTTPS is required — the plugin refuses anything else.
     update_endpoint: str = ""
+    # The Python interpreter the desktop app runs its backend with, when
+    # whoever installed the app provisioned one: an interpreter with
+    # ``ignite-ember[decisions]`` installed from their own package mirror.
+    # Empty means the app's own managed venv, which it downloads on first
+    # launch — something an air-gapped install cannot do. ``IGNI_RUNTIME_PYTHON``
+    # in the environment wins over this. Read by the Rust side
+    # (``clients/tauri/src-tauri/src/runtime.rs``), like ``update_endpoint``.
+    runtime_python: str = ""
+    # One switch for a deployment whose network has no route out: when
+    # set, igni makes no connection outside the customer's network.
+    # What it turns off, each where the request is made:
+    #
+    # * the PyPI update check (``core/utils/update_checker.py``);
+    # * the desktop updater's call to github.com — the app asks
+    #   ``update_endpoint`` (a mirror inside the network) or nothing
+    #   (the Rust side reads this key itself, as it does the two above);
+    # * the session-start clone of Anthropic's plugin marketplace, and
+    #   the refresh of any marketplace that is not the customer's own
+    #   (``plugins``, ``core/plugins/source_policy.py``);
+    # * WebFetch and WebSearch, denied below so neither toolkit is built.
+    #
+    # Also set by ``IGNI_AIR_GAPPED=1`` in the environment, and by a
+    # managed-settings file or an organisation's group policy carrying
+    # ``air_gapped: true`` — both already merge any top-level key.
+    air_gapped: bool = False
+    #: The variable a deployment turns air-gapped mode on with. It only
+    #: turns it on: an unset or false variable leaves the file's choice.
+    AIR_GAPPED_ENV: ClassVar[str] = AIR_GAPPED_ENV
     models: ModelsConfig = Field(default_factory=ModelsConfig)
     permissions: PermissionsConfig = Field(default_factory=PermissionsConfig)
     safety: SafetyConfig = Field(default_factory=SafetyConfig)
@@ -135,7 +184,6 @@ class Settings(BaseModel):
     context: ContextConfig = Field(default_factory=ContextConfig)
     orchestration: OrchestrationConfig = Field(default_factory=OrchestrationConfig)
     memory: MemoryConfig = Field(default_factory=MemoryConfig)
-    knowledge: KnowledgeConfig = Field(default_factory=KnowledgeConfig)
     learning: LearningConfig = Field(default_factory=LearningConfig)
     reasoning: ReasoningConfig = Field(default_factory=ReasoningConfig)
     guardrails: GuardrailsConfig = Field(default_factory=GuardrailsConfig)
@@ -145,12 +193,46 @@ class Settings(BaseModel):
     scheduler: SchedulerConfig = Field(default_factory=SchedulerConfig)
     auth: AuthConfig = Field(default_factory=AuthConfig)
     group_policy: GroupPolicyConfig = Field(default_factory=GroupPolicyConfig)
-    code_index: CodeIndexConfig = Field(default_factory=CodeIndexConfig)
+    plugins: PluginsConfig = Field(default_factory=PluginsConfig)
     display: DisplayConfig = Field(default_factory=DisplayConfig)
 
     # TODO: Add telemetry config so users can wire their own Agno server or
     #       compatible telemetry endpoint (e.g. telemetry.enabled, telemetry.endpoint).
-    #       Ember Cloud does not collect CLI telemetry — usage is tracked server-side.
+    #       igni server does not collect CLI telemetry — usage is tracked server-side.
+
+    @model_validator(mode="after")
+    def _carry_confirm_commands_into_permissions(self) -> Settings:
+        """Hand ``safety.require_confirmation`` to the block that is read.
+
+        The list is documented in MIGRATION.md as where a Claude Code
+        ``"ask": ["Bash(git push *)"]`` rule goes, and no code in ``src`` read
+        it — the live permission path builds its evaluator from
+        ``settings.permissions`` alone, so the eight commands there (including
+        ``git push --force``, ``terraform apply`` and ``kubectl delete``) were
+        inert. Copied rather than merged into ``permissions.ask`` so the user's
+        own ask list stays exactly what the user wrote, and so the two can
+        still be told apart when something asks why a call prompted. See
+        ``PermissionsConfig._confirmation_ask_rules``.
+        """
+        self.permissions.confirm_commands = list(self.safety.require_confirmation)
+        return self
+
+    @model_validator(mode="after")
+    def _air_gap_closes_the_web(self) -> Settings:
+        """Apply ``IGNI_AIR_GAPPED`` and, when air-gapped, deny the web tools.
+
+        Denied rather than checked at call time because a denied tool is
+        never built: ``ToolRegistry.resolve_typed`` skips it, so no agent
+        holds a WebFetch or WebSearch toolkit to call. Set on
+        ``permissions`` (not a parallel flag) so every reader that already
+        honours ``--no-web`` honours this too, and ``igni config`` shows it.
+        """
+        if air_gapped_by_environment():
+            self.air_gapped = True
+        if self.air_gapped:
+            self.permissions.web_search = "deny"
+            self.permissions.web_fetch = "deny"
+        return self
 
     @classmethod
     def defaults(cls) -> Settings:
@@ -233,6 +315,7 @@ class Settings(BaseModel):
 def load_settings(
     cli_overrides: CliOverrides | dict[str, Any] | None = None,
     project_dir: Path | None = None,
+    group_policy_fetcher: Callable[[], GroupPolicyPack | None] | None = None,
 ) -> Settings:
     """Load settings by merging the 5-tier precedence stack.
 
@@ -256,26 +339,40 @@ def load_settings(
     the entry point onto the class only would break those tests
     silently. This is the ONLY surviving module-level function; every
     other former shim now lives as a method on a class.
+
+    ``group_policy_fetcher`` returns the org's
+    :class:`~ember_code.core.config.group_policy.GroupPolicyPack`, whose
+    ``settings`` entries become the tier between CLI and managed policy.
+    :meth:`SettingsLoader.load` has taken one since the tier was written; this
+    facade dropped it, and this facade is what production calls — so an admin
+    publishing ``{"permissions": {"web_fetch": "deny"}}`` could not have it applied
+    even by a caller that wanted to. Production now passes
+    :class:`~ember_code.core.config.group_policy.CachedSettingsFetcher` from
+    ``BackendApp.run`` and ``load_settings_from_options``; callers that want no
+    org policy (tests, tooling) simply leave it ``None``.
     """
-    return SettingsLoader.load(cli_overrides=cli_overrides, project_dir=project_dir)
+    return SettingsLoader.load(
+        cli_overrides=cli_overrides,
+        project_dir=project_dir,
+        group_policy_fetcher=group_policy_fetcher,
+    )
 
 
 __all__ = [
     "AgentsConfig",
     "AuthConfig",
     "GroupPolicyConfig",
-    "CodeIndexConfig",
     "ContextConfig",
     "DisplayConfig",
     "EvalsConfig",
     "GuardrailsConfig",
     "HooksConfig",
-    "KnowledgeConfig",
     "LearningConfig",
     "MemoryConfig",
     "ModelsConfig",
     "OrchestrationConfig",
     "PermissionsConfig",
+    "PluginsConfig",
     "ReasoningConfig",
     "RulesConfig",
     "SafetyConfig",

@@ -34,6 +34,9 @@ import logging
 from typing import TYPE_CHECKING, Any
 
 from ember_code.core.broadcast_schema import BroadcastEvent
+from ember_code.core.hooks.events import HookEvent
+from ember_code.core.hooks.executor import HookExecutor
+from ember_code.core.hooks.extension_gate import ExtensionHookGate, PlanSubmitValue
 from ember_code.core.tools.plan.researcher import PlanResearcherRunner
 from ember_code.core.tools.plan.schemas import (
     PermissionModeChangedPayload,
@@ -43,7 +46,6 @@ from ember_code.core.tools.plan.schemas import (
     PlanSubmittedPayload,
     PlanTaskInput,
 )
-from ember_code.core.tools.plan.validator import PlanConfidenceValidator
 from ember_code.core.tools.todo import _coerce_items
 
 if TYPE_CHECKING:
@@ -86,21 +88,18 @@ class PlanTransactionCoordinator:
     Public API:
 
     * :meth:`enter` — ``PlanEnterResult`` for the ``enter_plan_mode``
-      transaction (flip mode → reset attempts → broadcast the
+      transaction (flip mode → broadcast the
       agent-attributed follow-up → optionally spawn the
       researcher).
     * :meth:`submit` — ``PlanExitResult`` for the
-      ``exit_plan_mode`` transaction (confidence-gate → set
-      plan → populate todos → queue the ``plan_submitted``
+      ``exit_plan_mode`` transaction (set plan → populate todos → queue the ``plan_submitted``
       broadcast).
     """
 
     def __init__(self, session: Session) -> None:
         self._session = session
-        # Compose the sibling collaborators. Both accept a bare
-        # session and lazily read attributes — safe against
-        # partial-construction test stubs.
-        self._validator = PlanConfidenceValidator(session)
+        # Accepts a bare session and lazily reads attributes — safe
+        # against partial-construction test stubs.
         self._researcher = PlanResearcherRunner(session)
 
     # ── enter_plan_mode transaction ────────────────────────────
@@ -149,9 +148,10 @@ class PlanTransactionCoordinator:
                 reply_text=mode_status,
             )
 
-        # Reset the per-plan-mode-session validation state so
-        # the iteration counter starts fresh on every fresh entry.
-        self._validator.reset()
+        store = getattr(self._session, "plan_store", None)
+        if store is not None:
+            # A fresh plan: PlanSubmit hooks see attempt 0.
+            store.rejected = 0
 
         # Re-broadcast with the agent attribution + reason so
         # the FE can render a small info banner. The broadcast
@@ -212,7 +212,10 @@ class PlanTransactionCoordinator:
                 f"{researcher_report}"
             )
         return (
-            f"{header} Gather context (CodeIndex queries first, then file_read), "
+            # `file_read` is a permission category, not a function: PRD-12's
+            # fix reached the plan prompts and missed this tool result.
+            f"{header} Gather context (your read-only tools, and "
+            'run_shell_command "cat <path>"), '
             "then call exit_plan_mode(plan, tasks=[...]) with a concrete proposal. "
             "Tip: pass the user's request as `task=` next time and this tool will "
             "spawn the plan_researcher sub-agent for you automatically."
@@ -220,7 +223,7 @@ class PlanTransactionCoordinator:
 
     # ── exit_plan_mode transaction ─────────────────────────────
 
-    def submit(self, plan: str, tasks: list | None) -> PlanExitResult:
+    async def submit(self, plan: str, tasks: list | None) -> PlanExitResult:
         """Run the submit-plan transaction and return a typed
         envelope. See :class:`PlanExitResult` for field semantics.
 
@@ -242,7 +245,10 @@ class PlanTransactionCoordinator:
             )
 
         try:
-            return self._submit_transaction(plan_text, tasks)
+            checked = await self._checked(plan_text, tasks)
+            if isinstance(checked, PlanExitResult):
+                return checked
+            return self._submit_transaction(checked, tasks)
         except PlanSessionShapeError as shape_err:
             return PlanExitResult(
                 ok=False,
@@ -250,6 +256,52 @@ class PlanTransactionCoordinator:
                 error=shape_err.reply_text,
                 reply_text=shape_err.reply_text,
             )
+
+    async def _checked(self, plan_text: str, raw_tasks: list | None) -> str | PlanExitResult:
+        """The ``PlanSubmit`` hook event, before the plan reaches the person.
+
+        Extensions that hook it are asked first, in priority order, and
+        may change the plan; then igni's configured ``PlanSubmit`` hooks
+        run on what they left. The plan to submit, or the rejection,
+        which goes back to the agent so it can do more work and submit
+        again.
+        """
+        store = getattr(self._session, "plan_store", None)
+        if store is None:
+            msg = "Error: plan store not initialised on this session."
+            raise PlanSessionShapeError(missing="plan_store", reply_text=msg)
+        session_id = str(getattr(self._session, "session_id", "") or "")
+        verdict = await ExtensionHookGate.ask(
+            PlanSubmitValue(
+                session_id=session_id,
+                plan=plan_text,
+                tasks=list(raw_tasks or []),
+                attempt=int(store.rejected),
+            ),
+            HookEvent.PLAN_SUBMIT,
+        )
+        if not verdict.allowed:
+            return self._rejected(store, verdict.reason)
+        plan_text = str(verdict.value.get("plan", plan_text)).strip() or plan_text
+        executor = getattr(self._session, "hook_executor", None)
+        if isinstance(executor, HookExecutor):
+            result = await executor.execute(
+                event=HookEvent.PLAN_SUBMIT.value,
+                payload={
+                    "session_id": session_id,
+                    "plan": plan_text,
+                    "attempt": int(store.rejected),
+                },
+            )
+            if not result.should_continue:
+                return self._rejected(store, result.message or "a PlanSubmit hook rejected it")
+        return plan_text
+
+    @staticmethod
+    def _rejected(store: Any, reason: str) -> PlanExitResult:
+        store.rejected += 1
+        reply = f"Plan rejected: {reason}"
+        return PlanExitResult(ok=False, reason="rejected", error=reply, reply_text=reply)
 
     def _submit_transaction(self, plan_text: str, raw_tasks: list | None) -> PlanExitResult:
         """Body of the submit transaction — factored out so
@@ -259,23 +311,6 @@ class PlanTransactionCoordinator:
         if store is None:
             msg = "Error: plan store not initialised on this session."
             raise PlanSessionShapeError(missing="plan_store", reply_text=msg)
-
-        # ── Confidence check (row 50 enforcement) ─────────────
-        # Reject submissions that aren't grounded in concrete
-        # codebase facts. The rejection is bounded by an attempt
-        # counter (owned by the validator) so the loop converges
-        # even when the model can't satisfy us; after the cap we
-        # accept whatever came in (the user still reviews +
-        # can refine).
-        verdict = self._validator.validate(plan_text, raw_tasks)
-        if verdict.reject and verdict.attempts_remaining > 0:
-            return PlanExitResult(
-                ok=False,
-                rejected=True,
-                plan_rejection_feedback=verdict.feedback,
-                reason="confidence_rejected",
-                reply_text=verdict.feedback,
-            )
 
         # Construct the strict input envelope for the todo
         # pipeline. Agent-supplied dicts round-trip through

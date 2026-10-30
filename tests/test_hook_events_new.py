@@ -73,8 +73,10 @@ async def test_permission_request_event_fires_on_ask_rule(tmp_path: Path) -> Non
         func=fake_tool,
         args={"command": "npm install"},
     )
-    # Fall-through: the tool actually ran.
-    assert result == "ran"
+    # Fall-through: the tool actually ran. run_shell_command output is external
+    # content, so it comes back wrapped as untrusted (the output is preserved).
+    assert "ran" in result
+    assert result.startswith("<untrusted_tool_output nonce=")
     # And the event still fires for observability.
     requests = [c for c in executor.calls if c[0] == "PermissionRequest"]
     assert len(requests) == 1
@@ -136,11 +138,11 @@ class TestNewEventsRegistered:
     def test_permission_denied_in_enum(self) -> None:
         assert HookEvent.PERMISSION_DENIED.value == "PermissionDenied"
 
-    def test_count_grew_to_18(self) -> None:
+    def test_count_grew_to_19(self) -> None:
         # Original 10 + (PreCompact/PostCompact/InstructionsLoaded) +
         # (TaskCreated/TaskCompleted/StopFailure) +
-        # (PermissionRequest/PermissionDenied) = 18.
-        assert len(list(HookEvent)) == 18
+        # (PermissionRequest/PermissionDenied) + PlanSubmit = 19.
+        assert len(list(HookEvent)) == 19
 
 
 class _RecordingExecutor(HookExecutor):

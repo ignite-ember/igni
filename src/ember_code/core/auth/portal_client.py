@@ -36,6 +36,7 @@ import webbrowser
 
 import httpx
 
+from ember_code.core.activity.http import busy_call
 from ember_code.core.auth.callback_server import CallbackServer
 from ember_code.core.auth.schemas import (
     LoginResult,
@@ -149,7 +150,10 @@ class PortalClient:
         """
         url = f"{self._base('Validating your session')}/v1/portal/me"
         try:
-            async with httpx.AsyncClient(timeout=self._http_timeout) as client:
+            async with (
+                busy_call("igni-server"),
+                httpx.AsyncClient(timeout=self._http_timeout) as client,
+            ):
                 resp = await client.get(url, headers={"Authorization": f"Bearer {token}"})
         except Exception as exc:
             logger.debug("Token validation network error: %s", exc)
@@ -233,7 +237,10 @@ class PortalClient:
         """Fetch /v1/portal/me/group and return the group summary dict or None."""
         url = f"{self._base('Fetching your group policy')}/v1/portal/me/group"
         try:
-            async with httpx.AsyncClient(timeout=self._http_timeout) as client:
+            async with (
+                busy_call("igni-server"),
+                httpx.AsyncClient(timeout=self._http_timeout) as client,
+            ):
                 resp = await client.get(url, headers={"Authorization": f"Bearer {token}"})
         except Exception as exc:
             logger.debug("get_my_group_summary network error: %s", exc)
@@ -275,7 +282,10 @@ class PortalClient:
         if etag:
             headers["If-None-Match"] = etag
         try:
-            async with httpx.AsyncClient(timeout=self._http_timeout) as client:
+            async with (
+                busy_call("igni-server"),
+                httpx.AsyncClient(timeout=self._http_timeout) as client,
+            ):
                 resp = await client.get(url, headers=headers)
         except Exception as exc:
             logger.debug("fetch_group_pack network error: %s", exc)

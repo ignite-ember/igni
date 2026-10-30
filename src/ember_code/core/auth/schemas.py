@@ -24,10 +24,17 @@ logger = logging.getLogger(__name__)
 class UserInfo(BaseModel):
     """Typed shape for ``/v1/portal/me`` responses.
 
-    Only exposes the fields callers actually read (email + plan
-    tier + org display name) so extra portal fields don't leak
-    into typed callers. Rule 1: replaces the previous raw ``dict``
-    return from :meth:`ember_code.core.auth.portal_client.PortalClient.validate_token`.
+    Only exposes the fields callers actually read (email + org display
+    name) so extra portal fields don't leak into typed callers. Rule 1:
+    replaces the previous raw ``dict`` return from
+    :meth:`ember_code.core.auth.portal_client.PortalClient.validate_token`.
+
+    A ``tier`` field was here. It had no source — ember-server's
+    ``UserMeResponse`` carries no tier, because billing tiers are
+    retired — and its only reader was the ``get_cloud_plan`` RPC, which
+    was never registered and is now gone. ``extra: ignore`` means the
+    portal may still send one; we simply don't model a field nothing
+    populates and nothing reads.
 
     ``model_config = {"extra": "ignore"}`` — the portal is free to
     add fields without breaking the CLI.
@@ -36,6 +43,10 @@ class UserInfo(BaseModel):
     model_config = {"extra": "ignore"}
 
     email: str = ""
+    #: Display name. The portal has returned this all along and
+    #: this model dropped it, which is why the header could only
+    #: ever show an org.
+    full_name: str | None = None
     tier: str | None = None
     org_display_name: str | None = None
 
@@ -137,11 +148,21 @@ class JwtClaims(BaseModel):
 
     model_config = {"extra": "ignore"}
 
+    #: The person's user id on igni server (an app's or a space's id for theirs).
+    sub: str | None = None
+    #: What ``sub`` is: ``person`` (a session), ``app`` or ``space``.
+    kind: str | None = None
+    #: A space's app (its id), on a space's token.
+    app: str | None = None
+    #: The app's own name for a space's end user, on a space's token.
+    external_id: str | None = None
     email: str | None = None
     exp: int | None = None
     org: str | None = None
     org_name: str | None = None
-    group_id: str | None = None
+    #: The one group the person belongs to in ``org`` when the token was
+    #: issued — a snapshot; the extension listing carries it as it is now.
+    group: str | None = None
 
     @classmethod
     def decode(cls, token: str) -> JwtClaims | None:

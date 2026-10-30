@@ -114,8 +114,7 @@ class ToolPermissions:
         # ``mode=bypassPermissions`` was invisible at registry-build time and
         # ``needs_confirmation`` still said yes. ``--auto-approve`` sets four
         # *category* fields, and the category map knows three categories, so any
-        # tool outside them stayed at the ``ask`` default: ``NotebookEdit`` and
-        # ``CodeIndex`` both did. Recording the mode fixes that class of hole
+        # tool outside them stayed at the ``ask`` default: ``NotebookEdit`` did. Recording the mode fixes that class of hole
         # once rather than adding tools to the map as they are discovered.
         self._mode = str(getattr(cfg, "mode", "") or "")
         defaults = self._defaults

@@ -38,13 +38,19 @@ from datetime import timedelta
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from ember_code.core.mcp.naming import tool_name_prefix
+from ember_code.core.mcp.notification_tap import McpNotificationRouter
+
 try:
     from agno.tools.mcp import MCPTools
     from mcp import ClientSession
     from mcp.client.stdio import StdioServerParameters, stdio_client
+
+    from ember_code.core.mcp.request_meta import RequestMeta, RequestMetaSession
 except ImportError:  # pragma: no cover — exercised by test_connect_import_error
     MCPTools = None  # type: ignore[assignment,misc]
     ClientSession = None  # type: ignore[assignment,misc]
+    RequestMetaSession = None  # type: ignore[assignment,misc]
     StdioServerParameters = None  # type: ignore[assignment,misc]
     stdio_client = None  # type: ignore[assignment]
 
@@ -81,7 +87,14 @@ class StdioMCPBinding:
         instance without touching module globals."""
         return Path(tempfile.gettempdir()) / "ember_mcp_stderr.log"
 
-    async def open(self, name: str, config: MCPServerConfig) -> MCPTools:
+    async def open(
+        self,
+        name: str,
+        config: MCPServerConfig,
+        *,
+        notifications: McpNotificationRouter | None = None,
+        request_meta: RequestMeta | None = None,
+    ) -> MCPTools:
         """Open a stdio-backed :class:`MCPTools` handle with
         ``errlog`` redirected to :attr:`errlog_path`.
 
@@ -94,6 +107,14 @@ class StdioMCPBinding:
         The returned :class:`MCPTools` owns the file handle
         (via ``mcp_tools._errlog``) — Agno's :meth:`__aexit__`
         closes it during shutdown.
+
+        ``notifications`` takes the methods it routes out of the
+        read stream before the SDK sees them — see
+        :mod:`ember_code.core.mcp.notification_tap`.
+
+        ``request_meta``, when given, is asked on every tool call and
+        its answer travels as the request's ``_meta``
+        (:mod:`ember_code.core.mcp.request_meta`).
         """
         # Must stay open for MCP session lifetime; ownership
         # transfers to MCPTools via ``_errlog`` below.
@@ -102,12 +123,13 @@ class StdioMCPBinding:
             command=config.command,
             args=config.args or [],
             env=config.env if config.env else None,
+            cwd=config.cwd or None,
         )
 
         mcp_tools = MCPTools(
             server_params=params,
             transport="stdio",
-            tool_name_prefix=f"mcp_{name}",
+            tool_name_prefix=tool_name_prefix(name),
         )
 
         # Drive stdio_client with our errlog handle instead of
@@ -116,11 +138,23 @@ class StdioMCPBinding:
         session_params = await mcp_tools._context.__aenter__()
         mcp_tools._active_contexts = [mcp_tools._context]
         read, write = session_params[0:2]
+        if notifications is not None:
+            read = notifications.tap(name, read)
 
         timeout = getattr(mcp_tools, "timeout_seconds", 30) or 30
-        mcp_tools._session_context = ClientSession(  # type: ignore[assignment]
-            read, write, read_timeout_seconds=timedelta(seconds=timeout)
-        )
+        read_timeout = timedelta(seconds=timeout)
+        if RequestMetaSession is not None:
+            mcp_tools._session_context = RequestMetaSession(  # type: ignore[assignment]
+                read,
+                write,
+                read_timeout_seconds=read_timeout,
+                request_meta=request_meta,
+                busy_holder=f"mcp:{name}",
+            )
+        else:
+            mcp_tools._session_context = ClientSession(  # type: ignore[assignment]
+                read, write, read_timeout_seconds=read_timeout
+            )
         mcp_tools.session = await mcp_tools._session_context.__aenter__()
         mcp_tools._active_contexts.append(mcp_tools._session_context)
 

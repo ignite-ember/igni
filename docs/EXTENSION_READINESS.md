@@ -1,0 +1,221 @@
+# Extension readiness
+
+What is still missing before a partner can build a rich extension,
+stated as gates with a check you can run rather than a feeling.
+
+Every "missing" below was verified against the tree, not remembered.
+Where something is marked **declared but unenforced**, that is the
+dangerous category: a permission an author believes they granted and
+nobody checks is worse than one that does not exist, because the
+manifest reads as if it is protecting something.
+
+**Today's one-line summary: one extension runs end to end, and four
+of six permissions are enforced completely with two enforced at
+igni's boundary rather than the extension's.** A bundle installs,
+starts, serves its UI on its own origin, draws in a frame and answers
+`ext.<id>.*` calls that are authorised against its manifest — proven
+by a test that runs a real MCP server as a subprocess. Extensions reach
+machines from their services through igni server — signed, listed,
+verified and installed by the host (§8 of igni server's `service-identity.md`) —
+and a `python` packaging installs one offline from the wheels its bundle
+carries. What is still missing is OS-level confinement of a service's
+own network and filesystem.
+
+---
+
+## Gate A — it runs at all
+
+Nothing here is hard. All of it is missing.
+
+| # | State | Note |
+|---|---|---|
+| A1 | ✅ mostly | `@igni/ui-react` and `@igni/ui-css` are packages that pack — 16 files, 31 kB, tests excluded. Not pushed to a registry; for an air-gapped deployment the tarball in the bundle is the delivery anyway. `@igni/extension-bridge` is still a `clients/web` alias. |
+| A2 | ✅ | `list_extensions` tells the client what is installed, its state, its grant list and which loopback port its UI is on; `ExtensionPage` mounts `ExtensionFrame` for a page whose kind the registry says an extension owns. |
+| A3 | ✅ | `ExtensionRpc` is constructed in `BackendApp` and shared by the boot router and every per-session one, so one registry serves the whole backend. |
+| A4 | ✅ | `ExtensionInstaller` validates, checks trust, registers `PREPARING`, starts or reaches the service, serves the UI on its own origin, binds and marks `READY`. Failures after registration are `FAILED` with a reason. |
+
+**What is not done in A4:** sidecar images fail saying container
+supervision is not implemented; `python`, `endpoint` and the
+development packaging all work.
+
+**A fourth packaging, `python`,** is how a service ships its
+extension: a package speaking MCP over stdio, installed into a private
+environment per extension and version with igni's own interpreter,
+from the bundle's wheelhouse only (`--no-index`), so an air-gapped
+machine needs nothing else.
+
+**A third packaging, `dev`,** was added because neither of the other
+two can be run by an author on a laptop: one needs a container
+registry and the other needs a deployed service. It is argv, runs
+over stdio, and the schema refuses it on anything but
+`trust: unsigned`.
+
+Three things only a real subprocess found, each of which a stub had
+agreed with:
+
+- **The MCP first-use prompt blocked every extension.** It exists for
+  a `.mcp.json` anyone can commit to a repo; an administrative
+  install is not that, and the prompt fails closed when there is
+  nobody to ask — so no extension could ever have started on a
+  headless or shared backend.
+- **`structuredContent` was the wrong preference.** A FastMCP tool
+  annotated `-> str` wraps its answer as `{"result": …}`, so every
+  such extension would have unpicked an envelope.
+- **`cwd` never reached a stdio server**, and an extension's command
+  is relative to the bundle it was installed from.
+
+---
+
+## Gate B — the permissions are real
+
+The manifest models all of these and the schema validates them.
+**Nothing reads any of them.** This is the gate that decides whether
+the extension boundary is a security boundary or a comment.
+
+| # | Declared | Enforced at | How far |
+|---|---|---|---|
+| B1 | `permissions.rpc` | `ExtensionRegistry.authorise` | ✅ complete |
+| B2 | `permissions.egress` | the page's `connect-src`, written from the manifest; and the endpoint host igni dials | ✅ **complete for what it governs: pages.** The extension's process is the service's own code and is trusted, not confined — approving the service is that decision (EXTENSIBILITY §6, *The process is trusted*). |
+| B3 | `permissions.secrets` | resolution — an undeclared name is never looked up, and the resolver is the deployment's | ⚠️ **value, not handle.** It reaches the service's environment as `IGNI_SECRET_<NAME>`. **Never a token for the extension's own service**: that the host fetches by token exchange and serves on a loopback endpoint (`IGNI_SERVICE_TOKEN_URL`, §9 of igni server's `service-identity.md`), so the extension never holds the person's igni session. No deployment wires a secret source yet, so a declared secret currently fails the install. |
+| B4 | `permissions.workspace` / `workspacePaths` | what igni *tells* a service | ✅ **told, by design.** An ungranted extension is not told where the project is, and is not given its signals; its process runs with the person's own access, trusted as its service is. |
+| B5 | `permissions.tools` | tool registration, which is igni's | ✅ complete |
+| B6 | provenance (was `signature`) | the distribution sync, before a bundle is stored: the JWS igni server hands over with the bundle, checked against the approved service's `publisher_jwks` (RS256/ES256) and the archive's SHA-256; then the installer, which trusts a bundle only with that record | ✅ complete. The manifest no longer carries a signature — one cannot cover the archive it is inside — and the administrator-maintained Ed25519 trust store is gone. Anything not distributed by igni is a development install behind `IGNI_DEV_EXTENSIONS`. |
+
+**`egress` and `workspace` are enforced where igni decides, and the
+process is trusted where it acts.** That is a decision, not a gap: an
+extension's process is the code of a service a super admin approved,
+from a bundle that service signed, and confining it would mean an OS
+sandbox per platform for code the deployment has already chosen to run.
+For a regulated deployment the sentence to put in front of an assessor
+is that one, with the Services page as the record of what was approved.
+
+**Secrets became values rather than handles**, and the contract was
+corrected rather than the other way round. A handle needs an exchange
+step and an extension's service is an MCP server igni *calls*, so
+there is no channel for it to call back on. The cost: a secret sits
+in the service's process environment.
+
+---
+
+## Gate C — contributions land somewhere
+
+The manifest can declare these. None of them reach the app.
+
+| # | Contribution | State | Done when |
+|---|---|---|---|
+| C1 | ✅ | The `list_extensions` effect folds each installed manifest into `Contributions`, so its pages become sidebar entries and page kinds. A FAILED extension keeps its entry — the page it opens says what went wrong, which is what an administrator is looking for; an entry that silently vanishes is a worse answer. The effect's cleanup uninstalls, so a reconnect does not fold the same pages in twice. |
+| C2 | ✅ | Same registry, same effect: the entry appears in the header tools menu and runs its command. A kind colliding with one of igni's own, or with another extension's, is refused at `install()` rather than shadowing it. |
+| C3 | ✅ | Offered in the catalog as a fourth source and dispatched as a fourth tier — after built-ins so an extension cannot shadow `/clear`, before the skill fallback because that tier is the catch-all and is exactly where a contributed command used to end up. `contributes.commands` is its own grant: a tool the service exposes and the manifest does not offer will not run as a command. |
+| C4 | ✅ | `ExtensionContributions` follows the registry: a READY extension's anchors are registered and its variants made live, and both are withdrawn when it stops being READY. Tied to the *state*, not the install — an extension whose service died must stop telling the model about data it can no longer fetch. A variant stays *known* while down, so a `<agent>.<variant>.md` sibling is still recognised and skipped rather than loaded as an agent whose name contains a dot. |
+| C5 | ✅ | Stored per deployment beside the bundle (not inside it — the bundle is what was signed), with undeclared keys and out-of-range enums refused, defaults filled in, and keys a manifest no longer declares dropped. `list_extensions` carries both the shape and the values, and `set_extension_settings` writes them. `ExtensionsPanel` — `/extensions`, and a sidebar entry — renders the form: a control per declared type, a cleared number named rather than stored as `null`, and a type this build does not know shown as unsupported instead of guessed at. It is also the only place the host says which extensions are installed and why one is not READY. |
+
+---
+
+## Gate D — somebody outside this repo can build one
+
+| # | State | Note |
+|---|---|---|
+| D1 | ✅ | `igni ext init` scaffolds a bundle that installs and runs as written — manifest, MCP server, framed page with an inlined bridge, README. `install`, `list` and `remove` work against the store rather than a running backend, so an install outlives the process that made it. |
+| D2 | ✅ | `igni ext doctor` prints the contract this igni implements and what is wrong with a bundle. It separates *problems* from *notes*, which it did not at first — an unsigned development bundle was reported as a problem, so `doctor` failed on the output of `init`. |
+| D3 | ⚠️ partial | Every install igni server did not distribute — a directory, a clone, whatever trust it claims — is a development install, accepted only when `IGNI_DEV_EXTENSIONS=1`, which is outside the bundle and cannot be turned on by one. `igni ext install` refuses without it too. No persistent banner and no hot reload. |
+| D4 | ✅ | `examples/release-notes` is the opposite of all four — a two-pane browser over editable documents with comments. It found a published pair that could not be used as a pair (`Tabs` generated its own id prefix, `TabPanel` required one, nothing let a caller learn it), and its README carries what it still had to hand-roll: the split, block markdown, and an editor that fills its pane. |
+
+---
+
+## Gate E — components for a *rich* extension
+
+Tier 0 shipped: layout, scroll, error boundary, toasts, banners, live
+regions, selection, table internals, sortable headers, and the
+`params`/`setLocation` round trip that makes an extension addressable.
+46 exports, 100 published classes.
+
+For rich, Tier 1 from `UI_FLOOR.md` is what remains. The ones that
+actually block a shape rather than merely annoy:
+
+| # | Component | Blocks |
+|---|---|---|
+| E1 | `Combobox` | Any search-and-pick. The hardest to hand-roll correctly and the most-wanted. |
+| E2 | `Popover` | Anything anchored that is not a menu or a tooltip. |
+| E3 | `Split` | Two-pane anything. Already written as `ColumnHandle`, 180 lines, unpublished. |
+| E4 | ✅ `Markdown` (block) | Published, with `.ui-prose`, so prose in an extension looks like prose in igni. GitHub-flavoured, no raw HTML, links with `noopener`. |
+| E5 | `Form` / `Fieldset` | Multi-field editing: submit semantics, error summary focus. |
+| E6 | `Drawer` | Side panels; shares `Dialog`'s trap machinery. |
+
+Tier 2 is genuinely optional and additive — never breaking, so
+shipping without it costs nothing.
+
+---
+
+## Gate H — events
+
+| # | State | Note |
+|---|---|---|
+| H1 | ✅ | `HostTopic`, a `StrEnum` like `RpcMethod`: the wire names of the four signals that predate the host object model. |
+| H2 | ✅ | Granted by `permissions.host` (and `permissions.workspace` for the workspace signals), checked at dispatch and never at delivery. The `permissions.events` grant that duplicated it is retired; a manifest declaring it does not validate. |
+| H3 | ✅ | `bridge.on(signal, fn)` in a page, `@ext.on(signal)` in a process — the host object model's signals. The `event` envelope kind and `bridge.onEvent` are retired. |
+| H4 | ✅ | Delivery: the host model's `SignalBus` → a process's loopback channel, or the `host_signal` push → the frames of the extension it was addressed to. `only=` for signals that are *about* one extension. |
+| H5 | ✅ | Producers. `WorkspaceWatcher` polls `git rev-parse` at 1 Hz and `git status` at half that — and does neither while nobody entitled is subscribed. `session.switched` fires from a window's session binding, deduped, because a page reload is not a switch. |
+| H6 | ✅ | The content rule. Each listener gets its own value: the workspace signals require `permissions.workspace`, and `files-changed` is filtered to each extension's `workspacePaths`. The grant says whether you are addressed; it does not say what you are handed. |
+| H7 | — | Retired. A service used to be told through the reserved `igni_on_event(topic, payload)` tool; a process now subscribes over its host channel. An `endpoint` service with no page hears nothing. |
+| H8 | ✅ | `permissions.tools` enforces something for the first time. `get_tools` returns registered names and a manifest declares the server's own; `_restrict_tools` compared them directly, so *every* tool was refused including the declared ones. Safe direction, which is why it looked like it worked — and the unit test agreed because it passed bare names. `bare_tool_name` is the conversion, pinned against a real server. |
+
+## Gate G — more than one person
+
+A deployment serving a group is a different shape, and the contract
+has always said so. Now it is checked.
+
+| # | State | Note |
+|---|---|---|
+| G1 | ✅ | `IGNI_DEPLOYMENT=shared` marks a backend as serving several principals. Single-user by default, because the permissive answer must not be what you get by forgetting to configure anything. |
+| G2 | ✅ | A shared backend refuses `sidecar` and `dev` packaging. One process is one instance shared by every principal, with one `IGNI_WORKSPACE` and one resolution of each secret — there is no answer to *whose*. The refusal names `endpoint` as the packaging that works. |
+| G3 | ✅ | A shared backend refuses `contributes.pages`. A frame is hosted by the igni app beside the user, and a shared backend has no such app, so the pages would be served and never shown. |
+| G4 | ✅ | `workspace` and `secrets` on an `endpoint` extension are refused rather than ignored. igni delivers those in the environment of a process it starts; an endpoint is somebody else's process, so the grant would be approved and never arrive. |
+| G5 | ❌ **the one that matters** | **There is no principal on the extension call path.** `RPCRequest.caller` is an *extension id* — the check is which extension is asking, never which person. So a multi-tenant endpoint, which is the shape a group is supposed to use, cannot tell two users apart; and a shared process could not be made safe by being careful, because the identity it would need does not exist. |
+
+**G5 is an architecture decision, not an install check.** It needs a
+principal on the wire, a decision about where it comes from (igni's
+own auth, or the deployment's), and a decision about whether an
+extension is told who the user is or only given an opaque,
+stable-per-user token. The second is usually the right answer and it
+is not ours to assume.
+
+Until it exists: a group can run extensions, and every extension it
+runs sees one undifferentiated caller.
+
+## Gate F — operable once it is running
+
+| # | Missing | Done when |
+|---|---|---|
+| F1 | ✅ Health reporting | `ExtensionHealth` probes every installed extension on an interval and immediately after a failed call, moves the state with a reason, and restarts a service that is already dead — only once it is dead, because `disconnect_one` drops its reference without terminating the process, so restarting a live one would leak it. |
+| F2 | Upgrade path | A manifest asking for more permissions stays at its old grants until an administrator accepts, and they are shown the diff. |
+| F3 | Uninstall | Contributions withdrawn, prompt anchors removed, service stopped, port released. |
+| F4 | Observability | An administrator can see what an extension called and what was refused. The refusals are already logged at info; nothing surfaces them. |
+
+---
+
+## What to do in what order
+
+**To hand one trusted partner a thing that works** — done. They can
+scaffold, check, install, run, call their own service and see it fail
+legibly, without writing Python. Gate B is enforced; its process is
+trusted rather than sandboxed, and the agreement says so.
+
+**To let a third party build** — Gate B is done. Its process is not
+sandboxed: a deployment approves a third party's service only if it
+trusts that service's code, exactly as it would install its software.
+
+**To serve a group** — G1–G4 are done and G5 is not. A shared backend
+now refuses what it cannot run, which is the half that stops somebody
+being surprised. The half that is left is identity: every extension
+on a shared backend sees one caller, so a multi-tenant service cannot
+tell its users apart.
+
+**To call it rich** — Gate E. D4 is done and sharpened the list: the
+split is the biggest single gap for a two-pane shape, block markdown
+the biggest for a document, and neither `Combobox` nor `Popover` came
+up once in building it. That ordering was a guess before; it is a
+measurement now.
+
+**To sell it into a regulated deployment** — B6 is done. B2 is the
+one left that gets asked about by name, and the answer today is "the
+UI cannot reach an undeclared host; the service is trusted not to".

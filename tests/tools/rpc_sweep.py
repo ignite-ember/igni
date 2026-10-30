@@ -54,7 +54,6 @@ ARGS: dict[str, dict] = {
     "get_chat_history": {"session_id": "SESSION"},
     "get_interrupted_runs": {"session_id": "SESSION"},
     "search_chat": {"session_id": "SESSION", "query": "the"},
-    "knowledge_get": {"id": ""},
     "preview_plugin": {"source": ""},
     "search_code": {"snippet": "def"},
     # Three required keys, discovered one bare KeyError at a time:
@@ -72,7 +71,6 @@ ARGS: dict[str, dict] = {
     "get_mcp_server_details": {"name": ""},
     "read_file": {"path": "igni.md"},
     "complete_files": {"prefix": ""},
-    "knowledge_search": {"query": "test"},
     "count_context_tokens": {"text": "hello"},
     "read_process_tail": {"pid": 0},
     "list_dirs": {"path": "."},
@@ -99,8 +97,6 @@ ARGS: dict[str, dict] = {
         "session_id": "SESSION",
     },
     "extract_learnings": {"user_msg": "hello", "assistant_msg": "hi"},
-    "knowledge_add": {"source": "sweep-probe"},
-    "knowledge_remove": {"id": "no-such-doc"},
     "mcp_connect": {"server_name": "no-such-server"},
     "mcp_disconnect": {"server_name": "no-such-server"},
     "remove_plugin": {"name": "no-such-plugin"},
@@ -143,8 +139,9 @@ MUTATING = re.compile(
     r"^(set_|delete_|remove_|install_|update_|add_|clear_|cancel_|stop_|discard_|"
     r"truncate_|switch_|attach_|shutdown|login|logout|approve_|dismiss_|save_|"
     r"promote_|upload_|execute_|start_|run_|reload_|refresh_|compact_|extract_|"
-    r"codeindex_(install|sync|resync|clean)|mcp_|ensure_|knowledge_(add|remove)|"
-    r"auto_sync|loop_|pop_|fire_|toggle_|pick_|dispatch_|check_for_update)"
+    r"mcp_|ensure_|knowledge_(add|remove)|"
+    r"auto_sync|loop_|pop_|fire_|toggle_|pick_|dispatch_|check_for_update|"
+    r"notifications_mark_read)"
 )
 
 

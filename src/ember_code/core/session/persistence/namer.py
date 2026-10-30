@@ -105,6 +105,20 @@ class SessionNamer:
             return PersistResult(ok=False, error=str(exc))
         return PersistResult(ok=True)
 
+    async def title(self, name: str) -> PersistResult:
+        """Name the session, whether or not it has a row yet.
+
+        :meth:`rename` updates a row, and a session has none until its
+        first run completes. A chat opened for a service's thread
+        (``docs/CLOUD.md`` §6.1) is titled before anything has run in it,
+        so this writes the name into the row, creating it if it is not
+        there — the run that comes fills the rest in.
+        """
+        renamed = await self.rename(name)
+        if not renamed.ok or await self.get_name():
+            return renamed
+        return await self._data.write_key("session_name", name)
+
     async def get_name(self) -> str:
         """Get the current session's name from the database.
 

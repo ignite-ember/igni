@@ -7,7 +7,7 @@ igni's hook system is **compatible with Claude Code's** hook format. If you alre
 ## Overview
 
 ```
-Agent calls Edit tool
+Agent calls edit_file
     │
     ▼
 ┌──────────────────────┐
@@ -42,12 +42,15 @@ Agent calls Edit tool
 | `Stop` | When agent wants to finish | Yes | Completion validation (did tests run?) |
 | `SubagentStart` | When a sub-team spawns | No | Logging, resource tracking |
 | `SubagentStop` | When a sub-team finishes | No | Result validation |
+| `PlanSubmit` | When the agent submits a plan (`exit_plan_mode`), before the person sees it | Yes | Plan quality gates (does it name the files?) |
 | `Notification` | *(reserved for future use — nothing fires it)* | No | Custom notification handlers |
 
 ### Permission events
 
 Fired by the permission evaluator, paired. Both carry
-`{session_id, tool_name, tool_args, rule?, reason?}`.
+`{session_id, tool_name, tool_args}`; `PermissionDenied` adds a
+`reason` naming the stage that blocked the call — `pre_tool_use_hook`
+or `permission_evaluator`. There is no `rule` field on either.
 
 | Event | When It Fires | Can Block? | Use Case |
 |---|---|---|---|
@@ -202,16 +205,21 @@ Matchers are regex patterns that filter when a hook fires. Only hooks whose matc
 >
 > | Friendly catalog name | Use this in `matcher` |
 > |---|---|
-> | `Bash` | `run_shell_command` |
-> | `Write` | `save_file` and/or `create_file` |
-> | `Edit` | `edit_file` and/or `edit_file_replace_all` |
-> | `Read` | `read_file` (registry-only — won't fire on the main team; see [TOOLS.md](TOOLS.md)) |
-> | `Grep` | `grep` / `grep_files` / `grep_count` (registry-only) |
-> | `Glob` | `glob_files` (registry-only) |
-> | `LS` | `list_files` (registry-only) |
-> | `WebSearch` | `duckduckgo_search` / `duckduckgo_news` |
+> | `Bash` | `run_shell_command` — plus `read_process_output`, `await_process`, `watch_process`, `stop_process`, `list_processes` for the background-process verbs |
+> | `Write` | `save_file` |
+> | `Edit` | `edit_file` / `edit_file_replace_all` / `create_file` |
+> | `NotebookEdit` | `notebook_read` / `notebook_read_cell` / `notebook_edit_cell` / `notebook_add_cell` / `notebook_remove_cell` |
+> | `WebSearch` | `web_search` / `search_news` |
 > | `WebFetch` | `fetch_url` / `fetch_json` |
 > | `Schedule` | `schedule_task` / `list_scheduled_tasks` / `cancel_scheduled_task` |
+>
+> Note `create_file` sits under `Edit`, not `Write` — `Write` is a
+> write-only `FileTools` that registers `save_file` and nothing else.
+>
+> There are no `Read` / `Grep` / `Glob` / `LS` rows because there are no
+> such toolkits: reading, searching and listing all go through `Bash`
+> (`cat` / `rg` / `find`), so a matcher for those file operations is a
+> matcher on `run_shell_command`. See [TOOLS.md](TOOLS.md).
 
 **Examples (corrected):**
 ```json
@@ -239,7 +247,8 @@ Every hook receives a JSON object on stdin with common fields plus event-specifi
 **PreToolUse / PostToolUse:**
 ```json
 {
-  "tool_name": "Edit",
+  "session_id": "abc-123",
+  "tool_name": "edit_file",
   "tool_args": {
     "file_path": "/path/to/file.py",
     "old_string": "def foo():",
@@ -249,6 +258,22 @@ Every hook receives a JSON object on stdin with common fields plus event-specifi
   // "error": "..."          // PostToolUseFailure only
 }
 ```
+
+`tool_name` carries the **internal tool function name** — the same value
+a `matcher` is tested against, never the friendly catalog name. A payload
+can contain `edit_file` or `run_shell_command`; it can never contain
+`Edit` or `Bash`.
+
+Two more things the wire shape guarantees:
+
+- **Every `tool_args` value is a string.** Args are stringified before
+  they are sent, so an `int` argument such as `stop_process`'s `pid`
+  arrives as `"4242"`, not `4242`. Each value is also truncated to 500
+  characters, so a large `new_string` or file body reaches the hook
+  clipped — never assume you received the whole argument.
+- **`session_id` is on every payload**, including this one. It is
+  injected at the wire boundary rather than by each event, so the key is
+  always present even when the session id is the empty string.
 
 **UserPromptSubmit:**
 ```json
@@ -274,6 +299,19 @@ Every hook receives a JSON object on stdin with common fields plus event-specifi
   "task": "Write the auth module"
 }
 ```
+
+**PlanSubmit:**
+```json
+{
+  "session_id": "abc-123",
+  "plan": "## Plan\n1. Change `app/auth.py` …",
+  "attempt": 0
+}
+```
+
+`attempt` counts the plans rejected since the agent entered plan mode.
+A block (exit 2, or `"continue": false`) sends the plan back to the agent
+with the hook's `systemMessage`; it may do more work and submit again.
 
 **SubagentStop:**
 ```json
@@ -472,6 +510,48 @@ echo '{"continue": true}'
 - Hooks load at session startup. Use `/hooks reload` to pick up changes without restarting
 - Default timeout: 10 seconds for all hook types
 - Set `"background": true` for fire-and-forget hooks that don't block the agent
+
+---
+
+## Extensions
+
+An extension's process answers hook events too: it lists them in its
+manifest's `permissions.hooks` and answers with `@ext.hook` in the
+`igni-extension` SDK (`docs/EXTENSIBILITY.md`). One pipeline, not two:
+
+- **On the five events that decide** — `PreToolUse`, `PostToolUse`,
+  `UserPromptSubmit`, `Stop`, `PlanSubmit` — the extensions that hook
+  one are asked **first**, one at a time in the super admin's priority
+  order of extensions, each handed what the one before left. A reject
+  ends the chain; then igni's configured hooks above run on what the
+  extensions left, the way plugin hooks run before project hooks so the
+  project keeps the last word.
+- **Every other event** is told to the extensions that hook it, and
+  nothing waits on them.
+
+| Event | An extension may change | A reject | No answer in 2 s |
+|---|---|---|---|
+| `PreToolUse` | `tool_args` — igni's own checks, and the tool, see the change | The tool does not run; the agent is told why | **refused** |
+| `PostToolUse` | `result` (text) — what the model reads | The model is told the result was withheld, and why | goes ahead |
+| `UserPromptSubmit` | `message` — what the run is started with | The run does not start; the reason is the error | **refused** |
+| `Stop` | — | As a Stop hook's block: the agent revises its answer with the reason where igni can send it back, else the reason is shown after the run | goes ahead |
+| `PlanSubmit` | `plan` — what the person sees | The plan goes back to the agent with the reason | goes ahead |
+
+An extension handler is handed the real values, never the clipped
+strings a settings hook receives on stdin. Two seconds is igni's
+deadline, not the extension's; a process that is not running, a handler
+that raised, or a change the event cannot take is a silence too. A
+headless run (`-m`, `--pipe`) starts the extensions installed on the
+machine first, so their hooks apply there as well; one that did not
+start refuses what it would have checked, with why.
+
+**Faulty extensions.** Three timeouts or crashes in a row — hooks and
+the extension's tool calls alike — make an extension faulty: igni
+restarts its process, tells the person, and stops waiting on its hooks.
+While it is faulty, a `PreToolUse` or `UserPromptSubmit` it hooks is
+refused at once ("<extension> isn't responding"), and every other event
+goes ahead without it. Its first answer after the restart clears the
+mark.
 
 ---
 

@@ -24,7 +24,9 @@ from __future__ import annotations
 import re
 from typing import Any, ClassVar
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
+
+from ember_code.core.mcp.hints import ToolHints, ToolHintsRegistry
 
 # ── Tool sets — kept as module-level frozensets so the package
 #    ``__init__`` can re-export them for legacy imports. The
@@ -33,9 +35,19 @@ from pydantic import BaseModel, Field
 
 #: Tools that mutate the filesystem — used by ``acceptEdits``
 #: (auto-approve) and ``plan`` (block). Names match Claude Code's
-#: Edit/Write/NotebookEdit set, plus ember-code's ``edit_file_*`` /
+#: Edit/Write/NotebookEdit set, plus igni's ``edit_file_*`` /
 #: ``save_file`` / ``create_file`` variants. Bash is handled by
 #: :class:`BashCommand` because shell commands may or may not mutate.
+#
+# The three ``notebook_*`` writers are here because the evaluator is
+# handed the Agno *function* name, not the catalog name. ``NotebookEdit``
+# alone matched nothing the hook ever sees: the registry attaches
+# ``notebook_edit_cell`` / ``notebook_add_cell`` / ``notebook_remove_cell``,
+# so in plan mode all three fell through to DEFER — a default main-team
+# toolkit writing to disk under the banner that says plan mode does not.
+# (``NotebookEdit`` stays for rules written by friendly name, which resolve
+# through ``FriendlyToolNameResolver``; this set is a raw membership test
+# and does not.)
 FILE_EDIT_TOOLS: frozenset[str] = frozenset(
     {
         "Edit",
@@ -45,6 +57,9 @@ FILE_EDIT_TOOLS: frozenset[str] = frozenset(
         "edit_file",
         "edit_file_replace_all",
         "create_file",
+        "notebook_edit_cell",
+        "notebook_add_cell",
+        "notebook_remove_cell",
     }
 )
 
@@ -62,22 +77,19 @@ FILE_EDIT_TOOLS: frozenset[str] = frozenset(
 FILE_READ_TOOLS: frozenset[str] = frozenset(
     {
         "WebSearch",
+        # The function names the toolkit registers. Until these were here the
+        # set named only the pre-rename ``duckduckgo_*`` spellings, so plan
+        # mode auto-allowed two functions that do not exist and prompted for
+        # the two that do — while reading as though web search were allowed.
+        # The WebFetch rows below were correct, which is why only half of this
+        # block was wrong and none of it looked it.
+        "web_search",
+        "search_news",
         "duckduckgo_search",
         "duckduckgo_news",
         "WebFetch",
         "fetch_url",
         "fetch_json",
-        "CodeIndex",
-        # codeindex_cypher is read-only by hard contract — the toolkit
-        # rejects any mutating Cypher before it reaches the driver
-        # (cypher_guard.assert_read_only_cypher), so it belongs in the
-        # plan-mode auto-allow set. This used to list `codeindex_query` and
-        # `codeindex_tree` instead: those are internal service methods that
-        # are never registered as agent-facing tools (see
-        # tools/codeindex/tool.py:73-76), so the evaluator could not see
-        # them, while the ONE tool that does reach it was missing — meaning
-        # CodeIndex research in plan mode was not actually auto-allowed.
-        "codeindex_cypher",
     }
 )
 
@@ -165,11 +177,24 @@ class ToolCategoryCatalog(BaseModel):
     ``catalog.is_edit(name)`` instead of ``name in FILE_EDIT_TOOLS``.
     Alternative catalogs (with extra tools) can be built for tests
     without monkey-patching module globals.
+
+    igni's own tools are classified by name, here. An extension's are
+    classified by what its manifest says they are — MCP's four hints,
+    read through :meth:`hints` from the registry the installer fills.
+    igni does not know an extension's tools by name, and does not
+    need to.
     """
+
+    model_config = ConfigDict(arbitrary_types_allowed=True)
 
     file_edit_tools: frozenset[str] = Field(default_factory=lambda: FILE_EDIT_TOOLS)
     file_read_tools: frozenset[str] = Field(default_factory=lambda: FILE_READ_TOOLS)
     shell_tools: frozenset[str] = Field(default_factory=lambda: SHELL_TOOLS)
+    tool_hints: ToolHintsRegistry = Field(default_factory=ToolHintsRegistry.shared)
+
+    def hints(self, tool_name: str) -> ToolHints | None:
+        """What an extension's tool says it is, or ``None`` for one igni classifies by name."""
+        return self.tool_hints.get(tool_name)
 
     def is_edit(self, tool_name: str) -> bool:
         """Is ``tool_name`` a filesystem-mutating file tool?"""

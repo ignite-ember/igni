@@ -6,7 +6,7 @@ used to be welded into ``__main__._run``:
 * the :class:`SessionPool` + its :class:`SessionRuntime` factory,
 * the session-id → project-dir registry,
 * the per-client UI state store,
-* the pool-level RPCs (``attach_session``, ``{get,set,delete}_client_state``),
+* the pool-level RPCs (``attach_session``, ``host_model``, ``window_model``),
 * the ``_dispatch`` fan-out that picks the right runtime for each
   message,
 * the in-flight task set for graceful drain on shutdown.
@@ -24,115 +24,46 @@ import contextlib
 import logging
 import os
 import uuid
+from collections.abc import Awaitable, Callable, MutableSequence
 from pathlib import Path
 from typing import Any
 
-from ember_code.backend.knowledge_gate import (
-    _FALSEY,
-    ENV_OVERRIDE,
-    knowledge_runtime_enabled,
-)
+from pydantic import ValidationError
+
 from ember_code.backend.login_coordinator import LoginCoordinator
 from ember_code.backend.message_dispatcher import MessageDispatcher
 from ember_code.backend.push_bridge import PushNotificationBridge
 from ember_code.backend.rpc_router import POOL_LEVEL_RPCS, RpcRouter
+from ember_code.backend.schemas_extensions import PageTokenReply
 from ember_code.backend.schemas_rpc import (
     AttachSessionResult,
-    GetClientStateResult,
     SessionPoolConfig,
-    WriteClientStateResult,
 )
 from ember_code.backend.session_pool import SessionPool, SessionRuntime
 from ember_code.backend.session_stamping_transport import SessionStampingTransport
-from ember_code.backend.subsystem_status import KNOWLEDGE, SubsystemState
-from ember_code.core.paths import DEFAULT_DATA_DIR
+from ember_code.core.activity import background
+from ember_code.core.db.locator import StorageLocator
+from ember_code.core.layer import Layers
 from ember_code.core.session.client_state import ClientStateStore
 from ember_code.core.session.session_directories import SessionDirectoryStore
+from ember_code.extensions.host.windows import WindowModelError, WindowRequest
+from ember_code.extensions.registry import ExtensionRegistry
+from ember_code.extensions.rpc import ExtensionRpc
+from ember_code.extensions.service_events import ServiceEvent, ServiceEventInbox
+from ember_code.extensions.service_token import (
+    NoService,
+    NotSignedIn,
+    PageServiceTokens,
+    TokenExchangeFailed,
+)
 from ember_code.protocol import messages as msg
 from ember_code.protocol.rpc import RpcMethod
 
 logger = logging.getLogger(__name__)
 
-
-#: What to tell someone whose knowledge base will not start. Every
-#: recovery we have actually used for a wedged sidecar comes down to
-#: this, and a reason without a remedy is only half an answer.
-_KNOWLEDGE_FIX = (
-    "Delete ~/.ember/neo4j and reopen the app to reinstall the local database. "
-    "Set IGNI_NEO4J_RUNTIME=0 to run without it."
-)
-
-
-def _record(
-    session: Any,
-    state: SubsystemState,
-    *,
-    reason: str = "",
-    fix: str = "",
-    only_if_preparing: bool = False,
-) -> None:
-    """Write one subsystem state, tolerating sessions that have none.
-
-    A session is ``None`` before the pool is built and a stub in
-    several tests, and neither is a reason to take the backend down —
-    but a state that silently fails to record is precisely the bug
-    this registry exists to prevent, so it is logged rather than
-    swallowed.
-
-    ``only_if_preparing`` keeps a late, generic outcome from overwriting a
-    specific one already recorded — a failure the inner handler diagnosed, or a
-    subsystem the user deliberately switched off.
-    """
-    registry = getattr(session, "subsystems", None)
-    if registry is None:
-        logger.debug("knowledge: no subsystem registry on session; state %s unrecorded", state)
-        return
-    try:
-        if only_if_preparing:
-            current = registry.get(KNOWLEDGE)
-            # FAILED and DISABLED are both deliberate and both specific. The
-            # name says "preparing" and the check only knew about FAILED, so a
-            # DISABLED knowledge panel was overwritten with READY the moment
-            # the sidecar came up for CodeIndex instead.
-            if current is not None and current.state in (
-                SubsystemState.FAILED,
-                SubsystemState.DISABLED,
-            ):
-                return
-        registry.set(KNOWLEDGE, state, reason=reason, fix=fix)
-    except Exception:  # pragma: no cover — defensive
-        logger.exception("knowledge: could not record subsystem state %s", state)
-
-
-def _neo4j_runtime_wanted(settings: Any) -> bool:
-    """Whether to build the Neo4j runtime at all.
-
-    Neo4j backs TWO features. Gating on ``knowledge.enabled`` alone meant
-    ``knowledge.enabled=false`` with ``code_index.enabled=true`` skipped the
-    runtime entirely and left CodeIndex with no backend — ``codeindex_cypher``
-    answering ``no_backend`` for a feature the user had switched on.
-
-    :data:`ENV_OVERRIDE` stays a whole-runtime switch rather than a
-    knowledge-only one: it is the escape hatch for a machine whose sidecar will
-    not start, and a switch named ``NEO4J_RUNTIME`` that still started the
-    runtime for the other feature would not be one.
-    """
-    override = os.environ.get(ENV_OVERRIDE)
-    if override is not None:
-        return override.strip().lower() not in _FALSEY
-    return knowledge_runtime_enabled(settings) or _codeindex_wants_neo4j(settings)
-
-
-def _codeindex_wants_neo4j(settings: Any) -> bool:
-    """Whether CodeIndex needs the Neo4j runtime.
-
-    Deliberately as forgiving about the settings shape as
-    :func:`knowledge_runtime_enabled` — this runs on the boot path, and a
-    config that fails to produce a ``code_index`` section should cost the
-    user their index, not their backend.
-    """
-    code_index = getattr(settings, "code_index", None)
-    return bool(getattr(code_index, "enabled", False))
+#: Takes a person's session for the VM's own credential (a layer's credential
+#: keeper); answers its state.
+VmSignIn = Callable[[str, str | None], Awaitable[Any]]
 
 
 class SessionOrchestrator:
@@ -156,7 +87,10 @@ class SessionOrchestrator:
         rpc_table: dict[str, Any],
         push_bridge: PushNotificationBridge,
         login: LoginCoordinator,
-        queue: list[str],
+        extensions: ExtensionRpc | None = None,
+        origins: Any = None,
+        notifications: Any = None,
+        queue: MutableSequence[str],
     ) -> None:
         self._backend = backend
         self._transport = transport
@@ -165,6 +99,25 @@ class SessionOrchestrator:
         self._additional_dirs = additional_dirs
         self._push_bridge = push_bridge
         self._login = login
+        # The extension namespace, shared by every dispatcher this
+        # orchestrator builds and by the boot RPC table that
+        # :class:`~ember_code.backend.app.BackendApp` built before
+        # this existed. One registry per backend, not one per
+        # session: an extension is installed into a deployment, and a
+        # second session must not see a different set of them.
+        #
+        # Defaulted rather than required because several tests and
+        # the legacy ``_handle_message`` path construct an
+        # orchestrator directly; without extensions those sessions
+        # simply have none, which is what they had before.
+        self._extensions = (
+            extensions if extensions is not None else ExtensionRpc(ExtensionRegistry())
+        )
+        self._origins = origins
+        # The floor's notification center, handed to every per-runtime
+        # router so each session answers ``notifications_*`` from the
+        # same one.
+        self._notifications = notifications
         self._queue = queue
         self._boot_rpc_table = rpc_table
         # Constructed in ``setup_pool``. Kept on self so
@@ -178,29 +131,38 @@ class SessionOrchestrator:
         # ``_AUTO_NAME_TASKS`` set. Kept as instance attributes so
         # each orchestrator has its own lifetime.
         self._in_flight: set[asyncio.Task] = set()
-        # Optional Neo4j runtime. Constructed lazily when
-        # ``knowledge.enabled`` says so (see
-        # :mod:`ember_code.backend.knowledge_gate`) — the
-        # runtime's heavy work (downloading the JDK + Neo4j
-        # distribution, spawning the per-process subprocess) is
-        # triggered on first use via ``start_for_knowledge`` /
-        # ``start_for_commit``, not at construction. The
-        # construction itself is cheap (path resolution only).
-        self._neo4j_runtime: Any = None
-        self._neo4j_attach_task: asyncio.Task | None = None
+        # The host object model, once :class:`BackendApp` builds it,
+        # and whoever wants to see what windows send.
+        self._host_model: Any = None
+        self._page_tokens: PageServiceTokens | None = None
+        self._event_inbox: ServiceEventInbox | None = None
+        self._vm_sign_in: VmSignIn | None = None
+        self._inbound_watchers: list[Any] = []
+
+    @property
+    def extensions(self) -> ExtensionRpc:
+        """The extension namespace, for whoever installs into it.
+
+        Exposed because the installer is constructed elsewhere and
+        has to reach the same registry every dispatcher reads. A
+        second registry would authorise against one set of manifests
+        while the router served another.
+        """
+        return self._extensions
 
     # ── Setup ────────────────────────────────────────────────────
 
     def setup_pool(self) -> SessionPool:
         """Build the session pool + registries. Called once at boot
         after the default runtime's RPC table is ready."""
-        self._dir_registry = SessionDirectoryStore.from_data_dir(self._settings.storage.data_dir)
+        storage = StorageLocator.from_settings(self._settings)
+        self._dir_registry = SessionDirectoryStore.from_locator(storage)
         self._dir_registry.set_dir(self._backend.session_id, self._backend.project_dir)
 
         # Per-client UI state — survives reloads, shared across all
         # clients (web, JetBrains, VSCode) since each holds the same
         # opaque ``client_id`` and the BE is the source of truth.
-        self._client_state = ClientStateStore.from_data_dir(self._settings.storage.data_dir)
+        self._client_state = ClientStateStore.from_locator(storage)
 
         default_runtime = SessionRuntime(
             backend=self._backend,
@@ -216,6 +178,7 @@ class SessionOrchestrator:
             rpc_table=default_runtime.rpc_table,
             queue=default_runtime.queue,
             login=self._login,
+            extensions=self._extensions,
         )
         # Attach runtime ref so the dispatcher's auto-name spawner
         # can park tasks on the runtime instead of a module global.
@@ -237,198 +200,28 @@ class SessionOrchestrator:
         )
         return self._pool
 
-    async def attach_neo4j(self) -> Any | None:
-        """Wire the optional :class:`Neo4jRuntime` into the default
-        session's knowledge index.
-
-        No-op when :func:`knowledge_runtime_enabled` says no —
-        ``knowledge.enabled`` in config, with ``IGNI_NEO4J_RUNTIME``
-        as a process-level override. It used to be the env var alone,
-        which meant the config setting the rest of the codebase reads
-        was overridden here by a switch a desktop user could not set
-        at all; see :mod:`ember_code.backend.knowledge_gate`.
-
-        When enabled, builds a :class:`Neo4jRuntime` (one per BE —
-        the runtime is refcounted across sessions via the
-        per-(project, commit) subprocess map) and calls
-        :meth:`Session.attach_knowledge_neo4j` to swap the
-        default session's knowledge backend. Returns the runtime
-        for tests + the supervisor; ``None`` when skipped.
-
-        **Slow on a cold machine.** The attach downloads Neo4j and a
-        JDK (~500 MB combined) and waits for the bolt port, so callers
-        on the boot path must not await this — see
-        :meth:`attach_neo4j_in_background`.
-
-        Idempotent — a second call is a no-op (the runtime
-        itself is cached on ``self._neo4j_runtime``).
-        """
-        if not _neo4j_runtime_wanted(self._settings):
-            return None
-        if self._neo4j_runtime is not None:
-            return self._neo4j_runtime
-        from ember_code.backend.neo4j_runtime import Neo4jRuntime
-
-        # Missing Java, a full disk, a blocked download. The BE still boots and
-        # the user can still work — with no index, not with a fallback: the
-        # Chroma-backed path went away when the index moved to Neo4j.
-        try:
-            runtime = Neo4jRuntime(data_dir=self._settings.storage.data_dir)
-        except Exception:
-            logger.exception("neo4j: runtime construction failed — continuing without an index")
-            return None
-        self._neo4j_runtime = runtime
-        # ``self._backend`` is a :class:`BackendServer`; the session
-        # is reachable via the bootstrap. Both attach calls are
-        # safe when the field is missing or the session was built
-        # with the relevant feature disabled.
-        await self._attach_neo4j_to(getattr(self._backend, "_session", None))
-        return runtime
-
-    def attach_neo4j_in_background(self) -> asyncio.Task | None:
-        """Start :meth:`attach_neo4j` without holding up the caller.
-
-        Boot used to await the attach directly. That was survivable
-        only because the env gate meant it never ran: with config as
-        the switch and ``knowledge.enabled`` defaulting to true, the
-        first launch on a cold machine would have sat on the loading
-        screen for a ~500 MB download before the backend reported
-        ready — and reported nothing at all if the download failed.
-
-        Readiness and knowledge are now separate: the BE comes up
-        immediately, and the panel reports ``preparing`` (see
-        :attr:`Session.knowledge_preparing`) until this finishes.
-
-        Returns the task so callers can await it in tests and cancel
-        it on shutdown; ``None`` when knowledge is disabled, so the
-        caller can tell "not running" from "running".
-        """
-        session = getattr(self._backend, "_session", None)
-        # Two questions, and conflating them is what made the knowledge panel
-        # lie. What the KNOWLEDGE subsystem reports depends on
-        # ``knowledge.enabled`` alone — "disabled" and "broken" are the two
-        # states this panel used to run together, and a user who switched
-        # knowledge off should not see "preparing" forever because CodeIndex
-        # happens to want the same sidecar.
-        if not knowledge_runtime_enabled(self._settings):
-            _record(
-                session,
-                SubsystemState.DISABLED,
-                reason="knowledge.enabled is false in config",
-                fix=f"Set knowledge.enabled to true in {DEFAULT_DATA_DIR}/config.yaml and reopen the app.",
-            )
-        else:
-            _record(
-                session,
-                SubsystemState.PREPARING,
-                reason="starting the local database (one-time ~500 MB download on first run)",
-            )
-
-        # Whether the sidecar STARTS is the other question, and CodeIndex gets
-        # a vote: gating it on knowledge alone left ``codeindex_cypher``
-        # answering ``no_backend`` for a feature the user had switched on.
-        if not _neo4j_runtime_wanted(self._settings):
-            return None
-
-        async def _run() -> None:
-            try:
-                await self.attach_neo4j()
-            except Exception as exc:  # noqa: BLE001 — boot must survive
-                # ``attach_neo4j`` records per-session failures itself;
-                # this catches the ones before it gets that far (the
-                # runtime constructor, the download, a cancelled task
-                # on shutdown) which would otherwise surface only as
-                # "Task exception was never retrieved" on stderr.
-                logger.exception("knowledge: background attach failed")
-                _record(
-                    session,
-                    SubsystemState.FAILED,
-                    reason=str(exc) or exc.__class__.__name__,
-                    fix=_KNOWLEDGE_FIX,
-                    only_if_preparing=True,
-                )
-            else:
-                # Same guard the failure path already uses. The sidecar also
-                # starts for CodeIndex, so this runs with knowledge DISABLED
-                # too — and reporting it READY would tell the panel a feature
-                # the user switched off is switched on.
-                _record(session, SubsystemState.READY, only_if_preparing=True)
-
-        task = asyncio.create_task(_run(), name="knowledge-attach")
-        self._neo4j_attach_task = task
-        return task
-
-    async def _attach_neo4j_to(self, session: Any) -> None:
-        """Give one session the neo4j-backed indexes.
-
-        Called for the boot session by :meth:`attach_neo4j` and for
-        every other session by :meth:`_create_runtime`. It has to be
-        both: the boot session is the only one the BE makes for itself,
-        and every session the user actually opens comes from the
-        factory. Attaching only the first one left the rest with no
-        index at all, which reads as "Knowledge base failed to
-        initialize" in the panel — for what is otherwise a perfectly
-        healthy session.
-
-        Knowledge is gated on the setting rather than on an index
-        already being present. That used to be the check, back when the
-        constructor installed a chroma index and this only had to swap
-        the backend for it. Removing that fallback made
-        ``Session.knowledge`` ``None`` until precisely this call
-        installs it, so "attach only if an index exists" could never
-        fire.
-
-        ``code_index`` keeps its ``is not None`` check, because its
-        constructor really does build one eagerly (``core.py``
-        ``self.code_index = CodeIndex(...)``) — there the guard still
-        means what it says.
-        """
-        runtime = self._neo4j_runtime
-        if runtime is None or session is None:
-            # Say which. A silent return here is indistinguishable from
-            # an attach that ran and failed, and both look identical
-            # from the panel: no index. That ambiguity cost a debugging
-            # session.
-            logger.debug(
-                "knowledge: skipping neo4j attach (runtime=%s session=%s)",
-                "present" if runtime is not None else "absent",
-                "present" if session is not None else "absent",
-            )
-            return
-        if getattr(self._settings.knowledge, "enabled", True):
-            # A knowledge backend that will not come up must not take
-            # the whole BE with it. This is awaited from ``BackendApp.run``
-            # during boot, so an exception here is the difference
-            # between "no knowledge panel" and "no backend at all" —
-            # and it is reachable for ordinary reasons: the runtime
-            # downloads and spawns a Neo4j process on first use.
-            #
-            # The reason is recorded where the panel already looks for
-            # it (``Session.knowledge_error``, read by
-            # ``cmd_knowledge.panel``), so the failure arrives as a
-            # sentence rather than as an empty panel.
-            try:
-                await session.attach_knowledge_neo4j(runtime)
-            except Exception as exc:  # noqa: BLE001 — see above
-                _record(
-                    session,
-                    SubsystemState.FAILED,
-                    reason=str(exc) or exc.__class__.__name__,
-                    fix=_KNOWLEDGE_FIX,
-                )
-                logger.exception("knowledge: neo4j attach failed; continuing without it")
-            else:
-                _record(session, SubsystemState.READY)
-        if (
-            _codeindex_wants_neo4j(self._settings)
-            and getattr(session, "code_index", None) is not None
-        ):
-            await session.attach_codeindex_neo4j(runtime)
+    @property
+    def client_state(self) -> ClientStateStore:
+        """The store every window's lasting model fields are kept in."""
+        assert self._client_state is not None, "setup_pool must be called first"
+        return self._client_state
 
     @property
     def pool(self) -> SessionPool:
         assert self._pool is not None, "setup_pool must be called first"
         return self._pool
+
+    def refresh_agents(self) -> None:
+        """Rebuild every live session's agents.
+
+        What extensions do to the prompts and agents changed; a session
+        built before it would otherwise keep the old ones until
+        something else rebuilt it.
+        """
+        if self._pool is None:
+            return
+        for rt in self._pool.runtimes:
+            rt.backend.reload_agents()
 
     # ── Runtime factory ──────────────────────────────────────────
 
@@ -458,24 +251,13 @@ class SessionOrchestrator:
             additional_dirs=self._additional_dirs,
         )
         await rt_backend.startup()
-        # Background services the boot runtime gets in
-        # BackendApp.run — without these, a session locked to
-        # another repo has no knowledge load and no codeindex
-        # sync/watch for it (degraded vs "the TUI opened in that
-        # repo").
-        rt_backend.start_all_background_services()
-        # The neo4j indexes are part of that same "what the boot
-        # runtime gets" list, and were missing from it. ``attach_neo4j``
-        # is idempotent and caches the runtime, so this builds it once
-        # for the whole BE and is a cheap no-op afterwards; it returns
-        # ``None`` when the opt-in is unset, and then the attach below
-        # does nothing.
-        await self.attach_neo4j()
-        await self._attach_neo4j_to(getattr(rt_backend, "_session", None))
-        rt_queue: list[str] = []
+        rt_queue = rt_backend.message_queue
         rt_backend.wire_queue_hook(rt_queue)
         stamped = SessionStampingTransport(self._transport, rt_backend)
-        rt_bridge = self._push_bridge.for_transport(stamped)
+        # The runtime's own queue, not the boot bridge's — anything a
+        # bridge appends is injected as a synthetic user message in
+        # the session it belongs to.
+        rt_bridge = self._push_bridge.for_transport(stamped, queue=rt_queue)
         # Per-runtime RPC router. Login is anchored to the boot
         # bridge (there is one login flow per BE process), but the
         # rest of the router hangs off this runtime's backend +
@@ -485,6 +267,9 @@ class SessionOrchestrator:
             transport=stamped,
             login=self._login,
             push=rt_bridge,
+            extensions=self._extensions,
+            origins=self._origins,
+            notifications=self._notifications,
         )
         rt_table = rt_router.build_table()
         self._dir_registry.set_dir(rt_backend.session_id, rt_backend.project_dir)
@@ -503,21 +288,20 @@ class SessionOrchestrator:
 
     # ── Pool-level RPCs ──────────────────────────────────────────
 
-    async def _handle_attach_session(self, message: Any) -> None:
-        """Bind/create a session, optionally in a specific project
-        directory. Returns ``{session_id, project_dir}`` so the
-        view can adopt the binding."""
+    async def attach(self, session_id: str, project_dir: str | None) -> AttachSessionResult:
+        """Bind/create a session, optionally in a specific project directory.
+
+        The check a window's attach passes, in one place, so that the
+        host model's ``host.sessions`` is refused exactly where a window
+        would be. Raises :class:`ValueError` with the reason.
+        """
         assert self._dir_registry is not None
-        args = message.args or {}
-        session_id = str(args.get("session_id") or "")
-        wanted_dir = str(args.get("project_dir") or "")
+        session_id = str(session_id or "")
+        wanted_dir = str(project_dir or "")
         if wanted_dir:
             wd = Path(wanted_dir).expanduser()
             if not wd.is_dir():
-                await self._transport.send(
-                    msg.RPCResponse(id=message.id or "", error=f"not a directory: {wanted_dir}")
-                )
-                return
+                raise ValueError(f"not a directory: {wanted_dir}")
             if not session_id:
                 session_id = str(uuid.uuid4())[:8]
             # Register BEFORE creation so the factory picks the
@@ -535,60 +319,281 @@ class SessionOrchestrator:
             # wrong project.
             existing_dir = self._dir_registry.get_dir(session_id)
             if existing_dir and Path(existing_dir).resolve() != self._project_dir.resolve():
-                await self._transport.send(
-                    msg.RPCResponse(
-                        id=message.id or "",
-                        error=(
-                            f"session {session_id} belongs to a different "
-                            f"project ({existing_dir}); this backend is "
-                            f"bound to {self._project_dir}"
-                        ),
-                    )
+                raise ValueError(
+                    f"session {session_id} belongs to a different "
+                    f"project ({existing_dir}); this backend is "
+                    f"bound to {self._project_dir}"
                 )
-                return
         if not session_id:
             session_id = str(uuid.uuid4())[:8]
         assert self._pool is not None
         rt = await self._pool.get_or_create(session_id)
-        result = AttachSessionResult(
+        # Attaching is not looking: a window says which session it
+        # shows by writing its model's ``session``, and that write is
+        # ``sessions.current_changed`` — once, since writing the same
+        # session again on a reload changes nothing.
+        return AttachSessionResult(
             session_id=rt.backend.session_id,
             project_dir=str(rt.backend.project_dir),
         )
-        await self._transport.send(msg.RPCResponse(id=message.id or "", result=result.model_dump()))
 
-    async def _handle_client_state_rpc(self, message: Any) -> None:
-        """Read/write per-client UI state. Not tied to any session
-        — clients only need a stable ``client_id`` to round-trip
-        their preferences."""
-        assert self._client_state is not None
+    async def _handle_attach_session(self, message: Any) -> None:
+        """``attach_session`` from a window: :meth:`attach`, answered.
+
+        Returns ``{session_id, project_dir}`` so the view can adopt the
+        binding."""
         args = message.args or {}
-        client_id = str(args.get("client_id") or "").strip()
-        method = message.method
         try:
-            if method == RpcMethod.GET_CLIENT_STATE:
-                snapshot = self._client_state.get_for_client(client_id)
-                payload: dict[str, Any] = GetClientStateResult(state=snapshot).model_dump()["state"]
-                await self._transport.send(msg.RPCResponse(id=message.id or "", result=payload))
-                return
-            if method == RpcMethod.SET_CLIENT_STATE:
-                self._client_state.set_value(
-                    client_id, str(args.get("key") or ""), str(args.get("value") or "")
-                )
-            else:  # DELETE_CLIENT_STATE
-                self._client_state.delete_value(client_id, str(args.get("key") or ""))
-            ack = WriteClientStateResult(ok=True).model_dump()
-            await self._transport.send(msg.RPCResponse(id=message.id or "", result=ack))
-        except Exception as exc:
-            await self._transport.send(
-                msg.RPCResponse(id=message.id or "", error=f"client_state: {exc}")
+            result = await self.attach(
+                str(args.get("session_id") or ""), str(args.get("project_dir") or "")
             )
+        except ValueError as exc:
+            await self._transport.send(msg.RPCResponse(id=message.id or "", error=str(exc)))
+            return
+        await self._transport.send(msg.RPCResponse(id=message.id or "", result=result.model_dump()))
+        await self._show_waiting_approvals(result.session_id)
+
+    async def _show_waiting_approvals(self, session_id: str) -> None:
+        """Show an attaching window the session's approvals still waiting.
+
+        After a reload the window has lost its dialog; after a backend
+        restart the approvals were read back from the database. Either
+        way the person sees the question again, and answering it
+        resumes the run.
+        """
+        assert self._pool is not None
+        rt = await self._pool.get_or_create(session_id)
+        for paused in rt.backend.hitl.waiting_messages():
+            await rt.transport.send(paused)
+        # What the previous backend was continuing when it died goes on
+        # now, where a window can see it.
+        async for proto in rt.backend.hitl.resume_interrupted():
+            await rt.transport.send(proto)
+
+    async def _handle_window_model(self, message: Any) -> None:
+        """``window_model``: a window reading or writing its own model.
+
+        Not tied to any session — a window spans them. The host model
+        owns every window's model (:class:`~ember_code.extensions.host.
+        windows.Windows`); this only carries the request there and the
+        answer back. A refused write is an RPC error, so the window
+        drops its optimistic copy and shows the model's.
+        """
+        if self._host_model is None:
+            await self._transport.send(
+                msg.RPCResponse(id=message.id or "", error="window_model: no host model")
+            )
+            return
+        try:
+            request = WindowRequest.model_validate(dict(message.args or {}))
+            result = self._host_model.handle_window(request)
+        except (ValidationError, WindowModelError) as exc:
+            await self._transport.send(
+                msg.RPCResponse(id=message.id or "", error=f"window_model: {exc}")
+            )
+            return
+        await self._transport.send(msg.RPCResponse(id=message.id or "", result=result))
+
+    async def _handle_host_model(self, message: Any) -> None:
+        """``host_model``: an extension's page reaching the host object model.
+
+        The bridge forwards ``bridge.host.…`` here with the frame's
+        extension as ``caller`` — set by the host side of the bridge,
+        never by the frame. The answer is the model's reply, success or
+        refusal, as the result: the bridge needs the refusal's code,
+        which an RPC error string would lose.
+        """
+        caller = getattr(message, "caller", None)
+        if self._host_model is None or not caller:
+            await self._transport.send(
+                msg.RPCResponse(
+                    id=message.id or "",
+                    error="host_model: only an extension's page reaches the host model",
+                )
+            )
+            return
+        reply = await self._host_model.handle_page(caller, dict(message.args or {}))
+        await self._transport.send(msg.RPCResponse(id=message.id or "", result=reply))
+
+    async def _handle_service_token(self, message: Any) -> None:
+        """``extension_service_token``: a page's token for its own service.
+
+        ``bridge.service`` asks; igni's window forwards it with the
+        frame's extension as ``caller``. Answered with ``{ok,
+        access_token, expires_in, service_url}`` or ``{ok: false,
+        error}`` as the result — a page treats "nobody is signed in"
+        as a state, not a broken call. The audience is that
+        extension's own service and nothing it asked for.
+        """
+        caller = getattr(message, "caller", None)
+        tokens = self._page_tokens
+        if tokens is None or not caller:
+            await self._transport.send(
+                msg.RPCResponse(
+                    id=message.id or "",
+                    error="extension_service_token: only an extension's page asks for one",
+                )
+            )
+            return
+        try:
+            reply = await tokens.for_page(caller)
+        except (NoService, NotSignedIn, TokenExchangeFailed) as exc:
+            await self._transport.send(
+                msg.RPCResponse(
+                    id=message.id or "",
+                    result=PageTokenReply(ok=False, error=str(exc)).model_dump(),
+                )
+            )
+            return
+        await self._transport.send(
+            msg.RPCResponse(
+                id=message.id or "",
+                result=PageTokenReply(ok=True, **reply.model_dump()).model_dump(),
+            )
+        )
+
+    #: Calls only the platform makes: a layer may take them from its control
+    #: connection alone (``Layer.platform_calls_need_control``).
+    PLATFORM_RPCS: frozenset[str] = frozenset(
+        {RpcMethod.DELIVER_SERVICE_EVENTS, RpcMethod.VM_SIGN_IN}
+    )
+
+    @staticmethod
+    def _from_platform(message: Any) -> bool:
+        if not Layers.current().platform_calls_need_control():
+            return True
+        return bool(getattr(message, "via_control", False))
+
+    def attach_vm_sign_in(self, sign_in: VmSignIn | None) -> None:
+        """Who takes ``vm_sign_in``: the VM's credential keeper, in the cloud."""
+        self._vm_sign_in = sign_in
+
+    async def _handle_vm_sign_in(self, message: Any) -> None:
+        """``vm_sign_in``: ``{session_token, organisation?}`` → the credential's state."""
+        args = message.args or {}
+        sign_in = self._vm_sign_in
+        token = args.get("session_token")
+        if sign_in is None or not isinstance(token, str) or not token:
+            await self._transport.send(
+                msg.RPCResponse(
+                    id=message.id or "",
+                    error="vm_sign_in: a producer's VM takes the person's session_token",
+                )
+            )
+            return
+        organisation = args.get("organisation")
+        change = await sign_in(token, organisation if isinstance(organisation, str) else None)
+        await self._transport.send(
+            msg.RPCResponse(id=message.id or "", result=change.model_dump(mode="json"))
+        )
+
+    def attach_event_inbox(self, inbox: ServiceEventInbox | None) -> None:
+        """Where the platform's ``deliver_service_events`` go."""
+        self._event_inbox = inbox
+
+    async def _handle_service_events(self, message: Any) -> None:
+        """``deliver_service_events``: ``{events: [...]}`` → which to acknowledge."""
+        inbox = self._event_inbox
+        if inbox is None:
+            await self._transport.send(
+                msg.RPCResponse(id=message.id or "", error="this igni takes no events")
+            )
+            return
+        try:
+            events = [
+                ServiceEvent.model_validate(e) for e in (message.args or {}).get("events", [])
+            ]
+        except ValidationError as exc:
+            await self._transport.send(
+                msg.RPCResponse(id=message.id or "", error=f"not events: {exc}")
+            )
+            return
+        receipt = await inbox.deliver(events)
+        await self._transport.send(
+            msg.RPCResponse(
+                id=message.id or "",
+                result={**receipt.model_dump(mode="json"), "acknowledge": receipt.acknowledge},
+            )
+        )
+
+    def attach_page_tokens(self, tokens: PageServiceTokens | None) -> None:
+        """Where an extension page's ``bridge.service`` token comes from."""
+        self._page_tokens = tokens
+
+    # ── Serving the host object model ────────────────────────────
+
+    def attach_host_model(self, host_model: Any) -> None:
+        """The :class:`~ember_code.extensions.host.model.HostModel` to tell
+        about windows and to answer ``host_model`` with."""
+        self._host_model = host_model
+
+    def watch_inbound(self, watcher: Any) -> None:
+        """Be shown every message a window sends that a runtime handles."""
+        self._inbound_watchers.append(watcher)
+
+    def _start_dispatch(self, work: Any) -> asyncio.Future[Any]:
+        """A message's handling, in the background.
+
+        Not a busy lease of its own: a message that starts a run is the
+        session's to account for — running, or waiting on a person, which
+        must not count as busy — and anything else it does is short.
+        """
+        task = background.daemon(work, name="dispatch")
+        self._in_flight.add(task)
+        task.add_done_callback(self._in_flight.discard)
+        return task
+
+    def spawn_dispatch(self, message: Any) -> asyncio.Task:
+        """Dispatch a message as a window's would be, in the background."""
+        task = self._start_dispatch(self.dispatch(message))
+        return task
+
+    async def post_from_extension(
+        self,
+        *,
+        session_id: str,
+        extension_id: str,
+        text: str,
+        media: dict[str, str] | None,
+        queued: bool,
+        from_service: str = "",
+    ) -> None:
+        """A message in a session's chat, labelled as an extension's.
+
+        The agent answers it as it answers the person — the run streams
+        to every window — but nothing about it says the person wrote
+        it: every window labels it as the extension's, and the agent is
+        told who sent it. ``from_service`` marks one the extension's
+        service sent (``chat.message_added``'s ``from_service``).
+        """
+        assert self._pool is not None
+        rt = await self._pool.get_or_create(session_id)
+        dispatcher = self._dispatcher_for(rt)
+        if queued:
+            await dispatcher.queue_from_extension(extension_id, text, from_service)
+            return
+        self._start_dispatch(
+            dispatcher.post_from_extension(extension_id, text, media or {}, from_service)
+        )
+
+    def _dispatcher_for(self, rt: SessionRuntime) -> MessageDispatcher:
+        if rt is self._default_runtime and self._default_dispatcher is not None:
+            return self._default_dispatcher
+        return MessageDispatcher(
+            backend=rt.backend,
+            transport=rt.transport,
+            rpc_table=rt.rpc_table,
+            queue=rt.queue,
+            login=self._login,
+            extensions=self._extensions,
+        )
 
     # ── Message fan-out ──────────────────────────────────────────
 
     async def dispatch(self, message: Any) -> None:
         """Route one message to the right runtime + handler.
 
-        Pool-level RPCs (``attach_session``, ``{get,set,delete}_client_state``)
+        Pool-level RPCs (``attach_session``, ``host_model``, ``window_model``)
         bypass per-runtime routing; ``SessionList`` is forced onto
         the default runtime (see the long-form justification in the
         original ``__main__._dispatch``); everything else routes by
@@ -600,9 +605,26 @@ class SessionOrchestrator:
             if isinstance(message, msg.RPCRequest) and message.method in POOL_LEVEL_RPCS:
                 if message.method == RpcMethod.ATTACH_SESSION:
                     await self._handle_attach_session(message)
+                elif message.method == RpcMethod.HOST_MODEL:
+                    await self._handle_host_model(message)
+                elif message.method == RpcMethod.EXTENSION_SERVICE_TOKEN:
+                    await self._handle_service_token(message)
+                elif message.method in self.PLATFORM_RPCS and not self._from_platform(message):
+                    await self._transport.send(
+                        msg.RPCResponse(
+                            id=message.id or "",
+                            error=f"{message.method}: only on the platform's control connection",
+                        )
+                    )
+                elif message.method == RpcMethod.DELIVER_SERVICE_EVENTS:
+                    await self._handle_service_events(message)
+                elif message.method == RpcMethod.VM_SIGN_IN:
+                    await self._handle_vm_sign_in(message)
                 else:
-                    await self._handle_client_state_rpc(message)
+                    await self._handle_window_model(message)
                 return
+            for watcher in self._inbound_watchers:
+                watcher(message)
             # ``SessionList`` is a project-scoped query — force it
             # onto the boot runtime.
             if isinstance(message, msg.SessionList):
@@ -633,17 +655,7 @@ class SessionOrchestrator:
     async def _dispatch_to_runtime(self, rt: SessionRuntime, message: Any) -> None:
         # Default runtime already has a dispatcher; other runtimes
         # get a fresh one per call (cheap — no state carried over).
-        if rt is self._default_runtime:
-            await self._default_dispatcher.dispatch(message)
-            return
-        dispatcher = MessageDispatcher(
-            backend=rt.backend,
-            transport=rt.transport,
-            rpc_table=rt.rpc_table,
-            queue=rt.queue,
-            login=self._login,
-        )
-        await dispatcher.dispatch(message)
+        await self._dispatcher_for(rt).dispatch(message)
 
     # ── Serve loop ───────────────────────────────────────────────
 
@@ -657,19 +669,7 @@ class SessionOrchestrator:
                 break
             if shutdown_event.is_set():
                 break
-            task = asyncio.create_task(self.dispatch(message))
-            self._in_flight.add(task)
-            task.add_done_callback(self._in_flight.discard)
-
-        # Cancel rather than drain: the knowledge attach can be
-        # minutes into a download, and nothing about it is worth
-        # making the user wait on the way out. Deliberately not a
-        # member of ``_in_flight`` for that reason — the gather below
-        # would block on it.
-        if self._neo4j_attach_task is not None and not self._neo4j_attach_task.done():
-            self._neo4j_attach_task.cancel()
-            with contextlib.suppress(asyncio.CancelledError):
-                await self._neo4j_attach_task
+            self._start_dispatch(self.dispatch(message))
 
         # Drain in-flight tasks before shutting down so we don't
         # drop mid-stream messages on graceful exit.

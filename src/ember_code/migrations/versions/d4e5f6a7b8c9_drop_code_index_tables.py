@@ -8,15 +8,7 @@ The code_index tables (``code_index_file_reference`` and
 ``code_index_commit_metadata``) moved to Neo4j in v0.10. Alembic
 drops them on upgrade so the schema history reflects reality.
 
-The cutover script (:mod:`ember_code.core.code_index.cutover`)
-runs at BE startup (``backend/app.py:BackendApp.run``). It
-performs the file-system side of the cutover (wipes the
-per-commit ``<sha>.chroma/`` dirs, the ``knowledge.chroma`` dir,
-and the legacy ``manifest.json``) and writes a sentinel at
-``<data>/neo4j/state/<project_id>/.migrated`` so the next
-startup is a no-op. It also re-runs the same
-``DROP TABLE IF EXISTS`` Alembic does — both paths are safe
-to run together.
+The code index itself has since left igni for the CodeIndex extension.
 
 Other tables in ``state.db`` (agno memory, loop, scheduler,
 process store, session prefs) are unaffected.

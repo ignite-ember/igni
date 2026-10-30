@@ -1,0 +1,1039 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://igni.sh/schema/extension-manifest-1.json",
+  "title": "igni extension manifest",
+  "description": "Everything an extension declares about itself. One manifest per extension; packaging decides which of `sidecar` and `endpoint` applies. The contract this describes is docs/EXTENSIBILITY.md — read §2 for the reasoning and this file for the shape. Point your editor at it with \"$schema\": \"https://igni.sh/schema/extension-manifest-1.json\" and it will complete and check as you type.",
+  "type": "object",
+  "required": [
+    "id",
+    "version",
+    "contract",
+    "trust"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "$schema": {
+      "type": "string"
+    },
+    "id": {
+      "type": "string",
+      "description": "Reverse-DNS, immutable, and the namespace for everything this extension contributes. Changing it is a new extension, not a new version.",
+      "pattern": "^[a-z][a-z0-9]*(\\.[a-z][a-z0-9-]*)+$",
+      "examples": [
+        "acme.scanner",
+        "com.acme.ledgersync"
+      ]
+    },
+    "version": {
+      "type": "string",
+      "description": "The extension's own version. Semver. Independent of the contract version and of igni's.",
+      "pattern": "^\\d+\\.\\d+\\.\\d+(-[0-9A-Za-z.-]+)?$"
+    },
+    "contract": {
+      "type": "string",
+      "description": "The range of contract versions this extension works against — the only compatibility axis. Never name an igni version. A deployment advertises one contract version, the lower of what its backend and its installed client implement; `igni ext doctor` prints it.",
+      "examples": [
+        ">=1.0 <2"
+      ]
+    },
+    "name": {
+      "type": "string",
+      "description": "What an administrator sees in an install list. Defaults to `id` when absent, which reads badly.",
+      "maxLength": 60
+    },
+    "description": {
+      "type": "string",
+      "description": "One sentence, for the same install list.",
+      "maxLength": 200
+    },
+    "vendor": {
+      "type": "string",
+      "description": "Who to contact. Shown beside the trust tier, because 'partner' only means something if the administrator knows which partner."
+    },
+    "trust": {
+      "enum": [
+        "first-party",
+        "partner",
+        "unsigned"
+      ],
+      "description": "Who the author says this is from — a label an administrator reads, not what makes it trusted. A bundle is trusted because igni server distributed it and its signature verifies against the key of the service a super admin approved (service-identity §8), whatever this label says; anything installed another way is a development install and needs IGNI_DEV_EXTENSIONS. The one rule on it: `dev` packaging requires `unsigned`."
+    },
+    "sidecar": {
+      "type": "object",
+      "description": "Packaging A: a signed image igni installs and supervises. Single-user backends only — a sidecar is one process, so on a shared backend it would be one instance shared by every principal on it.",
+      "required": [
+        "image",
+        "mcp"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "image": {
+          "type": "string",
+          "description": "The container image, with a tag. Present in the bundle; never pulled at install, because an air-gapped deployment has no registry to pull from.",
+          "examples": [
+            "acme__ledger-sync:1.0.0"
+          ]
+        },
+        "mcp": {
+          "type": "object",
+          "required": [
+            "transport"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "transport": {
+              "enum": [
+                "stdio"
+              ],
+              "description": "A sidecar speaks MCP over stdio. An endpoint speaks it over SSE; that is the difference between the two packagings, not a choice you make here."
+            }
+          }
+        }
+      }
+    },
+    "endpoint": {
+      "type": "object",
+      "description": "Packaging B: a service someone else runs, registered rather than installed. Its availability, scaling and failover are its own. Always inside the customer's network — igni hosts nothing.",
+      "required": [
+        "url"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "url": {
+          "type": "string",
+          "format": "uri",
+          "description": "Where its MCP endpoint answers, over SSE.",
+          "examples": [
+            "https://artifacts.internal/mcp"
+          ]
+        },
+        "auth": {
+          "type": "object",
+          "description": "How igni authenticates to it.",
+          "required": [
+            "kind"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "enum": [
+                "none",
+                "bearer",
+                "mtls"
+              ],
+              "description": "none is only defensible on a network segment the customer treats as trusted."
+            },
+            "secret": {
+              "type": "string",
+              "description": "The name of a secret grant that resolves to the credential. A name, never the credential itself."
+            }
+          }
+        }
+      }
+    },
+    "python": {
+      "type": "object",
+      "description": "Packaging D: a Python package igni installs into a private environment and starts here, speaking MCP over stdio. How a service ships its extension (service-identity §8). The bundle carries the package and every dependency as wheels (cp312 or pure-Python, for each platform igni runs on), and igni installs from that wheelhouse only — never an index, because an air-gapped deployment has none. A development install of a source checkout with no wheelhouse builds the package from the directory instead.",
+      "required": [
+        "package",
+        "entry",
+        "mcp"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "package": {
+          "type": "string",
+          "minLength": 1,
+          "description": "The distribution to install, as pip names it.",
+          "examples": [
+            "igni_artifacts_extension"
+          ]
+        },
+        "entry": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Its console script — what igni runs.",
+          "examples": [
+            "igni-artifacts-extension"
+          ]
+        },
+        "wheels": {
+          "type": "string",
+          "default": "wheels",
+          "description": "The wheelhouse, a directory inside the bundle."
+        },
+        "mcp": {
+          "type": "object",
+          "required": [
+            "transport"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "transport": {
+              "enum": [
+                "stdio"
+              ],
+              "description": "The package speaks MCP over stdio, as a dev command does."
+            }
+          }
+        }
+      }
+    },
+    "dev": {
+      "type": "object",
+      "description": "Packaging C: a command igni runs on this machine, speaking MCP over stdio. Development only, and the schema refuses it on anything but `trust: unsigned` — it is an arbitrary command out of a text file. It exists so an author can run an extension while writing it, before there is a service to ship it from.",
+      "required": [
+        "command"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "command": {
+          "type": "array",
+          "description": "argv, not a shell string. A shell string would be parsed by a shell, and the quoting rules of whichever shell that turns out to be are not a thing a manifest should depend on.",
+          "items": {
+            "type": "string"
+          },
+          "minItems": 1,
+          "examples": [
+            [
+              "node",
+              "./server.js"
+            ]
+          ]
+        },
+        "cwd": {
+          "type": "string",
+          "description": "Working directory, relative to the bundle. Defaults to the bundle root."
+        },
+        "env": {
+          "type": "object",
+          "description": "Extra environment for the command. Values are literals — a secret belongs in `permissions.secrets`, which resolves to a handle rather than putting the credential in a file somebody commits.",
+          "additionalProperties": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "permissions": {
+      "type": "object",
+      "description": "Declared here, granted by an administrator, enforced by the base, denied by default. An extension that asks for more on upgrade stays at its old grants until an administrator accepts — permission drift is how extension ecosystems rot.",
+      "additionalProperties": false,
+      "properties": {
+        "workspace": {
+          "enum": [
+            "none",
+            "read",
+            "write"
+          ],
+          "default": "none",
+          "description": "Access to the user's project directory."
+        },
+        "workspacePaths": {
+          "type": "array",
+          "description": "Globs the workspace grant is scoped to, relative to the project root. Absent means the whole project, which is rarely what you need.",
+          "items": {
+            "type": "string"
+          },
+          "examples": [
+            [
+              "src/**",
+              "*.toml"
+            ]
+          ]
+        },
+        "egress": {
+          "type": "array",
+          "description": "Hosts this extension may reach, as `host` or `host:port`. Empty by default, and empty is the right answer for most extensions. Undeclared egress is a contract violation rather than a bug: it is the one failure that costs a customer their accreditation.",
+          "items": {
+            "type": "string",
+            "pattern": "^[a-z0-9.-]+(:\\d{1,5})?$"
+          },
+          "default": [],
+          "examples": [
+            [
+              "ledger.internal",
+              "vault.internal:8200"
+            ]
+          ]
+        },
+        "secrets": {
+          "type": "array",
+          "description": "Named grants the deployment resolves. A name not declared here is never resolved, and the resolver is the deployment's — never anything the bundle supplies. The value reaches your service in its environment as `IGNI_SECRET_<NAME>`; an earlier version of this said you receive a handle rather than a value, which described an exchange step that does not exist. Never a token for your own service: igni fetches that for you by token exchange and serves it on a loopback endpoint named by IGNI_SERVICE_TOKEN_URL (service-identity §9), so your extension never holds the person's igni session.",
+          "items": {
+            "type": "string"
+          },
+          "default": []
+        },
+        "tools": {
+          "type": "array",
+          "description": "MCP tools this extension may register with the agent, each with all four of MCP's tool hints. Namespaced by `id`, so a tool cannot shadow a base tool or another extension's. igni's permission modes decide on the hints (plan mode runs read-only tools, Accept Edits runs contained writes, Bypass runs everything) — see docs/EXTENSIBILITY.md. The hints the server reports at runtime must match these; when they do not, these apply. This is about the *agent's* tools — see `rpc` for what the extension's own UI may call.",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "name",
+              "annotations"
+            ],
+            "properties": {
+              "name": {
+                "type": "string",
+                "minLength": 1,
+                "description": "The tool, namespaced by the extension's id: `acme.ledgersync.lookup_account`."
+              },
+              "annotations": {
+                "type": "object",
+                "description": "MCP's ToolAnnotations, every hint stated. A read-only tool cannot also be destructive.",
+                "additionalProperties": false,
+                "required": [
+                  "readOnlyHint",
+                  "destructiveHint",
+                  "idempotentHint",
+                  "openWorldHint"
+                ],
+                "properties": {
+                  "readOnlyHint": {
+                    "type": "boolean",
+                    "description": "It changes nothing anywhere."
+                  },
+                  "destructiveHint": {
+                    "type": "boolean",
+                    "description": "A change it makes can delete or overwrite something. false for a read-only tool."
+                  },
+                  "idempotentHint": {
+                    "type": "boolean",
+                    "description": "Calling it again with the same arguments changes nothing more."
+                  },
+                  "openWorldHint": {
+                    "type": "boolean",
+                    "description": "It reaches beyond its own system: the web, another service, somebody else's data."
+                  }
+                },
+                "not": {
+                  "properties": {
+                    "readOnlyHint": {
+                      "const": true
+                    },
+                    "destructiveHint": {
+                      "const": true
+                    }
+                  },
+                  "required": [
+                    "readOnlyHint",
+                    "destructiveHint"
+                  ]
+                }
+              }
+            }
+          },
+          "examples": [
+            [
+              {
+                "name": "acme.ledgersync.lookup_account",
+                "annotations": {
+                  "readOnlyHint": true,
+                  "destructiveHint": false,
+                  "idempotentHint": true,
+                  "openWorldHint": false
+                }
+              }
+            ]
+          ]
+        },
+        "host": {
+          "type": "array",
+          "description": "Objects of igni's host object model (docs/HOST_OBJECT_MODEL.md) this extension may reach — from its process through `ext.host` and from its page through `bridge.host`. One name per object: `app`, `ui`, `sessions`, `chat.read`, `chat.post`, `chat.append`, `chat.control`, `chat.approvals`, `commands`, `agents`, `workflows`, `scheduler`, `processes`, `models`, `mcp`, `plugins`, `extensions`, `hooks`, `permissions`, `policy`, `account`, `notifications` — or a `*`-suffixed prefix (`chat.*`). An object not granted does not exist for the extension: reads fail, methods are refused, and its signals never arrive. `host.workspace` is granted by `workspace` above, not here, and is limited to `workspacePaths`. Its own state (`host.app.state`), its own settings (`host.self`) and its own notifications need no grant. Shown to the super admin who approves the service, and by `igni ext install`.",
+          "items": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9_.]*\\*?$"
+          },
+          "default": [],
+          "examples": [
+            [
+              "sessions",
+              "chat.read",
+              "chat.post"
+            ],
+            [
+              "chat.*",
+              "ui"
+            ]
+          ]
+        },
+        "rpc": {
+          "type": "array",
+          "description": "Backend RPC methods this extension's UI may call over the bridge. Exact names, or a `*`-suffixed prefix — no other patterns, because this list is read by whoever approves the install. An extension's own service answers under `ext.<id>.*`; naming a base method here requests access to igni's own data.",
+          "items": {
+            "type": "string",
+            "pattern": "^[a-z0-9_.]+\\*?$"
+          },
+          "default": [],
+          "examples": [
+            [
+              "ext.acme.scanner.*",
+              "get_status"
+            ]
+          ]
+        },
+        "toolAudience": {
+          "enum": [
+            "all-agents",
+            "own-agents"
+          ],
+          "default": "all-agents",
+          "description": "Which agents may call your `tools`. `all-agents` is MCP's ordinary behaviour. `own-agents` offers them only to agents shipped by the plugin you carry (`contributes.plugin`) — for a capability whose tools must belong to one role, because a capability any agent can grant itself is no rule at all. igni checks it by where an agent's file lives, so it never needs to know your id or your agents' names. Needs `contributes.plugin`; without one there are no own agents and the tools reach nobody, which is refused at install."
+        },
+        "hooks": {
+          "type": "array",
+          "description": "igni's hook events the extension's process answers (igni's docs/HOOKS.md, *Extensions*). On `PreToolUse`, `PostToolUse`, `UserPromptSubmit`, `Stop` and `PlanSubmit` its answer decides: it lets the event go ahead, stops it with a reason, or changes it (the tool's arguments, the tool's result, the message, the plan); it is asked before igni's own configured hooks. Every other event is told, and nothing waits on it. If the process does not answer in time, a tool call (`PreToolUse`) or a message (`UserPromptSubmit`) does not go ahead and every other event does. Shown to the super admin who approves the service; approving it covers them. Several extensions hooking one event never collide: they are asked in the super admin's priority order of extensions, each handed what the one before left, and the first reject ends it. A page cannot answer a hook.",
+          "uniqueItems": true,
+          "items": {
+            "enum": [
+              "PreToolUse",
+              "PostToolUse",
+              "PostToolUseFailure",
+              "UserPromptSubmit",
+              "SessionStart",
+              "SessionEnd",
+              "Stop",
+              "SubagentStart",
+              "SubagentStop",
+              "Notification",
+              "PreCompact",
+              "PostCompact",
+              "InstructionsLoaded",
+              "TaskCreated",
+              "TaskCompleted",
+              "StopFailure",
+              "PermissionRequest",
+              "PermissionDenied",
+              "PlanSubmit"
+            ]
+          },
+          "examples": [
+            [
+              "PreToolUse",
+              "PlanSubmit"
+            ]
+          ]
+        },
+        "service": {
+          "type": "array",
+          "description": "What this extension's service may do towards the producer's agent beyond a plain event (docs/CLOUD.md §6.1): `messages` posts text the service wrote, as the extension's message; `attachments` sends files with an item; `chats` names threads (each opens a chat), opens chats and acts on them (show a view, rename, cancel a working run). Approving the service grants them, and igni server checks them on every item. Answering an approval is never among them.",
+          "items": {
+            "enum": [
+              "messages",
+              "attachments",
+              "chats"
+            ]
+          },
+          "default": [],
+          "examples": [
+            [
+              "messages",
+              "attachments",
+              "chats"
+            ]
+          ]
+        }
+      }
+    },
+    "assets": {
+      "type": "array",
+      "description": "What the extension runs that is not Python — a database, a JVM, a model — so a machine with no network installs it. igni provides none of them. Each is pinned by size and SHA-256; the manifest is inside the signed bundle, so the signature covers every asset through its digest. The bundle builder fetches each from `source` at build time and writes it beside the bundle; the service uploads it to igni server (service-identity §8.2); a machine downloads only its own platform's, checks it again, and lays it out read-only under `<bundle>/assets/<name>/`, which the process finds through `IGNI_EXTENSION_ASSETS`. A name is either one file for `any` platform, or one for each of `macos-arm64`, `linux-x86_64` and `windows-x86_64`.",
+      "items": {
+        "type": "object",
+        "required": [
+          "name",
+          "platform",
+          "file",
+          "size",
+          "sha256",
+          "source"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "name": {
+            "type": "string",
+            "pattern": "^[a-z0-9][a-z0-9-]{0,63}$",
+            "description": "The directory it is laid out in, `<bundle>/assets/<name>/`, on every platform."
+          },
+          "platform": {
+            "enum": [
+              "any",
+              "macos-arm64",
+              "linux-x86_64",
+              "windows-x86_64"
+            ],
+            "description": "Where it is for."
+          },
+          "file": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._+-]{0,199}$",
+            "description": "A plain file name, no directory."
+          },
+          "size": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 1073741824,
+            "description": "In bytes."
+          },
+          "sha256": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$",
+            "description": "Lower-case hex."
+          },
+          "source": {
+            "type": "string",
+            "pattern": "^https://[^\\s]+$",
+            "maxLength": 2000,
+            "description": "Where the bundle builder fetches it, at build time. A machine never does — except a development install, which has no igni server to ask."
+          },
+          "unpack": {
+            "type": "boolean",
+            "default": false,
+            "description": "Unpack a `.tar.gz`, `.tgz` or `.zip` into its directory, refusing any path or link that reaches outside it. Otherwise the file is laid out as it is."
+          }
+        }
+      },
+      "examples": [
+        [
+          {
+            "name": "model",
+            "platform": "any",
+            "file": "model.onnx",
+            "size": 90405214,
+            "sha256": "6fd5d72fe4589f189f8ebc006442dbb529bb7ce38f8082112682524616046452",
+            "source": "https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2/resolve/1110a243/onnx/model.onnx"
+          }
+        ]
+      ]
+    },
+    "contributes": {
+      "type": "object",
+      "description": "What this extension adds beyond tools. MCP carries tools; none of the below travels over it.",
+      "additionalProperties": false,
+      "properties": {
+        "pages": {
+          "type": "array",
+          "description": "Surfaces the extension renders, in its own frame. A headless extension contributes none, which is normal.",
+          "items": {
+            "type": "object",
+            "required": [
+              "kind",
+              "label"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "type": "string",
+                "description": "Namespaced by `id`. A collision with a base page or another extension's is a validation error at install, not a surprise at runtime.",
+                "pattern": "^[a-z][a-z0-9]*(\\.[a-z][a-z0-9-]*)+$"
+              },
+              "label": {
+                "type": "string",
+                "maxLength": 24
+              },
+              "sidebar": {
+                "type": "boolean",
+                "default": false,
+                "description": "Whether it also gets a left-sidebar link. igni's own links keep their order and come first."
+              },
+              "entry": {
+                "type": "string",
+                "default": "index.html",
+                "description": "The page igni frames, relative to the bundle's `ui/` directory."
+              }
+            }
+          }
+        },
+        "menu": {
+          "type": "array",
+          "description": "Entries in the header tools menu. Named `menu` rather than `tools`: `permissions.tools` already means MCP tool names, and one word meaning two things in one file is how a manifest gets written wrong.",
+          "items": {
+            "type": "object",
+            "required": [
+              "label",
+              "command",
+              "desc"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "label": {
+                "type": "string",
+                "maxLength": 24
+              },
+              "command": {
+                "type": "string",
+                "pattern": "^/[a-z][a-z0-9-]*$"
+              },
+              "desc": {
+                "type": "string",
+                "maxLength": 60
+              }
+            }
+          }
+        },
+        "indicators": {
+          "type": "array",
+          "description": "Small status chips in the host's own chrome, beside igni's. For a capability whose health the user needs at a glance without opening its page — an index that has gone stale is the case this exists for. Not a frame: a chip is twenty pixels and an iframe is not what twenty pixels costs. The host renders it; the extension decides what it says, because what `PREPARING` means for one capability is not what it means for another.",
+          "items": {
+            "type": "object",
+            "required": [
+              "id",
+              "label",
+              "source"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "id": {
+                "type": "string",
+                "description": "Namespaced by the extension id, like a page kind.",
+                "pattern": "^[a-z][a-z0-9]*(\\.[a-z][a-z0-9-]*)+$"
+              },
+              "label": {
+                "type": "string",
+                "description": "What it is, when the chip has room to say so.",
+                "maxLength": 24
+              },
+              "source": {
+                "type": "string",
+                "description": "An MCP tool the host calls for the current state. It answers `{ label, tone, detail }` — `tone` being one of the four the design system publishes, so a chip cannot invent a colour igni does not have. Polled, because the bridge has no push; keep it cheap."
+              },
+              "opens": {
+                "type": "string",
+                "description": "A page kind this extension contributes, opened when the chip is clicked. Omit for a chip that only reports."
+              },
+              "intervalSeconds": {
+                "type": "number",
+                "description": "How often to ask. Clamped by the host, which will not poll faster than it polls its own.",
+                "minimum": 1,
+                "default": 30
+              }
+            }
+          }
+        },
+        "commands": {
+          "type": "array",
+          "description": "Slash commands the extension answers.",
+          "items": {
+            "type": "object",
+            "required": [
+              "command",
+              "desc"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "command": {
+                "type": "string",
+                "pattern": "^/[a-z][a-z0-9-]*$"
+              },
+              "desc": {
+                "type": "string",
+                "maxLength": 60
+              }
+            }
+          }
+        },
+        "promptFragments": {
+          "type": "array",
+          "description": "Text this extension supplies at a named `{{ANCHOR}}` in a prompt it wrote — one of its plugin's agents, an override or an edit. Only one extension may fill an anchor: two that both do collide, and a super admin decides which wins.",
+          "items": {
+            "type": "object",
+            "required": [
+              "anchor",
+              "source"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "anchor": {
+                "type": "string",
+                "description": "Upper snake case, starting with a letter — the spelling `{{THIS}}` takes inside a prompt. Namespaced by convention: prefix it with your extension's short name.",
+                "pattern": "^[A-Z][A-Z0-9_]*$"
+              },
+              "source": {
+                "enum": [
+                  "tool",
+                  "file"
+                ],
+                "description": "Where the text comes from. `tool`: igni calls the named MCP tool and uses what it returns, so the text can change as the extension's data does. `file`: a static file in the bundle. Required, because a fragment that declares only an anchor has no text and nothing to substitute."
+              },
+              "from": {
+                "type": "string",
+                "description": "The tool name, or the bundle-relative file path, depending on `source`."
+              }
+            }
+          }
+        },
+        "prompt": {
+          "type": "object",
+          "additionalProperties": false,
+          "description": "What your extension does to the agent's prompts — and full control is allowed. Per prompt (`main`, `plan_mode`, any agent) you either **override** it, with a whole prompt of your own, or **edit** it: append a section, insert one before or after a named section, or replace a named section. An agent's YAML header is its `frontmatter` section. Edits from several extensions stack, in an order a super admin sets, and never collide. Two extensions replacing one section collide; so do two overriding one prompt, and an `exclusive` override with anyone's edit of the same prompt — a super admin picks the winner on igni server's Services page before the version is distributed. Another extension's override is the new starting point: your appends still land, and your inserts and replacements land where it has the section they name — where it does not, they are left out, and the Services page and the extensions panel say so.",
+          "properties": {
+            "overrides": {
+              "type": "array",
+              "description": "A whole prompt, written by you. It is made of named sections (`<!-- section:<name> -->` … `<!-- /section:<name> -->`), and `sections` lists them, so other extensions' edits can land on it and a super admin can see which would not. Your text may carry `{{PERSISTING}}`, `{{AGENT_CATALOG}}` and the host's conditionals, which work as they do in igni's own.",
+              "items": {
+                "type": "object",
+                "required": [
+                  "target",
+                  "sections",
+                  "source",
+                  "from"
+                ],
+                "additionalProperties": false,
+                "properties": {
+                  "target": {
+                    "type": "string",
+                    "pattern": "^(main|plan_mode|agent:[a-z0-9][a-z0-9_.:-]*)$",
+                    "description": "`main` (the main agent's system prompt), `plan_mode` (what it is told about plan mode), or an agent by the name igni knows it by — `agent:explorer`, a plugin's `agent:acme.notes:archivist`. igni's own, with their sections, are listed in igni's `docs/prompt-targets.json`.",
+                    "examples": [
+                      "main",
+                      "plan_mode",
+                      "agent:explorer"
+                    ]
+                  },
+                  "sections": {
+                    "type": "array",
+                    "minItems": 1,
+                    "items": {
+                      "type": "string",
+                      "pattern": "^[a-z][a-z0-9_]*$"
+                    },
+                    "description": "Its sections, in order. An agent's `frontmatter` is implied."
+                  },
+                  "exclusive": {
+                    "type": "boolean",
+                    "default": false,
+                    "description": "Take no other extension's edits. Anyone who edits this prompt then collides with you, and a super admin picks your override or their edits."
+                  },
+                  "source": {
+                    "enum": [
+                      "tool",
+                      "file"
+                    ],
+                    "description": "Where the text comes from. `tool`: igni calls the named MCP tool when the extension becomes ready, and again when the extension asks (`ext.prompt.refresh()`). `file`: a file in the bundle."
+                  },
+                  "from": {
+                    "type": "string",
+                    "minLength": 1,
+                    "description": "The tool name, or the bundle-relative file path, depending on `source`."
+                  },
+                  "when": {
+                    "type": "string",
+                    "pattern": "^[a-z][a-z0-9-]*$",
+                    "description": "A condition your extension reports, with `notifications/igni/conditions` (`ext.prompt.hold(...)` in igni-extension): this holds only while the condition does. Without one it holds whenever the extension is ready.",
+                    "examples": [
+                      "index-covers-head"
+                    ]
+                  }
+                }
+              }
+            },
+            "edits": {
+              "type": "array",
+              "description": "One change to a prompt: exactly one of `replace` (a section's text), `insert` (a new section, `before` or `after` another) or `append` (a new section at the end).",
+              "items": {
+                "type": "object",
+                "required": [
+                  "target",
+                  "source",
+                  "from"
+                ],
+                "additionalProperties": false,
+                "properties": {
+                  "target": {
+                    "type": "string",
+                    "pattern": "^(main|plan_mode|agent:[a-z0-9][a-z0-9_.:-]*)$",
+                    "description": "`main` (the main agent's system prompt), `plan_mode` (what it is told about plan mode), or an agent by the name igni knows it by — `agent:explorer`, a plugin's `agent:acme.notes:archivist`. igni's own, with their sections, are listed in igni's `docs/prompt-targets.json`.",
+                    "examples": [
+                      "main",
+                      "plan_mode",
+                      "agent:explorer"
+                    ]
+                  },
+                  "replace": {
+                    "type": "string",
+                    "pattern": "^[a-z][a-z0-9_]*$",
+                    "description": "The section whose text this replaces. Another extension replacing the same one collides with you."
+                  },
+                  "insert": {
+                    "type": "string",
+                    "pattern": "^[a-z][a-z0-9_]*$",
+                    "description": "The name of the new section this inserts, `before` or `after` a section of the prompt."
+                  },
+                  "before": {
+                    "type": "string",
+                    "pattern": "^[a-z][a-z0-9_]*$",
+                    "description": "Where an `insert` goes: right before this section."
+                  },
+                  "after": {
+                    "type": "string",
+                    "pattern": "^[a-z][a-z0-9_]*$",
+                    "description": "Where an `insert` goes: right after this section, and after anything already inserted there."
+                  },
+                  "append": {
+                    "type": "string",
+                    "pattern": "^[a-z][a-z0-9_]*$",
+                    "description": "The name of the new section this adds at the end."
+                  },
+                  "source": {
+                    "enum": [
+                      "tool",
+                      "file"
+                    ],
+                    "description": "Where the text comes from. `tool`: igni calls the named MCP tool when the extension becomes ready, and again when the extension asks (`ext.prompt.refresh()`). `file`: a file in the bundle."
+                  },
+                  "from": {
+                    "type": "string",
+                    "minLength": 1,
+                    "description": "The tool name, or the bundle-relative file path, depending on `source`."
+                  },
+                  "when": {
+                    "type": "string",
+                    "pattern": "^[a-z][a-z0-9-]*$",
+                    "description": "A condition your extension reports, with `notifications/igni/conditions` (`ext.prompt.hold(...)` in igni-extension): this holds only while the condition does. Without one it holds whenever the extension is ready.",
+                    "examples": [
+                      "index-covers-head"
+                    ]
+                  }
+                },
+                "oneOf": [
+                  {
+                    "required": [
+                      "replace"
+                    ]
+                  },
+                  {
+                    "required": [
+                      "insert"
+                    ]
+                  },
+                  {
+                    "required": [
+                      "append"
+                    ]
+                  }
+                ]
+              }
+            }
+          }
+        },
+        "settings": {
+          "type": "array",
+          "description": "Configuration the host renders into its own settings surface. Values are stored per deployment and reach the extension through its launch params.",
+          "items": {
+            "type": "object",
+            "required": [
+              "key",
+              "type",
+              "label"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "key": {
+                "type": "string",
+                "pattern": "^[a-z][a-zA-Z0-9_]*$"
+              },
+              "type": {
+                "enum": [
+                  "string",
+                  "number",
+                  "boolean",
+                  "enum"
+                ]
+              },
+              "label": {
+                "type": "string"
+              },
+              "default": {},
+              "options": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "minItems": 1,
+                "description": "The choices, when `type` is `enum`. Required in that case and refused otherwise — this was prose for a while, which meant an enum setting with nothing to choose from validated cleanly and then rendered as an empty dropdown."
+              }
+            },
+            "if": {
+              "properties": {
+                "type": {
+                  "const": "enum"
+                }
+              }
+            },
+            "then": {
+              "required": [
+                "options"
+              ]
+            },
+            "else": {
+              "not": {
+                "required": [
+                  "options"
+                ]
+              }
+            }
+          }
+        },
+        "plugin": {
+          "type": "string",
+          "description": "A directory inside your bundle holding a plugin, installed with the extension and removed with it. **This is how an extension ships agents, skills and hooks** — they are not contribution types, because igni already delivers them through plugins and a second path for the same thing is a second thing to keep in step. The directory is a Claude-Code-shaped plugin (`.claude-plugin/plugin.json` plus `agents/`, `skills/`, `hooks/`); igni copies it into the plugins directory at install and deletes it at uninstall, and the loader that was already there picks it up. Relative to the bundle root and inside it: a plugin from somewhere else is one you install yourself.",
+          "examples": [
+            "plugin"
+          ]
+        }
+      }
+    }
+  },
+  "oneOf": [
+    {
+      "required": [
+        "sidecar"
+      ],
+      "allOf": [
+        {
+          "not": {
+            "required": [
+              "endpoint"
+            ]
+          }
+        },
+        {
+          "not": {
+            "required": [
+              "python"
+            ]
+          }
+        },
+        {
+          "not": {
+            "required": [
+              "dev"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "required": [
+        "endpoint"
+      ],
+      "allOf": [
+        {
+          "not": {
+            "required": [
+              "sidecar"
+            ]
+          }
+        },
+        {
+          "not": {
+            "required": [
+              "python"
+            ]
+          }
+        },
+        {
+          "not": {
+            "required": [
+              "dev"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "required": [
+        "python"
+      ],
+      "allOf": [
+        {
+          "not": {
+            "required": [
+              "sidecar"
+            ]
+          }
+        },
+        {
+          "not": {
+            "required": [
+              "endpoint"
+            ]
+          }
+        },
+        {
+          "not": {
+            "required": [
+              "dev"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "required": [
+        "dev"
+      ],
+      "allOf": [
+        {
+          "not": {
+            "required": [
+              "sidecar"
+            ]
+          }
+        },
+        {
+          "not": {
+            "required": [
+              "endpoint"
+            ]
+          }
+        },
+        {
+          "not": {
+            "required": [
+              "python"
+            ]
+          }
+        }
+      ]
+    }
+  ],
+  "allOf": [
+    {
+      "if": {
+        "required": [
+          "dev"
+        ]
+      },
+      "then": {
+        "properties": {
+          "trust": {
+            "const": "unsigned"
+          }
+        },
+        "description": "A dev command is an arbitrary executable named in a text file, so it is a development build by definition — and igni never runs one that arrived from a service."
+      }
+    },
+    {
+      "if": {
+        "required": [
+          "endpoint"
+        ]
+      },
+      "then": {
+        "properties": {
+          "permissions": {
+            "properties": {
+              "hooks": {
+                "maxItems": 0
+              }
+            }
+          }
+        },
+        "description": "Only a process igni starts is asked about an event, over the host channel igni hands it. An endpoint never connects to that channel, so its hooks could never answer — and silence blocks a fail-closed event (a tool call, a message) every time."
+      }
+    }
+  ]
+}

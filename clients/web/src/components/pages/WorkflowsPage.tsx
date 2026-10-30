@@ -67,8 +67,8 @@ export function WorkflowsPage({
       {workflows === null && !error && <div className="ctx-empty">Reading workflows…</div>}
 
       {workflows?.length === 0 && (
-        <div className="codeindex-empty">
-          <p className="codeindex-empty-lead">
+        <div className="page-empty">
+          <p className="page-empty-lead">
             No workflows in <code>.claude/workflows/</code>. A workflow is a script that
             drives several agents through named phases — useful when one prompt would have
             to do too many things at once.

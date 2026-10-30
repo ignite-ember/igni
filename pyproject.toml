@@ -10,9 +10,9 @@ readme = "README.md"
 license = "Apache-2.0"
 # 3.12 exactly, not a floor. The desktop app installs 3.12 and only
 # 3.12 (``clients/tauri/src-tauri/src/runtime.rs``), and the failure
-# mode off that version is silent rather than loud: on 3.14 the Neo4j
-# sidecar dies without writing stderr or a log, and the knowledge base
-# simply never comes up. A range here would let a contributor's
+# mode off that version is silent rather than loud: on 3.14 a sidecar
+# igni used to run died without writing stderr or a log, and the feature
+# behind it simply never came up. A range here would let a contributor's
 # ``uv sync`` pick an interpreter the product never ships on.
 requires-python = ">=3.12,<3.13"
 authors = [{ name = "Ignite Ember" }]
@@ -29,8 +29,7 @@ classifiers = [
     "Programming Language :: Python :: 3",
     # One classifier, because one version is supported. Listing 3.11 and
     # 3.13 told PyPI — and anyone reading the package page — that this
-    # installs and runs there. It does not: the desktop app ships 3.12,
-    # and off-version the Neo4j sidecar fails silently.
+    # installs and runs there. It does not: the desktop app ships 3.12.
     "Programming Language :: Python :: 3.12",
     "Topic :: Software Development",
     "Topic :: Software Development :: Code Generators",
@@ -57,25 +56,26 @@ dependencies = [
     "httpx~=0.28.1",
     "google-genai~=2.8.0",
     "tokenizers~=0.22.2",
-    "tiktoken~=0.13.0",
     "ripgrep~=15.1.0",
-    "beautifulsoup4~=4.15.0",
-    # ``~=6.16`` not ``~=6.16.1``: the tighter form caps the next patch and
-    # this pin has now capped a security fix twice — PYSEC-2026-3910/3911
-    # need 6.16.1 and 3913 needs 6.16.0, all of them out of reach of
-    # ``~=6.15.0``.
-    "pypdf~=6.16",
-    "python-docx~=1.2.0",
-    "python-pptx~=1.0.2",
-    "openpyxl~=3.1.5",
+    # Ed25519 verification of extension bundle signatures
+    # (``extensions/signature.py``). It was already importable as a
+    # transitive dependency, which a security control may not rely on.
+    "cryptography~=50.0",
     "aiofiles~=25.1.0",
-    "youtube_transcript_api~=1.2.4",
-    "arxiv~=4.0.0",
-    "wikipedia~=1.4.0",
+    # The document readers — pypdf, python-docx, python-pptx, openpyxl,
+    # beautifulsoup4, youtube_transcript_api, arxiv, wikipedia — and
+    # weasyprint for PDF export were here because the document store
+    # lived here. It is the Artifacts extension now, and they are its
+    # dependencies: a machine that never installs it never installs a
+    # PDF parser. Nothing left in igni imports any of them.
     "dateparser~=1.4.0",
-    "sentence-transformers~=5.5.1",
     "websockets~=16.0",
-    "neo4j~=5.27.0",
+    # Server discovery reads a TXT record in the customer's own zone,
+    # for deployments that would rather publish DNS than serve a file
+    # at their email domain's web root. Pure Python, no system
+    # resolver dependency, and the async resolver matters: a blocking
+    # lookup here would hold the sign-in screen.
+    "dnspython~=2.8.0",
 ]
 
 [project.urls]
@@ -85,15 +85,36 @@ Issues = "https://github.com/ignite-ember/igni/issues"
 Changelog = "https://github.com/ignite-ember/igni/releases"
 
 [project.optional-dependencies]
+# igni's decisions service (``python -m ember_code.decisions_server``):
+# Laya, for Bypass mode's last check and ``host.decide``. It runs in its
+# own process — beside a desktop backend, or once per cloud node — so a
+# backend image leaves this out and never carries torch. The desktop app
+# installs ``ignite-ember[decisions]``.
+decisions = [
+    "laya~=0.4.4",
+    "starlette~=1.9.0",
+    "uvicorn~=0.54.0",
+]
 dev = [
     "pytest~=9.0.2",
     "pytest-asyncio~=1.3.0",
+    # ``make test-cov`` and docs/TESTING.md both pass ``--cov``; without
+    # the plugin pytest rejects the unrecognised argument and exits 4,
+    # so the documented coverage command has never run.
+    "pytest-cov~=7.1.0",
     "ruff~=0.15.6",
     "mypy~=1.19.1",
     "python-dotenv~=1.2.2",
+    # Validates ``docs/extension-manifest.schema.json`` and the example
+    # manifests against it. It was already importable here as a
+    # transitive dependency of something else, which is not a thing a
+    # CI gate may rely on.
+    "jsonschema~=4.26.0",
 ]
 mcp = [
-    "mcp~=1.28.1",
+    # ``~=1.28.1`` capped CVE-2026-59951, whose fix is 1.30.0. This pin
+    # has now blocked a fix once; widened to the minor.
+    "mcp~=1.30",
 ]
 gemini = [
     "google-genai~=2.8.0",
@@ -135,6 +156,14 @@ exclude = [
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
+# The repository root, so ``packages/igni-cloud/tests`` reaches the core's
+# ``tests`` helpers and fixtures.
+pythonpath = ["."]
+markers = [
+    # tests/conftest.py runs every test inside the egress guard; this is
+    # the one way out, for a test whose subject is reaching the internet.
+    "reaches_the_internet: the test reaches a host outside the customer network on purpose; the egress guard stands down",
+]
 
 [tool.ruff]
 # Deliberately behind ``requires-python``. Raising this to py312 is not
@@ -168,16 +197,41 @@ disallow_untyped_defs = false
 ignore_missing_imports = true
 disable_error_code = ["union-attr", "annotation-unchecked", "arg-type", "return-value", "attr-defined", "import-untyped", "call-arg", "override"]
 
-# numpy 2.5 writes ``type X = ...`` in its own stubs, which mypy refuses to
-# parse while ``python_version`` is 3.11. It does not report it as one
-# skipped dependency either — it aborts with "errors prevented further
-# checking", so the whole run checked **zero files** and still exited
-# non-zero for a reason that named numpy, not this project.
+# Historical note, corrected: this override was added when
+# ``python_version`` was 3.11. numpy's stubs use PEP 695 ``type X = ...``
+# aliases, 3.12 syntax, which mypy will not parse while targeting 3.11 —
+# and it does not report that as one skipped dependency, it aborts with
+# "errors prevented further checking", so the whole run checked **zero
+# files** and still exited non-zero for a reason that named numpy rather
+# than this project.
 #
-# Skipping numpy's stubs keeps the 3.11 floor above honest. Raising
-# ``python_version`` instead would silently stop checking the 3.11
-# compatibility the package still claims to support.
+# There is no 3.11 floor any more. ``requires-python`` is ">=3.12,<3.13"
+# and ``python_version`` above is 3.12, so mypy parses numpy's stubs
+# fine and the original abort cannot recur. The skip is kept as a
+# deliberate boundary, not a workaround: numpy is a transitive
+# dependency whose stubs move on their own release schedule, and a
+# stub-side breakage there is not a signal about this codebase. Removing
+# it is safe with the currently pinned numpy — dropping it and
+# re-running ``mypy src/ember_code/`` still reports success — so if it
+# ever starts hiding a real error, delete it rather than work around it.
 [[tool.mypy.overrides]]
 module = ["numpy", "numpy.*"]
 follow_imports = "skip"
 follow_imports_for_stubs = true
+
+# ``call-arg`` is globally disabled above, which is why SWU-100 could
+# happen at all: ``DiscoverMarkdownCommands`` declared a ``__call__``
+# without ``group_dir`` while the one call site passed it, and mypy had
+# been told not to report exactly that. The Protocol exists *to* be
+# checked, so the error code is re-enabled here.
+#
+# Scoped rather than global on purpose. Dropping "call-arg" from the
+# list above reports 7 errors across 5 files; 6 of them are unrelated to
+# this module and live in files this change does not own — pydantic
+# models populated by field name (``LspServerConfig``, ``TodoItemWire``)
+# and two ``VisualizationDeltaEvent`` constructions. Those deserve their
+# own pass. The number is recorded here so that pass starts from a known
+# size instead of re-discovering it.
+[[tool.mypy.overrides]]
+module = ["ember_code.backend.markdown_command_dispatcher"]
+enable_error_code = ["call-arg"]

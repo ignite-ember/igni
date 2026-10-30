@@ -33,6 +33,13 @@ class MCPServerConfig(BaseModel):
     args: list[str] = Field(default_factory=list)
     env: dict[str, str] = Field(default_factory=dict)
     url: str = ""
+    cwd: str = ""
+    """Working directory for a stdio server.
+
+    Empty means igni's own, which is what a ``.mcp.json`` server has
+    always got. An extension needs it: its command is relative to the
+    bundle it was installed from, and that is not where the backend
+    happens to be running."""
     source_path: str = ""
     """Filesystem path of the .mcp.json file that defined this server."""
     source: str = "user"

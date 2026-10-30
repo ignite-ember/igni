@@ -4,8 +4,8 @@
 //! On first launch the Tauri shell now self-provisions everything
 //! the BE needs: downloads ``uv``, asks uv to install a pinned
 //! CPython, creates a managed venv, installs ``ignite-ember`` at
-//! the pinned version, and prefetches the sentence-transformer
-//! embedding model. Subsequent launches reuse the cache and skip
+//! the pinned version, and prefetches igni's decision model
+//! (Laya). Subsequent launches reuse the cache and skip
 //! straight to spawning the BE — overhead drops to sub-100ms.
 //!
 //! Everything lives under a per-user cache dir
@@ -24,6 +24,9 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::Duration;
 
+use crate::desktop_settings::DesktopSettings;
+use crate::update_policy::UpdatePolicy;
+
 const PYTHON_VERSION: &str = "3.12";
 const UV_VERSION: &str = "0.5.7";
 /// Also the wire version discovery compares a running backend's
@@ -33,8 +36,8 @@ pub(crate) const IGNITE_EMBER_VERSION: &str = env!("CARGO_PKG_VERSION");
 const INSTALL_MARKER: &str = "ember-install.json";
 
 /// 1 GB. Sized for uv (~25 MB) + CPython (~50 MB) + ignite-ember +
-/// transitives (chromadb / sentence-transformers / torch — ~600 MB
-/// unpacked) + the embedding model (~90 MB) + headroom. Failing
+/// transitives (laya / transformers / torch — ~600 MB unpacked) +
+/// headroom. The decision model itself (~1.7 GB) is fetched after. Failing
 /// fast here is much kinder than letting pip die mid-install.
 const MIN_BOOTSTRAP_FREE_BYTES: u64 = 1024 * 1024 * 1024;
 
@@ -67,6 +70,8 @@ pub struct BackendInstall {
 pub enum BackendSource {
     ManagedVenv,
     DevOverride,
+    /// An interpreter the installer provisioned (`runtime_python`).
+    Provisioned,
 }
 
 impl BackendSource {
@@ -74,8 +79,67 @@ impl BackendSource {
         match self {
             BackendSource::ManagedVenv => "managed_venv",
             BackendSource::DevOverride => "dev_override",
+            BackendSource::Provisioned => "provisioned",
         }
     }
+}
+
+/// The variable naming a provisioned interpreter; wins over the setting.
+pub(crate) const RUNTIME_PYTHON_ENV: &str = "IGNI_RUNTIME_PYTHON";
+
+/// The interpreter this install was provisioned with, if it names one:
+/// `IGNI_RUNTIME_PYTHON`, else `runtime_python` in the settings files.
+///
+/// The supported way to run the desktop app where it cannot download its
+/// runtime — an air-gapped network, or a locked-down estate. Whoever
+/// installs the app installs `ignite-ember[decisions]` from their own
+/// mirror into an interpreter and names it here. Unlike `IGNI_PYTHON` it
+/// needs no `IGNITE_EMBER_DEV=1`: it is an administrator's decision,
+/// written in the settings an administrator owns.
+pub(crate) fn provisioned_python_from(env: Option<&str>, settings: &DesktopSettings) -> Option<PathBuf> {
+    env.map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_string)
+        .or_else(|| settings.runtime_python.clone())
+        .map(PathBuf::from)
+}
+
+/// Use a provisioned interpreter, or say why it cannot be used. Never
+/// falls back to downloading: the administrator chose this one.
+pub(crate) fn provisioned_install(
+    python: PathBuf,
+    expected: String,
+    probe: impl Fn(&Path) -> Option<String>,
+) -> Result<BackendInstall, String> {
+    if !is_executable(&python) {
+        return Err(format!(
+            "runtime_python ({}) is not an executable. Point it (or {RUNTIME_PYTHON_ENV}) at the \
+             interpreter ignite-ember is installed in.",
+            python.display()
+        ));
+    }
+    let Some(actual) = probe(&python) else {
+        return Err(format!(
+            "runtime_python ({}) runs, but cannot import ember_code. Install \
+             ignite-ember[decisions]=={expected} into it from your package mirror.",
+            python.display()
+        ));
+    };
+    if actual != expected {
+        // Shown in the app too (the version chip); not fatal, as with the
+        // managed venv after a manual upgrade.
+        eprintln!(
+            "runtime_python at {} runs ignite-ember {actual}; this app is built for {expected}.",
+            python.display()
+        );
+    }
+    Ok(BackendInstall {
+        python,
+        env: vec![],
+        actual_cli_version: Some(actual),
+        expected_cli_version: expected,
+        source: BackendSource::Provisioned,
+    })
 }
 
 /// Progress callback signature — short human-readable status
@@ -84,7 +148,7 @@ impl BackendSource {
 pub type ProgressFn<'a> = &'a (dyn Fn(&str) + Sync);
 
 /// Resolve a Python interpreter with ``ignite-ember`` installed and
-/// the sentence-transformer model pre-warmed. Bootstraps on first
+/// its decision model pre-warmed. Bootstraps on first
 /// call; returns cached on subsequent calls.
 ///
 /// Returns an error with a human-readable message on any failure —
@@ -159,6 +223,12 @@ pub fn ensure_backend_python(progress: ProgressFn) -> Result<BackendInstall, Str
         }
     }
 
+    // ── A runtime the installer provisioned ──
+    let settings = DesktopSettings::load();
+    if let Some(python) = provisioned_python_from(std::env::var(RUNTIME_PYTHON_ENV).ok().as_deref(), &settings) {
+        return provisioned_install(python, expected, probe_cli_version);
+    }
+
     let cache = cache_root()?;
     fs::create_dir_all(&cache).map_err(|e| format!("create cache dir: {e}"))?;
     let hf_home = cache.join("huggingface");
@@ -205,6 +275,21 @@ pub fn ensure_backend_python(progress: ProgressFn) -> Result<BackendInstall, Str
     let needs_reinstall =
         !is_executable(&venv_python) || !marker_matches || venv_version_mismatch;
 
+    // An air-gapped install has no route to github.com (uv), the Python
+    // builds uv fetches, PyPI or Hugging Face, so it does not try: the
+    // runtime has to be provisioned into the cache by whoever installs
+    // the app. Said plainly rather than left to four timeouts.
+    if (!is_executable(&uv_path) || needs_reinstall) && UpdatePolicy::load().air_gapped() {
+        return Err(format!(
+            "igni is air-gapped (air_gapped: true), so the desktop app will not download its Python \
+             runtime. Install ignite-ember[decisions]=={IGNITE_EMBER_VERSION} from your package mirror \
+             into a Python {PYTHON_VERSION} interpreter and set runtime_python in \
+             ~/.igni/config.yaml or managed settings (or {RUNTIME_PYTHON_ENV}) to its path, then \
+             start the app again. (Cache directory for a managed install: {}.)",
+            cache.display()
+        ));
+    }
+
     // ── 1. uv binary ──
     if !is_executable(&uv_path) || needs_reinstall {
         progress("Downloading uv (one-time, ~25 MB)…");
@@ -232,14 +317,15 @@ pub fn ensure_backend_python(progress: ProgressFn) -> Result<BackendInstall, Str
                 "install",
                 "--python",
                 venv_python.to_string_lossy().as_ref(),
-                &format!("ignite-ember=={IGNITE_EMBER_VERSION}"),
+                // ``decisions``: igni's decisions service (Laya), which
+                // the backend starts beside itself on first use.
+                &format!("ignite-ember[decisions]=={IGNITE_EMBER_VERSION}"),
             ],
         )?;
 
-        // Pre-warm the sentence-transformer cache so the user's
-        // first agent run doesn't stall mid-chat on a silent
-        // 90 MB HuggingFace download.
-        progress("Downloading embedding model (one-time, ~90 MB)…");
+        // Pre-warm the decision model so the first Bypass check or
+        // `host.decide` doesn't stall on a silent HuggingFace download.
+        progress("Downloading igni's decision model (one-time, ~1.7 GB)…");
         let mut cmd = Command::new(&venv_python);
         cmd.args(["-m", "ember_code.prefetch_models"]);
         cmd.env("HF_HOME", &hf_home);
@@ -384,7 +470,6 @@ fn venv_python_rel_path() -> &'static str {
 fn uv_target() -> Result<&'static str, String> {
     let triple = match (std::env::consts::OS, std::env::consts::ARCH) {
         ("macos", "aarch64") => "aarch64-apple-darwin",
-        ("macos", "x86_64") => "x86_64-apple-darwin",
         ("linux", "aarch64") => "aarch64-unknown-linux-gnu",
         ("linux", "x86_64") => "x86_64-unknown-linux-gnu",
         ("windows", "x86_64") => "x86_64-pc-windows-msvc",
@@ -541,7 +626,6 @@ mod tests {
         let triple = uv_target().expect("host platform must be mapped");
         let known = [
             "aarch64-apple-darwin",
-            "x86_64-apple-darwin",
             "aarch64-unknown-linux-gnu",
             "x86_64-unknown-linux-gnu",
             "x86_64-pc-windows-msvc",
@@ -673,5 +757,72 @@ mod tests {
     fn backend_source_serializes_as_stable_strings() {
         assert_eq!(BackendSource::ManagedVenv.as_str(), "managed_venv");
         assert_eq!(BackendSource::DevOverride.as_str(), "dev_override");
+        assert_eq!(BackendSource::Provisioned.as_str(), "provisioned");
+    }
+
+    // ── A provisioned runtime (air-gapped installs) ──
+
+    fn named(runtime_python: Option<&str>) -> DesktopSettings {
+        DesktopSettings { runtime_python: runtime_python.map(str::to_string), ..DesktopSettings::default() }
+    }
+
+    #[test]
+    fn the_variable_wins_over_the_setting() {
+        assert_eq!(
+            provisioned_python_from(Some("/env/python"), &named(Some("/cfg/python"))),
+            Some(PathBuf::from("/env/python"))
+        );
+        assert_eq!(provisioned_python_from(Some("  "), &named(Some("/cfg/python"))), Some(PathBuf::from("/cfg/python")));
+        assert_eq!(provisioned_python_from(None, &named(None)), None, "nothing named: the managed venv");
+    }
+
+    #[test]
+    fn a_provisioned_runtime_needs_no_dev_acknowledgement() {
+        // The selection reads only the variable and the settings; IGNITE_EMBER_DEV
+        // is not among its inputs, which is the difference from IGNI_PYTHON.
+        let src = include_str!("runtime.rs");
+        let body = src.split("fn provisioned_python_from").nth(1).unwrap().split("\n}\n").next().unwrap();
+        assert!(!body.contains("ack_dev_mode") && !body.contains("IGNITE_EMBER_DEV"));
+    }
+
+    #[test]
+    fn a_missing_interpreter_is_refused_with_the_setting_named() {
+        let err = provisioned_install(PathBuf::from("/nonexistent/python"), "1.0.3".into(), |_| Some("1.0.3".into()))
+            .err()
+            .expect("refused");
+        assert!(err.contains("runtime_python") && err.contains(RUNTIME_PYTHON_ENV), "{err}");
+    }
+
+    #[cfg(unix)]
+    fn fake_python(dir: &Path, prints: &str) -> PathBuf {
+        use std::os::unix::fs::PermissionsExt;
+        let path = dir.join("python");
+        fs::write(&path, format!("#!/bin/sh\nprintf '{prints}'\n")).unwrap();
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o755)).unwrap();
+        path
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_provisioned_interpreter_is_used_as_is() {
+        let dir = std::env::temp_dir().join(format!("igni-provisioned-{}", std::process::id()));
+        fs::create_dir_all(&dir).unwrap();
+        let python = fake_python(&dir, "1.0.3");
+        let install = provisioned_install(python.clone(), "1.0.3".into(), probe_cli_version).expect("used");
+        assert_eq!(install.python, python);
+        assert_eq!(install.source.as_str(), "provisioned");
+        assert_eq!(install.actual_cli_version.as_deref(), Some("1.0.3"));
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn an_interpreter_without_igni_is_refused() {
+        // `true` exists and is executable everywhere this runs, and has no ember_code.
+        let python = PathBuf::from(if cfg!(windows) { "C:/Windows/System32/whoami.exe" } else { "/usr/bin/true" });
+        if !is_executable(&python) {
+            return;
+        }
+        let err = provisioned_install(python, "1.0.3".into(), |_| None).err().expect("refused");
+        assert!(err.contains("cannot import ember_code"), "{err}");
     }
 }

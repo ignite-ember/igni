@@ -1,0 +1,240 @@
+name: SDK release
+
+# Publishes igni's SDKs to igni's package index (Artifact Registry):
+#
+#   Python  igni-service, igni-extension         -> ember-<env>-python
+#   npm     @igni/extension-bridge, @igni/ui-react,
+#           @igni/ui-css                          -> ember-<env>-npm
+#
+# One version for all five, one tag: pushing `sdk-v<version>` (say
+# `sdk-v0.2.0`, or `sdk-v0.2.0-rc.1`) publishes that version to prod, the
+# index every consumer installs from. The tag must name the version the
+# manifests already carry — `make sdk-version VERSION=…` sets all five —
+# or the release stops before building anything.
+#
+# Run by hand (Actions -> SDK release -> Run workflow) to rehearse against
+# dev, from any branch. Prod is published only from an `sdk-v*` tag: a
+# dispatch on a branch may not target it. Re-running is safe — a file or
+# version already in the index is skipped, not re-uploaded.
+#
+# docs/PUBLISHING_THE_SDKS.md has the whole procedure, and igni_iac's
+# docs/sdk-package-repositories.md the infrastructure behind it.
+
+on:
+  push:
+    tags: ["sdk-v*"]
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: "Index to publish to (prod only from an sdk-v* tag)"
+        type: choice
+        options: [dev, prod]
+        default: dev
+
+permissions:
+  contents: read
+
+# Two runs for one ref would race each other's uploads; let the first finish.
+concurrency:
+  group: sdk-release-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  REGION: us-central1
+
+jobs:
+  authorize:
+    name: Authorize
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check actor is repo admin
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          PERMISSION=$(gh api "repos/${{ github.repository }}/collaborators/${{ github.actor }}/permission" --jq '.permission')
+          if [ "$PERMISSION" != "admin" ]; then
+            echo "::error::SDK releases can only be triggered by repo admins. Actor '${{ github.actor }}' has '$PERMISSION' permission."
+            exit 1
+          fi
+
+  # Which index, and which version. The version comes from the manifests;
+  # a tag only has to agree with them.
+  resolve:
+    name: Resolve
+    needs: authorize
+    runs-on: ubuntu-latest
+    outputs:
+      env: ${{ steps.resolve.outputs.env }}
+      version: ${{ steps.resolve.outputs.version }}
+      python_url: ${{ steps.resolve.outputs.python_url }}
+      npm_url: ${{ steps.resolve.outputs.npm_url }}
+      npm_dist_tag: ${{ steps.resolve.outputs.npm_dist_tag }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+
+      - id: resolve
+        shell: bash
+        env:
+          EVENT: ${{ github.event_name }}
+          REF: ${{ github.ref }}
+          REQUESTED_ENV: ${{ inputs.environment }}
+        run: |
+          if [ "$EVENT" = "push" ]; then env=prod; else env="$REQUESTED_ENV"; fi
+          case "$REF" in
+            refs/tags/sdk-v*) tag_version="${REF#refs/tags/sdk-v}" ;;
+            *)                tag_version="" ;;
+          esac
+          if [ "$env" = "prod" ] && [ -z "$tag_version" ]; then
+            echo "::error::prod is published only from an sdk-v* tag; '$REF' is not one. Rehearse with environment=dev."
+            exit 1
+          fi
+          case "$env" in
+            dev)  project_id=ember-dev-491411 ;;
+            prod) project_id=ember-prod-491411 ;;
+            *)    echo "::error::no index for environment '$env'"; exit 1 ;;
+          esac
+
+          # Fails, listing every manifest, when they disagree with each
+          # other or with the tag.
+          version=$(make --no-print-directory sdk-version-check VERSION="$tag_version" | tail -n 1 | sed 's/^SDK version //')
+
+          # A pre-release must not become what `npm install @igni/…` picks.
+          case "$version" in
+            *-*) npm_dist_tag=next ;;
+            *)   npm_dist_tag=latest ;;
+          esac
+
+          {
+            echo "env=$env"
+            echo "version=$version"
+            echo "python_url=https://${REGION}-python.pkg.dev/${project_id}/ember-${env}-python/"
+            echo "npm_url=https://${REGION}-npm.pkg.dev/${project_id}/ember-${env}-npm/"
+            echo "npm_dist_tag=$npm_dist_tag"
+          } >> "$GITHUB_OUTPUT"
+          echo "Publishing SDK $version to $env ($project_id), npm dist-tag $npm_dist_tag" >> "$GITHUB_STEP_SUMMARY"
+
+  # The checks the packages' own CI jobs run (ci.yml `packages` and `web`),
+  # on the commit being released. Not the whole of ci.yml: the desktop and
+  # browser suites test igni, not its SDKs, and must not hold one up.
+  verify-python:
+    name: Verify Python SDKs
+    needs: authorize
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version-file: .python-version
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+
+      - name: Lint, type-check and test the SDKs
+        run: make packages-check
+
+  # @igni/ui-react's and @igni/extension-bridge's tests run in clients/web,
+  # whose vitest and tsconfig include packages/.
+  verify-npm:
+    name: Verify npm SDKs
+    needs: authorize
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: clients/web
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+          cache-dependency-path: clients/web/package-lock.json
+
+      - run: npm ci
+
+      - name: Typecheck
+        run: npx tsc -b --noEmit
+
+      - name: Unit tests
+        run: npx vitest run
+
+  build:
+    name: Build
+    needs: resolve
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Build wheels, sdists and npm tarballs
+        run: make sdk-build
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sdk-${{ needs.resolve.outputs.version }}
+          path: dist/sdk
+          retention-days: 30
+          if-no-files-found: error
+
+  publish:
+    name: Publish to ${{ needs.resolve.outputs.env }}
+    needs: [resolve, verify-python, verify-npm, build]
+    runs-on: ubuntu-latest
+    # `sdk-dev` / `sdk-prod` hold WIF_PROVIDER and WIF_SERVICE_ACCOUNT (the
+    # ember-<env>-sdk-publish account); give `sdk-prod` required reviewers
+    # to gate a release on a person as well as on the tag.
+    environment: sdk-${{ needs.resolve.outputs.env }}
+    permissions:
+      contents: read
+      id-token: write  # Workload Identity Federation
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: sdk-${{ needs.resolve.outputs.version }}
+          path: dist/sdk
+
+      - id: auth
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ vars.WIF_PROVIDER }}
+          service_account: ${{ vars.WIF_SERVICE_ACCOUNT }}
+          token_format: access_token
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Publish
+        env:
+          SDK_INDEX_TOKEN: ${{ steps.auth.outputs.access_token }}
+        run: >-
+          make sdk-publish
+          SDK_PYTHON_URL="${{ needs.resolve.outputs.python_url }}"
+          SDK_NPM_URL="${{ needs.resolve.outputs.npm_url }}"
+          NPM_DIST_TAG="${{ needs.resolve.outputs.npm_dist_tag }}"
+
+      - name: Summary
+        run: |
+          {
+            echo "### SDK ${{ needs.resolve.outputs.version }} published to ${{ needs.resolve.outputs.env }}"
+            echo
+            echo "- Python: \`${{ needs.resolve.outputs.python_url }}\`"
+            echo "- npm (dist-tag \`${{ needs.resolve.outputs.npm_dist_tag }}\`): \`${{ needs.resolve.outputs.npm_url }}\`"
+            echo
+            for f in dist/sdk/python/* dist/sdk/npm/*; do echo "    ${f##*/}"; done
+          } >> "$GITHUB_STEP_SUMMARY"

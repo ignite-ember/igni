@@ -38,12 +38,12 @@ from ember_code.backend.push_bridge import PushNotificationBridge
 from ember_code.backend.rpc_handlers import (
     POOL_LEVEL_RPCS,
     AuthRpcHandler,
-    CodeIndexRpcHandler,
+    ExtensionsRpcHandler,
     HooksRpcHandler,
-    KnowledgeRpcHandler,
     LoopRpcHandler,
     McpRpcHandler,
     ModelsRpcHandler,
+    NotificationsRpcHandler,
     PanelRpcHandler,
     PlanRpcHandler,
     PluginsRpcHandler,
@@ -92,6 +92,9 @@ class RpcRouter:
         transport: Any,
         login: LoginCoordinator,
         push: PushNotificationBridge,
+        extensions: Any = None,
+        origins: Any = None,
+        notifications: Any = None,
     ) -> None:
         # Shared services the panel-cluster handlers depend on.
         # Cached here so per-runtime routers each get their own
@@ -107,6 +110,9 @@ class RpcRouter:
             push=push,
             file_completion=file_completion,
             shell_runner=shell_runner,
+            extensions=extensions,
+            origins=origins,
+            notifications=notifications,
         )
         # Order is descriptive, not load-bearing — the merge below
         # raises on duplicate keys so mis-registration surfaces
@@ -121,8 +127,8 @@ class RpcRouter:
             SkillsRpcHandler(ctx),
             ModelsRpcHandler(ctx),
             HooksRpcHandler(ctx),
-            KnowledgeRpcHandler(ctx),
-            CodeIndexRpcHandler(ctx),
+            ExtensionsRpcHandler(ctx),
+            NotificationsRpcHandler(ctx),
             PluginsRpcHandler(ctx),
             PlanRpcHandler(ctx),
             PanelRpcHandler(ctx),

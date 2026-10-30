@@ -33,6 +33,7 @@ from typing import Any, Union
 
 from pydantic import BaseModel
 
+from ember_code.core.activity import background
 from ember_code.core.lsp.schemas import (
     ClientCapabilities,
     InitializeParams,
@@ -106,7 +107,7 @@ class LspClient:
             )
         except (OSError, FileNotFoundError) as exc:
             raise LspClientError(f"failed to launch {self.config.command!r}: {exc}") from exc
-        self._reader_task = asyncio.create_task(self._reader_loop(), name=f"lsp-{self.config.name}")
+        self._reader_task = background.daemon(self._reader_loop(), name=f"lsp-{self.config.name}")
         # The LSP initialize request includes the workspace root
         # so the server can scan its corpus before answering
         # other queries. We pass the project_dir as the root URI

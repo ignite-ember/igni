@@ -53,7 +53,10 @@ from ember_code.backend.schemas_lifecycle import InterruptedRunSummary
 from ember_code.backend.schemas_run import CancelAgentRunResult, MediaAttachments, RunPhase
 from ember_code.backend.session_checkpointer import SessionCheckpointer
 from ember_code.backend.stream_event_dispatcher import StreamEventDispatcher
+from ember_code.core.activity import background
+from ember_code.core.session.queued_messages import DurableMessageQueue
 from ember_code.core.tools.process_supervisor_locator import supervisors
+from ember_code.core.utils.memory_files import MemoryMirror
 from ember_code.protocol import messages as msg
 
 if TYPE_CHECKING:
@@ -170,6 +173,25 @@ class RunController:
         if summary is not None:
             self._pending_journal.queue_drops(summary.pending_ids_to_drop)
 
+    def _consume_interrupted_note(self, text: str | None) -> str | None:
+        """Render the one-shot interrupted-run note for *this* delivery, or
+        ``None`` when the previous shutdown was clean.
+
+        The recap is built at startup, before anyone has spoken; it is read by
+        the model here, where ``text`` is the message the user just sent. Which
+        of those two situations it is decides the closing instruction, so the
+        choice is made at the point that knows — see
+        :meth:`InterruptedRunSummary.render`. It previously always claimed the
+        user had not sent a new message, one line above the message they had.
+
+        Consuming is part of the contract: the summary is one-shot, so it is
+        cleared whether or not a note comes back out.
+        """
+        summary, self._interrupted_summary = self._interrupted_summary, None
+        if summary is None:
+            return None
+        return summary.render(awaiting_user=not (text or "").strip())
+
     # ── State transitions ───────────────────────────────────────────
 
     def _transition_to(self, phase: RunPhase) -> None:
@@ -228,6 +250,21 @@ class RunController:
                 yield msg.Info(text="Run cancelled by user.")
             finally:
                 self._current_run_task = None
+                # A cancelled run reaches none of ``_run_locked``'s
+                # terminal transitions: ``CancelledError`` is a
+                # BaseException, so its ``except Exception`` branch
+                # doesn't fire and its ``finally`` only tears down the
+                # checkpoint task + httpx client. The phase stayed
+                # ``streaming`` forever, which meant ``is_processing()``
+                # stayed True — the FE's ``get_processing`` reported the
+                # session busy for the rest of the process's life and
+                # ``SessionPool.evict_idle`` could never reclaim the
+                # runtime. Mapped here rather than in the ``except``
+                # above so a generator closed without ever resuming
+                # (the consumer breaking out of its ``async for``, or a
+                # re-raised cancel on the ``yield``) lands the same way.
+                if self._phase.is_active():
+                    self._transition_to(RunPhase.done)
 
     async def run_locked(
         self, text: str, media: MediaAttachments | None
@@ -252,8 +289,7 @@ class RunController:
         ``RunStatus.running`` heuristic. The stamp is fire-and-
         forget so the cancel response doesn't wait on the disk.
         """
-        if supervisors.default().cancel_foreground():
-            logger.info("Killed foreground process on cancel")
+        self._cancel_own_foreground()
 
         try:
             team = self._session.main_team
@@ -269,6 +305,35 @@ class RunController:
         if task and not task.done():
             logger.info("Cancelling run task %s", task.get_name())
             task.cancel()
+
+    def _cancel_own_foreground(self) -> None:
+        """Kill the foreground shell — but only if this session
+        could plausibly own it.
+
+        ``supervisors.default()`` is process-wide and one BE process
+        hosts N sessions (see :mod:`session_pool`), so the foreground
+        slot is shared by every window. Cancelling an *idle* session
+        used to reach into that shared slot and kill whatever another
+        window was running in the foreground — someone's ``pytest``,
+        ``npm run build`` or ``alembic upgrade``, in a different
+        repository, with no indication why.
+
+        A foreground shell only exists while the run that spawned it
+        is blocked on it, so a session that is not streaming cannot
+        be the owner and must not touch the slot. That closes the
+        idle-window case; the both-sessions-streaming case still
+        mis-attributes, and cannot be fixed from here — the
+        supervisor would have to stamp an owning session id on the
+        foreground slot (``core/tools/process_supervisor.py``).
+        """
+        if self._phase is not RunPhase.streaming:
+            logger.debug(
+                "cancel: session is %s, not streaming — leaving the shared foreground slot alone",
+                self._phase,
+            )
+            return
+        if supervisors.default().cancel_foreground():
+            logger.info("Killed foreground process on cancel")
 
     def _stamp_interrupted(
         self,
@@ -293,9 +358,11 @@ class RunController:
         if pending_id is None:
             return
         try:
-            loop = asyncio.get_running_loop()
-            loop.create_task(
+            asyncio.get_running_loop()
+            background.start(
                 self._pending_journal.mark_interrupted(pending_id, reason, last_error),
+                holder="run",
+                reason="recording an interrupted run",
                 name=f"mark_interrupted:{reason}:{pending_id[:8]}",
             )
         except RuntimeError:
@@ -355,6 +422,32 @@ class RunController:
         """
         await ModelHttpClientManager().close_and_replace(team)
 
+    # ── Stream outcome ──────────────────────────────────────────────
+
+    @staticmethod
+    def _failure_text(proto: msg.Message) -> str | None:
+        """The failure this streamed message reports, or ``None``.
+
+        The ``except Exception`` branch of :meth:`_run_locked` used to
+        be the only thing that stamped a run interrupted, and nothing
+        ever reached it: ``HITLStreamMultiplexer.stream`` catches every
+        stream exception and *yields* an :class:`~msg.Error` instead of
+        propagating it, and an Agno ``RunErrorEvent`` is serialized to
+        :class:`~msg.RunError` on the ordinary event path. Both end the
+        run as a failure, both left the loop above falling through to
+        ``mark_completed`` — so the "stamp it interrupted so the FE can
+        offer Retry/Discard" story only ever fired for user cancels.
+
+        These two message types are the stream's typed failure
+        contract; reading them here is what makes a failed run
+        recoverable.
+        """
+        if isinstance(proto, msg.Error):
+            return proto.text or "run failed"
+        if isinstance(proto, msg.RunError):
+            return proto.error or "run failed"
+        return None
+
     # ── The locked body ─────────────────────────────────────────────
 
     async def _run_locked(
@@ -374,13 +467,20 @@ class RunController:
 
         # Consume the one-shot interrupted-summary + drain any
         # pending-message ids queued during detect_interrupted_run.
-        interrupted_summary_text = (
-            self._interrupted_summary.summary_text
-            if self._interrupted_summary is not None
-            else None
-        )
-        self._interrupted_summary = None
+        interrupted_summary_text = self._consume_interrupted_note(text)
         await self._pending_journal.drain_queued_drops()
+
+        # Fire UserPromptSubmit hook, before the prompt is built from
+        # the text: an extension that hooks it may change the text.
+        # Blocks the run when should_continue=False; otherwise
+        # optionally appends a <hook-context> block onto the prompt.
+        gate = await self._hook_gate.fire_user_prompt_submit(text)
+        if not gate.should_continue:
+            yield msg.Error(text=gate.block_message or "Message blocked by hook.")
+            self._transition_to(RunPhase.done)
+            return
+        if gate.text is not None:
+            text = gate.text
 
         # Pre-run prompt assembly: mentions, media, URL, learnings,
         # timestamp + interrupted-run note.
@@ -392,14 +492,6 @@ class RunController:
         message = build.message
         media = build.media
 
-        # Fire UserPromptSubmit hook. Blocks the run when
-        # should_continue=False; otherwise optionally appends a
-        # <hook-context> block onto the prompt.
-        gate = await self._hook_gate.fire_user_prompt_submit(text)
-        if not gate.should_continue:
-            yield msg.Error(text=gate.block_message or "Message blocked by hook.")
-            self._transition_to(RunPhase.done)
-            return
         if gate.context_message:
             message = f"{message}\n<hook-context>{gate.context_message}</hook-context>"
 
@@ -426,16 +518,32 @@ class RunController:
 
         # Periodic checkpoint task — see SessionCheckpointer.run_forever
         # (BackendServer._periodic_checkpoint is the late-binding hook).
-        checkpoint_task = asyncio.create_task(self._periodic_checkpoint_via_backend(team))
+        checkpoint_task = background.daemon(
+            self._periodic_checkpoint_via_backend(team), name="run-checkpoint"
+        )
 
         media_kwargs = media.to_kwargs() if media is not None else {}
         self._transition_to(RunPhase.streaming)
         try:
+            stream_failure: str | None = None
             async for proto in self._stream_via_backend(
                 team.arun(message, stream=True, **media_kwargs)
             ):
                 yield proto
                 await self._dispatcher.handle(proto, team)
+                stream_failure = self._failure_text(proto) or stream_failure
+            if stream_failure is not None:
+                # The stream reported a failure instead of raising —
+                # see :meth:`_failure_text`. Same bookkeeping as the
+                # ``except`` branch below, minus the re-raise: the
+                # FE has already been handed the error message, so
+                # raising here would only cost it its ``StreamEnd``.
+                self._pending_id_for_cancel = None
+                await self._pending_journal.mark_interrupted(
+                    pending_id, "errored", last_error=stream_failure
+                )
+                self._transition_to(RunPhase.errored)
+                return
             # Natural end-of-run — mark the pre-persisted user
             # message as completed.
             await self._pending_journal.mark_completed(pending_id)
@@ -456,6 +564,15 @@ class RunController:
             with contextlib.suppress(asyncio.CancelledError):
                 await checkpoint_task
             await self._close_http_client(team)
+            # Queued messages this run took are deleted once the saved
+            # conversation holds them (``DurableMessageQueue``).
+            queue = getattr(self._backend, "message_queue", None)
+            if isinstance(queue, DurableMessageQueue):
+                await queue.settle(self._session.db)
+            # Memory files the run wrote, whatever tool wrote them.
+            mirror = getattr(self._session, "memory_mirror", None)
+            if isinstance(mirror, MemoryMirror):
+                await asyncio.to_thread(mirror.sync)
 
         # Fire Stop hook after the natural end-of-run.
         stop_gate = await self._hook_gate.fire_stop()

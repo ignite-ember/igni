@@ -33,7 +33,7 @@ does this result mean?" queries the FE bridge asks:
 * One generic factory — :meth:`for_action` — replaces the 14
   action-only shortcuts (``quit`` / ``clear`` / ``sessions`` /
   ``model`` / ``login`` / ``mcp`` / ``plugins`` / ``agents`` /
-  ``skills`` / ``knowledge`` / ``codeindex`` / ``hooks`` /
+  ``skills`` / ``knowledge`` / ``hooks`` /
   ``loop`` / ``watcher``) that used to hand-dispatch over the
   :class:`CommandAction` enum.
 * Three query methods — :meth:`is_error`, :meth:`is_action`,
@@ -97,7 +97,7 @@ class CommandResult(WireCommandResult):
         Replaces the fourteen action-only shortcut factories
         (``quit`` / ``clear`` / ``sessions`` / ``model`` / ``login``
         / ``mcp`` / ``plugins`` / ``agents`` / ``skills`` /
-        ``knowledge`` / ``codeindex`` / ``hooks`` / ``loop`` /
+        ``knowledge`` / ``hooks`` / ``loop`` /
         ``watcher``) that used to hand-dispatch over the
         :class:`CommandAction` enum. Producers now pass the enum
         member directly, so the enum itself is the single truth for

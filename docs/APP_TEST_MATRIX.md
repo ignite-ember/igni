@@ -92,15 +92,14 @@ files are `mode: "serial"`; see below for why.
 | Plan mode | 3 | 0 | 3 | 0 |
 | Sessions | 8 | 4 | 4 | 0 |
 | Models & auth | 8 | 1 | 4 | 3 |
-| CodeIndex | 8 | 1 | 6 | 1 |
 | MCP & plugins | 18 | 0 | 18 | 0 |
 | Skills & commands | 4 | 1 | 3 | 0 |
 | Workflows, loops & scheduling | 12 | 0 | 11 | 1 |
 | Background processes | 3 | 0 | 3 | 0 |
 | Knowledge & learnings | 8 | 0 | 8 | 0 |
-| Files, dirs & attachments | 3 | 0 | 2 | 1 |
+| Files, dirs & attachments | 4 | 0 | 3 | 1 |
 | Client shell & state | 9 | 2 | 6 | 1 |
-| **Total** | **104** | **15** | **81** | **8** |
+| **Total** | **97** | **14** | **76** | **7** |
 
 ## Conversation
 
@@ -178,26 +177,13 @@ Which model, and who you are.
 | `get_model_registry` | An empty registry — the state that produced "not in models.registry". | `verified` |
 | `switch_model` | Switching mid-run; switching to a model the deployment does not serve. Sweep: **answers** (`--mutating`). | `answers` |
 | `login` | Cancelling the browser round-trip; an expired code. Sweep: **never called** — irreversible or blocking — never called. | `todo` |
+| `discover_server` | A domain with no record; one serving a plaintext `api_url`; a redirect to another host; an address that is not one. Sweep: **answers** (read-only). | `answers` |
+| `set_server` | A plaintext URL typed by hand; an existing config whose other keys must survive. Sweep: **never called** — writes the file that decides where sign-in codes go. | `todo` |
 | `reload_cloud_credentials` | Credentials file missing or unreadable. Sweep: **never called** — irreversible or blocking — never called. | `todo` |
 | `clear_cloud_credentials` | Clearing while a run is in flight. Sweep: **never called** — irreversible or blocking — never called. | `todo` |
 | `check_for_update` | Offline; a newer version available. Sweep: **answers** (`--mutating`). | `answers` |
 | `get_display_config` | A model with no context window published. Sweep: **answers** (default run). | `answers` |
 | `get_output_styles` | An unknown style name. Sweep: **answers** (default run). | `answers` |
-
-## CodeIndex
-
-The semantic index over the repo.
-
-| Function | Edge cases | Status |
-|---|---|---|
-| `codeindex_status` | Not indexed — the state the footer shows today. | `verified` |
-| `codeindex_install` | Install with no server configured. **Refuses well**: "Opening the portal needs to know where your igni server is, and `api_url` is not set" and tells you where to set it — the DEC-11 no-vendor-default decision behaving as intended. Sweep: **refuses** — Opening the portal needs to know where your igni server is, and `api_url` is not set.. | `todo` |
-| `codeindex_sync` | Sync during an active run. Sweep: **answers** (`--mutating`). | `answers` |
-| `codeindex_resync` | Resync of a repo whose HEAD moved mid-sync. Sweep: **answers** (`--mutating`). | `answers` |
-| `codeindex_clean` | Cleaning while a query is in flight. Sweep: **answers** (`--mutating`). | `answers` |
-| `codeindex_activity` | No activity; a failed indexing job. Sweep: **answers** (default run). | `answers` |
-| `codeindex_head_breakdown` | A repo with one commit. Sweep: **answers** (default run). | `answers` |
-| `search_code` | No results; results in a file since deleted. Sweep: **answers** (default run). | `answers` |
 
 ## MCP & plugins
 
@@ -223,6 +209,34 @@ Third-party tools and extensions.
 | `add_marketplace` | A URL that 404s; a duplicate. Sweep: **answers** (`--mutating`). | `answers` |
 | `remove_marketplace` | Removing one that plugins came from. Sweep: **answers** (`--mutating`). | `answers` |
 | `refresh_marketplaces` | Offline. Sweep: **answers** (`--mutating`). | `answers` |
+
+## Extensions
+
+An extension's *own* methods are not listed here and never will be:
+they are `ext.<id>.<method>`, they arrive with a manifest rather than
+at import time, and they are routed by prefix rather than through the
+dispatch table. What they are driven by is
+`tests/test_an_extension_installs_and_answers.py`, which installs a
+real bundle and calls it over a real subprocess.
+
+| Method | How it is driven | Sweep |
+|---|---|---|
+| `list_extensions` | `tests/test_the_frontend_can_draw_an_extension.py`. Offline, read-only — returns the installed set with each one's state, reason and origin, including the FAILED ones, because "why is it missing" is better answered by a row than by an absence. | `answers` |
+| `set_extension_settings` | `tests/test_an_extension_contributes_commands_and_settings.py`. Offline, mutating — writes values for the keys a manifest declares and refuses every other key. Returns the whole list, since the caller has just invalidated its view of all of it. | `answers` |
+| `host_model` | `tests/test_the_host_model_answers.py` (`TestAPageReachesTheSameModel`). An extension page's `bridge.host…`, forwarded by its window with the frame's extension as caller: get, set, call and subscribe against the host object model, refused for igni's own UI (no caller) and for any object `permissions.host` does not grant. The model itself is driven member by member in the same file, and by a real extension process over its socket in `tests/test_an_extension_process_reaches_the_host.py`. | `answers` |
+| `vm_sign_in` | The `igni-cloud` package's own tests (the VM's credential). The gateway hands a person's VM their session when they sign in through it; igni exchanges it for the VM's own credential, keeps it on the volume and a token from it, renews (rotating) before the token lapses, and says `needs_sign_in` / `needs_reissue` when it is refused; a call without a `session_token` is refused. | `answers` |
+| `deliver_service_events` | `tests/test_an_event_is_handed_to_its_extension.py` and `tests/test_a_service_reaches_an_agent_in_its_own_chats.py`. The platform hands the producer what services sent: each item once (by id, across restarts). An event goes to its extension's handler and igni posts nothing; one no handler took is reported `not_handled`. A message lands as sent in its thread's chat, or the extension's own, starting a run or queued for the run going (working or waiting on an approval); files arriving during a run are held until it ends. The answer says which to acknowledge. The SDK half is in the `igni-extension` package's own tests. | `answers` |
+| `extension_service_token` | `tests/test_a_page_reaches_its_own_service.py`. An extension page's `bridge.service` token, asked by its window with the frame's extension as caller: answered for the service recorded on that extension's own origin (an audience in the arguments is not read), refused without a caller, `ok: false` when the extension has no service a page may reach. The bridge half in `packages/extension-bridge/src/service.test.ts`, the window's in `clients/web/src/extensions/ExtensionFrame.test.tsx`. | `answers` |
+
+Notifications are the floor's, not an extension's: one list and one
+count per extension, merging what igni server delivered to whoever is
+signed in with what an extension on this machine told the host.
+
+| Method | How it is driven | Sweep |
+|---|---|---|
+| `notifications_list` | `tests/test_notifications_are_the_floors.py`. Both paths newest first; igni server unreachable mid-read, which must keep the rows last read and say why rather than read as "nothing waiting"; nobody signed in, which returns the local half alone. Sweep: **answers** (default run). | `answers` |
+| `notifications_counts` | `tests/test_notifications_are_the_floors.py`. Merged unread per source — igni server's `by_source` plus local unread — answered from what was last read, asking nobody. Sweep: **answers** (default run). | `answers` |
+| `notifications_mark_read` | `tests/test_notifications_are_the_floors.py`. By ids (local ids marked here, the rest on igni server, nothing local ever sent), by source, and everything. Sweep: **answers** (`--mutating`). | `answers` |
 
 ## Skills & commands
 
@@ -270,13 +284,6 @@ What the agent is told to remember.
 
 | Function | Edge cases | Status |
 |---|---|---|
-| `knowledge_add` | Adding a duplicate; adding an empty document. Sweep: **answers** (`--mutating`). | `answers` |
-| `knowledge_get` | A missing id. Sweep: **answers** (default run). | `answers` |
-| `knowledge_list` | Empty. Sweep: **answers** (default run). | `answers` |
-| `knowledge_remove` | Removing while a search is in flight. Sweep: **answers** (`--mutating`). | `answers` |
-| `knowledge_search` | No results; a query longer than the embedding limit. Sweep: **answers** (default run). | `answers` |
-| `get_knowledge_status` | Never synced. Sweep: **answers** (default run). | `answers` |
-| `auto_sync_knowledge` | Sync with no source configured. Sweep: **answers** (`--mutating`). | `answers` |
 | `extract_learnings` | A session with nothing worth extracting. Sweep: **answers** (`--mutating`). | `answers` |
 
 ## Files, dirs & attachments
@@ -287,6 +294,7 @@ Getting your material in.
 |---|---|---|
 | `upload_attachment` | A file larger than the limit; an unsupported type; upload cancelled midway. Sweep: **answers** (`--mutating`). | `answers` |
 | `list_dirs` | A directory with no read permission. Sweep: **answers** (default run). | `answers` |
+| `search_code` | No results; results in a file since deleted. Sweep: **answers** (default run). | `answers` |
 | `pick_dir_native` | Cancelling the native dialog. Sweep: **never called** — irreversible or blocking — never called. | `todo` |
 
 ## Client shell & state
@@ -295,9 +303,7 @@ The window around the conversation.
 
 | Function | Edge cases | Status |
 |---|---|---|
-| `get_client_state` | First run, no stored state. | `verified` |
-| `set_client_state` | Two windows writing concurrently. Sweep: **answers** (`--mutating`). | `answers` |
-| `delete_client_state` | Deleting while the UI reads it. Sweep: **answers** (`--mutating`). | `answers` |
+| `window_model` | `tests/test_a_window_is_a_view_of_its_model.py`. A window hydrating its model (first run, nothing stored; after a restart, what lasts); a write from the window and from an extension racing (the model's order wins, every push carries the revision and the writer's token); a write that does not fit the field's type; toasts and dialogs by their own operations, an answer to a dialog no longer open. The web client's half: `clients/web/src/clientState.test.tsx` and `clients/web/e2e/window-model.spec.ts`. | `answers` |
 | `get_hooks_details` | A hook file that does not parse. Sweep: **answers** (default run). | `answers` |
 | `reload_hooks` | Reloading while a hook is executing. Sweep: **answers** (`--mutating`). | `answers` |
 | `get_group_policy` | No group — the footer shows "Group none" today. | `verified` |
@@ -319,7 +325,7 @@ Each was reproduced, and each is recorded on its own row above.
 | `/rename` confirmed renames it had not made. A session has no row until its first run, so on every page load and every "+ New chat" `rename_session` updated nothing, raised nothing, and the user was told "Session renamed to: X" while the sidebar never showed X. A DB error was swallowed at DEBUG and reported the same way | `backend/cmd_session.py`, `persistence/facade.py` | **fixed** — writes, reads back, and says so when nothing was stored; also sets `session_named`, which its own docstring already claimed |
 | `/plugin` did nothing at all — no output, no panel, not even the echoed command. The picker lists `/plugins` before `/plugin`, and Enter's "already-complete command runs it" test compares against the *highlighted* entry | `components/Composer.tsx` | **fixed** — `filterSlashCommands` puts an exact match first, so what runs is what is highlighted |
 | `@` file mentions stopped working after "+ New chat". The session id rotates one RPC round trip later, the Composer re-hydrates its draft from `draft:<sessionId>`, and the `@` the parser needs was blanked out of the editor. The picker stayed open, filtered to nothing, and the query went to the model as chat | `App.tsx` | **fixed** — `carryDraft` moves the draft onto the new id across `/clear` and `/fork` |
-| `/knowledge` said "Knowledge base failed to initialize." — no cause, and untrue. The index is *deferred* until CodeIndex's Neo4j attaches. `Session._knowledge_error` was initialised to `None` and assigned nowhere, so the branch that exists to explain the failure could not run | `core/session/core.py`, `backend/cmd_knowledge.py` | **fixed** — the deferred state explains itself and points at `/codeindex` |
+| `/knowledge` said "Knowledge base failed to initialize." — no cause, and untrue. The index is *deferred* until CodeIndex's Neo4j attaches. `Session._knowledge_error` was initialised to `None` and assigned nowhere, so the branch that exists to explain the failure could not run | `core/session/core.py`, the `/knowledge` command (since removed) | **fixed** — the deferred state explains itself and points at `/codeindex` |
 | **Web search ran with no approval prompt.** `WebSearchSpec.confirm_function_names` was `("duckduckgo_search", "duckduckgo_news")`; `DuckDuckGoTools` registers `web_search` and `search_news`. agno matched the list against its registry, found neither, and logged "Requires confirmation tool(s) not present in the toolkit". `test_web_search.py` asserted the two strings were *in the list* and passed throughout | `core/tools/tool_spec.py` | **fixed** — gates the real names; a rule now asserts every gated name exists in the built toolkit |
 | `PythonSpec` gated one of `PythonTools`' seven functions. `save_to_file_and_run`, `run_python_file_return_variable`, `pip_install_package` and `uv_pip_install_package` ran ungated — two of them install from the internet. Partial gating is worse than none: the prompt on `run_python_code` reads as "this toolkit is supervised" | `core/tools/tool_spec.py` | **fixed, then superseded** — all seven were gated, and the spec has since been removed from the registry entirely along with `Read` / `Grep` / `Glob` / `LS`. A toolkit that cannot be attached cannot be mis-gated |
 | Eight of eighteen hook events were undocumented — `PermissionRequest`, `PermissionDenied`, `PreCompact`, `PostCompact`, `TaskCreated`, `TaskCompleted`, `StopFailure`, `InstructionsLoaded`. All eight fire. `docs/HOOKS.md` listed ten and read as complete, and hooks are how a self-hosted deployment extends the product | `docs/HOOKS.md` | **fixed** — documented with payloads; `test_every_hook_event_is_documented.py` requires a table row per event |
@@ -406,10 +412,10 @@ was actually there.
 
 | Surface | Size | State |
 |---|---|---|
-| Slash commands | 31 in `Composer.tsx`, 34 registered backend-side | **31 driven**, each asserted inside the surface it opens or against text from its own output. Not run, and why: `/login` and `/logout` (real credentials), `/bug` (opens a browser on the host). `/plan`, `/accept` and `/bypass` are driven *and toggled back*, so the suite cannot leave a session auto-approving tools |
-| Model-callable tools | 66 statically-named functions across 24 toolkits, of which ~11 became unreachable when `Read` / `Grep` / `Glob` / `LS` / `Python` left the registry | 13 of igni's own had **no direct test**; all 13 now have one (`stop_process`, `watch_process`, `list_processes`, all of `LoopProgressTool`, all of `KnowledgeTools`, `loop_resume`). `test_every_tool_function_is_reachable.py` fails when a registered function has none. Still not driven *through the app* — these are unit tests of the functions, not of the model choosing to call them |
-| UI panels | 15 under `components/panels/` | 7 opened live via their commands — plugins, codeindex, hooks, loop, schedule, watcher, mcp — asserted on content, not merely on the drawer existing. Opening is not driving: nothing inside any of them is clicked |
-| Header tools menu | 13 entries, documented in-code as "no slash command visible to the user" | all 13 clicked, each asserted on the surface it opens, plus that the list is exactly what `App.tsx` defines |
+| Slash commands | 30 in `Composer.tsx`, 33 registered backend-side | **30 driven**, each asserted inside the surface it opens or against text from its own output. Not run, and why: `/login` and `/logout` (real credentials), `/bug` (opens a browser on the host). `/plan`, `/accept` and `/bypass` are driven *and toggled back*, so the suite cannot leave a session auto-approving tools |
+| Model-callable tools | 66 statically-named functions across 24 toolkits, of which ~11 became unreachable when `Read` / `Grep` / `Glob` / `LS` / `Python` left the registry | 13 of igni's own had **no direct test**; all 13 now have one (`stop_process`, `watch_process`, `list_processes`, all of `LoopProgressTool`, all of `ArtifactTools`, `loop_resume`). `test_every_tool_function_is_reachable.py` fails when a registered function has none. Still not driven *through the app* — these are unit tests of the functions, not of the model choosing to call them |
+| UI panels | 15 under `components/panels/` | 6 opened live via their commands — plugins, hooks, loop, schedule, watcher, mcp — asserted on content, not merely on the drawer existing. Opening is not driving: nothing inside any of them is clicked |
+| Header tools menu | 12 entries, documented in-code as "no slash command visible to the user" | all 12 clicked, each asserted on the surface it opens, plus that the list is exactly what `App.tsx` defines |
 | Welcome cards | 9 clickable | all 9 clicked. One, `/workflows`, is a client-side regex intercept and never appears in the slash picker at all |
 | Hook events | 18 | 17 fire in the product and 16 test files exercise the pipeline — the earlier "only listing" note was wrong, and was about the three *RPCs*. What was missing was documentation: eight events were absent from `docs/HOOKS.md`. `Notification` is fired by nothing, and the page says so |
 | CLI flags | 16 on `igni` plus `--help`/`--version` | all 16 driven through Click and through `load_settings_from_options`, both directions (set *and* unset). `--worktree` and `--pipe` have tests for their refusals. A rule fails when an option no test mentions is added |

@@ -17,7 +17,7 @@ as public attributes.
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, MutableSequence
 from typing import Any
 
 from .buffer import InjectedRunBuffer
@@ -40,7 +40,7 @@ class QueueBridge:
 
     def __init__(
         self,
-        queue: list[str],
+        queue: MutableSequence[str],
         on_inject: Callable[[str], None] | None = None,
         on_queue_changed: Callable[[], None] | None = None,
     ) -> None:

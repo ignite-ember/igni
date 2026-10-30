@@ -1,8 +1,9 @@
-"""Per-project SQLite stores for the active ``/loop`` and its progress.
+"""Per-project stores for the active ``/loop`` and its progress.
 
-Both stores share the project's ``state.db`` (the same file the
-scheduler writes to) so they're scoped per-project: switching
-projects doesn't expose another project's loop or its progress.
+Both stores share the project's database (the desktop's ``state.db``,
+the same file the scheduler writes to) and filter every query by its
+:class:`~ember_code.core.db.scope.StorageScope`, so switching projects
+doesn't expose another project's loop or its progress.
 """
 
 from __future__ import annotations
@@ -10,30 +11,12 @@ from __future__ import annotations
 from datetime import datetime
 from pathlib import Path
 
-from sqlalchemy import delete, select
+from sqlalchemy import Select, delete, select
 
-from ember_code.core.code_index.paths import state_db_path
-from ember_code.core.config.settings import Settings
 from ember_code.core.db.database import Database
+from ember_code.core.db.locator import StorageLocator
 from ember_code.core.loop.db_models import LoopProgressModel, LoopStateModel
 from ember_code.core.loop.models import LoopState
-from ember_code.core.paths import DEFAULT_DATA_DIR
-
-
-def _resolve_db_path(
-    db_path: str | Path | None,
-    project_dir: str | Path | None,
-) -> Path:
-    """Pick a SQLite path. Mirrors the scheduler's resolver."""
-    if db_path is not None:
-        return Path(str(db_path)).expanduser()
-    project = project_dir if project_dir is not None else Path.cwd()
-    try:
-        data_dir = Settings().storage.data_dir
-    except Exception:
-        data_dir = DEFAULT_DATA_DIR
-    return state_db_path(project, data_dir=data_dir)
-
 
 # ── LoopStore ─────────────────────────────────────────────────────
 
@@ -60,11 +43,16 @@ class LoopStore:
         if db is not None:
             self._db = db
             return
-        self._db = Database(_resolve_db_path(db_path, project_dir))
+        self._db = StorageLocator.database_for(db_path, project_dir)
+
+    def _select_row(self) -> Select[tuple[LoopStateModel]]:
+        return select(LoopStateModel).where(
+            self._db.scope.where(LoopStateModel), LoopStateModel.id == self._SINGLETON_ID
+        )
 
     async def load(self) -> LoopState | None:
         async with self._db.session() as session:
-            row = await session.get(LoopStateModel, self._SINGLETON_ID)
+            row = (await session.execute(self._select_row())).scalar_one_or_none()
             if row is None:
                 return None
             return LoopState(
@@ -84,10 +72,11 @@ class LoopStore:
         """
         now = datetime.now()
         async with self._db.session() as session, session.begin():
-            row = await session.get(LoopStateModel, self._SINGLETON_ID)
+            row = (await session.execute(self._select_row())).scalar_one_or_none()
             if row is None:
                 session.add(
                     LoopStateModel(
+                        **self._db.scope.stamp(),
                         id=self._SINGLETON_ID,
                         run_id=state.run_id,
                         prompt=state.prompt,
@@ -109,7 +98,9 @@ class LoopStore:
     async def clear(self) -> bool:
         async with self._db.session() as session, session.begin():
             result = await session.execute(
-                delete(LoopStateModel).where(LoopStateModel.id == self._SINGLETON_ID)
+                delete(LoopStateModel).where(
+                    self._db.scope.where(LoopStateModel), LoopStateModel.id == self._SINGLETON_ID
+                )
             )
             return (result.rowcount or 0) > 0
 
@@ -149,12 +140,13 @@ class LoopProgressStore:
         if db is not None:
             self._db = db
             return
-        self._db = Database(_resolve_db_path(db_path, project_dir))
+        self._db = StorageLocator.database_for(db_path, project_dir)
 
     async def get(self, run_id: str, key: str) -> str | None:
         async with self._db.session() as session:
             result = await session.execute(
                 select(LoopProgressModel.value).where(
+                    self._db.scope.where(LoopProgressModel),
                     LoopProgressModel.run_id == run_id,
                     LoopProgressModel.key == key,
                 )
@@ -175,6 +167,7 @@ class LoopProgressStore:
         async with self._db.session() as session, session.begin():
             result = await session.execute(
                 select(LoopProgressModel).where(
+                    self._db.scope.where(LoopProgressModel),
                     LoopProgressModel.run_id == run_id,
                     LoopProgressModel.key == key,
                 )
@@ -183,6 +176,7 @@ class LoopProgressStore:
             if row is None:
                 session.add(
                     LoopProgressModel(
+                        **self._db.scope.stamp(),
                         run_id=run_id,
                         key=key,
                         value=value,
@@ -200,7 +194,7 @@ class LoopProgressStore:
         async with self._db.session() as session:
             result = await session.execute(
                 select(LoopProgressModel.key, LoopProgressModel.value)
-                .where(LoopProgressModel.run_id == run_id)
+                .where(self._db.scope.where(LoopProgressModel), LoopProgressModel.run_id == run_id)
                 .order_by(LoopProgressModel.created_at)
             )
             return [(k, v) for k, v in result.all()]
@@ -209,6 +203,7 @@ class LoopProgressStore:
         async with self._db.session() as session, session.begin():
             result = await session.execute(
                 delete(LoopProgressModel).where(
+                    self._db.scope.where(LoopProgressModel),
                     LoopProgressModel.run_id == run_id,
                     LoopProgressModel.key == key,
                 )
@@ -221,7 +216,9 @@ class LoopProgressStore:
         progress entries" in chat."""
         async with self._db.session() as session, session.begin():
             result = await session.execute(
-                delete(LoopProgressModel).where(LoopProgressModel.run_id == run_id)
+                delete(LoopProgressModel).where(
+                    self._db.scope.where(LoopProgressModel), LoopProgressModel.run_id == run_id
+                )
             )
             return result.rowcount or 0
 

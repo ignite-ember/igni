@@ -26,6 +26,7 @@ from typing import TYPE_CHECKING
 from ember_code.backend.chat_history_searcher import ChatHistorySearcher
 from ember_code.backend.schemas_history import ChatHistoryEntry, ChatSearchHit
 from ember_code.backend.schemas_sessions import AutoNameResult
+from ember_code.core.session.schemas import PersistResult
 from ember_code.protocol import messages as msg
 
 if TYPE_CHECKING:
@@ -85,6 +86,13 @@ class SessionsController:
         if not name:
             return AutoNameResult(ok=False, name="", reason="no_name_produced")
         return AutoNameResult(ok=True, name=name, reason="generated")
+
+    async def title(self, name: str) -> PersistResult:
+        """Name this session now — before its first run, too — so no auto-name replaces it."""
+        result = await self._session.persistence.title(name)
+        if result.ok:
+            self._session.session_named = True
+        return result
 
     async def switch_session(self, session_id: str) -> msg.Info:
         """Switch to a different session.

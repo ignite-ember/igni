@@ -41,6 +41,7 @@ from ember_code.core.config.accumulator import SettingsAccumulator
 from ember_code.core.config.cloud_model_migrator import CloudModelMigrator
 from ember_code.core.config.config_io import YamlSource
 from ember_code.core.config.managed_policy import ManagedPolicySource
+from ember_code.core.layer import Layers
 from ember_code.core.paths import home_config_dir, project_config_dir
 
 if TYPE_CHECKING:
@@ -161,7 +162,7 @@ class ManagedTier(Tier):
 
 
 class CloudMigrationTier(Tier):
-    """Override Ember Cloud rows with the shipping defaults so users
+    """Override igni server rows with the shipping defaults so users
     always get the latest model after upgrading. Runs after the
     other tiers so a fresh migration is visible in the final
     :class:`Settings`.
@@ -212,6 +213,31 @@ class GroupPolicyTier(Tier):
     Everything else a group sets still wins over the CLI. This is a
     ratchet on ``permissions`` denies specifically, not a general
     reversal of precedence.
+
+    ## Where the fetcher comes from
+
+    :meth:`SettingsMergePlan.default` only appends the tier when it is handed
+    a ``group_policy_fetcher``, and for a long time no production caller
+    passed one — the tier was written, correct, and unreached, so an admin
+    publishing ``{"permissions": {"web_fetch": "deny"}}`` believed it was enforced
+    and it was not.
+
+    Production now passes
+    :class:`~ember_code.core.config.group_policy.CachedSettingsFetcher`, from
+    the two places that build a real ``Settings``: ``BackendApp.run`` (the
+    backend process every window talks to) and ``load_settings_from_options``
+    (the ``igni -m`` / pipe path, which runs a session in-process). Both build
+    exactly one per process.
+
+    That fetcher reads the pack the last refresh left on disk rather than
+    calling the portal, because a settings load runs before this process holds
+    a bearer token. The fetch lives in ``AuthController._hydrate_group_policy``
+    — cold start, login, and every ``group_policy.poll_seconds`` — and the read
+    lives here; see :class:`CachedSettingsFetcher` for what that split buys and
+    what it costs.
+
+    Tests and one-off migrations still pass their own fetcher, and a plan built
+    without one skips the tier entirely.
     """
 
     def __init__(
@@ -320,17 +346,27 @@ class SettingsMergePlan:
         # instance, because the ratchet reads what this one actually set.
         cli_tier = CliTier(cli)
 
+        # A layer may read no settings file of its own — not the user's
+        # under ``~/.igni``, not the workspace's ``.igni`` (the cloud's:
+        # what it runs with comes from the image and from igni server).
+        local_tiers: list[Tier] = (
+            []
+            if not Layers.current().reads_local_settings()
+            else [
+                # User global (lowest priority above built-in defaults)
+                YamlTier(user_ember / "config.yaml"),
+                JsonFragmentTier(user_ember / "settings.json"),
+                JsonFragmentTier(user_ember / "settings.local.json"),
+                # Project (committed)
+                YamlTier(project_ember / "config.yaml"),
+                JsonFragmentTier(project_ember / "settings.json"),
+                # Project local (gitignored)
+                YamlTier(project_ember / "config.local.yaml"),
+                JsonFragmentTier(project_ember / "settings.local.json"),
+            ]
+        )
         tiers: list[Tier] = [
-            # User global (lowest priority above built-in defaults)
-            YamlTier(user_ember / "config.yaml"),
-            JsonFragmentTier(user_ember / "settings.json"),
-            JsonFragmentTier(user_ember / "settings.local.json"),
-            # Project (committed)
-            YamlTier(project_ember / "config.yaml"),
-            JsonFragmentTier(project_ember / "settings.json"),
-            # Project local (gitignored)
-            YamlTier(project_ember / "config.local.yaml"),
-            JsonFragmentTier(project_ember / "settings.local.json"),
+            *local_tiers,
             # CLI
             cli_tier,
             # Org-group policy — wins over CLI, loses to sysadmin

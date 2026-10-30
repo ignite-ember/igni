@@ -98,15 +98,16 @@ class PauseHandler:
                 # ``req.confirm() / req.reject()`` failure.
 
             # Defer: ask the user.
-            self._store.register(req_id, PendingRequirement(req=req, run_id=run_id))
-            requirements.append(
-                msg.HITLRequest(
-                    requirement_id=req_id,
-                    tool_name=raw_name,
-                    friendly_name=default_registry().friendly_name(raw_name),
-                    tool_args=tool_args,
-                )
+            request = msg.HITLRequest(
+                requirement_id=req_id,
+                tool_name=raw_name,
+                friendly_name=default_registry().friendly_name(raw_name),
+                tool_args=tool_args,
             )
+            self._store.register(
+                req_id, PendingRequirement(req=req, run_id=run_id, request=request)
+            )
+            requirements.append(request)
 
         messages: list[msg.Message] = []
         if requirements:

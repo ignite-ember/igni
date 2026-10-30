@@ -29,7 +29,7 @@ const detail: PageRoute = {
   label: "acme-tools",
   params: { id: "acme-tools" },
 };
-const knowledge: PageRoute = { kind: "knowledge", label: "Knowledge" };
+const artifacts: PageRoute = { kind: "artifacts", label: "Artifacts" };
 
 describe("current", () => {
   it("is null for an empty stack — the chat is showing", () => {
@@ -47,9 +47,9 @@ describe("openRoot", () => {
   });
 
   it("replaces one destination with another rather than nesting", () => {
-    // `Plugins / Knowledge` would claim Knowledge lives inside
+    // `Plugins / Artifacts` would claim Artifacts lives inside
     // Plugins. They are siblings.
-    expect(openRoot(knowledge)).toEqual([knowledge]);
+    expect(openRoot(artifacts)).toEqual([artifacts]);
   });
 
   it("returns to the top of the destination you are already in", () => {

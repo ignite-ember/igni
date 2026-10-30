@@ -32,10 +32,15 @@ compare on ``decision.action``.
 
 from __future__ import annotations
 
+import inspect
 import logging
 from collections.abc import AsyncIterator
 from typing import TYPE_CHECKING, Any
 
+from agno.db.base import SessionType
+from agno.run.base import RunStatus
+
+from ember_code.backend.cold_spawn_resume import ColdSpawnResume
 from ember_code.backend.hitl_stream_mux import HITLStreamMultiplexer
 from ember_code.backend.hitl_tracer import HITLTracer
 from ember_code.backend.pause_handler import PauseHandler
@@ -58,6 +63,7 @@ from ember_code.core.config.tool_permissions import (
     ToolPermissions,
 )
 from ember_code.core.hooks.events import HookEvent
+from ember_code.core.hooks.extension_gate import ExtensionHookGate, StopValue
 from ember_code.protocol import messages as msg
 
 if TYPE_CHECKING:
@@ -223,6 +229,13 @@ class HitlController:
 
         self._merge_auto_resolved(main_resolved_reqs, run_id)
 
+        # Sub-agent approvals a previous backend left: once all of a
+        # run's are answered, nothing in this process waits on them —
+        # continue the sub-agent and the calls above it here.
+        for ready in self._session.sub_agent_hitl.take_ready_restored():
+            async for proto in ColdSpawnResume(self._session, self._stream_factory).resume(ready):
+                yield proto
+
         if not main_resolved_reqs:
             return  # everything was sub-agent or failed
 
@@ -256,18 +269,34 @@ class HitlController:
             len(main_resolved_reqs),
             run_id,
         )
-        async for proto in self._stream_factory(
-            team.acontinue_run(
-                run_id=run_id,
-                session_id=self._session.session_id,
-                requirements=main_resolved_reqs,
-                stream=True,
-                stream_events=True,
-            )  # type: ignore[call-overload]  # kwargs + agno overload interplay
-        ):
-            yield proto
+        # Marked while it runs: a backend that dies before the run ends
+        # leaves the mark, and the next one reports the run interrupted
+        # rather than leave it paused with nothing to answer.
+        if run_id:
+            self._store.begin_continuing(run_id)
+        try:
+            async for proto in self._stream_factory(
+                team.acontinue_run(
+                    run_id=run_id,
+                    session_id=self._session.session_id,
+                    requirements=main_resolved_reqs,
+                    stream=True,
+                    stream_events=True,
+                )  # type: ignore[call-overload]  # kwargs + agno overload interplay
+            ):
+                yield proto
+        finally:
+            if run_id:
+                self._store.end_continuing(run_id)
 
-        # Fire Stop hook after continuation completes.
+        # Fire Stop hook after continuation completes: the extensions
+        # that hook it first, then the configured hooks.
+        verdict = await ExtensionHookGate.ask(
+            StopValue(session_id=self._session.session_id), HookEvent.STOP
+        )
+        if not verdict.allowed:
+            yield msg.Info(text=verdict.reason)
+            return
         stop_result = await self._session.hook_executor.execute(
             event=HookEvent.STOP.value,
             payload=StopHookPayload(session_id=self._session.session_id).model_dump(),
@@ -392,6 +421,68 @@ class HitlController:
         """
         return HITLStreamMultiplexer.build_subagent_paused(entries)
 
+    def waiting_messages(self) -> list[msg.RunPaused]:
+        """Every approval of this session still waiting on the person,
+        as the ``RunPaused`` a window shows a dialog for.
+
+        Sent to a window when it attaches, so a dialog survives both a
+        reload and a backend restart (the approvals are read back from
+        the journal at start): the main agent's, then its sub-agents'.
+        """
+        return [
+            *self._store.waiting_messages(),
+            *self._session.sub_agent_hitl.waiting_requests(),
+        ]
+
+    #: What the session is told about a main-agent run cut off while it
+    #: was being continued.
+    INTERRUPTED_RUN = (
+        "A run was interrupted: igni restarted while it was continuing after "
+        "its approval was answered. It was not run again — what it did before "
+        "the restart may or may not have taken effect. You can carry on the "
+        "conversation."
+    )
+
+    async def _close_interrupted_run(self, run_id: str) -> bool:
+        """Mark Agno's stored run as ended in error, so it is no longer
+        paused with nothing left to answer. ``True`` when it was found."""
+        db = getattr(self._session.main_team, "db", None)
+        if db is None:
+            return False
+        found = db.get_session(session_id=self._session.session_id, session_type=SessionType.AGENT)
+        stored = await found if inspect.isawaitable(found) else found
+        for run in getattr(stored, "runs", None) or []:
+            if run.run_id != run_id:
+                continue
+            if run.status == RunStatus.paused:
+                run.status = RunStatus.error
+                run.content = self.INTERRUPTED_RUN
+                saved = db.upsert_session(stored)
+                if inspect.isawaitable(saved):
+                    await saved
+            return True
+        return False
+
+    async def resume_interrupted(self) -> AsyncIterator[msg.Message]:
+        """Finish what a previous backend was continuing when it died.
+
+        A main-agent run whose approvals had been answered left its
+        ``continuing`` mark: the session is told it was interrupted, and
+        Agno's stored run is closed rather than left paused. A sub-agent
+        or team left its spawn link: it is reported failed to the call
+        waiting on it, and that call's run goes on
+        (``ColdSpawnResume.interrupted``). None is run again; each is
+        taken once.
+        """
+        for run_id in self._store.take_interrupted_runs():
+            if await self._close_interrupted_run(run_id):
+                yield msg.Info(text=self.INTERRUPTED_RUN)
+        for link in self._session.sub_agent_hitl.take_interrupted():
+            async for proto in ColdSpawnResume(self._session, self._stream_factory).interrupted(
+                link
+            ):
+                yield proto
+
     def sweep_run(self, run_id: str) -> None:
         """Drop pending + auto-resolved entries for a finished run.
 
@@ -431,7 +522,7 @@ class HitlController:
         batch."""
         if batch_run_id is None or this_run_id == batch_run_id:
             return None
-        self._store.register(requirement_id, entry)
+        self._store.register(requirement_id, entry)  # back as it was, request and all
         return msg.Error(
             text=(
                 f"Cross-run HITL batch rejected: "

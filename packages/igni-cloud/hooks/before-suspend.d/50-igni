@@ -1,0 +1,22 @@
+#!/bin/sh
+# igni's before-suspend hook (igni__cloudvm's guest protocol, `before_suspend`;
+# ember-code packages/igni-cloud/src/igni_cloud/guest/suspend.py).
+#
+# Asks igni to hand its free heap memory back before the snapshot, and waits
+# for its answer — half a second at most: a suspend never waits on igni.
+run_dir="${IGNI_RUN_DIR:-/run/igni}"
+request="${IGNI_SUSPENDING_FILE:-$run_dir/suspending}"
+ready="${IGNI_SUSPEND_READY_FILE:-$run_dir/suspend-ready}"
+[ -d "$(dirname "$request")" ] || exit 0
+token="$(date +%s%N)-$$"
+printf '{"token": "%s"}' "$token" > "$request.tmp.$$" && mv -f "$request.tmp.$$" "$request"
+i=0
+while [ "$i" -lt 100 ]; do
+    case "$(cat "$ready" 2>/dev/null)" in
+        *"\"$token\""*) exit 0 ;;
+    esac
+    sleep 0.005
+    i=$((i + 1))
+done
+echo "igni did not answer $request within 0.5 s" >&2
+exit 0

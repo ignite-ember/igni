@@ -31,7 +31,9 @@ interface WindowLike {
   __EMBER_HOST__?: {
     openFile?: (p: string) => unknown;
     notify?: (payload: { title: string; body?: string }) => unknown;
+    openUrl?: (url: string) => unknown;
   };
+  open?: (url: string, target?: string, features?: string) => unknown;
   setTimeout: typeof setTimeout;
   clearTimeout: typeof clearTimeout;
   addEventListener: (
@@ -531,6 +533,50 @@ describe("Host.notifyFileEdited", () => {
 // FE registers at boot. Returns true when the open attempt was
 // dispatched, false when only the fallback fired (or nothing
 // could happen at all).
+
+describe("Host.openExternal", () => {
+  it("accepts only https links with a host and no credentials", () => {
+    const ok = HostMod.isOpenableLink;
+    expect(ok("https://code.example.com/repos/42?tab=x#y")).toBe(true);
+    expect(ok("http://code.example.com/")).toBe(false);
+    expect(ok("javascript:alert(1)")).toBe(false);
+    expect(ok("file:///etc/passwd")).toBe(false);
+    expect(ok("vscode://open")).toBe(false);
+    expect(ok("https://user:pw@example.com/")).toBe(false);
+    expect(ok("https://example.com/a b")).toBe(false);
+    expect(ok("/relative")).toBe(false);
+    expect(ok("")).toBe(false);
+  });
+
+  it("Tauri: hands the link to the opener bridge", async () => {
+    const openUrl = vi.fn().mockResolvedValue(undefined);
+    win.__TAURI__ = {};
+    win.__EMBER_HOST__ = { openUrl };
+    const host = new HostMod.Host();
+    expect(await host.openExternal("https://example.com/x")).toBe(true);
+    expect(openUrl).toHaveBeenCalledWith("https://example.com/x");
+  });
+
+  it("a browser tab opens a new tab with no way back", async () => {
+    const open = vi.fn().mockReturnValue(null);
+    win.open = open;
+    const host = new HostMod.Host();
+    expect(await host.openExternal("https://example.com/x")).toBe(true);
+    expect(open).toHaveBeenCalledWith("https://example.com/x", "_blank", "noopener,noreferrer");
+  });
+
+  it("refuses a link it may not open, and opens nothing", async () => {
+    const openUrl = vi.fn();
+    const open = vi.fn();
+    win.__TAURI__ = {};
+    win.__EMBER_HOST__ = { openUrl };
+    win.open = open;
+    const host = new HostMod.Host();
+    expect(await host.openExternal("http://example.com/")).toBe(false);
+    expect(openUrl).not.toHaveBeenCalled();
+    expect(open).not.toHaveBeenCalled();
+  });
+});
 
 describe("Host.openFile", () => {
   it("returns false for an empty path (defensive)", async () => {

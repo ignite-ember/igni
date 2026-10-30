@@ -1,5 +1,5 @@
 """Tests for config/cloud_models.py — the :class:`CloudModelCatalogClient`
-that fetches + merges the Ember Cloud key-pool catalogue.
+that fetches + merges the igni server key-pool catalogue.
 
 Covers both pieces independently:
 

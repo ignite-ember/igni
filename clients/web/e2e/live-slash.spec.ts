@@ -110,7 +110,6 @@ const READ_ONLY: {
   { cmd: "/skills", where: ".page", shows: /skill/i },
   { cmd: "/mcp", where: ".page", shows: /mcp|server/i },
   { cmd: "/plugins", where: ".page", shows: /marketplace|installed/i },
-  { cmd: "/codeindex", where: ".page", shows: /sync|resync|clean/i },
   { cmd: "/hooks", where: ".page", shows: /hook/i },
   { cmd: "/loop", where: ".page", shows: /loop/i },
   { cmd: "/schedule", where: ".page", shows: /scheduled|task/i },
@@ -383,41 +382,6 @@ for (const { cmd, shows } of ANSWERS) {
     );
   });
 }
-
-test("/knowledge says why it is unavailable", async ({ page, liveBe }) => {
-  // Either it opens the panel, or it explains itself. What it must
-  // not do is the third thing, which is what it did: "Knowledge base
-  // failed to initialize." — no cause, and not a failure. The index
-  // is deferred until CodeIndex's Neo4j attaches, and this branch
-  // exists to say so. `Session._knowledge_error` was never assigned,
-  // so it could not.
-  await page.goto(`/?ws=${encodeURIComponent(liveBe.wsUrl)}`);
-  await connected(page);
-  await page.getByRole("button", { name: /New chat/i }).click();
-
-  await runCommand(page, "/knowledge");
-  await shot(page, "ans-knowledge");
-
-  const opened = await page
-    .locator(".drawer")
-    .first()
-    .isVisible()
-    .catch(() => false);
-  if (opened) return;
-
-  const conversation = page.locator(".conversation");
-  await expect(conversation).toContainText(/knowledge/i, { timeout: 30_000 });
-  // A cause, in words that point somewhere.
-  // ``setting up|local database`` are the subsystem-state wording: knowledge
-  // now reports PREPARING while the sidecar starts, where it used to report
-  // only the reasons it was off. Both name a cause, which is the property this
-  // test is for — the line below still holds the fallback to account, and that
-  // is what "says why" means here.
-  await expect(conversation).toContainText(
-    /neo4j|codeindex|disabled|config|setting up|local database/i,
-  );
-  await expect(conversation).not.toContainText(/failed to initialize\.?\s*$/i);
-});
 
 for (const { cmd, becomes } of MODES) {
   test(`${cmd} switches the permission mode and back`, async ({

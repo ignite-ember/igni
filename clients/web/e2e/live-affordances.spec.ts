@@ -54,10 +54,10 @@ type Lands = "page" | "transcript" | "either";
 
 const LANDS: Record<string, Lands> = {
   "/mcp": "page",
-  "/codeindex": "page",
   "/agents": "page",
   "/skills": "page",
   "/plugins": "page",
+  "/extensions": "page",
   "/hooks": "page",
   "/loop": "page",
   "/schedule": "page",
@@ -68,19 +68,15 @@ const LANDS: Record<string, Lands> = {
   // A client-side intercept, not a backend command — it appends an
   // info line listing what it found.
   "/workflows": "transcript",
-  // Opens the panel when the index is up, explains itself when it is
-  // not. Both are correct answers; silence is not.
-  "/knowledge": "either",
 };
 
 /** The header tools menu, in `App.tsx`'s `TOOLS_MENU` order. */
 const TOOLS = [
   "MCP servers",
-  "CodeIndex",
   "Agents",
   "Skills",
   "Plugins",
-  "Knowledge",
+  "Extensions",
   "Hooks",
   "Loop",
   "Scheduled tasks",
@@ -93,11 +89,10 @@ const TOOLS = [
 
 const TOOL_COMMAND: Record<string, string> = {
   "MCP servers": "/mcp",
-  CodeIndex: "/codeindex",
   Agents: "/agents",
   Skills: "/skills",
   Plugins: "/plugins",
-  Knowledge: "/knowledge",
+  Extensions: "/extensions",
   Hooks: "/hooks",
   Loop: "/loop",
   "Scheduled tasks": "/schedule",
@@ -113,12 +108,10 @@ const CARDS = [
   "/agents",
   "/skills",
   "/workflows",
-  "/codeindex",
   "/schedule",
   "/loop",
   "/mcp",
   "/plugins",
-  "/knowledge",
 ];
 
 async function connected(page: Page) {

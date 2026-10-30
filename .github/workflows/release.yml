@@ -34,6 +34,30 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # The release has two version universes and nothing used to make
+      # them agree. Tag-derived: latest.json's ``version`` field and the
+      # ``pip install 'ignite-ember==…'`` line in the release body.
+      # Commit-derived: pyproject.toml, which hatchling stamps onto the
+      # wheel and sync-version.mjs copies into tauri.conf.json /
+      # Cargo.toml (``CARGO_PKG_VERSION``, what the updater plugin
+      # compares latest.json against). Tag ``v1.0.4`` on a tree still at
+      # 1.0.3 shipped a release whose own page contradicted itself, and
+      # an installed desktop app that stays "out of date" forever: the
+      # updater downloads the bundle, the bundle reports 1.0.3, the
+      # feed still says 1.0.4, so it offers the same update on every
+      # launch. This is the first step of publish-pypi and every other
+      # job needs it transitively, so the whole release stops here.
+      - name: Verify tag matches pyproject version
+        run: |
+          set -euo pipefail
+          TAG_V="${GITHUB_REF#refs/tags/v}"
+          PY_V="$(grep -m1 -E '^version[[:space:]]*=' pyproject.toml | sed -E 's/.*"([^"]+)".*/\1/')"
+          if [ "$TAG_V" != "$PY_V" ]; then
+            echo "::error::tag v$TAG_V does not match pyproject.toml version $PY_V — bump pyproject (and run scripts/sync-version.mjs) or retag"
+            exit 1
+          fi
+          echo "tag and pyproject agree on $PY_V"
+
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
@@ -53,6 +77,22 @@ jobs:
 
       - name: Sync version across all clients
         run: node scripts/sync-version.mjs
+
+      # …and then fail if it had anything to do. The fixup above only
+      # helps THIS job: build-tauri checks the tag out fresh and never
+      # runs the syncer, so a stale ``clients/tauri/src-tauri/Cargo.toml``
+      # is what the shipped bundle reports as CARGO_PKG_VERSION — the
+      # value the updater plugin compares against latest.json's
+      # tag-derived ``version``. Mismatched, the app re-offers the same
+      # update on every launch, forever.
+      - name: Fail if the committed client versions were out of sync
+        run: |
+          set -euo pipefail
+          if ! git diff --quiet; then
+            echo "::error::client version files were not in sync with pyproject.toml — run 'node scripts/sync-version.mjs' and commit before tagging"
+            git diff --stat
+            exit 1
+          fi
 
       - name: Build package
         run: uv build
@@ -235,7 +275,7 @@ jobs:
           VSIX=$(ls *.vsix | head -1)
           npx --yes @vscode/vsce publish --packagePath "$VSIX" --pat "$VSCE_PAT"
 
-  # Tauri desktop installers — mac (arm + intel), windows, linux.
+  # Tauri desktop installers — mac (Apple Silicon only), windows, linux.
   # Tauri Action handles the per-platform bundle (.dmg/.msi/.AppImage),
   # generates the updater signatures, and uploads everything to the
   # GitHub Release. ``tagName`` matches the tag we're already on so
@@ -255,7 +295,7 @@ jobs:
   # (we trigger by pushing a ``v*`` tag, not by clicking "Create
   # release") there's no existing release, and the action's
   # find-or-create-by-tag path errors with "Release not found or
-  # created" — possibly because the four matrix legs race to
+  # created" — possibly because the three matrix legs race to
   # create the same release. Pre-creating it as a draft serialises
   # the creation; the matrix uploads in parallel; the final
   # ``github-release`` job downgrades draft → published and adds
@@ -292,10 +332,8 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - platform: macos-14
+          - platform: macos-26
             args: --target aarch64-apple-darwin
-          - platform: macos-14
-            args: --target x86_64-apple-darwin
           - platform: windows-latest
             args: ""
           - platform: ubuntu-22.04
@@ -313,7 +351,7 @@ jobs:
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
         with:
-          targets: ${{ matrix.platform == 'macos-14' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
+          targets: ${{ matrix.platform == 'macos-26' && 'aarch64-apple-darwin' || '' }}
 
       - name: Cache Cargo
         uses: Swatinem/rust-cache@v2
@@ -339,7 +377,7 @@ jobs:
       # creds it exits non-zero with a clear "Authentication failed"
       # in ~5 seconds, fast-failing the run.
       - name: Preflight notarytool credentials (macOS)
-        if: matrix.platform == 'macos-14'
+        if: matrix.platform == 'macos-26'
         env:
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
@@ -395,7 +433,7 @@ jobs:
       # pre-staple tarball is deleted so the next step's fallback
       # re-mints it via minisign against the new tarball.
       - name: Notarize + staple .app (macOS)
-        if: matrix.platform == 'macos-14'
+        if: matrix.platform == 'macos-26'
         env:
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
@@ -505,7 +543,7 @@ jobs:
           # the stapled version. tauri-bundler emits the tarball
           # locally as ``<productName>.app.tar.gz`` (no arch suffix),
           # but tauri-action RENAMES it to
-          # ``<productName>_<arch>.app.tar.gz`` (``_aarch64`` / ``_x64``)
+          # ``<productName>_<arch>.app.tar.gz`` (``_aarch64`` — the only Mac build)
           # when uploading to the release — and ``latest.json`` URLs
           # point at the arch-suffixed names. So if we upload the
           # bare basename we publish a new ``igni.app.tar.gz`` asset
@@ -523,11 +561,7 @@ jobs:
           # updater broke. Same variable means same file means no
           # divergence path.
           if [ -n "$OLD_TARBALL" ]; then
-            if [[ "${{ matrix.args }}" == *aarch64* ]]; then
-              REMOTE_NAME="igni_aarch64.app.tar.gz"
-            else
-              REMOTE_NAME="igni_x64.app.tar.gz"
-            fi
+            REMOTE_NAME="igni_aarch64.app.tar.gz"
             # ``gh release upload "file#displayName"`` only sets the
             # label in the UI — the asset's actual filename / URL
             # uses the local basename. So we have to RENAME the file
@@ -569,7 +603,7 @@ jobs:
       # ``signature`` field. ``updater-json`` below embeds the
       # file's contents verbatim.
       - name: Stash updater signature (macOS)
-        if: matrix.platform == 'macos-14'
+        if: matrix.platform == 'macos-26'
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
@@ -609,10 +643,10 @@ jobs:
           fi
           ls -la /tmp/updater-sig/
       - name: Upload updater signature artifact
-        if: matrix.platform == 'macos-14'
+        if: matrix.platform == 'macos-26'
         uses: actions/upload-artifact@v4
         with:
-          name: updater-sig-${{ contains(matrix.args, 'aarch64') && 'aarch64' || 'x86_64' }}
+          name: updater-sig-aarch64
           path: /tmp/updater-sig/updater.sig
           if-no-files-found: error
           retention-days: 1
@@ -625,7 +659,7 @@ jobs:
       # The .app.tar.gz updater payload (separately signed) is
       # untouched, so the auto-updater chain stays valid.
       - name: Strip DMG volume icon (macOS)
-        if: matrix.platform == 'macos-14'
+        if: matrix.platform == 'macos-26'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
@@ -663,22 +697,20 @@ jobs:
           PUB_DATE="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
           BASE_URL="https://github.com/${GITHUB_REPOSITORY}/releases/download/${TAG}"
 
-          # Each macOS matrix leg copied its ``.app.tar.gz.sig`` to
+          # The macOS matrix leg copied its ``.app.tar.gz.sig`` to
           # ``/tmp/updater-sig/updater.sig`` before uploading the
           # artifact, so the filename inside each download dir is
           # the stable ``updater.sig`` (no space-in-filename glob
           # surprises like the v0.6.2 attempt hit).
           AARCH64_SIG="$(cat /tmp/sigs/updater-sig-aarch64/updater.sig)"
-          X64_SIG="$(cat /tmp/sigs/updater-sig-x86_64/updater.sig)"
 
           # ``jq -Rs .`` reads the file content as a raw string and
           # JSON-quotes it (escapes newlines / quotes correctly).
           AARCH64_JSON="$(printf '%s' "$AARCH64_SIG" | jq -Rs .)"
-          X64_JSON="$(printf '%s' "$X64_SIG" | jq -Rs .)"
 
           # tauri-bundler emits ``<productName>_<arch>.app.tar.gz`` —
-          # productName is ``igni`` per tauri.conf.json, so the assets
-          # are ``igni_aarch64.app.tar.gz`` and ``igni_x64.app.tar.gz``.
+          # productName is ``igni`` per tauri.conf.json, so the asset
+          # is ``igni_aarch64.app.tar.gz`` (Apple Silicon only; no Intel build).
           # (Pre-rename builds at v0.6.x used ``Ember.Code_<arch>...``;
           # spaces in the old productName became dots in the
           # filename. Bumping ``productName`` in tauri.conf.json
@@ -692,10 +724,6 @@ jobs:
               "darwin-aarch64": {
                 "signature": ${AARCH64_JSON},
                 "url": "${BASE_URL}/igni_aarch64.app.tar.gz"
-              },
-              "darwin-x86_64": {
-                "signature": ${X64_JSON},
-                "url": "${BASE_URL}/igni_x64.app.tar.gz"
               }
             }
           }
@@ -791,9 +819,12 @@ jobs:
 
           **Python (CLI / library):**
           ```bash
-          pip install 'ignite-ember==${{ steps.notes.outputs.pip_version }}'
+          pip install 'ignite-ember[decisions]==${{ steps.notes.outputs.pip_version }}'
           # or
-          uv pip install 'ignite-ember==${{ steps.notes.outputs.pip_version }}'
+          uv pip install 'ignite-ember[decisions]==${{ steps.notes.outputs.pip_version }}'
+          # ``[decisions]`` adds igni's decisions service (Laya, torch) for
+          # Bypass mode's last check and ``host.decide``; leave it out on a
+          # backend that points IGNI_DECISIONS_URL at a shared one.
           ```
 
           **JetBrains plugin:** download the ``ember-code-jetbrains-*.zip``
@@ -928,7 +959,13 @@ jobs:
             homepage "https://ignite-ember.sh"
             url "PLACEHOLDER_URL"
             sha256 "PLACEHOLDER_SHA"
-            license "MIT"
+            # Apache-2.0, matching ``LICENSE`` at the repo root and
+            # ``license = "Apache-2.0"`` in pyproject.toml. This said
+            # "MIT" for every release published so far, which put a
+            # licence the project has never shipped under on the tap
+            # page brew users read before installing. Homebrew validates
+            # this string against its SPDX list, so keep it SPDX-exact.
+            license "Apache-2.0"
 
             depends_on "git"
             depends_on "python@3.12"
@@ -939,7 +976,15 @@ jobs:
             def install
               venv = virtualenv_create(libexec, "python3.12")
               system libexec/"bin/python3.12", "-m", "pip", "install", "--prefer-binary", "ignite-ember==PLACEHOLDER_VERSION"
+              # Both console scripts from pyproject's [project.scripts].
+              # ``igni`` is the canonical command and the one README and
+              # QUICKSTART tell brew users to type; for every release up
+              # to now only ``ignite-ember`` was linked, so the
+              # documented install path shipped without the documented
+              # command. The test below runs ``igni`` for that reason —
+              # dropping this line again fails the formula's own test.
               bin.install_symlink libexec/"bin/ignite-ember"
+              bin.install_symlink libexec/"bin/igni"
 
               # Clear dylib IDs from Rust-built Python extensions so Homebrew's
               # install_name_tool fixup doesn't fail on them.
@@ -949,6 +994,10 @@ jobs:
             end
 
             test do
+              # Run the canonical name first: ``brew test`` is the only
+              # thing that would have caught the missing symlink, and it
+              # was pointed at the other binary.
+              assert_match "igni", shell_output("#{bin}/igni --version")
               assert_match "igni", shell_output("#{bin}/ignite-ember --version")
             end
           end

@@ -34,16 +34,18 @@ _ALLOWED_HOSTS: dict[str, str] = {
     # login the user cannot retry. F124.
     "127.0.0.1": "the sign-in callback listener, on this machine",
     "placeholder.invalid": "RFC 2606, a deliberately unroutable stand-in",
-    # ── One-time bootstrap downloads ─────────────────────────────────
-    #
-    # Not telemetry: nothing about the customer goes out, and they run
-    # once at install. They do mean an air-gapped machine cannot bootstrap
-    # unaided, which self-hosting.md §7 covers as a packaging gap rather
-    # than a privacy one.
-    "api.adoptium.net": "JDK download, for the JetBrains plugin bootstrap",
-    "dist.neo4j.org": "Neo4j download, for the local code index",
+    # The one-time Neo4j and JDK downloads left with the local code
+    # index: the CodeIndex extension makes them, and declares both hosts
+    # in its manifest's `permissions.egress`.
     # ── The vendor's own hosts ───────────────────────────────────────
     "docs.ignite-ember.sh": "a documentation link in a generated config template",
+    # A JSON Schema `$id`, written into the manifest `igni ext init`
+    # scaffolds. Identifiers, not addresses: nothing dereferences it,
+    # and an editor that does is resolving a schema the author asked
+    # it to, on their machine, about their own file. The schema it
+    # names ships in the repository at
+    # docs/extension-manifest.schema.json.
+    "igni.sh": "the $schema identifier in a scaffolded extension manifest",
     # `ignite-ember.sh` and `api.ignite-ember.sh` used to be here, and
     # the second carried a paragraph beginning "OPEN QUESTION, not a
     # settled answer": `api_url` defaulted to the vendor, so a CLI

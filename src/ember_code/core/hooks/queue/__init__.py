@@ -48,6 +48,8 @@ from .schemas import (
     PostHookInvocation,
     QueueCallbacks,
     SupportsRunOutput,
+    TakenMessage,
+    TakesMessages,
     ToolHookInvocation,
 )
 
@@ -63,5 +65,7 @@ __all__ = [
     "QueueInjectorHook",
     "QueuePersisterHook",
     "SupportsRunOutput",
+    "TakenMessage",
+    "TakesMessages",
     "ToolHookInvocation",
 ]

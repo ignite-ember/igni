@@ -20,7 +20,7 @@ User Message
 │ • Selects    │       │  simplifier.md  security.md   │
 │   agents     │       │  qa.md          debugger.md   │
 │ • Picks team │       │  docs.md                      │
-│   mode       │       │  data-architect.codeindex.md  │
+│   mode       │       │  (+ extensions' agents)       │
 │              │       │  your-custom-agent.md         │
 │              │       └───────────────────────────────┘
 │              │
@@ -117,7 +117,6 @@ fails to resolve, which is silent — the agent simply does not get that tool.
 | `WebFetch` | `WebTools` | `fetch_url`, `fetch_json` | yes |
 | `Schedule` | `ScheduleTools` | `schedule_task`, `list_scheduled_tasks`, `cancel_scheduled_task` | yes |
 | `NotebookEdit` | `NotebookTools` | `notebook_read`, `notebook_read_cell`, `notebook_add_cell`, `notebook_edit_cell`, `notebook_remove_cell` | yes |
-| `CodeIndex` | `CodeIndexTools` | `codeindex_cypher` | no — main agent only |
 | `Visualize` | `VisualizeTools` | (UI payload) | no — main agent only |
 | `mcp_<server>_<tool>` | `MCPTools` | per server | via `.mcp.json`, not `tools:` |
 
@@ -830,7 +829,6 @@ Skills are reusable prompted workflows — task recipes invoked via `/skill-name
 
 ```
 /deploy staging              — invoke the deploy skill
-/resolve-issues main         — fix issues CodeIndex flagged on your branch
 /explain src/auth/           — deep-dive explanation using CodeIndex
 ```
 

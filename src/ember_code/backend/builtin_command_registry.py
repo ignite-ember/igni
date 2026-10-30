@@ -21,35 +21,11 @@ and dispatch table read from the same list.
 
 from __future__ import annotations
 
+import importlib
 from collections.abc import Awaitable, Callable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from types import MappingProxyType
-from typing import TYPE_CHECKING
-
-from ember_code.backend.cmd_agents import cmd_agents
-from ember_code.backend.cmd_auth import cmd_login, cmd_logout, cmd_whoami
-from ember_code.backend.cmd_codeindex import cmd_codeindex
-from ember_code.backend.cmd_config import cmd_config
-from ember_code.backend.cmd_context import cmd_compact, cmd_ctx, cmd_output_style
-from ember_code.backend.cmd_eject import cmd_eject
-from ember_code.backend.cmd_evals import cmd_evals
-from ember_code.backend.cmd_help import cmd_help
-from ember_code.backend.cmd_hooks import cmd_hooks
-from ember_code.backend.cmd_knowledge import cmd_knowledge, cmd_sync_knowledge
-from ember_code.backend.cmd_loop import cmd_loop
-from ember_code.backend.cmd_memory import cmd_memory
-from ember_code.backend.cmd_misc import (
-    cmd_bug,
-    cmd_mcp,
-    cmd_quit,
-    cmd_skills,
-    cmd_watcher,
-)
-from ember_code.backend.cmd_model import cmd_model
-from ember_code.backend.cmd_modes import cmd_accept, cmd_bypass, cmd_plan
-from ember_code.backend.cmd_plugin import cmd_plugin, cmd_plugins
-from ember_code.backend.cmd_schedule import cmd_schedule
-from ember_code.backend.cmd_session import cmd_clear, cmd_fork, cmd_rename, cmd_sessions
+from typing import TYPE_CHECKING, cast
 
 if TYPE_CHECKING:
     from ember_code.backend.command_handler import CommandHandler
@@ -57,44 +33,78 @@ if TYPE_CHECKING:
 
 
 # All builtin shim callables share this signature: ``(handler, args)``
-# → ``Awaitable[CommandResult]``. Two-arg shape for both no-arg
-# commands (they accept an ignored ``args``) and arg-taking ones —
-# the registry stays uniform.
+# → ``Awaitable[CommandResult]``. A command whose shim takes only the
+# handler is registered with ``takes_args=False`` and the registry
+# drops the args for it.
 BuiltinHandler = Callable[["CommandHandler", str], Awaitable["CommandResult"]]
+NoArgsHandler = Callable[["CommandHandler"], Awaitable["CommandResult"]]
 
 
 @dataclass(frozen=True)
 class BuiltinCommand:
-    """One entry in the registry: slash-key + bare-name + description
-    + shim callable.
+    """One entry in the registry: slash-key + description + where its
+    shim lives.
 
-    ``@dataclass(frozen=True)`` (not Pydantic) so ``handler`` — a
-    Callable that Pydantic can't serialize without
-    ``arbitrary_types_allowed=True`` — stores cleanly and the
-    entry is hashable.
+    ``target`` is ``"module:attr"``. The module is imported the first
+    time the command runs, never before: an idle backend carries
+    none of what ``/evals``, ``/loop``, ``/schedule`` or ``/plugin``
+    need (sqlalchemy, alembic, dateparser, the evals runner…). Listing
+    and describing commands reads only this entry.
     """
 
     slash: str  # e.g. "/agents"
     description: str
-    handler: BuiltinHandler
+    target: str  # e.g. "ember_code.backend.cmd_agents:cmd_agents"
+    takes_args: bool = True
+    _resolved: list[BuiltinHandler] = field(
+        default_factory=list, repr=False, compare=False, hash=False
+    )
 
     @property
     def bare(self) -> str:
         """Name with the leading slash stripped."""
         return self.slash.lstrip("/")
 
+    @property
+    def module(self) -> str:
+        """Dotted path of the module the shim lives in."""
+        return self.target.partition(":")[0]
+
+    def resolve(self) -> BuiltinHandler:
+        """The shim, imported on first use and kept.
+
+        This is the one place in the backend that imports by name at
+        run time — deliberately, so the commands' dependencies load
+        when somebody runs one rather than when the backend starts.
+        """
+        if not self._resolved:
+            module_name, _, attr = self.target.partition(":")
+            shim = getattr(importlib.import_module(module_name), attr)
+            if self.takes_args:
+                self._resolved.append(cast(BuiltinHandler, shim))
+            else:
+                no_args = cast(NoArgsHandler, shim)
+
+                async def _without_args(handler: CommandHandler, _args: str) -> CommandResult:
+                    return await no_args(handler)
+
+                self._resolved.append(_without_args)
+        return self._resolved[0]
+
+
+_B = "ember_code.backend"
+
 
 class BuiltinCommandRegistry:
     """Registry of every built-in slash command.
 
-    Adding a new builtin means one entry in :attr:`_ENTRIES` —
+    Adding a new builtin means one entry in :meth:`_build_entries` —
     the descriptions catalog and dispatch table are both derived
-    from that single list. No more three-place edit.
+    from that single list, and nothing behind an entry is imported
+    until the command runs.
     """
 
     def __init__(self) -> None:
-        # Build the actual entries at instance-construct time so
-        # the auth wrappers close over the underscored originals.
         self._entries: tuple[BuiltinCommand, ...] = tuple(self._build_entries())
         self._by_slash: Mapping[str, BuiltinCommand] = MappingProxyType(
             {e.slash: e for e in self._entries}
@@ -105,93 +115,106 @@ class BuiltinCommandRegistry:
 
     @staticmethod
     def _build_entries() -> list[BuiltinCommand]:
-        async def _login_wrapper(handler: CommandHandler, _args: str) -> CommandResult:
-            return await cmd_login(handler)
-
-        async def _logout_wrapper(handler: CommandHandler, _args: str) -> CommandResult:
-            return await cmd_logout(handler)
-
-        async def _whoami_wrapper(handler: CommandHandler, _args: str) -> CommandResult:
-            return await cmd_whoami(handler)
-
-        async def _compact_wrapper(handler: CommandHandler, _args: str) -> CommandResult:
-            return await cmd_compact(handler)
-
-        async def _ctx_wrapper(handler: CommandHandler, _args: str) -> CommandResult:
-            return await cmd_ctx(handler)
-
-        async def _sync_knowledge_wrapper(handler: CommandHandler, _args: str) -> CommandResult:
-            return await cmd_sync_knowledge(handler)
-
-        async def _clear_wrapper(handler: CommandHandler, _args: str) -> CommandResult:
-            return await cmd_clear(handler)
-
-        async def _sessions_wrapper(handler: CommandHandler, _args: str) -> CommandResult:
-            return await cmd_sessions(handler)
-
         return [
-            BuiltinCommand("/quit", "Exit the session", cmd_quit),
-            BuiltinCommand("/exit", "Exit the session", cmd_quit),
-            BuiltinCommand("/help", "Show help and available commands", cmd_help),
+            BuiltinCommand("/quit", "Exit the session", f"{_B}.cmd_misc:cmd_quit"),
+            BuiltinCommand("/exit", "Exit the session", f"{_B}.cmd_misc:cmd_quit"),
+            BuiltinCommand("/help", "Show help and available commands", f"{_B}.cmd_help:cmd_help"),
             BuiltinCommand(
                 "/watcher",
                 "Open the background-process watcher panel",
-                cmd_watcher,
+                f"{_B}.cmd_misc:cmd_watcher",
             ),
-            BuiltinCommand("/agents", "List and manage agents", cmd_agents),
-            BuiltinCommand("/skills", "List installed skills", cmd_skills),
-            BuiltinCommand("/hooks", "List installed hooks", cmd_hooks),
+            BuiltinCommand("/agents", "List and manage agents", f"{_B}.cmd_agents:cmd_agents"),
+            BuiltinCommand("/skills", "List installed skills", f"{_B}.cmd_misc:cmd_skills"),
+            BuiltinCommand("/hooks", "List installed hooks", f"{_B}.cmd_hooks:cmd_hooks"),
             BuiltinCommand(
                 "/eject",
                 "Copy something your group ships into this project, so yours wins",
-                cmd_eject,
+                f"{_B}.cmd_eject:cmd_eject",
             ),
-            BuiltinCommand("/clear", "Clear the current conversation", _clear_wrapper),
-            BuiltinCommand("/sessions", "List past sessions", _sessions_wrapper),
-            BuiltinCommand("/rename", "Rename the current session", cmd_rename),
-            BuiltinCommand("/fork", "Fork the current session under a new id", cmd_fork),
-            BuiltinCommand("/memory", "Inspect or optimise learned memories", cmd_memory),
-            BuiltinCommand("/knowledge", "Search or add to the knowledge base", cmd_knowledge),
-            BuiltinCommand("/codeindex", "Manage the semantic code index", cmd_codeindex),
-            BuiltinCommand("/config", "Show current settings", cmd_config),
-            BuiltinCommand("/model", "Switch the active model", cmd_model),
-            BuiltinCommand("/mcp", "Open the MCP servers panel", cmd_mcp),
-            BuiltinCommand("/login", "Sign in to igni Cloud", _login_wrapper),
-            BuiltinCommand("/logout", "Sign out of igni Cloud", _logout_wrapper),
-            BuiltinCommand("/whoami", "Show the signed-in user", _whoami_wrapper),
-            BuiltinCommand("/schedule", "Schedule one-shot or recurring tasks", cmd_schedule),
-            BuiltinCommand("/loop", "Run a prompt in a loop", cmd_loop),
-            BuiltinCommand("/plugin", "Install / update / remove a plugin", cmd_plugin),
-            BuiltinCommand("/plugins", "Open the plugins panel", cmd_plugins),
-            BuiltinCommand("/compact", "Compact the conversation context", _compact_wrapper),
-            BuiltinCommand("/ctx", "Show context window usage", _ctx_wrapper),
+            BuiltinCommand(
+                "/clear",
+                "Clear the current conversation",
+                f"{_B}.cmd_session:cmd_clear",
+                takes_args=False,
+            ),
+            BuiltinCommand(
+                "/sessions",
+                "List past sessions",
+                f"{_B}.cmd_session:cmd_sessions",
+                takes_args=False,
+            ),
+            BuiltinCommand("/rename", "Rename the current session", f"{_B}.cmd_session:cmd_rename"),
+            BuiltinCommand(
+                "/fork", "Fork the current session under a new id", f"{_B}.cmd_session:cmd_fork"
+            ),
+            BuiltinCommand(
+                "/memory", "Inspect or optimise learned memories", f"{_B}.cmd_memory:cmd_memory"
+            ),
+            BuiltinCommand("/config", "Show current settings", f"{_B}.cmd_config:cmd_config"),
+            BuiltinCommand("/model", "Switch the active model", f"{_B}.cmd_model:cmd_model"),
+            BuiltinCommand("/mcp", "Open the MCP servers panel", f"{_B}.cmd_misc:cmd_mcp"),
+            BuiltinCommand(
+                "/login", "Sign in to igni Cloud", f"{_B}.cmd_auth:cmd_login", takes_args=False
+            ),
+            BuiltinCommand(
+                "/logout", "Sign out of igni Cloud", f"{_B}.cmd_auth:cmd_logout", takes_args=False
+            ),
+            BuiltinCommand(
+                "/whoami",
+                "Show the signed-in user",
+                f"{_B}.cmd_auth:cmd_whoami",
+                takes_args=False,
+            ),
+            BuiltinCommand(
+                "/schedule",
+                "Schedule one-shot or recurring tasks",
+                f"{_B}.cmd_schedule:cmd_schedule",
+            ),
+            BuiltinCommand("/loop", "Run a prompt in a loop", f"{_B}.cmd_loop:cmd_loop"),
+            BuiltinCommand(
+                "/plugin", "Install / update / remove a plugin", f"{_B}.cmd_plugin:cmd_plugin"
+            ),
+            BuiltinCommand("/plugins", "Open the plugins panel", f"{_B}.cmd_plugin:cmd_plugins"),
+            BuiltinCommand(
+                "/extensions",
+                "Installed extensions and their settings",
+                f"{_B}.cmd_misc:cmd_extensions",
+            ),
+            BuiltinCommand(
+                "/compact",
+                "Compact the conversation context",
+                f"{_B}.cmd_context:cmd_compact",
+                takes_args=False,
+            ),
+            BuiltinCommand(
+                "/ctx",
+                "Show context window usage",
+                f"{_B}.cmd_context:cmd_ctx",
+                takes_args=False,
+            ),
             BuiltinCommand(
                 "/plan",
                 "Toggle plan mode (read-only sandbox + plan-then-execute workflow)",
-                cmd_plan,
+                f"{_B}.cmd_modes:cmd_plan",
             ),
             BuiltinCommand(
                 "/accept",
                 "Toggle acceptEdits mode (auto-approve file edits)",
-                cmd_accept,
+                f"{_B}.cmd_modes:cmd_accept",
             ),
             BuiltinCommand(
                 "/bypass",
                 "Toggle bypassPermissions mode (auto-approve every tool — no HITL prompts)",
-                cmd_bypass,
+                f"{_B}.cmd_modes:cmd_bypass",
             ),
             BuiltinCommand(
                 "/output-style",
                 "List or switch the active output style (tone / verbosity)",
-                cmd_output_style,
+                f"{_B}.cmd_context:cmd_output_style",
             ),
-            BuiltinCommand("/bug", "Open a bug report", cmd_bug),
-            BuiltinCommand("/evals", "Run evaluation suites", cmd_evals),
-            BuiltinCommand(
-                "/sync-knowledge",
-                "Sync the knowledge base with git",
-                _sync_knowledge_wrapper,
-            ),
+            BuiltinCommand("/bug", "Open a bug report", f"{_B}.cmd_misc:cmd_bug"),
+            BuiltinCommand("/evals", "Run evaluation suites", f"{_B}.cmd_evals:cmd_evals"),
         ]
 
     # ── Public API ─────────────────────────────────────────────
@@ -206,6 +229,10 @@ class BuiltinCommandRegistry:
         """Bare (no-slash) names of every built-in command."""
         return [e.bare for e in self._entries]
 
+    def entries(self) -> tuple[BuiltinCommand, ...]:
+        """Every entry, in registration order."""
+        return self._entries
+
     def describe(self, name: str) -> str:
         """One-liner description for a built-in command. Accepts
         either ``"help"`` or ``"/help"``; returns ``""`` for
@@ -215,29 +242,22 @@ class BuiltinCommandRegistry:
         entry = self.get(name)
         return entry.description if entry is not None else ""
 
-    def as_mapping(self) -> Mapping[str, BuiltinHandler]:
-        """Read-only view keyed on the slash form. Provided so the
-        legacy :class:`CommandHandler._COMMANDS` back-compat shim
-        can honour ``"/bypass" in _COMMANDS`` in existing tests
-        (see :mod:`test_plan_mode`, :mod:`test_evals`).
-        """
-        return MappingProxyType({e.slash: e.handler for e in self._entries})
-
     async def dispatch(
         self, handler: CommandHandler, slash: str, args: str
     ) -> CommandResult | None:
-        """Route ``slash`` to its shim. Returns ``None`` when the
-        command isn't a registered builtin so the caller can fall
-        through to the next dispatch tier (markdown, skills).
+        """Route ``slash`` to its shim, importing it on first use.
+        Returns ``None`` when the command isn't a registered builtin
+        so the caller can fall through to the next dispatch tier
+        (markdown, skills).
         """
         entry = self._by_slash.get(slash)
         if entry is None:
             return None
-        return await entry.handler(handler, args)
+        return await entry.resolve()(handler, args)
 
 
-# Module-level singleton — the registry is stateless (frozen
-# entries) so one instance is safe to share across the process.
+# Module-level singleton — entries are frozen and a resolved shim is
+# the same for every caller, so one instance is safe to share.
 BUILTIN_REGISTRY = BuiltinCommandRegistry()
 
 

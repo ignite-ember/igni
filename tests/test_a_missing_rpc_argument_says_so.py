@@ -94,9 +94,9 @@ class TestTheErrorNamesTheArgument:
     async def test_other_failures_are_still_reported_verbatim(self):
         """Only ``KeyError`` is reinterpreted.
 
-        A handler that raises with a considered message — the
-        ``codeindex_install`` refusal explains where to set `api_url`
-        and why — must reach the caller unchanged. Wrapping every
+        A handler that raises with a considered message — a refusal
+        that explains where to set `api_url` and why — must reach the
+        caller unchanged. Wrapping every
         exception in "is a required argument" would have destroyed the
         one class of error already worth reading.
         """
@@ -105,9 +105,9 @@ class TestTheErrorNamesTheArgument:
         def explodes(_args: dict):
             raise ValueError("api_url is not set. Set it in ~/.igni/config.yaml")
 
-        dispatcher = _dispatcher(transport, {"codeindex_install": explodes})
+        dispatcher = _dispatcher(transport, {"open_portal": explodes})
 
-        await dispatcher._on_rpc_request(_Request("codeindex_install", {}), "req-3")
+        await dispatcher._on_rpc_request(_Request("open_portal", {}), "req-3")
 
         assert transport.sent[0].error == "api_url is not set. Set it in ~/.igni/config.yaml"
 

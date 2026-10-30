@@ -24,6 +24,9 @@ from typing import Any
 
 import httpx
 
+from ember_code.core.activity import BusyKind
+from ember_code.core.activity.http import BusyAsyncClient
+from ember_code.core.auth.http_auth import CloudTokenAuth
 from ember_code.core.config.llm_call_logger import LlmCallLogger
 from ember_code.core.config.logging_model import LoggingModel
 from ember_code.core.config.model_entry import ModelRegistryEntry
@@ -47,8 +50,14 @@ class ProviderClientBuilder(ABC):
         *,
         cloud_token: str | None,
         llm_logger: LlmCallLogger,
+        cloud_auth: CloudTokenAuth | None = None,
     ) -> Any:
-        """Return a live Agno model instance for ``entry``."""
+        """Return a live Agno model instance for ``entry``.
+
+        ``cloud_auth``, when given, puts igni server's current token on
+        each request of an entry that uses it, instead of ``cloud_token``
+        — the token as it was when the model was built.
+        """
 
 
 class OpenAILikeBuilder(ProviderClientBuilder):
@@ -65,8 +74,9 @@ class OpenAILikeBuilder(ProviderClientBuilder):
         *,
         cloud_token: str | None,
         llm_logger: LlmCallLogger,
+        cloud_auth: CloudTokenAuth | None = None,
     ) -> LoggingModel:
-        kwargs = self._build_kwargs(entry, cloud_token=cloud_token)
+        kwargs = self._build_kwargs(entry, cloud_token=cloud_token, cloud_auth=cloud_auth)
         return LoggingModel(
             logger=llm_logger,
             vision=entry.vision,
@@ -78,6 +88,7 @@ class OpenAILikeBuilder(ProviderClientBuilder):
         entry: ModelRegistryEntry,
         *,
         cloud_token: str | None,
+        cloud_auth: CloudTokenAuth | None = None,
     ) -> dict[str, Any]:
         """OpenAI-like providers share a broad kwarg surface:
         base_url, api_key, temperature, max_tokens, timeout +
@@ -86,7 +97,7 @@ class OpenAILikeBuilder(ProviderClientBuilder):
         Models with explicit credentials use them directly.
         Otherwise, authenticated users route through the Ember
         Cloud gateway. URL and API key resolve independently:
-        - URL: from the entry, or the Ember Cloud gateway fallback
+        - URL: from the entry, or the igni server gateway fallback
         - Key: from the entry, or the injected cloud token
         """
         kwargs: dict[str, Any] = {"id": entry.model_id}
@@ -94,7 +105,11 @@ class OpenAILikeBuilder(ProviderClientBuilder):
         if entry.url:
             kwargs["base_url"] = entry.url
 
-        api_key = entry.resolve_api_key(cloud_token=cloud_token)
+        resolved = entry.resolve_key(cloud_token=cloud_token)
+        api_key = resolved.value
+        # igni server's token is read on each request, not fixed now: in
+        # a producer's VM there may be none yet, and it rotates.
+        auth = cloud_auth if resolved.cloud else None
         # OpenAILike requires SOME api_key value — even a placeholder
         # so the SDK's None-check inside its constructor doesn't
         # raise before the first call. When the resolver returns
@@ -106,7 +121,7 @@ class OpenAILikeBuilder(ProviderClientBuilder):
         # authentication error — phrased in their terms and arriving
         # nowhere near the cause. This is the only moment we know both
         # that a key was wanted and that none was found.
-        if not api_key:
+        if not api_key and auth is None:
             logger.warning("%s Requests to it will be rejected.", entry.why_no_api_key())
         kwargs["api_key"] = api_key or "not-set"
 
@@ -127,7 +142,10 @@ class OpenAILikeBuilder(ProviderClientBuilder):
         # Short keepalive expiry avoids stale connections that
         # hang when reused after idle periods (e.g. between user
         # messages).
-        kwargs["http_client"] = httpx.AsyncClient(
+        kwargs["http_client"] = BusyAsyncClient(
+            busy_holder="model",
+            busy_kind=BusyKind.MODEL_CALL,
+            auth=auth,
             timeout=httpx.Timeout(timeout_s),
             limits=httpx.Limits(
                 max_connections=10,
@@ -169,7 +187,10 @@ class GeminiBuilder(ProviderClientBuilder):
         *,
         cloud_token: str | None,
         llm_logger: LlmCallLogger,
+        cloud_auth: CloudTokenAuth | None = None,
     ) -> Any:
+        # Gemini's SDK takes a key, not an httpx client: no live token.
+        _ = cloud_auth
         if self._gemini_cls is None:
             raise RuntimeError(
                 "Gemini provider requested but google-genai is not installed. "

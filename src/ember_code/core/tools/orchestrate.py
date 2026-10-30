@@ -51,6 +51,7 @@ from ember_code.core.tools.orchestrate_streaming import (
 from ember_code.core.tools.orchestrate_streaming import (
     run_team_streaming as _run_team_streaming,
 )
+from ember_code.core.tools.spawn_context import ParentCall, SpawnCalls
 
 __all__ = [
     "OrchestrateTools",
@@ -172,6 +173,10 @@ class OrchestrateTools(Toolkit):
 
     # ── Dependency wiring ────────────────────────────────────────
 
+    def spawn_deps(self) -> SpawnDeps:
+        """The factories spawns are built with (see :meth:`_build_spawn_deps`)."""
+        return self._build_spawn_deps()
+
     def _build_spawn_deps(self) -> SpawnDeps:
         """Bundle the four late-bound module attributes into a
         :class:`SpawnDeps`.
@@ -200,6 +205,8 @@ class OrchestrateTools(Toolkit):
         task: str,
         agent_name: str,
         isolation: str = "",
+        agent: Any = None,
+        run_context: Any = None,
     ) -> str:
         """Run a single agent from the pool on a subtask.
 
@@ -222,7 +229,22 @@ class OrchestrateTools(Toolkit):
             spawn was isolated, a ``Worktree:`` footer reports
             the branch + path so the caller knows where the
             changes landed.
+
+        ``agent`` and ``run_context`` are Agno's to fill (it leaves them
+        out of the tool's schema): the run waiting for this call, which
+        lets an approval the spawned agent asks for outlive the backend
+        (:mod:`ember_code.core.tools.spawn_context`).
         """
+        parent = ParentCall.from_run_context(
+            run_context,
+            agent=agent,
+            tool_name="spawn_agent",
+            tool_args={"task": task, "agent_name": agent_name, "isolation": isolation},
+        )
+        with SpawnCalls.entered(parent):
+            return await self._spawn_one(task, agent_name, isolation)
+
+    async def _spawn_one(self, task: str, agent_name: str, isolation: str = "") -> str:
         runner = AgentSpawn(
             agent_name=agent_name,
             task=task,
@@ -243,7 +265,14 @@ class OrchestrateTools(Toolkit):
         )
         return await runner.run()
 
-    async def spawn_team(self, task: str, agent_names: str, mode: str = "coordinate") -> str:
+    async def spawn_team(
+        self,
+        task: str,
+        agent_names: str,
+        mode: str = "coordinate",
+        agent: Any = None,
+        run_context: Any = None,
+    ) -> str:
         """Create and run a sub-team for a specific subtask.
 
         Args:
@@ -257,8 +286,18 @@ class OrchestrateTools(Toolkit):
         names = [n.strip() for n in agent_names.split(",") if n.strip()]
         # Single-name teams collapse to a plain spawn — preserved
         # behaviour from the pre-refactor code.
-        if len(names) == 1:
-            return await self.spawn_agent(task, names[0])
+        parent = ParentCall.from_run_context(
+            run_context,
+            agent=agent,
+            tool_name="spawn_team",
+            tool_args={"task": task, "agent_names": agent_names, "mode": mode},
+        )
+        with SpawnCalls.entered(parent):
+            if len(names) == 1:
+                return await self._spawn_one(task, names[0])
+            return await self._spawn_team(task, names, mode)
+
+    async def _spawn_team(self, task: str, names: list[str], mode: str) -> str:
         runner = TeamSpawn(
             names=names,
             task=task,

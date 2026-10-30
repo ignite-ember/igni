@@ -176,35 +176,60 @@ class TestBothTransportsNamespaceTheirTools:
     the transport decides whether its tools are namespaced, so the collision
     appears when someone moves a working server from stdio to SSE and the tools
     change names underneath them.
+
+    This used to compare the two ``f"mcp_{name}"`` literals by reading the
+    source of both methods. They are one function now — which is the better
+    fix, and also why reading for a literal stopped finding anything. What is
+    pinned instead: neither site builds a prefix by hand, and the prefix can
+    be taken back off, because something has to put a registered name back
+    into the server's own vocabulary and for a long time nothing did.
     """
 
-    def _prefix_of(self, source: str) -> str | None:
+    def test_neither_transport_builds_its_own_prefix(self):
+        """Two spellings would be as bad as one missing: the same server
+        would answer to different names depending on how it was connected."""
+        import inspect
         import re
 
-        found = re.search(r'tool_name_prefix=f"([^"]+)"', source)
-        return found.group(1) if found else None
-
-    def test_the_sse_path_sets_a_prefix(self):
-        import inspect
-
         from ember_code.core.mcp.client import MCPClientManager
+        from ember_code.core.mcp.stdio_binding import StdioMCPBinding
 
-        source = inspect.getsource(MCPClientManager._open_transport)
+        for method in (MCPClientManager._open_transport, StdioMCPBinding.open):
+            source = inspect.getsource(method)
+            assert re.search(r'tool_name_prefix=f?"', source) is None, (
+                f"{method.__qualname__} spells the prefix itself instead of "
+                "calling tool_name_prefix()"
+            )
 
-        assert self._prefix_of(source) is not None, (
-            "the SSE branch builds MCPTools without tool_name_prefix — its tools "
-            "will collide with built-ins of the same name"
-        )
-
-    def test_both_transports_use_the_same_prefix_shape(self):
-        """Two spellings would be as bad as one missing: the same server would
-        answer to different tool names depending on how it is connected."""
+    def test_both_transports_ask_for_the_prefix(self):
         import inspect
 
         from ember_code.core.mcp.client import MCPClientManager
         from ember_code.core.mcp.stdio_binding import StdioMCPBinding
 
-        sse = self._prefix_of(inspect.getsource(MCPClientManager._open_transport))
-        stdio = self._prefix_of(inspect.getsource(StdioMCPBinding.open))
+        for method in (MCPClientManager._open_transport, StdioMCPBinding.open):
+            source = inspect.getsource(method)
+            assert "tool_name_prefix(name)" in source, (
+                f"{method.__qualname__} does not namespace its tools — they "
+                "will collide with built-ins of the same name"
+            )
 
-        assert sse == stdio, f"SSE uses {sse!r}, stdio uses {stdio!r}"
+    def test_a_registered_name_converts_back(self):
+        """The half that was missing. ``get_tools`` returns registered names
+        and a manifest declares the server's own, so anything comparing the
+        two has to convert — and ``permissions.tools`` did not, which is why
+        it refused every tool it was ever asked about."""
+        from ember_code.core.mcp.naming import bare_tool_name, tool_name_prefix
+
+        server = "ext:acme.scanner"
+        registered = f"{tool_name_prefix(server)}_list"
+        assert registered == "mcp_ext:acme.scanner_list"
+        assert bare_tool_name(server, registered) == "list"
+
+    def test_a_name_that_is_not_prefixed_is_left_alone(self):
+        """Callers pass lists from mixed sources, and a bare name is
+        already bare."""
+        from ember_code.core.mcp.naming import bare_tool_name
+
+        assert bare_tool_name("ext:acme.scanner", "list") == "list"
+        assert bare_tool_name("ext:acme.scanner", "mcp_other_list") == "mcp_other_list"

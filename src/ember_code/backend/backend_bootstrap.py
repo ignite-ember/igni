@@ -14,7 +14,9 @@ attributes:
 
 * :attr:`session` — the :class:`Session`.
 * :attr:`settings` — the ``Settings`` passed in.
-* :attr:`hitl_store` — :class:`PendingRequirementsStore`.
+* :attr:`hitl_store` — :class:`PendingRequirementsStore`, durable.
+* :attr:`message_queue` — :class:`DurableMessageQueue`, the messages
+  typed during a run.
 * :attr:`hitl_tracer` — :class:`HITLTracer` built from settings.
 * :attr:`pending_store` — :class:`PendingMessageStore`.
 * :attr:`session_prefs` — :class:`SessionPreferencesStore`.
@@ -32,9 +34,11 @@ from typing import TYPE_CHECKING
 
 from ember_code.backend.hitl_tracer import HITLTracer
 from ember_code.backend.pending_requirements_store import PendingRequirementsStore
-from ember_code.core.code_index.paths import state_db_path
+from ember_code.core.approvals.journal import ApprovalJournal
 from ember_code.core.config.user_config_store import UserConfigStore
+from ember_code.core.db.locator import StorageLocator
 from ember_code.core.session.pending_messages import PendingMessageStore
+from ember_code.core.session.queued_messages import DurableMessageQueue, QueuedMessageStore
 from ember_code.core.session.session_preferences import SessionPreferencesStore
 
 if TYPE_CHECKING:
@@ -62,8 +66,9 @@ class BackendBootstrap:
         # Per-session prefs need to be consulted BEFORE the Session
         # builds its main team, since the team binds whatever model
         # is in ``settings.models.default`` at construction time.
+        storage = StorageLocator.from_settings(settings)
         self.session_prefs = SessionPreferencesStore(
-            state_db_path(resolved_project_dir, data_dir=settings.storage.data_dir),
+            storage.project_database(resolved_project_dir),
         )
         if resume_session_id:
             persisted_model = self.session_prefs.get_model(resume_session_id)
@@ -84,20 +89,30 @@ class BackendBootstrap:
         )
         self.settings = settings
 
+        project_db = storage.project_database(self.session.project_dir)
+        session = self.session
+
         # HITL pause state lives on a dedicated store, not two raw
         # dicts. Both the pending-user bucket AND the evaluator-
         # auto-resolved bucket are behind one class so the "pending
-        # XOR auto_resolved" invariant has one place to live.
-        self.hitl_store = PendingRequirementsStore()
+        # XOR auto_resolved" invariant has one place to live. Both
+        # it and the sub-agent coordinator write through to the
+        # approval journal, and read back what a previous backend
+        # left waiting — so a restart does not lose a question.
+        journal = ApprovalJournal(project_db)
+        self.hitl_store = PendingRequirementsStore(journal, session_id=lambda: session.session_id)
+        self.hitl_store.restore(session.session_id)
+        session.sub_agent_hitl.attach_journal(journal, session_id=lambda: session.session_id)
+        session.sub_agent_hitl.restore(session.session_id)
         self.hitl_tracer = HITLTracer.from_settings(settings)
 
-        # Pre-persist user messages BEFORE handing them to Agno.
-        self.pending_store = PendingMessageStore(
-            state_db_path(
-                self.session.project_dir,
-                data_dir=settings.storage.data_dir,
-            ),
+        # Messages typed while a run works, kept until a run takes them.
+        self.message_queue = DurableMessageQueue(
+            QueuedMessageStore(project_db), session_id=lambda: session.session_id
         )
+
+        # Pre-persist user messages BEFORE handing them to Agno.
+        self.pending_store = PendingMessageStore(project_db)
 
         # Injected into ModelSwitcher by the controller registry —
         # moved from an inline import in ``BackendServer.model_switcher``

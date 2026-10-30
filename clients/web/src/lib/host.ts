@@ -36,6 +36,27 @@ interface NativeBridge {
    *  this to set their window title too; today JetBrains uses the
    *  tool-window header for the same info. */
   setAppTitle?: (folder: string, org: string) => unknown;
+  /** Tauri-only: open a link with the operating system. */
+  openUrl?: (url: string) => unknown;
+}
+
+/** A link igni may open outside itself: absolute `https:` with a host
+ *  and no credentials. The backend checks `host.app.open_external`'s
+ *  URL first; this is the window's own check before it opens one. */
+export function isOpenableLink(url: string): boolean {
+  if (!url || /[\s\u0000-\u001f]/.test(url)) return false;
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    return false;
+  }
+  return (
+    parsed.protocol === "https:" &&
+    parsed.hostname !== "" &&
+    parsed.username === "" &&
+    parsed.password === ""
+  );
 }
 
 export interface NotifyPayload {
@@ -127,6 +148,8 @@ export class Host {
   /** When the host can't natively open files, the FE shows this
    *  preview instead. Set once at app boot. */
   private fallback: ((path: string) => void) | null = null;
+  /** Told of every file opened, whichever way it opened. */
+  private openListeners = new Set<(path: string) => void>();
 
   constructor() {
     this._kind = detectHost();
@@ -160,6 +183,15 @@ export class Host {
     this.fallback = fn;
   }
 
+  /** Be told whenever a file is opened — in the host's editor or the
+   *  preview. The window's model keeps it as the file picked. */
+  onOpen(fn: (path: string) => void): () => void {
+    this.openListeners.add(fn);
+    return () => {
+      this.openListeners.delete(fn);
+    };
+  }
+
   /** `true` if the host can open files in something other than the
    *  built-in preview modal. Useful for tooltips. */
   get canOpenNatively(): boolean {
@@ -171,6 +203,30 @@ export class Host {
    * Returns true if the open attempt was dispatched; false if we
    * fell back to the preview (or had nothing to do at all).
    */
+  /**
+   * Open an https link in the person's browser, as igni opens every
+   * link outside it: the desktop app's opener, else a new tab with no
+   * way back to this one. Refuses anything {@link isOpenableLink}
+   * does not accept. Returns true if the open was dispatched.
+   */
+  async openExternal(url: string): Promise<boolean> {
+    if (!isOpenableLink(url)) return false;
+    try {
+      const bridge = window.__EMBER_HOST__;
+      if (this.kind === "tauri" && bridge?.openUrl) {
+        await Promise.resolve(bridge.openUrl(url));
+        return true;
+      }
+      // ``noopener`` makes ``window.open`` answer null whether or not
+      // it opened, so there is nothing to read back.
+      window.open(url, "_blank", "noopener,noreferrer");
+      return true;
+    } catch (e) {
+      console.warn("host.openExternal failed for", this.kind, e);
+      return false;
+    }
+  }
+
   /**
    * Surface a notification through the native host (OS / IDE) when
    * a bridge is wired. Returns ``true`` if dispatched; ``false`` for
@@ -361,6 +417,7 @@ export class Host {
 
   async openFile(path: string): Promise<boolean> {
     if (!path) return false;
+    for (const fn of this.openListeners) fn(path);
     try {
       switch (this.kind) {
         case "tauri": {

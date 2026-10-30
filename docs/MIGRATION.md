@@ -92,7 +92,7 @@ Claude Code agents grep for patterns. igni agents can also search by **meaning**
                security analysis, dependency graph, and references
 ```
 
-See [CodeIndex](CODEINDEX.md) for details.
+See `igni-integration.md` in the CodeIndex repository's docs (`igni__code-index`) for details.
 
 ### 5. Default Model
 

@@ -1,57 +1,41 @@
-"""One-shot model prefetcher used by the IDE plugins' bootstrap.
+"""One-shot model prefetcher used by the clients' managed-runtime bootstrap.
 
-Calling ``python -m ember_code.prefetch_models`` warms the
-sentence-transformer cache so the first agent run doesn't stall
-mid-conversation while a 90 MB embedding model downloads silently.
-The IDE plugins' managed-runtime bootstrap (``EmberRuntime.kt`` for
-JetBrains, ``runtime.ts`` for VSCode) calls this after installing
-``ignite-ember`` so the user's loading screen accounts for it —
-the model download moves from "agent hung for 30 seconds" to
-"plugin doing its visible install".
+Calling ``python -m ember_code.prefetch_models`` fetches Laya, igni's
+decision model (:mod:`ember_code.decisions_server`), so the first Bypass
+check or ``host.decide`` does not stall on a ~1.7 GB download. The
+bootstraps (Tauri's ``runtime.rs``, ``EmberRuntime.kt`` for JetBrains,
+``runtime.ts`` for VS Code) call this after installing igni, so the
+download is a visible install step rather than a hung first call.
 
-Idempotent: ``get_model()`` returns the cached model on subsequent
-calls and ``SentenceTransformer`` itself skips the network probe when
-``HF_HUB_OFFLINE=1`` is set (which our embeddings loader sets
-automatically when the cache already exists — see
-``core/embeddings.py``).
+It is the only model igni has. An extension that needs one ships and
+fetches it itself. It runs in its own process at install time, with the
+``decisions`` extra installed; the backend never imports Laya.
 
 Output:
-  * Progress lines go to stdout (one per stage) so the plugin
-    bootstrap can surface them. Errors go to stderr and exit non-zero
-    so the bootstrap knows to surface the failure.
+  * Progress lines go to stdout so the bootstrap can surface them.
+    A failure goes to stderr and is not fatal: Laya loads on first use
+    instead, and the Bypass guard asks rather than allows if it cannot.
 
 Environment:
-  * ``HF_HOME`` — honored by sentence-transformers/transformers.
-    The plugin sets this to a path inside the managed cache so the
-    Reinstall Backend (Clean) action really wipes everything.
+  * ``HF_HOME`` — honoured by transformers. The plugins set it inside
+    the managed cache so a clean reinstall really wipes everything.
 """
 
 from __future__ import annotations
 
 import sys
 
-from ember_code.core.embeddings import DEFAULT_MODEL, get_model
+from ember_code.decisions_server.model import LayaModel
 
 
 def main() -> int:
-    print("prefetch: loading sentence-transformer (~90 MB on first run)", flush=True)
+    print("prefetch: loading igni's decision model (~1.7 GB on first run)", flush=True)
     try:
-        model = get_model()
+        LayaModel().load()
     except Exception as exc:  # pragma: no cover — surfaced to caller
-        print(f"prefetch: failed: {exc!r}", file=sys.stderr, flush=True)
-        return 1
-
-    # ``encode`` a trivial input so we exercise the full path (tokenizer
-    # + model forward + numpy round-trip). If anything is wrong with the
-    # cached weights or platform-specific torch wheel, the failure
-    # surfaces here instead of during the user's first chat turn.
-    try:
-        _ = model.encode(["ember"], show_progress_bar=False, convert_to_numpy=True)
-    except Exception as exc:  # pragma: no cover
-        print(f"prefetch: warm-up encode failed: {exc!r}", file=sys.stderr, flush=True)
-        return 2
-
-    print(f"prefetch: {DEFAULT_MODEL} ready", flush=True)
+        print(f"prefetch: decision model not fetched: {exc!r}", file=sys.stderr, flush=True)
+        return 0
+    print("prefetch: decision model ready", flush=True)
     return 0
 
 

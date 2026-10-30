@@ -41,7 +41,9 @@ describe("parsePartialSpec", () => {
   });
 
   it("accepts a complete spec", () => {
-    const spec = parsePartialSpec('{"root":"r","elements":{"r":{"type":"Text","props":{"text":"hi"}}}}');
+    const spec = parsePartialSpec(
+      '{"root":"r","elements":{"r":{"type":"Text","props":{"text":"hi"}}}}',
+    );
     expect(spec).not.toBeNull();
     expect(spec!.root).toBe("r");
   });
@@ -70,7 +72,9 @@ describe("parsePartialSpec", () => {
     // isn't a resolvable id in the elements map, the walk crashes.
     // We must not return a Spec until the root element materializes.
     expect(
-      parsePartialSpec('{"root":"root","elements":{"chart":{"type":"LineGraph"}}}'),
+      parsePartialSpec(
+        '{"root":"root","elements":{"chart":{"type":"LineGraph"}}}',
+      ),
     ).toBeNull();
   });
 
@@ -128,7 +132,9 @@ describe("applyVisualizationDelta — reducer", () => {
       spec_id: "run-1",
       json: '{"root":"r","elements":{"r":{"type":"Card"',
     });
-    const originalId = (items[0] as Extract<ChatItem, { kind: "visualization" }>).id;
+    const originalId = (
+      items[0] as Extract<ChatItem, { kind: "visualization" }>
+    ).id;
     items = applyVisualizationDelta(items, {
       spec_id: "run-1",
       json: '{"root":"r","elements":{"r":{"type":"Card","props":{"title":"Hi"}}}}',
@@ -138,9 +144,11 @@ describe("applyVisualizationDelta — reducer", () => {
     // Same identity — it's an update, not an append.
     expect(card.id).toBe(originalId);
     // Spec updated with new props.
-    const props = (card.spec as {
-      elements: { r: { props: { title?: string } } };
-    }).elements.r.props;
+    const props = (
+      card.spec as {
+        elements: { r: { props: { title?: string } } };
+      }
+    ).elements.r.props;
     expect(props.title).toBe("Hi");
   });
 
@@ -157,8 +165,12 @@ describe("applyVisualizationDelta — reducer", () => {
     expect(items.length).toBe(2);
     expect(items[0].kind).toBe("visualization");
     expect(items[1].kind).toBe("visualization");
-    expect((items[0] as Extract<ChatItem, { kind: "visualization" }>).specId).toBe("run-1");
-    expect((items[1] as Extract<ChatItem, { kind: "visualization" }>).specId).toBe("run-2");
+    expect(
+      (items[0] as Extract<ChatItem, { kind: "visualization" }>).specId,
+    ).toBe("run-1");
+    expect(
+      (items[1] as Extract<ChatItem, { kind: "visualization" }>).specId,
+    ).toBe("run-2");
   });
 
   it("returns same ref when spec_id is empty", () => {
@@ -203,7 +215,8 @@ describe("token-by-token stream converges to the target spec", () => {
   });
 
   it("intermediate deltas produce valid Spec references (never null once opened)", () => {
-    const target = '{"root":"r","elements":{"r":{"type":"Text","props":{"text":"hello world"}}}}';
+    const target =
+      '{"root":"r","elements":{"r":{"type":"Text","props":{"text":"hello world"}}}}';
     let items: ChatItem[] = [];
     // After the first delta that opens root+elements, every
     // subsequent delta should keep the card alive (not remove it,
@@ -214,9 +227,8 @@ describe("token-by-token stream converges to the target spec", () => {
         spec_id: "run-a",
         json: target.slice(0, n),
       });
-      const card = items.find(
-        (it) => it.kind === "visualization",
-      ) as Extract<ChatItem, { kind: "visualization" }> | undefined;
+      const card = items.find((it) => it.kind === "visualization") as
+        Extract<ChatItem, { kind: "visualization" }> | undefined;
       if (card) {
         sawFirstCard = true;
         expect(card.spec).not.toBeNull();

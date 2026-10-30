@@ -33,8 +33,6 @@ Owned concerns (each has a class in this package):
   + PermissionEvaluator composition.
 * :class:`~.learning_ops.SessionLearningManager` — learning
   context inject / extract.
-* :class:`~.codeindex_availability.CodeIndexAvailabilityRefresher`
-  — flip-detect + rebuild.
 * :class:`~.identity.SessionIdentity` — session_id rotate /
   rebind invariant.
 * :class:`~.run_debug.RunMessagesDebugDumper` — diagnostic
@@ -51,22 +49,18 @@ so all turns are automatically persisted and restored.
 import contextlib
 import getpass
 import logging
-import threading
 import uuid
 from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import Any
 
 from agno.agent import Agent
-from agno.compression.manager import CompressionManager
 
-from ember_code.backend.schemas_codeindex_rpc import RefreshAvailabilityResult
 from ember_code.backend.schemas_model import ModelSwitchResult
+from ember_code.core.activity import background
 from ember_code.core.agents import AgentPool
 from ember_code.core.auth.credentials import CloudCredentials
 from ember_code.core.broadcast_schema import BroadcastEvent
-from ember_code.core.code_index import CodeIndex, CodeIndexSyncManager
-from ember_code.core.code_index.embedder import LiveEmbedder
 from ember_code.core.config.models import ModelRegistry
 from ember_code.core.config.settings import Settings
 from ember_code.core.config.tool_permissions import ToolPermissions
@@ -74,7 +68,9 @@ from ember_code.core.guardrails.runner import GuardrailRunner
 from ember_code.core.hooks.events import HookEvent
 from ember_code.core.hooks.executor import HookExecutor
 from ember_code.core.hooks.loader import HookLoader
+from ember_code.core.hooks.memory_sync import MemorySyncHook
 from ember_code.core.hooks.tool_hook import ToolEventHook
+from ember_code.core.hooks.turn_results import TurnResultHook
 from ember_code.core.init import ProjectInitializer
 from ember_code.core.learn import create_learning_machine  # noqa: F401 — test-patch target
 from ember_code.core.loop import LoopProgressStore, LoopStore, LoopToolResult
@@ -94,14 +90,11 @@ from ember_code.core.session.agent_factory import (
 from ember_code.core.session.broadcast import BroadcastBus
 from ember_code.core.session.cloud_auth import SessionCloudAuth
 from ember_code.core.session.cloud_catalog import CloudModelCatalog
-from ember_code.core.session.codeindex_availability import (
-    CodeIndexAvailabilityRefresher,
-)
 from ember_code.core.session.compaction import CompactionCoordinator
+from ember_code.core.session.compression import MeasuredCompression
 from ember_code.core.session.event_log import SessionEventLog
 from ember_code.core.session.event_log_schema import SessionEvent
 from ember_code.core.session.identity import SessionIdentity
-from ember_code.core.session.knowledge_ops import SessionKnowledgeManager
 from ember_code.core.session.learning_ops import SessionLearningManager
 from ember_code.core.session.loop_ops import LoopController
 from ember_code.core.session.mcp_ops import McpLifecycleCoordinator, McpLifecycleDeps
@@ -134,6 +127,7 @@ from ember_code.core.tools.todo import TodoStore
 from ember_code.core.utils.audit import AuditLogger
 from ember_code.core.utils.context import ProjectMemoryBank, load_project_context
 from ember_code.core.utils.display import DisplayManager
+from ember_code.core.utils.memory_files import MemoryMirror
 from ember_code.core.utils.response import extract_response_text  # noqa: F401 — test-patch target
 from ember_code.core.utils.rules_index import RulesIndex
 from ember_code.core.workspace import WorkspaceManager
@@ -184,7 +178,6 @@ class Session:
         project_dir: Path | None = None,
         resume_session_id: str | None = None,
         additional_dirs: list[Path] | None = None,
-        pre_knowledge: Any | None = None,
     ):
         self.settings = settings
 
@@ -232,8 +225,6 @@ class Session:
         # ── Storage (Agno AsyncBaseDb) ────────────────────────────────
         self.db = StorageManager.build_db(settings, project_dir=self.project_dir)
 
-        self._init_knowledge(settings, pre_knowledge)
-
         # ── Audit Logger ─────────────────────────────────────────────
         self.audit = AuditLogger(settings)
 
@@ -248,14 +239,10 @@ class Session:
 
         self._init_project_context(settings)
 
-        self._init_codeindex(settings)
         self._init_agent_and_skill_pools(settings)
 
         # ── Context window (for compaction threshold, capped by setting) ──
-        self._context_window = min(
-            ModelRegistry(settings).get_context_window(),
-            settings.models.max_context_window,
-        )
+        self._context_window = self._resolve_context_window()
 
         # ── Cloud auth coordinator (owns creds + rebuild-team invariant) ─
         # Composed BEFORE ``main_team`` so the first agent build can
@@ -279,7 +266,9 @@ class Session:
         self.identity = SessionIdentity(
             session_id=resume_session_id or str(uuid.uuid4())[:8],
             session_named=bool(resume_session_id),
-            user_id=getpass.getuser(),
+            # In the cloud, Agno's rows are told apart by ``user_id``,
+            # which the scoped db fixes to the session's scope.
+            user_id=self._scoped_user_id() or getpass.getuser(),
             main_team_ref=lambda: getattr(self, "main_team", None),
             persistence_ref=lambda: getattr(self, "persistence", None),
         )
@@ -300,12 +289,6 @@ class Session:
         # ── Delegated managers ───────────────────────────────────────
         self.persistence = SessionPersistence(self.db, self.session_id)
         self.memory_mgr = SessionMemoryManager(self.db, settings, self.user_id)
-        self.knowledge_mgr = SessionKnowledgeManager(self.knowledge, settings, self.project_dir)
-        # Share knowledge_mgr with the pool so all sub-agents get the toolkit.
-        self.pool.attach_knowledge_manager(self.knowledge_mgr if self.knowledge else None)
-        # Late-bound: ``attach_codeindex_neo4j`` swaps ``self.code_index`` when a
-        # Neo4j runtime attaches, which happens after the pool is configured.
-        self.pool.attach_code_index_provider(lambda: self.code_index)
 
         # ── Learning coordinator (owns _learning + inject/extract) ──
         # Composed after ``persistence`` / ``memory_mgr`` so the
@@ -363,26 +346,6 @@ class Session:
             auto_connect_mcps=self._auto_connect_mcps,
         )
 
-        # ── Availability refresher (codeindex flip → rebuild) ───────
-        # ``build_main_agent`` is a lambda (not a bound method) so
-        # the refresher re-reads ``self._build_main_agent`` at call
-        # time — tests that monkey-patch the private name intercept
-        # cleanly this way.
-        self._codeindex_refresher = CodeIndexAvailabilityRefresher(
-            settings=settings,
-            project_dir=self.project_dir,
-            code_index=self.code_index,
-            code_index_sync=self.code_index_sync,
-            pool_ref=lambda: self.pool,
-            plugin_loader_ref=lambda: self.plugin_loader,
-            disabled_plugins_ref=lambda: self._disabled_plugins,
-            mcp_manager_ref=lambda: self.mcp_manager,
-            build_main_agent=lambda: self._build_main_agent(),
-            assign_main_team=self._assign_main_team,
-            get_availability=lambda: self._codeindex_available,
-            set_availability=self._set_codeindex_available,
-        )
-
         # ── Main Agent (single agent with all tools + orchestration) ──
         self.main_team = self._build_main_agent()
 
@@ -404,13 +367,22 @@ class Session:
             pending_reminders_drain=self._reminder_queue.drain,
             compact_hook=self.compact_if_needed,
             ensure_mcp=self.ensure_mcp,
-            session_id=self.session_id,
-            context_window=self._context_window,
+            # Both by-reference, not by-value: ``/clear`` and ``/fork``
+            # rotate the session id and ``/model`` changes the context
+            # window, and the handler outlives both (it is built once here
+            # and never rebuilt).
+            session_id_ref=lambda: self.session_id,
+            context_window_ref=lambda: self._context_window,
             latch_input_tokens=self.latch_input_tokens,
             extract_response_text=lambda resp: extract_response_text(resp),
         )
 
     # ── __init__ helpers ────────────────────────────────────────
+
+    def _scoped_user_id(self) -> str | None:
+        """The scope a shared database's Agno storage fixes ``user_id`` to, if it does."""
+        scoped = getattr(self.db, "scoped_user_id", None)
+        return scoped if isinstance(scoped, str) and scoped else None
 
     def _init_per_session_scratch(self) -> None:
         """Set up the per-session scratch state populated by tools /
@@ -424,8 +396,12 @@ class Session:
         """
         self.todo_store = TodoStore()
         self.plan_store = PlanStore()
-        self._plan_mode_attempt: int = 0
-        ProjectMemoryBank(self.project_dir).ensure()
+        memory_bank = ProjectMemoryBank(self.project_dir)
+        memory_bank.ensure()
+        # In the cloud the memory directory is a write-through mirror of
+        # the database's rows (``core/utils/memory_files.py``); ``None``
+        # on the desktop, whose files are the store.
+        self.memory_mirror: MemoryMirror | None = memory_bank.mirror()
         self.output_styles: dict[str, OutputStyle] = {}
         self._active_output_style: str = ""
         # Owns the FE push-channel fan-out (callback list +
@@ -468,95 +444,6 @@ class Session:
         self.loop_store = LoopStore(project_dir=self.project_dir)
         self.loop_progress_store = LoopProgressStore(project_dir=self.project_dir)
         self.loop = LoopController(self.loop_store)
-
-    def _init_codeindex(self, settings: Settings) -> None:
-        """Construct :class:`CodeIndex` + :class:`CodeIndexSyncManager`
-        eagerly and compute the ``_codeindex_available`` flag.
-        """
-        # LiveEmbedder rather than the default: the ``chunk_embedding`` vector
-        # index is 384-dim all-MiniLM-L6-v2, and the fallback HashEmbedder makes
-        # every chunk vector a hash of its own text — semantic search then only
-        # matches byte-identical text. The knowledge index next door has always
-        # passed LiveEmbedder; the code index never did.
-        self.code_index = CodeIndex(
-            project=self.project_dir,
-            data_dir=settings.storage.data_dir,
-            embedder=LiveEmbedder(),
-        )
-        self.code_index_sync = CodeIndexSyncManager.from_settings(
-            settings,
-            project_dir=self.project_dir,
-            code_index=self.code_index,
-            # A background sync that populates the index has to tell the
-            # session, or the agent keeps the toolset and prompt it started
-            # with. Flipping to an indexed branch mid-session left it believing
-            # CodeIndex was unavailable while the graph was ready to query.
-            on_sync_complete=lambda: self.refresh_codeindex_availability(),
-        )
-
-        if not settings.code_index.enabled:
-            # The objects stay — they are cheap, hold no connection, and
-            # a hundred call sites read them without a None guard. What
-            # changes is the flag, and it is the only thing that needs
-            # to: ``_main_tool_names`` gates the CodeIndex tool on it,
-            # ``PromptBuilder`` picks the plain prompt over the
-            # CodeIndex-first one, and the agent pool loads the
-            # non-CodeIndex variant of every definition. Nothing else
-            # has to learn about the switch.
-            self._codeindex_available = False
-            logger.info("CodeIndex: disabled in settings")
-            return
-
-        _head_sha = self.code_index_sync.current_sha()
-        self._codeindex_available = bool(_head_sha and self.code_index.has_commit(_head_sha))
-
-    async def attach_codeindex_neo4j(self, runtime: Any) -> None:
-        """Swap the default chroma-backed code index for a neo4j
-        one driven by ``runtime`` (typically a ``Neo4jRuntime``).
-
-        Mirrors :meth:`attach_knowledge_neo4j` for the code
-        intelligence side. Replaces ``self.code_index`` and
-        ``self.code_index_sync`` with neo4j-backed equivalents,
-        points the :class:`CodeIndexAvailabilityRefresher` at the
-        new refs, and recomputes ``_codeindex_available``.
-
-        Idempotent: a second call with the same runtime
-        short-circuits. Switching the runtime rebuilds the index.
-        """
-        # ``CodeIndex`` doesn't take an ``embedder`` kwarg yet —
-        # the items/chunks path is still chroma-backed in this
-        # branch. The seam for ``runtime=`` is what matters here:
-        # ``apply_delta`` and ``file_reference_service`` already
-        # route through the runtime's per-commit client. The
-        # remaining chroma path inside ``add_item`` is the
-        # standing migration debt (see the parked drop-tables
-        # migration and the schema description for the boundary).
-        new_index = CodeIndex(
-            project=self.project_dir,
-            data_dir=self.settings.storage.data_dir,
-            runtime=runtime,
-            embedder=LiveEmbedder(),
-        )
-        new_sync = CodeIndexSyncManager.from_settings(
-            self.settings,
-            project_dir=self.project_dir,
-            code_index=new_index,
-        )
-
-        existing_runtime = getattr(self.code_index, "_neo4j_runtime", None)
-        if existing_runtime is runtime:
-            return
-
-        self.code_index = new_index
-        self.code_index_sync = new_sync
-
-        if self._codeindex_refresher is not None:
-            self._codeindex_refresher._code_index = new_index
-            self._codeindex_refresher._code_index_sync = new_sync
-
-        new_head = new_sync.current_sha()
-        self._codeindex_available = bool(new_head and new_index.has_commit(new_head))
-        logger.info("CodeIndex: switched to neo4j backend (project=%s)", self.project_dir)
 
     def _init_mcp_client_manager(self) -> None:
         """Construct :class:`MCPClientManager` and merge in
@@ -604,141 +491,6 @@ class Session:
             self.mcp_failures.pop(name, None)
         else:
             self.mcp_failures[name] = getattr(result, "reason", "") or ""
-
-    def _init_knowledge(self, settings: Settings, pre_knowledge: Any | None) -> None:
-        """Wire up the neo4j-backed knowledge index (if enabled).
-
-        The chroma path was removed when the code_index migrated to
-        neo4j — the constructor's default is now "no knowledge
-        index" (the BE's :class:`SessionOrchestrator` calls
-        :meth:`attach_knowledge_neo4j` after the runtime is up to
-        build the real one). A pre-built ``pre_knowledge`` (tests
-        + explicit ``Session(pre_knowledge=...)`` calls) still
-        works as before.
-        """
-        # Which optional subsystems are up, and why the others are not.
-        # One record with a state, a reason and a fix, instead of a
-        # private boolean per subsystem per failure mode — see
-        # :mod:`ember_code.backend.subsystem_status`.
-        from ember_code.backend.subsystem_status import SubsystemRegistry
-
-        self.subsystems = SubsystemRegistry()
-        self._knowledge_ready = threading.Event()
-        self._knowledge_ready.set()
-        if pre_knowledge is not None:
-            self.knowledge = pre_knowledge
-            logger.info("Knowledge: using pre-loaded instance")
-            return
-        if not settings.knowledge.enabled:
-            self.knowledge = None
-            logger.info("Knowledge: disabled in settings")
-            return
-        # No runtime at construction time → the chroma fallback
-        # is gone, so the index is deferred until
-        # :meth:`attach_knowledge_neo4j` runs. The BE does that
-        # in the SessionOrchestrator's startup. Tests that need
-        # an index at construction pass a ``pre_knowledge`` (or
-        # a ``neo4j_client`` via ``pre_knowledge=``).
-        self.knowledge = None
-        # Say *why* there is no index, in words a user can act on.
-        #
-        # ``_knowledge_error`` was set to ``None`` here and assigned
-        # nowhere else in the codebase, which made
-        # ``KnowledgeCommand.panel``'s "Knowledge failed to load:
-        # {err}" branch unreachable — a diagnostic that existed, was
-        # documented, and could not fire. Every user hit the fallback
-        # instead: "Knowledge base failed to initialize.", which names
-        # no cause and is not even true. Nothing failed. The index is
-        # deferred by design and this session never got the runtime it
-        # was deferred for.
-        # Annotated, because ``attach_knowledge_neo4j`` clears it back to
-        # ``None`` once the runtime arrives — without this, the first
-        # assignment narrows the attribute to ``str`` and that clear is a
-        # type error.
-        self._knowledge_error: str | None = (
-            "no Neo4j runtime has attached to this session. The knowledge "
-            "index is created when CodeIndex's Neo4j comes up — open "
-            "/codeindex and check that it is running and synced."
-        )
-        logger.info(
-            "Knowledge: deferred (no neo4j runtime at construction); "
-            "call attach_knowledge_neo4j(runtime) to install"
-        )
-
-    async def attach_knowledge_neo4j(self, runtime: Any) -> None:
-        """Swap the default chroma-backed knowledge index for a neo4j
-        one driven by ``runtime`` (typically a ``Neo4jRuntime``).
-
-        Called by :class:`SessionOrchestrator` after the BE's
-        runtime is up — the Session's default constructor runs
-        before any neo4j driver exists, so the chroma fallback
-        path is the constructor's choice. This method replaces
-        ``self.knowledge`` (and ``self.knowledge_mgr.knowledge``)
-        with a neo4j-backed :class:`KnowledgeIndex` so subsequent
-        knowledge ops go through neo4j.
-
-        Idempotent: a second call with the same client is a
-        no-op. Switching the runtime rebuilds the index.
-        """
-        from ember_code.core.code_index.neo4j_client import Neo4jKnowledgeClient
-
-        # ``runtime`` may be a real ``Neo4jRuntime`` (production) or
-        # any duck-typed object with ``driver_for_knowledge(project_id)``
-        # (test stubs). We only depend on the protocol surface.
-        from ember_code.core.code_index.project import resolve_project_id
-        from ember_code.core.knowledge.index import KnowledgeIndex
-
-        project_id = resolve_project_id(self.project_dir)
-        # The per-project process has to exist before a driver can
-        # point at it: ``driver_for_knowledge`` raises rather than
-        # starting one on demand. The call was missing and nobody
-        # noticed, because the orchestrator's guard meant this method
-        # never ran outside tests — and the test runtimes hand back a
-        # driver without needing a process. Duck-typed for exactly that
-        # reason: a stub that only implements ``driver_for_knowledge``
-        # stays valid.
-        starter = getattr(runtime, "start_for_knowledge", None)
-        if starter is not None:
-            # ``start_for_knowledge`` also waits for the bolt port
-            # (``_wait_for_bolt``), so there is no separate readiness
-            # step to compose here — returning means either a spawned
-            # process that answered, or a discovered one that was
-            # probed alive.
-            await starter(project_id)
-        driver = runtime.driver_for_knowledge(project_id)
-        client = Neo4jKnowledgeClient(driver, project_id)
-        await client.apply_schema()
-        embedder = LiveEmbedder()
-
-        # Idempotency guard: a second ``attach_knowledge_neo4j``
-        # with the same runtime reuses the existing index. We
-        # compare on the underlying driver (the runtime's
-        # ``driver_for_knowledge`` returns a cached driver per
-        # project, so identity is the right comparator) — not the
-        # client instance, which is constructed fresh each call.
-        existing_client = getattr(self.knowledge, "_neo4j_client", None)
-        if existing_client is not None and existing_client._driver is driver:
-            return
-        index = KnowledgeIndex(
-            project=self.project_dir,
-            data_dir=self.settings.storage.data_dir,
-            neo4j_client=client,
-            embedder=embedder,
-        )
-        await index.start()  # no-op on neo4j (client is open)
-        self.knowledge = index
-        # ``knowledge_mgr`` is constructed in __init__ with the
-        # default chroma index; it caches ``self.knowledge`` —
-        # update the reference so subsequent calls go through
-        # the neo4j backend.
-        if self.knowledge_mgr is not None:
-            self.knowledge_mgr.knowledge = index
-        # The deferred-state explanation set in the constructor is no
-        # longer true. Leaving it would have ``/knowledge`` telling a
-        # working session to go and start the runtime it is already
-        # using.
-        self._knowledge_error = None
-        logger.info("Knowledge: switched to neo4j backend (project=%s)", project_id)
 
     def group_dir_for(self, kind: str) -> Path:
         """Where the policy cache puts this kind's entries.
@@ -867,10 +619,10 @@ class Session:
         self.pool.load_definitions(
             settings,
             self.project_dir,
-            codeindex_available=self._codeindex_available,
             group_dir=self.group_root("agents"),
         )
         self.plugin_loader.apply_to_agents(self.pool, disabled=self._disabled_plugins)
+        self.pool.apply_prompt_contributions()
         if settings.orchestration.generate_ephemeral:
             self.pool.init_ephemeral(
                 self.project_dir, settings.orchestration.max_ephemeral_per_session
@@ -935,10 +687,23 @@ class Session:
             read_claude=settings.rules.cross_tool_support,
             group_dir=self.group_root("output-styles"),
         )
-        if "default" in self.output_styles:
-            self._active_output_style = "default"
-        elif self.output_styles:
-            self._active_output_style = sorted(self.output_styles)[0]
+        # Keep the style the user chose if the rediscovered set still
+        # has it. This method also runs on plugin hot-reload, and an
+        # unconditional reset meant installing a plugin silently put
+        # the session back on ``default`` — the style is a live user
+        # choice, not a boot-time default, once ``set_output_style``
+        # has been called.
+        current = getattr(self, "_active_output_style", "")
+        if current not in self.output_styles:
+            if "default" in self.output_styles:
+                self._active_output_style = "default"
+            elif self.output_styles:
+                self._active_output_style = sorted(self.output_styles)[0]
+            else:
+                # The style is gone and there is nothing to fall back
+                # to — better an empty name than one that names a file
+                # this reload just found missing.
+                self._active_output_style = ""
 
         # ── Hooks ────────────────────────────────────────────────────
         self._hook_loader = HookLoader(
@@ -985,9 +750,17 @@ class Session:
             rewake_callback=self._reminder_queue.queue,
         )
         # Rebuild the tool-hook factory so it points at the new
-        # executor. The factory caches the ``PermissionEvaluator``
-        # so a mode flip performed via :class:`RuntimeModeCoordinator`
-        # survives a ``reload_hooks``.
+        # executor, carrying the live ``PermissionEvaluator`` across.
+        # The factory caches the evaluator so a mode flip performed via
+        # :class:`RuntimeModeCoordinator` survives a ``reload_hooks``
+        # — but this method REPLACES the factory, and a replacement
+        # with an empty cache rebuilds the evaluator from
+        # ``settings.permissions.mode``. That is how ``/plugin install``
+        # used to take a session out of plan mode with no message: the
+        # next ``_build_main_agent`` asked the new factory for an
+        # evaluator, got a default-mode one, and the FE badge (which
+        # reads the same object) flipped with it.
+        _prev_hook_factory = getattr(self, "_tool_hook_factory", None)
         self._tool_hook_factory = ToolEventHookFactory(
             settings=settings,
             # The fallback is only reached when this runs before
@@ -1002,7 +775,102 @@ class Session:
             project_dir=self.project_dir,
             hook_executor_ref=lambda: self.hook_executor,
             session_id_ref=lambda: self.session_id,
+            permission_evaluator=(
+                _prev_hook_factory.permission_evaluator if _prev_hook_factory is not None else None
+            ),
         )
+        self._tool_hook_factory.bypass_guard = self._build_bypass_guard(settings)
+
+    def _build_bypass_guard(self, settings: Settings) -> Any:
+        """Bypass mode's last check, asking through the session's approval channel.
+
+        See ``core/hooks/bypass_guard.py``. The mode is read live from
+        the evaluator on every call, so toggling Bypass mid-session
+        takes effect on the next tool call.
+        """
+        from ember_code.core.config.permission_eval.schemas import PermissionMode  # noqa: PLC0415
+        from ember_code.core.hooks.bypass_explainer import CallExplainer  # noqa: PLC0415
+        from ember_code.core.hooks.bypass_guard import BypassGuard  # noqa: PLC0415
+
+        factory = self._tool_hook_factory
+        config = settings.safety.bypass_guard
+
+        def session_model() -> Any:
+            from ember_code.core.config.models import ModelRegistry  # noqa: PLC0415
+
+            return ModelRegistry(self.settings).get_model()
+
+        def in_bypass() -> bool:
+            evaluator = factory.permission_evaluator
+            return evaluator is not None and evaluator.mode is PermissionMode.BYPASS_PERMISSIONS
+
+        return BypassGuard(
+            config=config,
+            project_dir=self.project_dir,
+            in_bypass=in_bypass,
+            ask=self._ask_about_tool_call,
+            explainer=(
+                CallExplainer(
+                    session_model, project_dir=self.project_dir, timeout=config.explain_timeout
+                )
+                if config.explain
+                else None
+            ),
+        )
+
+    async def _ask_about_tool_call(
+        self,
+        tool_name: str,
+        args: dict[str, Any],
+        reason: str,
+        agent_path: list[str],
+        *,
+        follow_up: Callable[[], Awaitable[str | None]] | None = None,
+    ) -> bool | None:
+        """Put one tool call to the person; True / False, or None if nobody can answer.
+
+        Rides the channel sub-agent approvals already use: the
+        requirement is pushed to the coordinator, the backend's stream
+        relays it to the UI as an ordinary approval dialog, and the
+        answer comes back through ``HitlController``. With no relay
+        running — a headless run — there is nobody to ask, and waiting
+        would hang the run for ever.
+
+        With ``follow_up`` the dialog opens with a spinner instead of
+        text, and shows the model's description when it comes — or
+        ``reason`` when it does not. Answering first cancels it.
+        """
+        coordinator = self.sub_agent_hitl
+        if coordinator.listeners <= 0:
+            return None
+        requirement = _GuardRequirement(
+            tool_name=tool_name,
+            tool_args=args,
+            details="" if follow_up else reason,
+            details_pending=follow_up is not None,
+        )
+        req_id = await coordinator.push_requirement(
+            requirement,  # type: ignore[arg-type]
+            run_id=f"bypass-guard-{tool_name}",
+            agent_path=[*agent_path, "safety check"],
+        )
+
+        async def explain_on_screen() -> None:
+            assert follow_up is not None
+            coordinator.update_details(req_id, await follow_up() or reason)
+
+        explaining = (
+            background.start(explain_on_screen(), holder="approval", reason="explaining a call")
+            if follow_up
+            else None
+        )
+        try:
+            await coordinator.wait_resolved(req_id)
+        finally:
+            if explaining is not None:
+                explaining.cancel()
+            coordinator.cleanup(req_id)
+        return requirement.confirmed
 
     # ── Cloud auth accessors (forward to SessionCloudAuth) ─────
 
@@ -1032,17 +900,22 @@ class Session:
 
     @property
     def cloud_connected(self) -> bool:
-        """Whether the session is authenticated with Ember Cloud."""
+        """Whether the session is authenticated with an igni server."""
         return self.cloud_auth.connected
 
     @property
+    def cloud_email(self) -> str | None:
+        """The signed-in account's address."""
+        return self.cloud_auth.email
+
+    @property
     def cloud_org_id(self) -> str | None:
-        """The organization ID from the Ember Cloud JWT."""
+        """The organization ID from the igni server JWT."""
         return self.cloud_auth.org_id
 
     @property
     def cloud_org_name(self) -> str | None:
-        """The organization display name from the Ember Cloud JWT."""
+        """The organization display name from the igni server JWT."""
         return self.cloud_auth.org_name
 
     def replace_cloud_credentials(self, creds: CloudCredentials) -> None:
@@ -1057,28 +930,37 @@ class Session:
         """Delegate to :meth:`SessionCloudAuth.refresh_models`."""
         return self.cloud_auth.refresh_models()
 
+    def _resolve_context_window(self) -> int:
+        """Effective context window for the *current* default model,
+        capped by ``models.max_context_window``.
+
+        Same expression the agent builder uses for the compression
+        threshold — kept as one method because it is read twice (once
+        at construction, once per rebuild) and the two drifting apart
+        would mean compacting against a window the model does not have.
+        """
+        return min(
+            ModelRegistry(self.settings).get_context_window(),
+            self.settings.models.max_context_window,
+        )
+
     # ── Plugin hot-reload ──────────────────────────────────────
 
     def _rebuild_main_team(self) -> None:
-        """Assign a freshly-built main team to ``self.main_team``."""
+        """Assign a freshly-built main team to ``self.main_team``.
+
+        Re-resolves the context window too: ``/model`` swaps the default
+        model and comes through here, and the compaction threshold was
+        computed once in ``__init__`` and never again — switching from a
+        200k model to a 32k one left auto-compaction waiting for a limit
+        the new model blows past six times over.
+        """
         self.main_team = self._build_main_agent()
+        self._context_window = self._resolve_context_window()
 
     def rebuild_main_team(self) -> None:
         """Public wrapper over :meth:`_rebuild_main_team`."""
         self._rebuild_main_team()
-
-    def _assign_main_team(self, team: Any) -> None:
-        """Assignment sink used by
-        :class:`CodeIndexAvailabilityRefresher` so the refresher
-        can install a freshly-built team without reaching into
-        ``session.main_team`` by name."""
-        self.main_team = team
-
-    def _set_codeindex_available(self, value: bool) -> None:
-        """Setter used by :class:`CodeIndexAvailabilityRefresher`
-        so the refresher writes through a named method rather than
-        via bare-attribute assignment on the session."""
-        self._codeindex_available = value
 
     def set_default_model(self, model_name: str) -> ModelSwitchResult:
         """Validate ``model_name`` against the registry, swap the
@@ -1119,21 +1001,9 @@ class Session:
             self._plan_research_armed = False
         return armed
 
-    def start_all_background_services(self) -> None:
-        """Kick off knowledge + codeindex background services.
-
-        Idempotent-safe — each subsystem's ``start_*_background``
-        entry is guarded against a double-start.
-        """
-        self.start_knowledge_background()
-        self.start_codeindex_background()
-
     def start_boot_background_services(self) -> None:
-        """Superset of :meth:`start_all_background_services` used by
-        the boot runtime only — also refreshes plugin marketplace
-        catalogs.
-        """
-        self.start_all_background_services()
+        """What the boot runtime starts in the background: the plugin
+        marketplace catalogs' refresh."""
         self.start_marketplace_refresh_background()
 
     async def fire_session_start_hook(self) -> None:
@@ -1204,7 +1074,7 @@ class Session:
 
     def _resolve_main_tool_names(self, registry: "ToolRegistry") -> list[str]:
         """Compose the main team's toolkit, honouring per-session
-        flags (web permissions, CodeIndex availability).
+        flags (web permissions).
         """
         tool_names: list[str] = list(self._MAIN_CORE_TOOLS)
         web_allowed = self.settings.permissions.web_search != "deny"
@@ -1221,8 +1091,6 @@ class Session:
                 tool_names.append("WebFetch")
             except (ImportError, ValueError):
                 pass
-        if self._codeindex_available:
-            tool_names.append("CodeIndex")
         return tool_names
 
     def _build_main_agent(self) -> Agent:
@@ -1234,7 +1102,7 @@ class Session:
             agent_cls=Agent,
             registry_cls=ToolRegistry,
             permissions_cls=ToolPermissions,
-            compression_cls=CompressionManager,
+            compression_cls=MeasuredCompression,
             model_registry_cls=ModelRegistry,
             reasoning_factory=create_reasoning_tools,
             guardrails_factory=create_guardrails,
@@ -1245,18 +1113,13 @@ class Session:
 
     @property
     def cloud_access_token(self) -> str | None:
-        """The Ember Cloud access token (``None`` when logged out)."""
+        """The igni server access token (``None`` when logged out)."""
         return self.cloud_auth.access_token
 
     @property
     def cloud_server_url(self) -> str:
-        """The Ember Cloud API root URL used by cloud-routed tools."""
+        """The igni server API root URL used by cloud-routed tools."""
         return self.cloud_auth.server_url
-
-    @property
-    def codeindex_available(self) -> bool:
-        """Whether a populated CodeIndex exists for the current HEAD."""
-        return self._codeindex_available
 
     @property
     def active_output_style(self) -> str:
@@ -1312,36 +1175,6 @@ class Session:
         commands. Forwards to
         :attr:`SessionLearningManager.effective_machine`."""
         return self.learning_mgr.effective_machine
-
-    @property
-    def knowledge_error(self) -> str | None:
-        """Human-readable reason the knowledge base is not up.
-
-        Reads through to :attr:`subsystems`, which is the record. Kept
-        as a property because callers and tests already ask the session
-        this question directly, and because "what went wrong with
-        knowledge" is a fair thing to ask a session.
-        """
-        from ember_code.backend.subsystem_status import KNOWLEDGE, SubsystemState
-
-        status = self.subsystems.get(KNOWLEDGE)
-        if status is None or status.state is not SubsystemState.FAILED:
-            return None
-        return status.reason or None
-
-    @property
-    def knowledge_preparing(self) -> bool:
-        """Whether the knowledge backend is still coming up.
-
-        Distinguishes "not ready yet" from "tried and failed", which
-        the panel could not previously tell apart — and so called a
-        healthy first launch a failure for the minutes its one-time
-        download takes.
-        """
-        from ember_code.backend.subsystem_status import KNOWLEDGE, SubsystemState
-
-        status = self.subsystems.get(KNOWLEDGE)
-        return status is not None and status.state is SubsystemState.PREPARING
 
     @property
     def _mcp_initialized(self) -> bool:
@@ -1510,6 +1343,16 @@ class Session:
             resolver = MCPToolResolver(mcp_manager_ref=lambda: getattr(self, "mcp_manager", None))
             self._mcp_resolver_obj = resolver
         return resolver.resolve(server, tool)
+
+    def memory_sync_hooks(self) -> list[Any]:
+        """The main agent's durability hooks: memory-file writes stored (in
+        the cloud), and finished calls' results kept for a turn a restart
+        may cut (``core/hooks/turn_results.py``)."""
+        hooks: list[Any] = [TurnResultHook(self.sub_agent_hitl)]
+        mirror = getattr(self, "memory_mirror", None)
+        if mirror is not None:
+            hooks.append(MemorySyncHook(mirror))
+        return hooks
 
     def _create_tool_event_hook(self) -> ToolEventHook:
         """Delegate to :meth:`ToolEventHookFactory.create`.
@@ -1751,7 +1594,7 @@ class Session:
         """Delegate to :meth:`LoopController.loop_status_from_tool`."""
         return self.loop.loop_status_from_tool()
 
-    # ── Knowledge / codeindex / marketplace / MCP startup ──────
+    # ── Marketplace / MCP startup ──────
 
     def _startup_coord(self) -> SessionStartupCoordinator:
         """Return the :class:`SessionStartupCoordinator`."""
@@ -1760,21 +1603,6 @@ class Session:
             coord = SessionStartupCoordinator(self)
             self.startup = coord
         return coord
-
-    def start_knowledge_background(self) -> None:
-        """Delegate to
-        :meth:`SessionStartupCoordinator.start_knowledge_background`."""
-        self._startup_coord().start_knowledge_background()
-
-    async def _ensure_knowledge(self) -> None:
-        """Delegate to
-        :meth:`SessionStartupCoordinator.ensure_knowledge_started`."""
-        await self._startup_coord().ensure_knowledge_started()
-
-    def start_codeindex_background(self) -> None:
-        """Delegate to
-        :meth:`SessionStartupCoordinator.start_codeindex_background`."""
-        self._startup_coord().start_codeindex_background()
 
     def start_marketplace_refresh_background(self) -> None:
         """Delegate to
@@ -1788,41 +1616,6 @@ class Session:
     def rebuild_mcp(self) -> None:
         """Delegate to :meth:`SessionStartupCoordinator.rebuild_mcp`."""
         self._startup_coord().rebuild_mcp()
-
-    def refresh_codeindex_availability(self) -> RefreshAvailabilityResult:
-        """Delegate to
-        :meth:`CodeIndexAvailabilityRefresher.refresh`.
-
-        Bare-Session test stubs may not have composed the
-        refresher (they set ``session.code_index`` etc. by hand);
-        materialise a transient one from the current session
-        attributes so those fixtures keep working. Attribute
-        errors during the lazy build are folded into an
-        ``ok=False`` envelope — matches the pre-refactor
-        bare-except behaviour.
-        """
-        refresher = getattr(self, "_codeindex_refresher", None)
-        if refresher is None:
-            try:
-                refresher = CodeIndexAvailabilityRefresher(
-                    settings=self.settings,
-                    project_dir=getattr(self, "project_dir", None),
-                    code_index=getattr(self, "code_index", None),
-                    code_index_sync=getattr(self, "code_index_sync", None),
-                    pool_ref=lambda: getattr(self, "pool", None),
-                    plugin_loader_ref=lambda: getattr(self, "plugin_loader", None),
-                    disabled_plugins_ref=lambda: getattr(self, "_disabled_plugins", set()),
-                    mcp_manager_ref=lambda: getattr(self, "mcp_manager", None),
-                    build_main_agent=lambda: self._build_main_agent(),
-                    assign_main_team=self._assign_main_team,
-                    get_availability=lambda: getattr(self, "_codeindex_available", False),
-                    set_availability=self._set_codeindex_available,
-                )
-            except Exception as exc:  # noqa: BLE001 — lazy-build safety envelope
-                logger.debug("refresh_codeindex_availability lazy-build failed (%s)", exc)
-                return RefreshAvailabilityResult(ok=False, changed=False, error=str(exc))
-            self._codeindex_refresher = refresher
-        return refresher.refresh()
 
     # ── MCP status ─────────────────────────────────────────────
 
@@ -1888,3 +1681,39 @@ class Session:
         with contextlib.suppress(Exception):
             _log_run_messages_debug(self.main_team)
         return result
+
+
+class _GuardToolExecution:
+    """The two fields the approval dialog reads from a requirement's tool execution."""
+
+    def __init__(self, tool_name: str, tool_args: dict[str, Any]) -> None:
+        self.tool_name = tool_name
+        self.tool_args = tool_args
+
+
+class _GuardRequirement:
+    """A Bypass-guard question shaped like an Agno ``RunRequirement``.
+
+    Only what the coordinator and the dialog touch: ``tool_execution``,
+    ``details``, ``confirm()`` and ``reject()``.
+    """
+
+    def __init__(
+        self,
+        *,
+        tool_name: str,
+        tool_args: dict[str, Any],
+        details: str,
+        details_pending: bool = False,
+    ) -> None:
+        self.tool_execution = _GuardToolExecution(tool_name, tool_args)
+        self.details = details
+        #: The model is still describing the call; the dialog spins.
+        self.details_pending = details_pending
+        self.confirmed = False
+
+    def confirm(self) -> None:
+        self.confirmed = True
+
+    def reject(self, note: str = "") -> None:
+        self.confirmed = False

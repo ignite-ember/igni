@@ -94,6 +94,33 @@ Pattern matching uses glob syntax. Exact entries come from "always allow", patte
 | `ignite-ember --read-only` | Denies the write tools **and the shell** — a hard wall (see below) |
 | `ignite-ember --auto-approve` | Auto-approves everything (use with caution) |
 
+#### The last check before `--auto-approve` runs a call
+
+Bypass (`--auto-approve`) still checks every non-read call before it runs:
+rules for actions that are dangerous by their shape (deleting outside the
+project, `curl | sh`, force-pushing, sending credentials off the machine…),
+then Laya, a small typed-decision model, for what no rule names. A call
+either flags is turned back into the ordinary approval prompt.
+
+Laya does not run inside the backend. It runs in **igni's decisions
+service** (`python -m ember_code.decisions_server`), which brings torch and
+the model's checkpoints:
+
+- **On a desktop** the backend starts it on first use as its own process,
+  on a loopback port, with a secret generated for that run; it exits when
+  the backend exits, or after 15 minutes unused, and is started again when
+  next needed. The desktop app installs it (`ignite-ember[decisions]`).
+- **In the cloud** one service runs per node and every backend on the node
+  points `IGNI_DECISIONS_URL` at it, sending `IGNI_DECISIONS_TOKEN` (the
+  service's `IGNI_DECISIONS_SECRET`). The service answers approvals before
+  anything an extension asks, across every backend it serves.
+
+**It fails closed.** If the service cannot be started or reached, or the
+model cannot load — including an install without the `decisions` extra — the
+check cannot run, and a call that would have been checked is *asked about*,
+never let through. A headless run with nobody to ask refuses it with the
+reason.
+
 #### What `--read-only` costs
 
 It denies the write tools — `save_file`, `create_file`, `edit_file`,
@@ -108,8 +135,8 @@ get.
 
 What still works is analysis that does not route through the shell:
 
-- `codeindex_cypher`, which queries the code graph and is read-only by
-  construction, and is the intended way to explore a codebase in this mode;
+- an extension's read-only tools — CodeIndex's `codeindex_cypher` queries the
+  code graph, and is the intended way to explore a codebase in this mode;
 - the notebook readers;
 - `web_search` and `fetch_url`.
 
@@ -368,7 +395,7 @@ safety:
 
 ### CodeIndex Data Residency
 
-For teams that can't send code to the cloud, self-hosted CodeIndex is planned for a future release. This will allow all code analysis and embeddings to stay on your infrastructure. See [CodeIndex](CODEINDEX.md#self-hosting-planned) for details.
+For teams that can't send code to the cloud, self-hosted CodeIndex is planned for a future release. This will allow all code analysis and embeddings to stay on your infrastructure. See *Self-hosting* in the CodeIndex repository's `igni-integration.md` for details.
 
 ---
 

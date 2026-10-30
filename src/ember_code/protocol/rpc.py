@@ -65,15 +65,6 @@ class RpcMethod(StrEnum):
     GET_MCP_SERVER_DETAILS = "get_mcp_server_details"
     SET_MCP_TOOL_ENABLED = "set_mcp_tool_enabled"
 
-    # ── CodeIndex extras ──────────────────────────────────────────
-    CODEINDEX_HEAD_BREAKDOWN = "codeindex_head_breakdown"
-    CODEINDEX_ACTIVITY = "codeindex_activity"
-
-    # ── Per-client UI state (browser / IDE plugin) ────────────────
-    GET_CLIENT_STATE = "get_client_state"
-    SET_CLIENT_STATE = "set_client_state"
-    DELETE_CLIENT_STATE = "delete_client_state"
-
     # ── Session / status ──────────────────────────────────────────
     GET_SESSION_ID = "get_session_id"
     GET_RUN_TIMEOUT = "get_run_timeout"
@@ -165,9 +156,6 @@ class RpcMethod(StrEnum):
     # FE uses this to render a picker / status chip.
     GET_OUTPUT_STYLES = "get_output_styles"
 
-    # ── Knowledge ─────────────────────────────────────────────────
-    AUTO_SYNC_KNOWLEDGE = "auto_sync_knowledge"
-
     # ── Attachments (drag/drop, paste, OS picker) ────────────────
     UPLOAD_ATTACHMENT = "upload_attachment"
 
@@ -184,6 +172,11 @@ class RpcMethod(StrEnum):
 
     # ── Auth / models / config ───────────────────────────────────
     LOGIN = "login"
+    # Where this address's organisation runs igni, read from a record
+    # the organisation publishes on its own domain.
+    DISCOVER_SERVER = "discover_server"
+    # Write that server down, so the next launch knows it.
+    SET_SERVER = "set_server"
     RELOAD_CLOUD_CREDENTIALS = "reload_cloud_credentials"
     CLEAR_CLOUD_CREDENTIALS = "clear_cloud_credentials"
     SWITCH_MODEL = "switch_model"
@@ -231,14 +224,6 @@ class RpcMethod(StrEnum):
     # ── Skills ────────────────────────────────────────────────────
     GET_SKILL_DETAILS = "get_skill_details"
 
-    # ── Knowledge ─────────────────────────────────────────────────
-    GET_KNOWLEDGE_STATUS = "get_knowledge_status"
-    KNOWLEDGE_SEARCH = "knowledge_search"
-    KNOWLEDGE_ADD = "knowledge_add"
-    KNOWLEDGE_LIST = "knowledge_list"
-    KNOWLEDGE_GET = "knowledge_get"
-    KNOWLEDGE_REMOVE = "knowledge_remove"
-
     # ── File access (sandboxed to project/.igni) ────────────────
     READ_FILE = "read_file"
     TRUNCATE_HISTORY = "truncate_history"
@@ -250,13 +235,6 @@ class RpcMethod(StrEnum):
     #: "how big", this answers "made of what" — the split ``/compact``
     #: can shrink versus the floor it cannot.
     GET_CONTEXT_BREAKDOWN = "get_context_breakdown"
-
-    # ── CodeIndex ─────────────────────────────────────────────────
-    CODEINDEX_STATUS = "codeindex_status"
-    CODEINDEX_SYNC = "codeindex_sync"
-    CODEINDEX_RESYNC = "codeindex_resync"
-    CODEINDEX_CLEAN = "codeindex_clean"
-    CODEINDEX_INSTALL = "codeindex_install"
 
     # ── Workflows (CC ``/workflows`` parity) ───────────────────────
     # The BE acts as a runner for ``.claude/workflows/*.mjs``
@@ -283,6 +261,62 @@ class RpcMethod(StrEnum):
     ADD_MARKETPLACE = "add_marketplace"
     REMOVE_MARKETPLACE = "remove_marketplace"
     REFRESH_MARKETPLACES = "refresh_marketplaces"
+
+    # ── Extensions ────────────────────────────────────────────────
+    #
+    # Only the *base* side of the extension surface lives in this
+    # enum. An extension's own methods are ``ext.<id>.<method>`` and
+    # are deliberately not members: they arrive with a manifest
+    # rather than at import time, and making them members would give
+    # up the exhaustiveness guarantee this enum exists for. They are
+    # routed by prefix instead — see
+    # :mod:`ember_code.extensions.rpc`.
+    LIST_EXTENSIONS = "list_extensions"
+    SET_EXTENSION_SETTINGS = "set_extension_settings"
+
+    # ── Notifications ─────────────────────────────────────────────
+    #
+    # The floor's, not any extension's (igni server's
+    # ``docs/service-identity.md`` §10): what igni server delivered to
+    # whoever is signed in, merged with what extensions on this
+    # machine told the host. See :mod:`ember_code.notifications`.
+    NOTIFICATIONS_LIST = "notifications_list"
+    NOTIFICATIONS_COUNTS = "notifications_counts"
+    NOTIFICATIONS_MARK_READ = "notifications_mark_read"
+
+    # ── The host object model ─────────────────────────────────────
+    #
+    # How an extension's *page* reaches ``docs/HOST_OBJECT_MODEL.md``:
+    # the bridge forwards ``bridge.host.…`` here, with the frame's
+    # extension as ``caller``, and the host answers from the same
+    # :class:`~ember_code.extensions.host.model.HostModel` the
+    # extension's process reaches over its loopback socket. Pool-level,
+    # like ``attach_session``: the model spans every session.
+    HOST_MODEL = "host_model"
+    # How a *window* reaches its own part of the host model: it hydrates
+    # its model, and writes every change its views make, here — the
+    # same :class:`~ember_code.extensions.host.windows.Windows` an
+    # extension's ``host.ui`` writes. Pool-level: a window spans
+    # sessions. See ``clients/web/src/clientState.ts``.
+    WINDOW_MODEL = "window_model"
+    # An extension's *page* asking for a token for its own service
+    # (``bridge.service``), with the frame's extension as ``caller``.
+    # The audience is the service recorded on that extension's UI
+    # origin, never an argument — see
+    # :class:`~ember_code.extensions.service_token.PageServiceTokens`.
+    # Pool-level: a token is the person's, not a session's.
+    EXTENSION_SERVICE_TOKEN = "extension_service_token"
+    # Events a service sent its extension for this producer, handed in by
+    # the platform (the gateway, in the cloud): each starts or resumes the
+    # agent's run once (``extensions/service_events.py``). Answers which
+    # to acknowledge. Pool-level: an event is the producer's, not a
+    # session's.
+    DELIVER_SERVICE_EVENTS = "deliver_service_events"
+    # The gateway handing a producer's VM the person's own session when
+    # they sign in through it, for igni to exchange for the VM's own
+    # credential (igni server's service-identity §16). Pool-level: the
+    # credential is the VM's. Answers the credential's state.
+    VM_SIGN_IN = "vm_sign_in"
 
 
 def validate_rpc_table(registered_keys: Iterable[str]) -> None:

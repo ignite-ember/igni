@@ -8,7 +8,6 @@ import pytest
 
 from ember_code.core.config.settings import (
     GuardrailsConfig,
-    KnowledgeConfig,
     PermissionsConfig,
     Settings,
 )
@@ -49,15 +48,6 @@ class TestTips:
         assert isinstance(tip, str)
         assert tip in GENERAL_TIPS
 
-    def test_get_tip_contextual_knowledge_disabled(self, tmp_path):
-        """When knowledge is disabled, suggests enabling it."""
-        settings = Settings(knowledge=KnowledgeConfig(enabled=False))
-        # Create the project context file so that tip doesn't fire instead
-        (tmp_path / PROJECT_CONTEXT_FILE).write_text("# test")
-        tip = get_tip(settings, tmp_path)
-        assert isinstance(tip, str)
-        assert len(tip) > 0
-
     def test_get_tip_contextual_no_project_context_file(self, tmp_path):
         """When the project context file is missing, suggests creating it."""
         settings = Settings()
@@ -97,7 +87,6 @@ class TestTips:
         (tmp_path / CONFIG_DIR / "agents").mkdir(parents=True)
         (tmp_path / CONFIG_DIR / "agents" / "custom.md").write_text("---\nname: custom\n---")
         settings = Settings(
-            knowledge=KnowledgeConfig(enabled=True, share=True),
             guardrails=GuardrailsConfig(pii_detection=True, prompt_injection=True, moderation=True),
             reasoning=Settings().reasoning.model_copy(update={"enabled": True}),
             learning=Settings().learning.model_copy(update={"enabled": True}),
@@ -279,6 +268,8 @@ class TestCheckForUpdate:
 
         mock_settings = MagicMock()
         mock_settings.update_check_ttl = 86400  # 24h — cache will be fresh
+        # A bare MagicMock attribute is truthy, which would read as air-gapped.
+        mock_settings.air_gapped = False
 
         with (
             patch("ember_code.core.utils.update_checker.CACHE_FILE", cache_file),

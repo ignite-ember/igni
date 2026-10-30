@@ -12,7 +12,7 @@ pays the cost of parsing ``.md`` files (~50ms), not importing
 LLM provider modules (~350ms). Ephemeral CRUD lives on
 :class:`EphemeralAgentStore` and is reached via :attr:`ephemeral`.
 
-Backward-compat shim surface (``_definitions`` / ``_codeindex_available``
+Backward-compat shim surface (``_definitions``
 / ``_ephemeral_count`` / ``_max_ephemeral`` / ``_ephemeral_dir`` /
 ``_load_directory``) is quarantined in :mod:`pool_legacy` — see that
 module for the follow-up-PR deletion target.
@@ -20,13 +20,15 @@ module for the follow-up-PR deletion target.
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Iterable
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 from ember_code.core.agents.builder import AgentBuilder
 from ember_code.core.agents.ephemeral import EphemeralAgentStore
 from ember_code.core.agents.loader import AgentDefinitionLoader
+from ember_code.core.agents.markdown import AgentMarkdownFile
 from ember_code.core.agents.plugin_policy import PluginRestrictionPolicy
 from ember_code.core.agents.pool_legacy import LegacyAgentPoolMixin
 from ember_code.core.agents.schemas import (
@@ -36,15 +38,17 @@ from ember_code.core.agents.schemas import (
     AgentPriority,
     Broadcast,
     DbHandle,
-    KnowledgeManager,
     LoadReport,
     McpClient,
 )
 from ember_code.core.config.settings import Settings
+from ember_code.core.prompts.contributions import PromptContributions, prompt_contributions
 from ember_code.core.tools.orchestrate_budget import SpawnBudget
 
 if TYPE_CHECKING:
     from agno.agent import Agent
+
+logger = logging.getLogger(__name__)
 
 
 class AgentPool(LegacyAgentPoolMixin):
@@ -77,18 +81,6 @@ class AgentPool(LegacyAgentPoolMixin):
         # re-context. Populated by ``load_definitions``.
         self._settings: Settings | None = None
         self._base_dir: str | None = None
-        # Codeindex-availability captured on the last ``load_*``
-        # call — used by :meth:`load_plugin_directory` so plugins
-        # pick the same prompt variant as the base load. The legacy
-        # ``_codeindex_available`` property on the mixin shadows
-        # this by design (data-descriptor precedence) — read/write
-        # the raw flag via the mixin property from *within* the
-        # class too, so there's only one storage slot.
-        self._codeindex_available_flag: bool = False
-        # Pending knowledge manager set before ``build_agents``
-        # first runs. Declared here so no ``getattr`` hidden-field.
-        self._pending_knowledge_mgr: KnowledgeManager | None = None
-        self._pending_code_index_provider: Any | None = None
         # Per-session sub-agent budget cache — lazily constructed
         # on first :meth:`spawn_budget` call so every
         # :class:`OrchestrateTools` for the same session shares one
@@ -115,9 +107,6 @@ class AgentPool(LegacyAgentPoolMixin):
         object.__setattr__(self, "_broadcast", None)
         object.__setattr__(self, "_settings", None)
         object.__setattr__(self, "_base_dir", None)
-        object.__setattr__(self, "_codeindex_available_flag", False)
-        object.__setattr__(self, "_pending_knowledge_mgr", None)
-        object.__setattr__(self, "_pending_code_index_provider", None)
         object.__setattr__(self, "_spawn_budgets", {})
 
     # ── Introspection helpers used by the collaborators ─────────
@@ -194,7 +183,7 @@ class AgentPool(LegacyAgentPoolMixin):
         """Merge a rehydrated ephemeral dir at
         :attr:`AgentPriority.EPHEMERAL`. Called by
         :class:`EphemeralAgentStore.init`."""
-        loader = self._make_base_loader(codeindex_available=False)
+        loader = self._make_base_loader()
         report = loader.load_directory(path, AgentPriority.EPHEMERAL)
         self._merge(report)
 
@@ -222,7 +211,6 @@ class AgentPool(LegacyAgentPoolMixin):
         self,
         settings: Settings,
         project_dir: Path | None = None,
-        codeindex_available: bool = False,
         group_dir: Path | None = None,
     ) -> LoadReport:
         """Parse all agent ``.md`` files and resolve priorities.
@@ -237,12 +225,10 @@ class AgentPool(LegacyAgentPoolMixin):
 
         self._settings = settings
         self._base_dir = str(project_dir)
-        self._codeindex_available_flag = bool(codeindex_available)
 
         loader = AgentDefinitionLoader(
             settings=settings,
             project_dir=project_dir,
-            codeindex_available=codeindex_available,
             group_dir=group_dir,
         )
         report = loader.load()
@@ -261,7 +247,7 @@ class AgentPool(LegacyAgentPoolMixin):
         subsequent ``get(...)`` works."""
         self._settings = settings
         self._base_dir = base_dir or str(path.parent)
-        loader = self._make_base_loader(codeindex_available=False)
+        loader = self._make_base_loader()
         report = loader.load_directory(path, priority)
         self._merge(report)
         # Ensure the builder exists so lazy ``get()`` works.
@@ -285,12 +271,62 @@ class AgentPool(LegacyAgentPoolMixin):
         loader = AgentDefinitionLoader(
             settings=self._settings_or_bare(),
             project_dir=Path(self._base_dir) if self._base_dir else Path.cwd(),
-            codeindex_available=self._codeindex_available_flag,
             restriction_policy=policy,
         )
         report = loader.load_directory(path, priority, namespace=namespace)
         self._merge(report)
         return report
+
+    def apply_prompt_contributions(self, contributions: PromptContributions | None = None) -> None:
+        """Every agent as extensions have shaped it: overridden, edited, or both.
+
+        Run once everything is loaded — igni's agents, the group's, the
+        project's and the plugins' — because an edit applies to
+        whichever definition won. An override stands at
+        :attr:`AgentPriority.EXTENSION_OVERRIDE`, above every file a
+        person or an organisation wrote, and defines the agent even
+        where igni has none; the moment the extension stops, or its
+        condition stops holding, it is gone from the table and the
+        agent is whatever it was before.
+
+        Text an extension wrote for an agent's header gets the plugin
+        security envelope a plugin's own agents get.
+        """
+        table = contributions if contributions is not None else prompt_contributions
+        for name in table.agents():
+            entry = self._entries.get(name)
+            source = entry.definition.source_path if entry is not None else None
+            base = None
+            if source is not None:
+                try:
+                    base = source.read_text(encoding="utf-8")
+                except OSError as exc:
+                    logger.warning("agent %s: %s could not be read: %s", name, source, exc)
+            try:
+                composition = table.compose(f"agent:{name}", base)
+            except ValueError as exc:
+                logger.warning("agent %s: what extensions do to it does not fit: %s", name, exc)
+                continue
+            if composition is None:
+                logger.info("agent %s: edited by an extension, and nobody defines it", name)
+                continue
+            path = composition.override_path or source or Path(f"{name}.md")
+            md = AgentMarkdownFile(path, content=composition.document.render())
+            try:
+                definition = md.parse().model_copy(update={"name": name})
+            except ValueError as exc:
+                logger.warning("agent %s, as extensions shaped it, does not load: %s", name, exc)
+                continue
+            if composition.frontmatter_owner is not None:
+                definition = PluginRestrictionPolicy.strict().apply(
+                    definition, md.raw_frontmatter_keys(), plugin_name=composition.frontmatter_owner
+                )
+            priority = (
+                AgentPriority.EXTENSION_OVERRIDE
+                if composition.override_owner is not None or entry is None
+                else entry.priority
+            )
+            self._entries[name] = AgentEntry(definition=definition, priority=priority)
 
     # ── Phase 2: build ───────────────────────────────────────────
 
@@ -306,8 +342,6 @@ class AgentPool(LegacyAgentPoolMixin):
             settings=self._settings,
             base_dir=self._base_dir,
             mcp_clients=mcp_clients,
-            knowledge_mgr=self._pending_knowledge_mgr,
-            code_index_provider=self._pending_code_index_provider,
             db=self._db,
             broadcast=self._broadcast,
         )
@@ -316,34 +350,6 @@ class AgentPool(LegacyAgentPoolMixin):
         else:
             self._builder.replace_context(context)
         self._agents.clear()
-
-    def attach_code_index_provider(self, provider: Any | None) -> None:
-        """Give spawned agents a way to reach the session's code index.
-
-        Mirrors :meth:`attach_knowledge_manager`. A callable rather than the
-        index itself: ``attach_codeindex_neo4j`` replaces
-        ``session.code_index`` when a Neo4j runtime arrives, and a specialist
-        built before that must still see the replacement.
-        """
-        self._pending_code_index_provider = provider
-        if self._builder is not None:
-            new_context = self._builder.context.model_copy(update={"code_index_provider": provider})
-            self._builder.replace_context(new_context)
-            self._agents.clear()
-
-    def attach_knowledge_manager(self, knowledge_mgr: KnowledgeManager | None) -> None:
-        """Public setter so :class:`Session` no longer reaches for
-        ``pool._knowledge_mgr`` directly.
-
-        If the builder is already constructed, the context is
-        rebuilt so sub-agents built next see the manager."""
-        self._pending_knowledge_mgr = knowledge_mgr
-        if self._builder is not None:
-            new_context = self._builder.context.model_copy(update={"knowledge_mgr": knowledge_mgr})
-            self._builder.replace_context(new_context)
-            # Invalidate the built agent cache — the next ``get()``
-            # rebuilds with the knowledge manager attached.
-            self._agents.clear()
 
     def load_all(
         self,
@@ -522,13 +528,12 @@ class AgentPool(LegacyAgentPoolMixin):
             if existing is None or entry.priority > existing.priority:
                 self._entries[name] = entry
 
-    def _make_base_loader(self, *, codeindex_available: bool) -> AgentDefinitionLoader:
+    def _make_base_loader(self) -> AgentDefinitionLoader:
         """Construct a bare-bones loader for single-directory
         loads (tests, ephemeral rehydrate)."""
         return AgentDefinitionLoader(
             settings=self._settings_or_bare(),
             project_dir=Path(self._base_dir) if self._base_dir else Path.cwd(),
-            codeindex_available=codeindex_available,
         )
 
     def _ensure_builder(self) -> AgentBuilder:
@@ -541,8 +546,6 @@ class AgentPool(LegacyAgentPoolMixin):
             settings=settings,
             base_dir=self._base_dir,
             mcp_clients=None,
-            knowledge_mgr=self._pending_knowledge_mgr,
-            code_index_provider=self._pending_code_index_provider,
             db=self._db,
             broadcast=self._broadcast,
         )

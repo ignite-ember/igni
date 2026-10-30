@@ -24,16 +24,20 @@ jobs:
         uses: astral-sh/setup-uv@v4
 
       - name: Install dependencies
-        run: uv sync --extra dev
+        run: |
+          uv sync --extra dev
+          uv pip install -e packages/igni-cloud
 
       - name: Ruff check
-        run: uv run ruff check src/ tests/
+        run: uv run --no-sync ruff check src/ tests/ packages/igni-cloud/
 
       - name: Ruff format check
-        run: uv run ruff format --check src/ tests/
+        run: uv run --no-sync ruff format --check src/ tests/ packages/igni-cloud/
 
       - name: Mypy
-        run: uv run mypy src/ember_code/
+        run: |
+          uv run --no-sync mypy src/ember_code/
+          uv run --no-sync mypy packages/igni-cloud/src/igni_cloud/
 
   # No matrix. The product ships one interpreter, so there is one job,
   # and its name carries no version — which matters because the branch
@@ -68,39 +72,58 @@ jobs:
         run: uv run --with pip-audit pip-audit
   test:
     runs-on: ubuntu-latest
+    steps:
+      # Full history, because one test in this suite is *about* the history.
+      # ``actions/checkout`` fetches depth 1 by default, which leaves the merge
+      # commit with no parents — and ``test_the_commit_convention_is_followed``
+      # skips itself rather than draw conclusions from a window of one. It had
+      # therefore never run anywhere it was enforced, which is the state that
+      # test's own docstring calls worse than having no rule at all.
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
-    # Thirty-five tests skipped themselves here for want of a database,
-    # and they were the tests covering the subsystem that broke most
-    # often — the knowledge attach, the per-session index, the
-    # orchestrator's swap to neo4j. A suite that skips a third of its
-    # coverage of the riskiest area, and reports green, is worse than
-    # one that never had the tests: it looks like coverage.
-    #
-    # The version is pinned to the one the product downloads at
-    # runtime (``DEFAULT_NEO4J_VERSION``), so CI exercises what users
-    # actually run rather than whatever ``:latest`` is that week.
+      - uses: actions/setup-python@v5
+        with:
+          python-version-file: .python-version
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+
+      # The core alone — the desktop's wheel, without psycopg or the
+      # cloud layer: everything it does must work, and every cloud test
+      # lives in packages/igni-cloud.
+      - name: Install dependencies
+        run: uv sync --extra dev
+
+      - name: Run tests
+        run: uv run pytest tests/ -q -rs
+
+      - name: The cloud layer's tests
+        run: |
+          uv pip install -e packages/igni-cloud
+          uv run --no-sync pytest packages/igni-cloud/tests -q -rs
+
+  # igni's stores against PostgreSQL, the cloud's database (docs/CLOUD.md
+  # section 9). The suite above runs them on SQLite; here the same tests
+  # run again on a real server, which they skip — saying why — wherever
+  # IGNI_TEST_DATABASE_URL is unset. Its own job rather than a matrix
+  # entry for the reason the test job has no matrix: the check name is
+  # what the branch ruleset requires.
+  test-postgres:
+    runs-on: ubuntu-latest
     services:
-      neo4j:
-        image: neo4j:5.26.0-community
+      postgres:
+        image: postgres:17
         env:
-          NEO4J_AUTH: neo4j/testtest
-          # A CI container has no business reserving a heap it will
-          # never fill, and the runner has 7 GB total.
-          NEO4J_server_memory_heap_max__size: 512m
+          POSTGRES_PASSWORD: postgres
         ports:
-          - 7687:7687
-          - 7474:7474
+          - 5432:5432
         options: >-
-          --health-cmd "wget -q -O /dev/null http://localhost:7474 || exit 1"
-          --health-interval 10s
+          --health-cmd pg_isready
+          --health-interval 5s
           --health-timeout 5s
-          --health-retries 12
-
-    env:
-      NEO4J_TEST_URI: bolt://localhost:7687
-      NEO4J_TEST_USER: neo4j
-      NEO4J_TEST_PASSWORD: testtest
-
+          --health-retries 10
     steps:
       - uses: actions/checkout@v4
 
@@ -111,11 +134,40 @@ jobs:
       - name: Install uv
         uses: astral-sh/setup-uv@v4
 
+      # PostgreSQL storage is the igni-cloud package's (an entry point,
+      # found by the database URL), so it is installed here.
       - name: Install dependencies
-        run: uv sync --extra dev
+        run: |
+          uv sync --extra dev
+          uv pip install -e packages/igni-cloud
 
-      - name: Run tests
-        run: uv run pytest tests/ -q -rs
+      - name: Storage tests on PostgreSQL
+        env:
+          IGNI_TEST_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/postgres
+        run: >-
+          uv run --no-sync pytest -q -rs
+          tests/test_storage_backends.py
+          tests/test_approvals_and_queued_messages_survive_a_restart.py
+          tests/test_an_approval_resumes_after_a_cold_restart.py
+          packages/igni-cloud/tests
+
+  # The Python SDKs under packages/ (igni-service, igni-extension) have
+  # dependencies of their own and are checked in their own environments,
+  # the way `make packages-check` does locally.
+  packages:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version-file: .python-version
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+
+      - name: Lint, type-check and test the SDKs
+        run: make packages-check
 
   # The shared web UI lives under ``clients/web`` and is consumed by
   # the Tauri / VSCode / JetBrains shells. Typecheck + tests run on

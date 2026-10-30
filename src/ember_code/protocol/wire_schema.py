@@ -41,36 +41,46 @@ SNAPSHOT_PATH = (
     / "wire-schema.json"
 )
 
-#: RPC payloads that are plain dicts built by hand in the backend, so
-#: there is no model to reflect on. Kept in step with the producing
-#: code by hand — the file that builds each one is named above it,
-#: which is the only thing holding these together.
-RPC_PAYLOADS: dict[str, list[str]] = {
-    # backend/server.py::loop_status
-    "loop_status": [
-        "active",
-        "paused",
-        "prompt",
-        "iteration_index",
-        "iterations_remaining",
-        "cap_explicit",
-        "announced_total",
-    ],
-    # backend/server.py::get_pending_messages
-    "pending_message": ["role", "content", "received_at", "message_id"],
-    # backend/server.py::get_mcp_server_details
-    "mcp_server": [
-        "name",
-        "connected",
-        "transport",
-        "tool_names",
-        "tool_descriptions",
-        "resources",
-        "prompts",
-        "error",
-        "policy_blocked",
-    ],
-}
+
+def _rpc_payload_fields() -> dict[str, list[str]]:
+    """RPC payloads that reach the FE outside a :class:`Message` envelope.
+
+    These used to be hand-written field lists, on the premise that the
+    producers built "plain dicts … so there is no model to reflect on".
+    All three return Pydantic models, and the list had already drifted:
+    ``mcp_server`` was missing ``tools_disabled``, which
+    :class:`MCPServerSnapshot` has carried since the per-tool toggle
+    shipped — so the one field the snapshot test existed to protect was
+    the one it silently stopped covering. Reflecting makes that class of
+    drift impossible, the same way :func:`_agent_info_fields` already
+    does.
+
+    Imports are function-local so :mod:`ember_code.protocol` stays
+    importable without dragging in :mod:`ember_code.backend`.
+    """
+    from ember_code.backend.schemas_context import PendingMessage
+    from ember_code.backend.schemas_loop import LoopStatusSnapshot
+    from ember_code.backend.schemas_mcp import MCPServerSnapshot
+    from ember_code.notifications.schemas import (
+        FloorNotification,
+        NotificationCounts,
+        NotificationsListResult,
+        NotificationTarget,
+    )
+
+    return {
+        # backend/server.py::loop_status
+        "loop_status": list(LoopStatusSnapshot.model_fields),
+        # backend/server.py::get_pending_messages
+        "pending_message": list(PendingMessage.model_fields),
+        # backend/server.py::get_mcp_server_details
+        "mcp_server": list(MCPServerSnapshot.model_fields),
+        # backend/rpc_handlers/notifications.py
+        "notifications_list": list(NotificationsListResult.model_fields),
+        "floor_notification": list(FloorNotification.model_fields),
+        "notification_target": list(NotificationTarget.model_fields),
+        "notification_counts": list(NotificationCounts.model_fields),
+    }
 
 
 def _agent_info_fields() -> list[str]:
@@ -108,7 +118,7 @@ def build_schema() -> dict[str, dict[str, list[str]]]:
         key = wire_type if isinstance(wire_type, str) else cls.__name__
         schema["messages"][key] = sorted(cls.model_fields)
 
-    schema["rpc"] = {k: sorted(v) for k, v in RPC_PAYLOADS.items()}
+    schema["rpc"] = {k: sorted(v) for k, v in _rpc_payload_fields().items()}
     schema["rpc"]["agent_info"] = sorted(_agent_info_fields())
     schema["rpc"]["scheduled_task"] = sorted(_scheduled_task_fields())
     return schema

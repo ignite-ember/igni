@@ -82,9 +82,6 @@ describe("BUILTIN_COMMANDS — structural contract", () => {
       "/skills",
       "/plugin",
       "/plugins",
-      "/knowledge",
-      "/codeindex",
-      "/sync-knowledge",
       "/hooks",
       "/loop",
       "/schedule",
@@ -112,7 +109,7 @@ describe("filterSlashCommands", () => {
     { name: "/help", description: "Show help" },
     { name: "/clear", description: "Clear chat" },
     { name: "/compact", description: "Compact context" },
-    { name: "/codeindex", description: "Code index" },
+    { name: "/context", description: "Context usage" },
     { name: "/sessions", description: "List sessions" },
   ];
 
@@ -123,10 +120,10 @@ describe("filterSlashCommands", () => {
   });
 
   it("prefix-matches on the name AFTER the leading '/'", () => {
-    // Query ``co`` should match ``/compact`` and ``/codeindex``
+    // Query ``co`` should match ``/compact`` and ``/context``
     // but not ``/clear`` (which starts with c, not co).
     const out = filterSlashCommands(pool, "co");
-    expect(out.map((c) => c.name)).toEqual(["/compact", "/codeindex"]);
+    expect(out.map((c) => c.name)).toEqual(["/compact", "/context"]);
   });
 
   it("is case-insensitive", () => {

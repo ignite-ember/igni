@@ -1,12 +1,15 @@
 import { Component, memo, useEffect, useRef, useState, isValidElement, type ReactNode } from "react";
 import ReactMarkdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
+
+import { MermaidBlock } from "@igni/ui-react";
 import rehypeHighlight from "rehype-highlight";
 import "highlight.js/styles/github-dark-dimmed.css";
 import { formatStats, type AssistantInterrupted, ASSISTANT_INTERRUPTED_LABELS, type ChatItem } from "../chat/model";
 import type { DiffRow } from "../protocol/messages";
 import type { Spec } from "@json-render/core";
 import { ChevronIcon } from "./Icons";
+import { useExtensionName } from "../extensions/extensionNames";
 import { FilePill } from "./FilePill";
 import { JsonRenderView } from "./JsonRenderView";
 import { WorkflowRun } from "./WorkflowRun";
@@ -328,115 +331,26 @@ function CodeBlock({ children }: { children?: ReactNode }) {
   );
 }
 
-/** Lazy-loaded mermaid renderer. Mermaid is ~700KB so we import it
- *  on first use rather than always — the dynamic import is cached
- *  by the module system, so the second block on the page reuses
- *  the already-loaded library. SVG is re-rendered on every theme
- *  flip via a ``data-theme`` observer (the page-level mutation
- *  isn't worth listening for here; React re-mounts on theme change
- *  via a key further up). */
-type MermaidLib = { initialize: (opts: Record<string, unknown>) => void; render: (id: string, src: string) => Promise<{ svg: string }> };
-let mermaidPromise: Promise<MermaidLib> | null = null;
-/** Pick a mermaid built-in theme that matches the current igni
- *  theme. ``default`` = the colored light palette (purples / teals
- *  / pinks); ``dark`` = a colored dark palette. Both run in colour;
- *  the previous ``neutral`` choice was the cause of the all-grey
- *  diagrams. */
-function mermaidThemeForDocument(): "default" | "dark" {
-  if (typeof document === "undefined") return "default";
-  const explicit = document.documentElement.dataset.theme;
-  if (explicit === "dark") return "dark";
-  if (explicit === "light") return "default";
-  // ``auto`` (or unset) — defer to the OS.
-  if (typeof window !== "undefined" && window.matchMedia) {
-    return window.matchMedia("(prefers-color-scheme: dark)").matches
-      ? "dark"
-      : "default";
-  }
-  return "default";
-}
-
-function loadMermaid(): Promise<MermaidLib> {
-  if (!mermaidPromise) {
-    mermaidPromise = import("mermaid").then((m) => {
-      const lib = m.default as unknown as MermaidLib;
-      lib.initialize({
-        startOnLoad: false,
-        securityLevel: "strict",
-        theme: mermaidThemeForDocument(),
-        themeVariables: {
-          fontFamily: "var(--font-ui)",
-          // Let our container's ``--bg-inset`` show through instead
-          // of mermaid's stark white panel.
-          background: "transparent",
-        },
-      });
-      return lib;
-    });
-  }
-  return mermaidPromise;
-}
-
-let mermaidId = 0;
-function MermaidBlock({ source }: { source: string }) {
-  const ref = useRef<HTMLDivElement>(null);
-  const [error, setError] = useState<string | null>(null);
-  useEffect(() => {
-    let cancelled = false;
-    setError(null);
-    void loadMermaid()
-      .then((lib) => lib.render(`mermaid-${++mermaidId}`, source))
-      .then(({ svg }) => {
-        if (cancelled || !ref.current) return;
-        ref.current.innerHTML = svg;
-      })
-      .catch((e: unknown) => {
-        if (cancelled) return;
-        setError(e instanceof Error ? e.message : String(e));
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [source]);
-  if (error) {
-    // Fall back to showing the raw source if the diagram doesn't
-    // parse — better than a blank box. Same look as a plain pre.
-    return (
-      <pre className="mermaid-error" title={`Mermaid render failed: ${error}`}>
-        {source}
-      </pre>
-    );
-  }
-  return (
-    <div className="mermaid-diagram">
-      <DiagramCopyButton source={source} />
-      <div ref={ref} />
-    </div>
-  );
-}
-
-/** Copy-source button used by ``MermaidBlock``. Sits top-right of
- *  the diagram frame and copies the original fenced-source string,
- *  not the rendered SVG markup — the user typically wants what the
- *  model emitted, not what the renderer produced. */
-function DiagramCopyButton({ source }: { source: string }) {
-  const [copied, copy] = useCopiedFlag();
-  return (
-    <button
-      type="button"
-      className="diagram-copy"
-      title={copied ? "Copied!" : "Copy source"}
-      aria-label={copied ? "Copied" : "Copy source"}
-      onClick={() => copy(source)}
-    >
-      {copied ? <CheckIcon /> : <CopyIcon />}
-    </button>
-  );
-}
-
 const ASSISTANT_MD_COMPONENTS: Components = {
   pre: MarkdownPre,
 };
+
+/** Markdown as the agent's replies render it: GFM, highlighted code,
+ *  the fenced-block handling in ``MarkdownPre``. No raw-HTML plugin, so
+ *  HTML in the text stays text. Shared by the agent's replies and the
+ *  messages an extension posts, so both are rendered and sanitised
+ *  alike. */
+function ChatMarkdown({ text }: { text: string }) {
+  return (
+    <ReactMarkdown
+      remarkPlugins={[remarkGfm]}
+      rehypePlugins={[rehypeHighlight]}
+      components={ASSISTANT_MD_COMPONENTS}
+    >
+      {normalizeAssistantMarkdown(text)}
+    </ReactMarkdown>
+  );
+}
 
 /** Assistant chat bubble with a hover-revealed copy-response
  *  button. Copies the raw markdown source (``item.text``) — that's
@@ -463,13 +377,7 @@ export const AssistantMessage = memo(function AssistantMessage({
   return (
     <div className="msg-assistant">
       <div className="msg-assistant-body">
-        <ReactMarkdown
-          remarkPlugins={[remarkGfm]}
-          rehypePlugins={[rehypeHighlight]}
-          components={ASSISTANT_MD_COMPONENTS}
-        >
-          {normalizeAssistantMarkdown(item.text)}
-        </ReactMarkdown>
+        <ChatMarkdown text={item.text} />
       </div>
       {item.interrupted && (
         <InterruptedBanner
@@ -1312,7 +1220,7 @@ export function ToolCardView({
 }: {
   name: string;
   args: string;
-  status: "running" | "done" | "error";
+  status: "running" | "done" | "error" | "rejected";
   result: string;
   diffRows?: DiffRow[] | null;
   agentName?: string;
@@ -1328,6 +1236,7 @@ export function ToolCardView({
         <span className={`tool-status ${status}`} />
         <span className="tool-name">{name}</span>
         <span className="tool-args">{args}</span>
+        {status === "rejected" && <span className="tool-rejected-tag">Not run</span>}
         {agentName && (
           <span
             className="tool-agent-badge"
@@ -1345,6 +1254,36 @@ export function ToolCardView({
         <div className="tool-card-body">{result}</div>
       ) : null}
     </div>
+  );
+}
+
+/** A json-render card in the chat. One an extension appended is
+ *  labelled with the extension's name, looked up when it renders so a
+ *  reload that reads the history before the extensions are listed
+ *  still ends up with the name. */
+function VisualizationCard({
+  item,
+  onDispatchAction,
+}: {
+  item: Extract<ChatItem, { kind: "visualization" }>;
+  onDispatchAction?: (action: string, params: Record<string, unknown>) => Promise<unknown>;
+}) {
+  const extensionName = useExtensionName(item.fromExtension);
+  const spec = item.spec as Spec | null;
+  // Cheap signature: length of element keys is enough to detect
+  // "a new delta happened" so the boundary can retry.
+  const sig = spec
+    ? `${spec.root}|${Object.keys(spec.elements ?? {}).length}`
+    : "null";
+  return (
+    <VisualizationErrorBoundary specSignature={sig}>
+      <JsonRenderView
+        spec={spec as Spec}
+        title={item.title}
+        sourceAgent={extensionName || item.sourceAgent}
+        onDispatchAction={onDispatchAction}
+      />
+    </VisualizationErrorBoundary>
   );
 }
 
@@ -1383,6 +1322,9 @@ const UserMessage = memo(function UserMessage({
   // truncate by run_id). Without runId, the operation has no target —
   // hide the controls so the user doesn't get a confusing failure.
   const canMutate = !!item.runId && (onEdit || onDelete);
+  // The posting extension's name: the item keeps its id, and a name
+  // looked up now is right on a reload too.
+  const fromName = useExtensionName(item.fromExtension);
 
   if (editing && onEdit) {
     const submit = () => {
@@ -1444,9 +1386,23 @@ const UserMessage = memo(function UserMessage({
     );
   }
 
-  const body = mode === "chat" ? renderUserText(item.text) : item.text;
+  // An extension's message is markdown, as the agent's are; a person's
+  // stays as typed, with its pills.
+  const body =
+    mode !== "chat"
+      ? item.text
+      : item.fromExtension
+        ? <div className="msg-user-markdown"><ChatMarkdown text={item.text} /></div>
+        : renderUserText(item.text);
   return (
-    <div className={`msg-user mode-${mode}`}>
+    <div
+      className={`msg-user mode-${mode}${item.fromExtension ? " msg-user-extension" : ""}`}
+    >
+      {item.fromExtension && (
+        // Posted by an extension (``host.chat.post``), never by the
+        // person — said on the bubble, every time.
+        <div className="msg-user-from">from {fromName}</div>
+      )}
       {body}
       {canMutate && (
         <div className="msg-user-actions" onClick={(e) => e.stopPropagation()}>
@@ -1859,23 +1815,12 @@ export const ChatItemView = memo(function ChatItemView({
       return <div className="msg-error">{item.text}</div>;
     case "shell":
       return <ShellBlock item={item} />;
-    case "visualization": {
-      const spec = item.spec as Spec | null;
-      // Cheap signature: length of element keys is enough to detect
-      // "a new delta happened" so the boundary can retry.
-      const sig = spec
-        ? `${spec.root}|${Object.keys(spec.elements ?? {}).length}`
-        : "null";
+    case "visualization":
       return (
-        <VisualizationErrorBoundary specSignature={sig}>
-          <JsonRenderView
-            spec={spec as Spec}
-            title={item.title}
-            sourceAgent={item.sourceAgent}
-            onDispatchAction={onDispatchVisualizationAction}
-          />
-        </VisualizationErrorBoundary>
+        <VisualizationCard
+          item={item}
+          onDispatchAction={onDispatchVisualizationAction}
+        />
       );
-    }
   }
 });

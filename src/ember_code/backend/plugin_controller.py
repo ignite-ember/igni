@@ -36,6 +36,7 @@ from ember_code.core.plugins import marketplaces as _plugin_marketplaces
 from ember_code.core.plugins import state as _plugin_state
 from ember_code.core.plugins.git import GitClient, GitError
 from ember_code.core.plugins.models import PluginInfo
+from ember_code.core.plugins.source_policy import PluginSourcePolicy
 from ember_code.protocol import messages as msg
 
 if TYPE_CHECKING:
@@ -81,6 +82,10 @@ class PluginController:
         )
         if key in self._preview_cache:
             return self._preview_cache[key]
+
+        policy = PluginSourcePolicy.from_settings(self._session.settings)
+        if not policy.allows(clone_url):
+            return PluginContents.error_result(policy.refusal(clone_url))
 
         git = GitClient()
         if not git.is_available():
@@ -223,7 +228,10 @@ class PluginController:
         wins.
         """
         data_dir = self._session.settings.storage.data_dir
-        installer = _plugin_installer.PluginInstaller(data_dir=data_dir)
+        installer = _plugin_installer.PluginInstaller(
+            data_dir=data_dir,
+            source_policy=PluginSourcePolicy.from_settings(self._session.settings),
+        )
         if not installer.is_git_available():
             return msg.Info(text="git not found on PATH. Install git and retry.")
 
@@ -242,6 +250,10 @@ class PluginController:
             subdir = resolved_source.subdir
             if install_ref is None:
                 install_ref = resolved_source.ref
+
+        policy = PluginSourcePolicy.from_settings(self._session.settings)
+        if not policy.allows(url):
+            return msg.Info(text=policy.refusal(url))
 
         try:
             manifest = installer.install(url, ref=install_ref, subdir=subdir)
@@ -275,6 +287,7 @@ class PluginController:
         """Fetch + reset to ``install_ref`` (default: origin's HEAD)."""
         installer = _plugin_installer.PluginInstaller(
             data_dir=self._session.settings.storage.data_dir,
+            source_policy=PluginSourcePolicy.from_settings(self._session.settings),
         )
         if not installer.is_git_available():
             return msg.Info(text="git not found on PATH.")

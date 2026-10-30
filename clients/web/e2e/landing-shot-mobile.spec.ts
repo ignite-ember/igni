@@ -13,6 +13,7 @@
  */
 
 import { test, expect } from "./fixtures/embed";
+import { signedInStatus } from "./fixtures/backend";
 
 const OUT = process.env.LANDING_SHOT_DIR || "landing-shots";
 
@@ -29,23 +30,20 @@ test("capture phone product shot", async ({ page, backend, appUrl }) => {
     project_dir: PROJECT,
   }));
   backend.onRpc("get_session_id", () => "a1f9c2e4");
-  backend.onRpc("get_status", () => ({
-    type: "status_update",
-    model: MODEL,
-    context_tokens: 8_200,
-    max_context: 200_000,
-    cloud_connected: true,
-    cloud_org: "Acme",
-  }));
+  backend.onRpc("get_status", () =>
+    signedInStatus({
+      model: MODEL,
+      context_tokens: 8_200,
+      max_context: 200_000,
+      cloud_connected: true,
+      cloud_org: "Acme",
+    }),
+  );
   backend.onRpc("count_context_tokens", () => 8_200);
-  backend.onRpc("codeindex_status", () => ({
-    install_state: "active",
-    head_indexed: true,
-    sync_in_progress: false,
-    sync_error: null,
-    remote_url: "https://github.com/acme/payments-api",
+  backend.onRpc("get_login_state", () => ({
+    logged_in: true,
+    email: "dev@acme.com",
   }));
-  backend.onRpc("get_login_state", () => ({ logged_in: true, email: "dev@acme.com" }));
   backend.onRpc("list_sessions", () => ({ sessions: [] }));
 
   await page.goto(appUrl);
@@ -59,7 +57,9 @@ test("capture phone product shot", async ({ page, backend, appUrl }) => {
   await expect
     .poll(() => backend.received().find((m) => m.type === "user_message"))
     .toBeTruthy();
-  const runId = String(backend.received().find((m) => m.type === "user_message")!.id);
+  const runId = String(
+    backend.received().find((m) => m.type === "user_message")!.id,
+  );
 
   backend.pushEvent({ type: "run_started", id: runId });
 
@@ -67,9 +67,9 @@ test("capture phone product shot", async ({ page, backend, appUrl }) => {
     type: "tool_started",
     id: "t1",
     run_id: runId,
-    tool_name: "codeindex_search",
-    friendly_name: "CodeIndex",
-    args_summary: "domain:auth + domain:billing",
+    tool_name: "run_shell_command",
+    friendly_name: "Shell",
+    args_summary: "rg -l auth | xargs rg -l billing",
   });
   backend.pushEvent({
     type: "tool_completed",
@@ -98,12 +98,16 @@ test("capture phone product shot", async ({ page, backend, appUrl }) => {
   backend.pushEvent({ type: "stream_end", id: runId });
   backend.pushEvent({ type: "run_completed", id: runId });
 
-  await expect(page.locator(".msg-assistant").last()).toContainText("patch all three");
+  await expect(page.locator(".msg-assistant").last()).toContainText(
+    "patch all three",
+  );
   await page.waitForTimeout(1200);
 
   // Off-the-bottom scroll affordance is correct behaviour and reads as
   // an artefact in a still.
-  await page.addStyleTag({ content: ".scroll-to-bottom { display: none !important; }" });
+  await page.addStyleTag({
+    content: ".scroll-to-bottom { display: none !important; }",
+  });
   await page.waitForTimeout(400);
 
   for (const scheme of ["dark", "light"] as const) {

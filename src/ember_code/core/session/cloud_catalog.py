@@ -1,7 +1,7 @@
 """Cloud model-catalog refresh.
 
 Extracted from :meth:`Session.refresh_cloud_models` — the
-best-effort fetch of the Ember Cloud key pool's catalogue and
+best-effort fetch of the igni server key pool's catalogue and
 merge into ``settings.models.registry``.
 
 Silent-failure semantics preserved: no token → 0, transport

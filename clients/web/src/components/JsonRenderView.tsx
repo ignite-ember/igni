@@ -2,10 +2,14 @@
  * JsonRenderView — mounts a json-render spec inside the chat stream.
  *
  * The BE's ``visualizer`` sub-agent produces a flat-tree spec
- * (``{ root, elements }``) and pushes it via
- * ``PushNotification(channel="visualization")``. App.tsx routes those
- * pushes to a ``visualization`` chat item, ChatItems renders that item
- * by mounting this component.
+ * (``{ root, elements }``). It arrives as a STREAM, not a finished
+ * object: ``orchestrate_agent_stream.py`` emits the accumulated JSON
+ * as ``visualization_delta`` events on the ``orchestrate_event`` push
+ * channel, and ``chat/visualizationStream.ts`` partial-parses each
+ * delta into a ``visualization`` chat item, which ChatItems renders
+ * by mounting this component. (There was once a one-shot
+ * ``channel="visualization"`` push; it had no producer left and the
+ * branch handling it has been removed.)
  *
  * Architecture:
  *

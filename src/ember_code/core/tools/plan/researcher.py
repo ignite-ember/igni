@@ -66,10 +66,9 @@ class PlanResearcherRunner:
             logger.debug("plan_researcher spawn skipped — no OrchestrateTools on session")
             return ""
 
-        # Check the agent is registered. The pool's
-        # ``_codeindex_available`` flag picks the right variant
-        # (``plan_researcher.codeindex.md`` vs ``plan_researcher.md``)
-        # — both register under the same canonical name.
+        # Check the agent is registered. Whichever version is live —
+        # the plain one, or an extension's override of it — registers
+        # under the same canonical name.
         try:
             orchestrate.pool.get("plan_researcher")
         except KeyError:

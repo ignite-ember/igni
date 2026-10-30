@@ -331,6 +331,15 @@ export class IgniClient {
     method: string,
     args: Record<string, unknown> = {},
     timeoutMs: number = RPC_TIMEOUT_MS,
+    /**
+     * Which extension is asking. Omitted for igni's own UI.
+     *
+     * Prefer {@link asExtension} over passing this by hand — it is
+     * the fourth positional argument of a method called on nearly
+     * every line of this file, which is not a thing to rely on
+     * anybody remembering.
+     */
+    caller?: string,
   ): Promise<T> {
     const id = genId("rpc");
     return new Promise<T>((resolve, reject) => {
@@ -351,8 +360,22 @@ export class IgniClient {
         reject,
         timer,
       });
-      this.send(fe.rpcRequest(method, args, id));
+      this.send(fe.rpcRequest(method, args, id, caller));
     });
+  }
+
+  /**
+   * This client, speaking for one extension.
+   *
+   * Every call made through the returned object carries that
+   * extension's id, which is what lets the backend enforce the
+   * manifest's `permissions.rpc` rather than trusting this process
+   * to have done it. The host frame checks the grant too, but that
+   * check is a courtesy that produces a good error message — a
+   * renderer is not where a decision about what may be read belongs.
+   */
+  asExtension(extensionId: string): ExtensionCaller {
+    return new ExtensionCaller(this, extensionId);
   }
 
   /** Switch model — request/reply, resolves with the BE's Info ack. */
@@ -555,5 +578,34 @@ export class IgniClient {
 
   private emitState(s: ConnectionState): void {
     for (const fn of this.stateListeners) fn(s);
+  }
+}
+
+/**
+ * An {@link IgniClient} bound to one extension.
+ *
+ * A class rather than a bound function because the binding is the
+ * whole point: there is no way to call through this without the
+ * caller being set, and no fourth positional argument for anybody to
+ * forget. Obtained from {@link IgniClient.asExtension}.
+ */
+export class ExtensionCaller {
+  constructor(
+    private readonly client: IgniClient,
+    readonly extensionId: string,
+  ) {}
+
+  /** Call a backend method as this extension. */
+  rpc<T = unknown>(
+    method: string,
+    args: Record<string, unknown> = {},
+    timeoutMs?: number,
+  ): Promise<T> {
+    return this.client.rpc<T>(
+      method,
+      args,
+      timeoutMs ?? RPC_TIMEOUT_MS,
+      this.extensionId,
+    );
   }
 }
