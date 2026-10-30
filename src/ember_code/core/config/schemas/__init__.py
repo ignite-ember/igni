@@ -26,6 +26,7 @@ from ember_code.core.config.schemas.orchestration import (
     SkillsConfig,
 )
 from ember_code.core.config.schemas.permissions import PermissionsConfig
+from ember_code.core.config.schemas.plugins import PluginsConfig
 from ember_code.core.config.schemas.safety import SafetyConfig
 from ember_code.core.config.schemas.storage_and_paths import (
     AuthConfig,
@@ -47,6 +48,7 @@ __all__ = [
     "ModelsConfig",
     "OrchestrationConfig",
     "PermissionsConfig",
+    "PluginsConfig",
     "ReasoningConfig",
     "RulesConfig",
     "SafetyConfig",

@@ -38,6 +38,7 @@ from ember_code.core.auth.discovery import discover, is_safe_url
 from ember_code.core.auth.portal_client import PortalClient
 from ember_code.core.auth.schemas import JwtClaims
 from ember_code.core.config.user_config_store import UserConfigStore
+from ember_code.core.plugins.source_policy import PluginSourcePolicy
 from ember_code.protocol import messages as msg
 
 logger = logging.getLogger(__name__)
@@ -290,7 +291,11 @@ class AuthController:
         from ember_code.core.plugins.installer import PluginInstaller
 
         data_dir = Path(self._settings.storage.data_dir).expanduser()
-        installer = PluginInstaller(data_dir=data_dir)
+        # A group's plugin sources are the admin's, but an air-gapped install
+        # still fetches only from inside its network.
+        installer = PluginInstaller(
+            data_dir=data_dir, source_policy=PluginSourcePolicy.from_settings(self._settings)
+        )
 
         # Serialize concurrent hydrations (cold-start + login race) so
         # two parallel ``refresh`` calls don't trample each other's

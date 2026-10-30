@@ -8,6 +8,12 @@
 
 mod discovery;
 mod runtime;
+mod desktop_settings;
+mod update_policy;
+
+#[cfg(test)]
+use desktop_settings::{configured_update_endpoint_in, update_checks_disabled_in};
+use update_policy::{UpdatePolicy, UpdateSource};
 
 use std::io::{BufRead, BufReader};
 use std::process::{Child, Command, Stdio};
@@ -636,170 +642,60 @@ fn build_menu(app: &tauri::AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
         .build()
 }
 
+/// An updater pointed at `endpoint`, or at the compiled one when `None`.
+///
+/// A configured endpoint that will not parse as a URL, or that the
+/// plugin rejects, is an error rather than a silent fallback: an
+/// operator who set a mirror and got the vendor's host anyway has been
+/// quietly overruled, which is the failure DEC-11 exists to prevent.
+///
+/// **Signature verification is unchanged, and that is the whole reason
+/// a mirror is safe.** The public key lives in `tauri.conf.json` and is
+/// not configurable, so a mirror can serve a different *version* but
+/// cannot serve a different *build*. The plugin also refuses a
+/// non-HTTPS endpoint, so `http://` fails at the builder rather than
+/// mid-download.
+fn updater_for(app: &AppHandle, endpoint: Option<&str>) -> Result<tauri_plugin_updater::Updater, String> {
+    use tauri_plugin_updater::UpdaterExt;
+
+    let Some(endpoint) = endpoint else {
+        return app.updater().map_err(|e| e.to_string());
+    };
+
+    let url = tauri::Url::parse(endpoint)
+        .map_err(|e| format!("update_endpoint is not a valid URL ({endpoint}): {e}"))?;
+
+    app.updater_builder()
+        .endpoints(vec![url])
+        .map_err(|e| format!("update_endpoint was refused ({endpoint}): {e}"))?
+        .build()
+        .map_err(|e| e.to_string())
+}
+
+/// The updater this install may use, or why it may use none.
+/// See `update_policy` for what decides it.
+fn permitted_updater(app: &AppHandle) -> Result<Option<tauri_plugin_updater::Updater>, String> {
+    match UpdatePolicy::load().source() {
+        UpdateSource::Off(_) => Ok(None),
+        UpdateSource::Compiled => updater_for(app, None).map(Some),
+        UpdateSource::Mirror(mirror) => updater_for(app, Some(&mirror)).map(Some),
+    }
+}
+
 /// Check the Tauri updater channel for a newer release and return
 /// a payload shaped like the Python BE's ``check_for_update`` RPC,
 /// so the existing ``.update-banner`` React component can render
 /// the result with no client-side branching.
 ///
-/// Returns ``available=false`` (with empty fields) if no update is
-/// pending or if the check fails — silent best-effort, same
-/// behavior as the BE's existing check.
-/// Whether the user has turned update checks off.
-///
-/// `update_check_ttl: 0` in `~/.igni/config.yaml` is the documented
-/// off switch, and the setting's own comment calls the PyPI check "the
-/// only unconfigured outbound request an ordinary run makes". That was
-/// not true in the desktop app: this command went straight to the
-/// updater plugin, so an install that had explicitly disabled update
-/// checks still contacted github.com on **every launch** — the silent
-/// startup check in `App.tsx` calls it on connect. F126.
-///
-/// Read here rather than asked of the backend because this is the
-/// command that makes the request. A check that consults a policy one
-/// process away can be reached without consulting it; a check that
-/// reads the file it is about cannot.
-///
-/// Parsed by hand rather than with a YAML crate. One integer at a known
-/// key is not worth a dependency in a binary that ships to customers,
-/// and the failure mode is chosen deliberately: anything unparseable
-/// leaves checks **enabled**, because silently disabling updates on a
-/// malformed config would leave a machine on an old build with nothing
-/// said.
-fn update_checks_disabled() -> bool {
-    let Some(home) = dirs::home_dir() else {
-        return false;
-    };
-    match std::fs::read_to_string(home.join(".igni/config.yaml")) {
-        Ok(text) => update_checks_disabled_in(&text),
-        // No config at all is the default, and the default is on.
-        Err(_) => false,
-    }
-}
-
-/// The decision, over the text — so it is testable without owning
-/// `$HOME`. Mutating the environment in a Rust test is `unsafe` and
-/// races every other thread in the binary, which is a poor trade for
-/// covering one `read_to_string`.
-fn update_checks_disabled_in(text: &str) -> bool {
-    for line in text.lines() {
-        // No trimming: `strip_prefix` on the raw line is what anchors
-        // this to the top level. An indented `update_check_ttl` belongs
-        // to whatever section contains it, and reading it as the
-        // top-level setting would let an unrelated block switch off the
-        // app's updates.
-        //
-        // There was an explicit whitespace guard here as well. A
-        // revert-check removing it still passed, because it could not
-        // fail — `strip_prefix` had already rejected the indented line.
-        // Dead code that reads as defence, which is worse than no code.
-        let Some(value) = line.strip_prefix("update_check_ttl:") else {
-            continue;
-        };
-        let value = value.split('#').next().unwrap_or("").trim();
-        if let Ok(ttl) = value.parse::<i64>() {
-            return ttl <= 0;
-        }
-        // Present but unreadable — see the caller's note: enabled, so a
-        // malformed config never silently strands a machine on an old
-        // build.
-        return false;
-    }
-    false
-}
-
-/// Where this install looks for releases.
-///
-/// DEC-11. `tauri.conf.json` names
-/// `github.com/ignite-ember/igni/releases`, which is the one outbound
-/// host a default install has — and it sits awkwardly beside DP-5's
-/// claim that nothing leaves the customer's cloud. Worse, an air-gapped
-/// customer could not update at all: `update_check_ttl: 0` turns the
-/// check off, and there was nothing to turn it *towards*.
-///
-/// So `update_endpoint` in `~/.igni/config.yaml` replaces the compiled
-/// default. A customer mirrors releases and points the app at their own
-/// host.
-///
-/// **Signature verification is unchanged, and that is the whole reason
-/// this is safe.** The public key lives in `tauri.conf.json` and is not
-/// configurable here, so a mirror can serve a different *version* but
-/// cannot serve a different *build* — an artefact it signed itself
-/// fails `minisign-verify` before anything is installed. Pointing at a
-/// hostile mirror costs you updates, not integrity.
-///
-/// The plugin additionally refuses a non-HTTPS endpoint unless the app
-/// was built with `dangerous_insecure_transport_protocol`, which this
-/// one is not. So `http://` fails, and it fails at the builder rather
-/// than mid-download.
-///
-/// Same hand-parse as `update_checks_disabled_in`, for the same
-/// reasons, with the same top-level anchoring — an indented
-/// `update_endpoint` belongs to whatever contains it, and reading it as
-/// the app's release source would let an unrelated config block choose
-/// where the binary comes from.
-fn configured_update_endpoint() -> Option<String> {
-    let home = dirs::home_dir()?;
-    let text = std::fs::read_to_string(home.join(".igni/config.yaml")).ok()?;
-    configured_update_endpoint_in(&text)
-}
-
-/// The decision, over the text, so it is testable without owning
-/// `$HOME`.
-fn configured_update_endpoint_in(text: &str) -> Option<String> {
-    for line in text.lines() {
-        let Some(value) = line.strip_prefix("update_endpoint:") else {
-            continue;
-        };
-        // No `#` splitting here, unlike the TTL: a URL may legitimately
-        // contain a fragment, and eating everything after the first
-        // `#` would silently truncate one. A trailing YAML comment on
-        // this key is worth losing to keep that true.
-        let value = value.trim().trim_matches('"').trim_matches('\'');
-        if value.is_empty() {
-            // Present and blank means "use the compiled default",
-            // which is a different statement from absent and reads
-            // the same — deliberately, since both are "I have not
-            // chosen a mirror".
-            return None;
-        }
-        return Some(value.to_string());
-    }
-    None
-}
-
-/// An updater pointed at whatever this install is configured to use.
-///
-/// Falls back to the compiled endpoint when nothing is set, so the
-/// default path is unchanged. A configured endpoint that will not parse
-/// as a URL, or that the plugin rejects, is an error rather than a
-/// silent fallback: an operator who set a mirror and got the vendor's
-/// host anyway has been quietly overruled, which is the failure DEC-11
-/// exists to prevent.
-fn updater_for(app: &AppHandle) -> Result<tauri_plugin_updater::Updater, String> {
-    use tauri_plugin_updater::UpdaterExt;
-
-    let Some(endpoint) = configured_update_endpoint() else {
-        return app.updater().map_err(|e| e.to_string());
-    };
-
-    let url = tauri::Url::parse(&endpoint).map_err(|e| {
-        format!("update_endpoint in ~/.igni/config.yaml is not a valid URL ({endpoint}): {e}")
-    })?;
-
-    app.updater_builder()
-        .endpoints(vec![url])
-        .map_err(|e| {
-            format!("update_endpoint in ~/.igni/config.yaml was refused ({endpoint}): {e}")
-        })?
-        .build()
-        .map_err(|e| e.to_string())
-}
-
+/// Makes no request at all when `update_check_ttl: 0` is set, or when
+/// the install is air-gapped and names no mirror — the silent startup
+/// check in `App.tsx` calls this on every connect, and before F126 it
+/// contacted github.com regardless.
 #[tauri::command]
 async fn ember_check_update(app: AppHandle) -> Result<serde_json::Value, String> {
     let current_version = env!("CARGO_PKG_VERSION").to_string();
 
-    if update_checks_disabled() {
+    let Some(updater) = permitted_updater(&app)? else {
         // Not an error: the caller asked whether an update exists and
         // the honest answer for a deployment that has opted out is
         // "nothing to install", with no request made.
@@ -809,8 +705,7 @@ async fn ember_check_update(app: AppHandle) -> Result<serde_json::Value, String>
             "latest_version": current_version,
             "checks_disabled": true,
         }));
-    }
-    let updater = updater_for(&app)?;
+    };
     match updater.check().await {
         Ok(Some(update)) => Ok(serde_json::json!({
             "available": true,
@@ -834,11 +729,11 @@ async fn ember_install_update(app: AppHandle) -> Result<(), String> {
     // The same gate. Installing is a bigger outbound request than
     // checking, and a caller that reached this without a check — the
     // banner persisted across a config change, say — must not make it.
-    if update_checks_disabled() {
-        return Err("update checks are disabled in ~/.igni/config.yaml (update_check_ttl: 0)".to_string());
-    }
-
-    let updater = updater_for(&app)?;
+    let updater = match UpdatePolicy::load().source() {
+        UpdateSource::Off(reason) => return Err(reason),
+        UpdateSource::Compiled => updater_for(&app, None)?,
+        UpdateSource::Mirror(mirror) => updater_for(&app, Some(&mirror))?,
+    };
     let update = updater
         .check()
         .await
@@ -1873,9 +1768,14 @@ mod tests {
         let source = include_str!("lib.rs");
 
         for name in ["ember_check_update", "ember_install_update"] {
+            let body = body_of(source, name);
             assert!(
-                body_of(source, name).contains("update_checks_disabled()"),
-                "{name} no longer consults the off switch"
+                body.contains("permitted_updater(") || body.contains("UpdatePolicy::load()"),
+                "{name} no longer consults the update policy"
+            );
+            assert!(
+                !body.contains("updater_for(&app)") && !body.contains("app.updater()"),
+                "{name} builds an updater without consulting the policy"
             );
         }
     }

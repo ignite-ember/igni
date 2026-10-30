@@ -19,6 +19,7 @@ from pathlib import Path
 from ember_code.core.paths import DEFAULT_DATA_DIR
 from ember_code.core.plugins.git import GitClient, GitError
 from ember_code.core.plugins.models import PluginManifest
+from ember_code.core.plugins.source_policy import PluginSourcePolicy
 from ember_code.core.plugins.state import load_state, save_state
 
 logger = logging.getLogger(__name__)
@@ -42,11 +43,16 @@ class PluginInstaller:
         *,
         data_dir: str | Path = DEFAULT_DATA_DIR,
         git_client: GitClient | None = None,
+        source_policy: PluginSourcePolicy | None = None,
     ) -> None:
         self._data_dir = Path(str(data_dir)).expanduser()
         self._plugins_dir = self._data_dir / "plugins"
         self._tmp_dir = self._data_dir / "_plugin_install_tmp"
         self._git = git_client or GitClient()
+        #: Which URLs install and update may clone or fetch from. Callers
+        #: holding a session pass ``PluginSourcePolicy.from_settings``; an
+        #: installer built without one is not air-gapped.
+        self._source_policy = source_policy or PluginSourcePolicy()
 
     @property
     def plugins_dir(self) -> Path:
@@ -97,6 +103,9 @@ class PluginInstaller:
                 exist, or a plugin with the same name is already
                 installed.
         """
+        if not self._source_policy.allows(url):
+            raise PluginError(self._source_policy.refusal(url))
+
         # Stale temp from a prior crashed install — wipe before reuse.
         if self._tmp_dir.exists():
             shutil.rmtree(self._tmp_dir, ignore_errors=True)
@@ -160,6 +169,7 @@ class PluginInstaller:
         sha = self._git.current_sha(dest) if not subdir else _safe_current_sha(self._git, dest)
         state = load_state(self._data_dir)
         state.pins[manifest.name] = sha or ""
+        state.sources[manifest.name] = url
         save_state(state, data_dir=self._data_dir)
 
         logger.info(
@@ -187,6 +197,19 @@ class PluginInstaller:
         if not plugin_dir.is_dir():
             raise PluginError(f"Plugin '{name}' is not installed at {plugin_dir}.")
 
+        source = self.source_of(name)
+        if source is None and self._source_policy.air_gapped:
+            # Nothing to check the host against, so nothing is fetched.
+            raise PluginError(
+                f"Plugin '{name}' has no recorded source, and igni is air-gapped "
+                "(air_gapped: true): it cannot tell whether an update stays inside "
+                "this network. Reinstall it from a local path or an internal host."
+            )
+        if source is not None and not self._source_policy.allows(source):
+            raise PluginError(
+                f"Not updating plugin '{name}': {self._source_policy.refusal(source)}"
+            )
+
         try:
             self._git.fetch(plugin_dir)
         except GitError as e:
@@ -208,6 +231,16 @@ class PluginInstaller:
         )
         return new_sha
 
+    def source_of(self, name: str) -> str | None:
+        """Where *name* updates from: the URL recorded at install, else its
+        git ``origin`` (plugins installed before sources were recorded).
+        ``None`` when neither is known. Contacts nothing."""
+        recorded = load_state(self._data_dir).sources.get(name)
+        if recorded:
+            return recorded
+        plugin_dir = self._plugins_dir / name
+        return self._git.remote_url(plugin_dir) if (plugin_dir / ".git").exists() else None
+
     # ── Remove ─────────────────────────────────────────────────────
 
     def remove(self, name: str) -> None:
@@ -225,6 +258,7 @@ class PluginInstaller:
         shutil.rmtree(plugin_dir)
         state = load_state(self._data_dir)
         state.pins.pop(name, None)
+        state.sources.pop(name, None)
         if name in state.disabled:
             state.disabled = [d for d in state.disabled if d != name]
         save_state(state, data_dir=self._data_dir)

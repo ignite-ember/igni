@@ -51,6 +51,7 @@ from ember_code.cli.invocation import (
 )
 from ember_code.cli.migrate import migrate
 from ember_code.cli.options import CliOptions
+from ember_code.core import air_gap
 from ember_code.core import session as _session_module
 from ember_code.core.paths import DEFAULT_DATA_DIR
 
@@ -141,6 +142,9 @@ def cli(ctx: click.Context, **_params: object) -> None:
 
     options = CliOptions.model_validate(ctx.params)
     settings = load_settings_from_options(options)
+    # A ``-m`` or pipe run starts igni's decisions service itself, and that
+    # process reads no settings: it inherits the air-gap decision instead.
+    air_gap.export_to(os.environ, settings.air_gapped)
 
     invocation = CliInvocation(options, settings, ctx)
     invocation.enable_debug_logging()

@@ -410,11 +410,106 @@ display:
   color_theme: "auto"              # auto, dark, light
 ```
 
+## Air-gapped mode
+
+One switch for a deployment whose network has no route out. Once set, igni
+makes no connection outside the customer's network.
+
+```yaml
+# ~/.igni/config.yaml, a managed-settings file, or a group policy's settings
+air_gapped: true
+
+# Optional: a release mirror inside your network for the desktop app.
+update_endpoint: https://releases.example.internal/igni/latest.json
+
+# Desktop app only: the interpreter its backend runs on, provisioned by you
+# (see "Providing the desktop runtime" below).
+runtime_python: /opt/igni/venv/bin/python
+
+# Optional: your own plugin marketplaces (local paths or internal git URLs).
+plugins:
+  marketplaces:
+    - /srv/igni/plugin-marketplace
+    - https://git.example.internal/tools/igni-plugins.git
+```
+
+Three ways to set it, any of which turns it on:
+
+- **The key**, in `~/.igni/config.yaml` or a project's `.igni/config.yaml`.
+  The desktop app's updater has no project when it checks, so for it use the
+  user file, managed settings or group policy.
+- **`IGNI_AIR_GAPPED=1`** in the environment (also `true`, `yes`, `on`). It
+  only turns the mode on; an unset or false variable leaves the files' choice.
+- **Managed settings or group policy**, for an organisation: `air_gapped: true`
+  in the managed-settings file (`/Library/Application Support/igni/managed-settings.yaml`
+  on macOS, `/etc/igni/managed-settings.yaml` on Linux,
+  `%PROGRAMDATA%\igni\managed-settings.yaml` on Windows), which a user cannot
+  override, or in a group's `settings` policy from igni server.
+
+What it turns off:
+
+| Flow | Without the switch | With `air_gapped: true` |
+|---|---|---|
+| Update check (PyPI) | `pypi.org`, every `update_check_ttl` seconds | No request |
+| Desktop updater | `github.com/ignite-ember/igni/releases`, or `update_endpoint` | `update_endpoint` only; no request if none is set |
+| Desktop first launch | Downloads uv, CPython, `ignite-ember` and the decision model | No download; the app runs on `runtime_python` (below), or refuses with a message naming it |
+| Decision model (Laya, Hugging Face) | Downloaded on first use if not cached | Loaded only from the local cache, with the hub offline; refused with a message saying how to pre-seed it |
+| Plugin marketplace at session start | Clones `github.com/anthropics/claude-plugins-official` | Not registered or refreshed; only local paths and `plugins.marketplaces` |
+| `/plugin marketplace add`, `/plugin install`, `/plugin update`, the plugins panel, group-policy plugins | Any git URL | Local paths and hosts named in `plugins.marketplaces`; others are refused before git runs |
+| WebFetch, WebSearch (DuckDuckGo) | Allowed | Denied; neither toolkit is built |
+
+The plugin clone also has its own switch, independent of air-gapped mode:
+`plugins.default_marketplace: false` stops igni registering Anthropic's
+marketplace and leaves everything else as it was.
+
+`/plugin update` checks the URL a plugin was installed from (recorded in
+`plugins.json` since this release; for older installs, the plugin's git
+remote) against the same rule. A plugin with neither is not updated while
+air-gapped: reinstall it from a local path or an internal host.
+
+Not covered by the switch: model endpoints, MCP servers, git remotes and the
+other integrations a user or administrator points at a host themselves. Name
+hosts inside your network for those.
+
+### Providing the desktop runtime
+
+On first launch the desktop app downloads uv, CPython and `ignite-ember`,
+which an air-gapped network cannot do. Provision them yourself and tell the app
+where they are:
+
+1. From your package mirror, install `ignite-ember[decisions]` at the app's
+   version into a Python 3.12 interpreter, e.g.
+   `python3.12 -m venv /opt/igni/venv && /opt/igni/venv/bin/pip install --index-url https://pypi.example.internal/simple "ignite-ember[decisions]==<version>"`.
+2. Set `runtime_python: /opt/igni/venv/bin/python` in `~/.igni/config.yaml`
+   or the managed-settings file, or `IGNI_RUNTIME_PYTHON` in the environment
+   (which wins). No `IGNITE_EMBER_DEV` is needed. The app uses it as is and
+   downloads nothing; an interpreter that is missing or cannot import
+   `ember_code` is refused with a message naming the setting.
+3. Pre-seed the decision model (next section).
+
+### Pre-seeding the decision model
+
+igni's decision model (Laya, `convaiinnovations/laya` on Hugging Face) answers
+Bypass mode's last check and `host.decide`. Air-gapped, it is loaded only from
+the local Hugging Face cache. On a machine that can reach huggingface.co, run
+`HF_HOME=/tmp/laya python -m ember_code.prefetch_models` (with
+`ignite-ember[decisions]` installed), then copy
+`/tmp/laya/hub/models--convaiinnovations--laya` into the target machine's
+cache (`~/.cache/huggingface/hub` by default), or set `HF_HOME` or
+`HF_HUB_CACHE` to a local copy for the decisions service. A missing or
+incomplete copy is refused with a message saying this; Bypass mode then asks
+rather than allows.
+
 ## Environment Variables
 
 Authentication is handled by `/login` — no API key environment variables needed for server-hosted models. The default model is set via `models.default` in your config, and agents can override it per-agent in their `.md` files.
 
 > **Note:** BYOM API keys (OpenAI, Anthropic, etc.) are configured per model in your registry via `api_key_env`, `api_key`, or `api_key_cmd` — you choose the variable name yourself.
+
+`IGNI_AIR_GAPPED=1` turns on air-gapped mode (above). A backend whose settings
+say `air_gapped: true` sets it for the processes it starts, so igni's decisions
+service follows the same switch. `IGNI_RUNTIME_PYTHON` names the desktop app's
+provisioned interpreter (above).
 
 **igni's decisions service** (Laya, for Bypass mode's last check and `host.decide`):
 

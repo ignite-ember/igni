@@ -36,7 +36,7 @@ body.
 from __future__ import annotations
 
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, ClassVar
 
 from pydantic import BaseModel, Field, model_validator
 
@@ -46,6 +46,7 @@ if TYPE_CHECKING:
     from ember_code.core.config.group_policy import GroupPolicyPack
     from ember_code.core.config.models import CliOverrides
 
+from ember_code.core.air_gap import AIR_GAPPED_ENV, air_gapped_by_environment
 from ember_code.core.config.model_entry import CLOUD_TOKEN_SENTINEL, ModelRegistryEntry
 
 # ── Re-exports: schemas from the schemas package ───────────────────
@@ -69,6 +70,7 @@ from ember_code.core.config.schemas import (
     ModelsConfig,
     OrchestrationConfig,
     PermissionsConfig,
+    PluginsConfig,
     ReasoningConfig,
     RulesConfig,
     SafetyConfig,
@@ -145,6 +147,34 @@ class Settings(BaseModel):
     # mirror can serve a different version but not a different build.
     # HTTPS is required — the plugin refuses anything else.
     update_endpoint: str = ""
+    # The Python interpreter the desktop app runs its backend with, when
+    # whoever installed the app provisioned one: an interpreter with
+    # ``ignite-ember[decisions]`` installed from their own package mirror.
+    # Empty means the app's own managed venv, which it downloads on first
+    # launch — something an air-gapped install cannot do. ``IGNI_RUNTIME_PYTHON``
+    # in the environment wins over this. Read by the Rust side
+    # (``clients/tauri/src-tauri/src/runtime.rs``), like ``update_endpoint``.
+    runtime_python: str = ""
+    # One switch for a deployment whose network has no route out: when
+    # set, igni makes no connection outside the customer's network.
+    # What it turns off, each where the request is made:
+    #
+    # * the PyPI update check (``core/utils/update_checker.py``);
+    # * the desktop updater's call to github.com — the app asks
+    #   ``update_endpoint`` (a mirror inside the network) or nothing
+    #   (the Rust side reads this key itself, as it does the two above);
+    # * the session-start clone of Anthropic's plugin marketplace, and
+    #   the refresh of any marketplace that is not the customer's own
+    #   (``plugins``, ``core/plugins/source_policy.py``);
+    # * WebFetch and WebSearch, denied below so neither toolkit is built.
+    #
+    # Also set by ``IGNI_AIR_GAPPED=1`` in the environment, and by a
+    # managed-settings file or an organisation's group policy carrying
+    # ``air_gapped: true`` — both already merge any top-level key.
+    air_gapped: bool = False
+    #: The variable a deployment turns air-gapped mode on with. It only
+    #: turns it on: an unset or false variable leaves the file's choice.
+    AIR_GAPPED_ENV: ClassVar[str] = AIR_GAPPED_ENV
     models: ModelsConfig = Field(default_factory=ModelsConfig)
     permissions: PermissionsConfig = Field(default_factory=PermissionsConfig)
     safety: SafetyConfig = Field(default_factory=SafetyConfig)
@@ -163,6 +193,7 @@ class Settings(BaseModel):
     scheduler: SchedulerConfig = Field(default_factory=SchedulerConfig)
     auth: AuthConfig = Field(default_factory=AuthConfig)
     group_policy: GroupPolicyConfig = Field(default_factory=GroupPolicyConfig)
+    plugins: PluginsConfig = Field(default_factory=PluginsConfig)
     display: DisplayConfig = Field(default_factory=DisplayConfig)
 
     # TODO: Add telemetry config so users can wire their own Agno server or
@@ -184,6 +215,23 @@ class Settings(BaseModel):
         ``PermissionsConfig._confirmation_ask_rules``.
         """
         self.permissions.confirm_commands = list(self.safety.require_confirmation)
+        return self
+
+    @model_validator(mode="after")
+    def _air_gap_closes_the_web(self) -> Settings:
+        """Apply ``IGNI_AIR_GAPPED`` and, when air-gapped, deny the web tools.
+
+        Denied rather than checked at call time because a denied tool is
+        never built: ``ToolRegistry.resolve_typed`` skips it, so no agent
+        holds a WebFetch or WebSearch toolkit to call. Set on
+        ``permissions`` (not a parallel flag) so every reader that already
+        honours ``--no-web`` honours this too, and ``igni config`` shows it.
+        """
+        if air_gapped_by_environment():
+            self.air_gapped = True
+        if self.air_gapped:
+            self.permissions.web_search = "deny"
+            self.permissions.web_fetch = "deny"
         return self
 
     @classmethod
@@ -324,6 +372,7 @@ __all__ = [
     "ModelsConfig",
     "OrchestrationConfig",
     "PermissionsConfig",
+    "PluginsConfig",
     "ReasoningConfig",
     "RulesConfig",
     "SafetyConfig",

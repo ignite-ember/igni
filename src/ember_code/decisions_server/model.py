@@ -17,6 +17,14 @@ off stdout. A model that will not load is
 :class:`~ember_code.core.decisions.schemas.DecisionsUnavailable` —
 never a guess.
 
+**Air-gapped** (``IGNI_AIR_GAPPED=1``, which a backend with
+``air_gapped: true`` exports to the service it starts): the model is
+loaded only from the local Hugging Face cache, with the hub switched
+offline for the life of the process, so no checkpoint is ever fetched
+— not at load, not when a checkpoint is first asked for. Pre-seed the
+cache (``HF_HOME`` or ``HF_HUB_CACHE``, a local path) from a machine
+that can reach the hub: :data:`PRESEED_HINT`.
+
 This module is the only one that imports ``laya`` (and with it torch);
 the backend never imports it.
 """
@@ -36,6 +44,7 @@ from typing import Any
 
 from huggingface_hub import constants as hub
 
+from ember_code.core.air_gap import air_gapped_by_environment
 from ember_code.core.decisions.schemas import (
     DecisionRequest,
     DecisionsUnavailable,
@@ -46,6 +55,15 @@ logger = logging.getLogger(__name__)
 
 #: The hub repository bundling every Laya checkpoint (``laya.router.BUNDLE_REPO``).
 BUNDLE_REPO = "convaiinnovations/laya"
+
+#: How to give an air-gapped machine the model, said whenever it is missing.
+PRESEED_HINT = (
+    "On a machine that can reach huggingface.co, run "
+    "`HF_HOME=/tmp/laya python -m ember_code.prefetch_models` (with ignite-ember[decisions] "
+    "installed), copy /tmp/laya/hub/models--convaiinnovations--laya into this machine's "
+    "Hugging Face cache ({cache}), or point HF_HOME or HF_HUB_CACHE at a local copy, then "
+    "start the decisions service again."
+)
 
 #: Checkpoints that may be resident at once: the Bypass guard's, and the
 #: two general ones extensions are routed between.
@@ -131,6 +149,8 @@ class LayaModel:
             if self._router is None:
                 try:
                     self._router = self._build()
+                except DecisionsUnavailable:
+                    raise
                 except Exception as exc:  # noqa: BLE001 — any load failure is "unavailable"
                     logger.warning("laya: could not load (%s)", type(exc).__name__)
                     raise DecisionsUnavailable(
@@ -150,6 +170,8 @@ class LayaModel:
         def build() -> Any:
             return Router(max_loaded=MAX_LOADED)
 
+        if air_gapped_by_environment():
+            return self._build_offline(build)
         if os.environ.get("HF_HUB_OFFLINE") is None and HubCache.has(BUNDLE_REPO):
             os.environ["HF_HUB_OFFLINE"] = "1"
             try:
@@ -159,6 +181,33 @@ class LayaModel:
             finally:
                 del os.environ["HF_HUB_OFFLINE"]
         return self._quietly(build)
+
+    def _build_offline(self, build: Callable[[], Any]) -> Any:
+        """Air-gapped: the cache or nothing, and the hub offline from here on.
+
+        Offline for the rest of the process rather than for the load alone:
+        the router loads each checkpoint the first time it is asked for it,
+        and that later load must not reach for the network either. Set on
+        the environment (read by transformers) and on ``huggingface_hub``'s
+        constant (read at import, so the variable alone is too late).
+        """
+        os.environ["HF_HUB_OFFLINE"] = "1"
+        os.environ["TRANSFORMERS_OFFLINE"] = "1"
+        hub.HF_HUB_OFFLINE = True
+        cache = hub.HF_HUB_CACHE
+        if not HubCache.has(BUNDLE_REPO):
+            raise DecisionsUnavailable(
+                f"igni is air-gapped, so its decision model ({BUNDLE_REPO}) is loaded only "
+                f"from the local cache, and it is not in {cache}. "
+                + PRESEED_HINT.format(cache=cache)
+            )
+        try:
+            return self._quietly(build)
+        except Exception as exc:  # noqa: BLE001 — named, never retried online
+            raise DecisionsUnavailable(
+                f"igni is air-gapped and its decision model in {cache} is incomplete "
+                f"({type(exc).__name__}). " + PRESEED_HINT.format(cache=cache)
+            ) from exc
 
     @staticmethod
     def _quietly(build: Callable[[], Any]) -> Any:
@@ -189,4 +238,4 @@ class HubCache:
         return snapshots.is_dir() and any(snapshots.iterdir())
 
 
-__all__ = ["BUNDLE_REPO", "HubCache", "LayaModel", "PriorityGate"]
+__all__ = ["BUNDLE_REPO", "PRESEED_HINT", "HubCache", "LayaModel", "PriorityGate"]

@@ -268,6 +268,8 @@ class TestCheckForUpdate:
 
         mock_settings = MagicMock()
         mock_settings.update_check_ttl = 86400  # 24h — cache will be fresh
+        # A bare MagicMock attribute is truthy, which would read as air-gapped.
+        mock_settings.air_gapped = False
 
         with (
             patch("ember_code.core.utils.update_checker.CACHE_FILE", cache_file),
