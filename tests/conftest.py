@@ -19,6 +19,7 @@ from ember_code.core.paths import CONFIG_DIR
 from ember_code.extensions.faults import ExtensionFaults
 from ember_code.extensions.host.hooks import ExtensionHooks
 from ember_code.extensions.host.processes import ExtensionProcesses
+from tests.egress_guard import EgressGuard, InternalNetwork
 from tests.storage_backends import ThrowawayPostgres
 
 # Load environment variables from .env at the repo root before any test
@@ -28,6 +29,32 @@ from tests.storage_backends import ThrowawayPostgres
 _ENV_FILE = Path(__file__).resolve().parent.parent / ".env"
 if _ENV_FILE.is_file():
     load_dotenv(_ENV_FILE, override=False)
+
+
+#: The marker a test carries when reaching the internet is what it is for.
+#: Registered in ``pyproject.toml``; the guard below stands down for it.
+REACHES_THE_INTERNET = "reaches_the_internet"
+
+
+@pytest.fixture(autouse=True)
+def _nothing_leaves_the_network(request: pytest.FixtureRequest) -> Iterator[None]:
+    """Every test runs as if inside the customer's network.
+
+    A name lookup or connection to anything outside it is refused while
+    the test runs, the way an air-gapped network refuses it, and the test
+    fails at teardown naming the destination — even when the code under
+    test swallowed the error. Sockets only: the child processes a test
+    starts on purpose are its own business, and
+    ``test_igni_reaches_nothing_outside_the_network.py`` watches those for
+    a real session. ``tests/egress_guard.py`` says what counts as inside.
+    """
+    if request.node.get_closest_marker(REACHES_THE_INTERNET):
+        yield
+        return
+    with EgressGuard(network=InternalNetwork()).watching() as log:
+        yield
+    if log.attempts:
+        pytest.fail(log.report(), pytrace=False)
 
 
 @pytest.fixture(autouse=True)

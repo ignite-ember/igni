@@ -159,6 +159,11 @@ testpaths = ["tests"]
 # The repository root, so ``packages/igni-cloud/tests`` reaches the core's
 # ``tests`` helpers and fixtures.
 pythonpath = ["."]
+markers = [
+    # tests/conftest.py runs every test inside the egress guard; this is
+    # the one way out, for a test whose subject is reaching the internet.
+    "reaches_the_internet: the test reaches a host outside the customer network on purpose; the egress guard stands down",
+]
 
 [tool.ruff]
 # Deliberately behind ``requires-python``. Raising this to py312 is not
