@@ -32,6 +32,9 @@ from pathlib import Path
 
 import click
 
+from ember_code.core.config.group_policy import CachedSettingsFetcher, GroupPolicyUnavailable
+from ember_code.core.config.settings import load_settings
+from ember_code.core.network_policy import NetworkPolicy
 from ember_code.core.plugins.git import GitClient, GitError
 from ember_code.extensions.manifest import ExtensionManifest, Workspace
 from ember_code.extensions.profile import DEV_FLAG, DevelopmentFlag
@@ -207,14 +210,42 @@ def _looks_like_sha(ref: str) -> bool:
     return all(c in "0123456789abcdefABCDEF" for c in ref)
 
 
+def _network_policy() -> NetworkPolicy:
+    """The deployment's network policy, from its settings.
+
+    Loaded the way ``igni -m`` loads them — local configuration first
+    to find the data directory, then again with the group policy cached
+    there — so an organisation that turns ``air_gapped`` on through its
+    group policy has it apply here too. Neither pass touches the network.
+    """
+    local_only = load_settings()
+    try:
+        settings = load_settings(
+            group_policy_fetcher=CachedSettingsFetcher.for_settings(local_only)
+        )
+    except GroupPolicyUnavailable as exc:
+        raise click.ClickException(str(exc)) from exc
+    return NetworkPolicy.from_settings(settings)
+
+
 @contextmanager
-def _bundle_from(source: str, *, ref: str | None, subdir: str | None) -> Iterator[Path]:
+def _bundle_from(
+    source: str,
+    *,
+    ref: str | None,
+    subdir: str | None,
+    network: NetworkPolicy | None = None,
+) -> Iterator[Path]:
     """A bundle directory, cloning first when ``source`` is a repo.
 
     The clone goes to a temporary directory and is deleted on the
     way out: the store keeps its own copy, so a second one under
     ``~/.igni`` would be a stale checkout nobody updates and
     everybody finds.
+
+    Under ``air_gapped`` a repository outside the network is refused
+    before git starts, so no connection is attempted. ``network`` is
+    the deployment's policy; without one every repository is allowed.
     """
     if source.startswith("@"):
         raise click.ClickException(
@@ -236,6 +267,13 @@ def _bundle_from(source: str, *, ref: str | None, subdir: str | None) -> Iterato
             )
         yield bundle
         return
+
+    network = network or NetworkPolicy()
+    if not network.allows(source):
+        raise click.ClickException(
+            f"{network.refusal(source, what='the repository')} Or clone it "
+            "somewhere this machine can read and install from that directory."
+        )
 
     git = GitClient()
     if not git.is_available():
@@ -326,7 +364,7 @@ def install(
             "from their services through igni server when you are signed in."
         )
     store = _store(root)
-    with _bundle_from(source, ref=ref, subdir=subdir) as bundle:
+    with _bundle_from(source, ref=ref, subdir=subdir, network=_network_policy()) as bundle:
         try:
             manifest = store.read(bundle)
             target = store.add(bundle, replace=replace)

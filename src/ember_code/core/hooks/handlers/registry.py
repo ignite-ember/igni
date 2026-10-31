@@ -26,6 +26,7 @@ from ember_code.core.hooks.schemas import (
     HookResult,
     HookType,
 )
+from ember_code.core.network_policy import NetworkPolicy
 
 logger = logging.getLogger(__name__)
 
@@ -35,7 +36,8 @@ class HookHandlerRegistry:
 
     Constructor takes the dependencies needed by the concrete
     handlers (``mcp_resolver`` for :class:`McpToolHookHandler`,
-    ``rewake_callback`` for :class:`CommandHookHandler`) and
+    ``rewake_callback`` for :class:`CommandHookHandler`,
+    ``network_policy`` for :class:`HttpHookHandler`) and
     assembles the four instances explicitly. The internal
     ``_handlers`` map is instance state so tests can register a
     fake handler on an alternate registry without patching the
@@ -47,10 +49,11 @@ class HookHandlerRegistry:
         *,
         mcp_resolver: MCPResolver | None = None,
         rewake_callback: Callable[[str], None] | None = None,
+        network_policy: NetworkPolicy | None = None,
     ):
         handlers: list[HookHandler] = [
             CommandHookHandler(rewake_callback=rewake_callback),
-            HttpHookHandler(),
+            HttpHookHandler(network_policy=network_policy),
             PromptHookHandler(),
             McpToolHookHandler(resolver=mcp_resolver),
         ]

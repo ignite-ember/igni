@@ -3,6 +3,10 @@
 Non-200 responses and network errors degrade to non-blocking:
 a flaky webhook shouldn't block the agent's tool call. For
 firm gating, use a ``command`` hook with exit 2.
+
+Under ``air_gapped: true`` a URL outside the customer's network
+(:class:`~ember_code.core.network_policy.NetworkPolicy`) is not
+sent at all: the hook degrades exactly as an unreachable one does.
 """
 
 from __future__ import annotations
@@ -22,6 +26,7 @@ from ember_code.core.hooks.schemas import (
     HookResult,
     HookType,
 )
+from ember_code.core.network_policy import NetworkPolicy
 
 logger = logging.getLogger(__name__)
 
@@ -31,12 +36,23 @@ class HttpHookHandler(HookHandler):
 
     handles: ClassVar[HookType] = "http"
 
+    def __init__(self, network_policy: NetworkPolicy | None = None) -> None:
+        #: Which URLs a hook may POST to. Without one, any — an install
+        #: that is not air-gapped.
+        self._network_policy = network_policy or NetworkPolicy()
+
     async def run(
         self,
         hook: HookDefinition,
         event: str,
         payload: HookPayload,
     ) -> HookResult:
+        if not self._network_policy.allows(hook.url):
+            logger.warning(
+                "HTTP hook not sent: %s",
+                self._network_policy.refusal(hook.url, what="the hook's URL"),
+            )
+            return self._non_blocking()
         try:
             timeout_secs = hook.timeout / 1000
             # Expand env vars in headers so users can put

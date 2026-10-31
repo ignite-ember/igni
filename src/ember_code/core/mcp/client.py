@@ -54,6 +54,7 @@ from ember_code.core.mcp.schemas import (
 from ember_code.core.mcp.stdio_binding import StdioMCPBinding
 from ember_code.core.mcp.tool_filter import MCPToolFilter
 from ember_code.core.mcp.tool_state import MCPToolStateStore
+from ember_code.core.network_policy import NetworkPolicy
 
 if TYPE_CHECKING:
     from agno.tools.mcp import MCPTools
@@ -82,6 +83,7 @@ class MCPClientManager:
         policy: MCPPolicy | None = None,
         stdio_binding: StdioMCPBinding | None = None,
         group_mcps_dir: Path | None = None,
+        network_policy: NetworkPolicy | None = None,
     ):
         # ``group_mcps_dir`` is the org's, from the policy cache. It has
         # to arrive here: this is the loader whose result becomes
@@ -96,6 +98,10 @@ class MCPClientManager:
             policy if policy is not None else MCPPolicy.from_managed_settings()
         )
         self._project_dir: Path | None = Path(project_dir) if project_dir else None
+        #: Which URLs a server reached over the network may be at. The
+        #: session passes ``NetworkPolicy.from_settings``; without one
+        #: every URL is allowed, as on an install that is not air-gapped.
+        self._network_policy = network_policy or NetworkPolicy()
         # Disabled-tools persistence extracted to ``MCPToolStateStore``
         # so this manager stays focused on connection lifecycle.
         # The store is composed by ``MCPToolFilter`` below.
@@ -123,8 +129,9 @@ class MCPClientManager:
 
         Returns ``None`` on green-light or the reason string if
         any gate rejects. Gates fire in order: managed-policy
-        deny, managed-policy not-allowed, user first-use
-        approval, MCP SDK availability. Callers wrap the
+        deny, managed-policy not-allowed, the air gap (a URL
+        server outside the network), user first-use approval,
+        MCP SDK availability. Callers wrap the
         returned reason in an :class:`MCPConnectResult.failure`
         and short-circuit.
         """
@@ -135,6 +142,17 @@ class MCPClientManager:
         if not self._policy.is_allowed(name):
             logger.warning("MCP '%s' blocked by managed policy (not allowed)", name)
             return f"Server '{name}' is not in the allowed list"
+
+        # Before the approval prompt, so nobody is asked to approve a
+        # connection that will not be made. Every transport but stdio
+        # is igni opening a socket to ``url``; a stdio server is a local
+        # process, and what it reaches is the network's to stop.
+        transport = str(getattr(config.type, "value", config.type))
+        if transport != "stdio" and config.url and not self._network_policy.allows(config.url):
+            logger.warning(
+                "MCP '%s' blocked: %s is outside the network (air-gapped)", name, config.url
+            )
+            return self._network_policy.refusal(config.url, what=f"MCP server '{name}'")
 
         # An extension's own service is approved by the install, not
         # by this prompt. The prompt exists for a threat this is not:

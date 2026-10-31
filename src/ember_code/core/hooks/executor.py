@@ -44,6 +44,7 @@ from ember_code.core.hooks.schemas import (
     HookPayloadBase,
     HookResult,
 )
+from ember_code.core.network_policy import NetworkPolicy
 
 logger = logging.getLogger(__name__)
 
@@ -83,6 +84,7 @@ class HookExecutor:
         hooks: dict[str, list[HookDefinition]],
         mcp_resolver: MCPResolver | None = None,
         rewake_callback: Callable[[str], None] | None = None,
+        network_policy: NetworkPolicy | None = None,
     ):
         # ``.hooks`` stays public as the raw dict — tool_hook.py
         # (and any plugin doing hot-reloads) reads it directly.
@@ -91,6 +93,7 @@ class HookExecutor:
         self._handler_registry = HookHandlerRegistry(
             mcp_resolver=mcp_resolver,
             rewake_callback=rewake_callback,
+            network_policy=network_policy,
         )
         # Strong references to the fire-and-forget tasks. asyncio only
         # holds a weak reference to a running task, so a bare
