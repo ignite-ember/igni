@@ -35,12 +35,13 @@ from __future__ import annotations
 import logging
 from collections.abc import Callable
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, ClassVar
 
 from ember_code.core.config.accumulator import SettingsAccumulator
 from ember_code.core.config.cloud_model_migrator import CloudModelMigrator
 from ember_code.core.config.config_io import YamlSource
 from ember_code.core.config.managed_policy import ManagedPolicySource
+from ember_code.core.config.schemas.telemetry import OtlpConfig, TelemetryConfig
 from ember_code.core.layer import Layers
 from ember_code.core.paths import home_config_dir, project_config_dir
 
@@ -194,35 +195,69 @@ class ProjectJsonFragmentTier(JsonFragmentTier):
         return accumulator.merge(payload) if payload else accumulator
 
 
-class WorkspaceTrustTier(Tier):
-    """``workspace_trust`` comes from the organisation, never from below it.
+class OrganisationOnlyTier(Tier):
+    """A settings block that comes from the organisation, never from below it.
 
     Runs after the CLI tier and before the group and managed tiers: whatever
     the user's config, a project's or the command line said is put back to the
-    defaults, and only the group policy pack, the managed file and (applied by
-    ``WorkspaceTrustConfig`` itself, tighten-only) the environment can set it.
-    A repository that could set this could trust itself; a person who could
-    set it could opt out of their organisation's rule.
+    defaults, and only the group policy pack, the managed file and the
+    environment (applied by the block's own model) can set it. Subclasses name
+    the block and how to build its defaults.
     """
 
-    BLOCK = "workspace_trust"
+    #: The top-level settings key.
+    BLOCK: ClassVar[str]
+
+    def defaults(self) -> dict[str, Any]:
+        """The block's defaults, without its environment."""
+        raise NotImplementedError
 
     def apply(self, accumulator: SettingsAccumulator) -> SettingsAccumulator:
-        from ember_code.core.config.schemas.workspace_trust import WorkspaceTrustConfig
-
-        defaults = WorkspaceTrustConfig.model_construct().model_dump()
+        defaults = self.defaults()
         payload = dict(accumulator.payload)
         block = payload.get(self.BLOCK)
         if isinstance(block, dict) and any(
             key in defaults and block[key] != defaults[key] for key in block
         ):
             logger.warning(
-                "workspace_trust may be set only in the managed-settings file, the "
-                "group policy or the environment; the value from user, project or CLI "
-                "settings is ignored."
+                "%s may be set only in the managed-settings file, the group policy or "
+                "the environment; the value from user, project or CLI settings is ignored.",
+                self.BLOCK,
             )
         payload[self.BLOCK] = defaults
         return SettingsAccumulator(payload=payload)
+
+
+class WorkspaceTrustTier(OrganisationOnlyTier):
+    """``workspace_trust`` comes from the organisation, never from below it.
+
+    The environment may only tighten it (``WorkspaceTrustConfig``). A
+    repository that could set this could trust itself; a person who could set
+    it could opt out of their organisation's rule.
+    """
+
+    BLOCK = "workspace_trust"
+
+    def defaults(self) -> dict[str, Any]:
+        from ember_code.core.config.schemas.workspace_trust import WorkspaceTrustConfig
+
+        return WorkspaceTrustConfig.model_construct().model_dump()
+
+
+class TelemetryTier(OrganisationOnlyTier):
+    """``telemetry`` (the OTLP collector) comes from the organisation.
+
+    A repository that could set it could send whoever opens it's traces to a
+    host of the repository's choosing, and with ``capture_content`` their
+    prompts and code; a person could do the same to their organisation. The
+    ``OTEL_*`` environment fills what the organisation left unset
+    (``OtlpConfig``).
+    """
+
+    BLOCK = "telemetry"
+
+    def defaults(self) -> dict[str, Any]:
+        return TelemetryConfig.model_construct(otlp=OtlpConfig.model_construct()).model_dump()
 
 
 class CliTier(Tier):
@@ -594,6 +629,8 @@ class SettingsMergePlan:
             # ``workspace_trust`` back to its defaults: only the organisation
             # tiers below (and the environment) may set it.
             WorkspaceTrustTier(),
+            # ``telemetry`` likewise: where traces go is the organisation's call.
+            TelemetryTier(),
             # Org-group policy — wins over CLI, loses to sysadmin
             # ManagedPolicy. Handed the CLI tier so it can honour the deny
             # ratchet: a group tightens freely but cannot loosen a

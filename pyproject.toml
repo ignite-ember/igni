@@ -122,6 +122,20 @@ gemini = [
 web = [
     "duckduckgo-search~=8.1",
 ]
+# OpenTelemetry traces and metrics, sent to the customer's own collector
+# and nowhere else (``core/observability``). An extra, because nothing is
+# exported unless an administrator names an endpoint in the managed
+# settings or ``OTEL_EXPORTER_OTLP_ENDPOINT``; an install without it never
+# carries an exporter. There is no default endpoint, and under
+# ``air_gapped`` the endpoint must be inside the network
+# (``tests/test_nothing_phones_home.py`` holds both).
+otel = [
+    "opentelemetry-sdk~=1.45.2",
+    "opentelemetry-exporter-otlp-proto-http~=1.45.2",
+    "opentelemetry-exporter-otlp-proto-grpc~=1.45.2",
+    "opentelemetry-instrumentation-httpx~=0.66b2",
+    "openinference-instrumentation-agno~=1.1.0",
+]
 
 [project.scripts]
 # ``ignite-ember`` kept for backwards compatibility — existing user

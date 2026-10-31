@@ -48,6 +48,7 @@ from ember_code.core.hooks.permission_pipeline import (
 )
 from ember_code.core.hooks.rules_suffixer import RulesSuffixer
 from ember_code.core.hooks.tool_call_invoker import ToolCallInvoker
+from ember_code.core.observability.runtime import OtelRuntime
 from ember_code.core.utils.rules_index import RulesIndex
 
 logger = logging.getLogger(__name__)
@@ -131,11 +132,14 @@ class ToolEventHook:
             HookEvent.PRE_TOOL_USE,
         )
         if not pre.allowed:
+            OtelRuntime.note_permission("deny")
             return f"Blocked: {pre.reason}"
         ctx = ctx.with_args(pre.value.get("tool_args", ctx.args))
         block_message = await self._pipeline.evaluate(ctx)
         if block_message is not None:
+            OtelRuntime.note_permission("deny")
             return block_message
+        OtelRuntime.note_permission("allow")
         try:
             result = await self._invoker.run(ctx)
         except Exception as exc:

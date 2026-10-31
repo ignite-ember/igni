@@ -1,10 +1,9 @@
 """igni — Terminal-based AI coding assistant built on Agno."""
 
-import os
-
 # Must run before anything that pulls in ``transformers`` /
 # ``sentence-transformers``. See the shim's docstring for why.
 from ember_code import _torchvision_shim as _torchvision_shim  # noqa: F401
+from ember_code.core.agno_telemetry import AgnoTelemetry
 
 # ── No run leaves the machine unless somebody asks for it ──────────
 #
@@ -22,16 +21,17 @@ from ember_code import _torchvision_shim as _torchvision_shim  # noqa: F401
 # model and storage choices, and it is a third party that appears in
 # none of the compliance documents that enumerate where data goes.
 #
-# Set here rather than at each ``Agent(...)`` / ``Team(...)`` because
-# there are a dozen construction sites across agents, pools, ephemeral
-# builders and the orchestrator, and one missed site is a silent leak.
+# Set here, before anything imports Agno, because
 # ``agno.agent._init.set_telemetry`` re-reads this variable on every
 # run and overrides whatever the constructor said, so one assignment
-# covers every path including ones added later.
+# covers every process that imports igni. Every ``Agent`` / ``Team``
+# igni builds also passes ``telemetry=False``, for a process whose
+# environment lost the variable.
 #
-# An explicit value is honoured. Somebody who *wants* to send telemetry
-# can, which is the same principle the deployment docs take elsewhere:
-# nothing leaves by default, and every means to send it is available.
-os.environ.setdefault("AGNO_TELEMETRY", "false")
+# An explicit ``AGNO_TELEMETRY=true`` is honoured, except under
+# air-gapped mode, where it is forced off with a warning — here for
+# ``IGNI_AIR_GAPPED=1``, and once settings are loaded for
+# ``air_gapped: true``. ``core/agno_telemetry.py`` has the whole rule.
+AgnoTelemetry.apply_process_default()
 
 __version__ = "1.0.3"

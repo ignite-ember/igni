@@ -523,6 +523,9 @@ The same keys in `~/.igni/config.yaml`, a project's config, a CLI flag or the
 group pack itself are ignored with a warning: whoever could set them could pin
 a key of their own, or make a missing policy harmless.
 
+`workspace_trust` and `telemetry` (below) are organisation-only too, but the
+group pack may set them as well as the managed file and the environment.
+
 ## Workspace trust
 
 Opening a folder never runs its code or loosens igni's safety until you trust
@@ -664,6 +667,8 @@ What it turns off:
 | MCP servers reached by URL | Connected | Hosts inside the network only; others are refused as a failed connection |
 | HTTP hooks | Sent | Hosts inside the network only; others are not sent and count as a failed hook |
 | WebFetch, WebSearch (DuckDuckGo) | Allowed | Denied; neither toolkit is built |
+| Agno's run telemetry (`os-api.agno.com`) | Off; an explicit `AGNO_TELEMETRY=true` is honoured | Off; an explicit `AGNO_TELEMETRY=true` is overruled with a warning |
+| OpenTelemetry export (`telemetry.otlp`) | None unless an administrator names a collector | Only to a collector inside the network; another is refused with a warning |
 
 A host is **inside the network** if it is a local path or `file://`, loopback,
 the host of `api_url`, `portal_url`, `update_endpoint` or `plugins.marketplaces`,
@@ -725,6 +730,71 @@ cache (`~/.cache/huggingface/hub` by default), or set `HF_HOME` or
 incomplete copy is refused with a message saying this; Bypass mode then asks
 rather than allows.
 
+## OpenTelemetry
+
+igni can send traces and metrics to **your own** OpenTelemetry collector, over
+OTLP. It is off by default and there is **no default endpoint**: with none
+configured nothing is exported, and the OpenTelemetry SDK is not set up at all.
+It needs the `otel` extra (`pip install 'ignite-ember[otel]'`); without it a
+configured endpoint is ignored with a warning.
+
+```yaml
+# The managed-settings file, or a group policy's settings — not ~/.igni/config.yaml
+telemetry:
+  otlp:
+    endpoint: http://otel-collector.acme.internal:4318   # the collector's base URL
+    protocol: http/protobuf        # or grpc (then the endpoint is the gRPC address)
+    headers:                       # sent with every export, for the collector's auth
+      authorization: Bearer <token>
+    service_name: igni
+    capture_content: false         # the default; see below
+```
+
+**Who may set it.** Only the managed-settings file, the organisation's group
+policy, and the environment. The same block in `~/.igni/config.yaml`, a
+project's `.igni/config.yaml` or on the command line is ignored with a warning:
+a repository that could name the collector could send whoever opens it's
+traces to a host of its choosing. The environment uses the standard variables,
+and fills only what the organisation left unset:
+
+| Variable | Field |
+|---|---|
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | `endpoint` |
+| `OTEL_EXPORTER_OTLP_PROTOCOL` | `protocol` (`grpc` or `http/protobuf`) |
+| `OTEL_EXPORTER_OTLP_HEADERS` | `headers`, as `key=value,key2=value2` (values URL-encoded) |
+| `OTEL_SERVICE_NAME` | `service_name` |
+| `IGNI_OTEL_CAPTURE_CONTENT=true` | `capture_content` |
+
+**Air-gapped.** Under `air_gapped: true` the endpoint must be inside the network
+— loopback, a host igni is configured to use, or one in `network.internal_hosts`
+— or nothing is exported and a warning says why. The endpoint must be an
+`http://` or `https://` URL.
+
+**What is exported.** Spans for each agent or team run, model call and tool
+call (OpenInference's Agno instrumentation), and for each httpx request igni
+makes — which carry the trace context (`traceparent`) to igni server, so one
+trace follows a turn across the deployment. Span attributes: the agent or team
+name, the model id and provider, token counts, timings, the tool name, the
+outcome, igni's permission decision for a tool call
+(`igni.permission.decision`: `allow` or `deny`), the session id, and on a run
+span the organisation and producer (`igni.org.id`, `igni.producer.id`). Three
+metrics: `igni.agent.runs` (with `igni.agent.run.duration`), `igni.llm.tokens`
+by direction, and `igni.tool.calls` by outcome (`ok`, `error`, `denied`).
+
+**What is not, unless `capture_content: true`:** prompts, responses, file
+content, tool arguments and results, error messages and stack traces, and full
+URLs. Spans keep only an allow-listed set of attributes; anything else the
+instrumentation records is dropped before export. With `capture_content: true`
+spans are exported as recorded — prompts, code and tool arguments included —
+so set it only for a collector that may hold your source.
+
+This is not Agno's own telemetry. Agno posts a metadata event for every run to
+`os-api.agno.com` unless told not to; igni sets `AGNO_TELEMETRY=false` in every
+process before Agno is imported, passes `telemetry=False` to every agent and
+team it builds, and hands the variable to the extension services it starts. An
+explicit `AGNO_TELEMETRY=true` is honoured outside air-gapped mode, and
+overruled (with a warning) under it.
+
 ## Environment Variables
 
 Authentication is handled by `/login` — no API key environment variables needed for server-hosted models. The default model is set via `models.default` in your config, and agents can override it per-agent in their `.md` files.
@@ -733,6 +803,11 @@ Authentication is handled by `/login` — no API key environment variables neede
 
 `IGNI_WORKSPACE_TRUST_MODE` / `IGNI_WORKSPACE_TRUSTED_REMOTES` tighten the
 organisation's workspace-trust policy ([Workspace trust](#workspace-trust)).
+
+`OTEL_EXPORTER_OTLP_ENDPOINT` and the other OTLP variables name your
+OpenTelemetry collector ([OpenTelemetry](#opentelemetry)). `AGNO_TELEMETRY` is
+`false` unless set; `true` sends Agno's own run telemetry to `os-api.agno.com`,
+and is overruled under air-gapped mode.
 
 `IGNI_AIR_GAPPED=1` turns on air-gapped mode (above). A backend whose settings
 say `air_gapped: true` sets it for the processes it starts, so igni's decisions

@@ -40,6 +40,8 @@ from typing import TYPE_CHECKING, Any, Literal, Protocol, runtime_checkable
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+from ember_code.core.agno_telemetry import AgnoTelemetry
+
 if TYPE_CHECKING:
     pass
 
@@ -349,6 +351,8 @@ class AgentConstructorArgs(BaseModel):
             "markdown": self.markdown,
             "num_history_runs": self.num_history_runs,
             "retries": self.retries,
+            # Agno's run telemetry to os-api.agno.com (core/agno_telemetry.py).
+            "telemetry": AgnoTelemetry.CONSTRUCTOR_VALUE,
         }
         if self.db is not None:
             kwargs["db"] = self.db

@@ -82,6 +82,9 @@ _ALLOWED_HOSTS: dict[str, str] = {
     ),
 }
 
+#: Packages whose purpose is to send data to a vendor: error reporting,
+#: product analytics, APM agents, and the LLM-observability SDKs whose
+#: default destination is their maker's cloud. None may be in the tree.
 _TELEMETRY_PACKAGES = (
     "sentry-sdk",
     "posthog",
@@ -89,6 +92,7 @@ _TELEMETRY_PACKAGES = (
     "segment-analytics-python",
     "analytics-python",
     "datadog",
+    "datadog-api-client",
     "ddtrace",
     "bugsnag",
     "rollbar",
@@ -96,9 +100,55 @@ _TELEMETRY_PACKAGES = (
     "newrelic",
     "elastic-apm",
     "scout-apm",
-    "opentelemetry-exporter-otlp",
     "honeycomb-beeline",
+    "honeycomb-opentelemetry",
+    "azure-monitor-opentelemetry",
+    "azure-monitor-opentelemetry-exporter",
+    "opentelemetry-exporter-gcp-trace",
+    "aws-xray-sdk",
+    "logfire",
+    "langfuse",
+    "langsmith",
+    "arize-otel",
+    "arize-phoenix-otel",
+    "agentops",
+    "openlit",
+    "traceloop-sdk",
+    "wandb",
+    "weave",
+    "lunary",
+    "opik",
+    "braintrust",
 )
+
+#: Hosts that may never be named in the source, whatever the reason given:
+#: Agno's own servers. Agno posts every run to ``os-api.agno.com`` unless
+#: ``AGNO_TELEMETRY`` says otherwise (``core/agno_telemetry.py``), and its
+#: AgentOS control plane is ``os.agno.com``. igni contacts neither, and
+#: ``test_no_run_reaches_an_agno_host.py`` watches the sockets for it.
+_NEVER_NAMED_SUFFIXES = ("agno.com",)
+
+#: The OTLP exporters, allowed by name and for one reason each. They used to
+#: be on the list above, and an exporter is a means of sending data; these
+#: ones send only where the customer says:
+#:
+#: * there is **no default endpoint** — with none configured nothing is
+#:   exported and no provider is built;
+#: * the endpoint is **customer-configured** — only the managed-settings
+#:   file, the group policy and the ``OTEL_*`` environment may set it, never
+#:   a user's or a repository's config;
+#: * under **air-gapped** mode it must be **inside the network**, or nothing
+#:   is exported.
+#:
+#: ``test_telemetry_goes_only_to_the_customers_collector.py`` proves each of
+#: the three; the test below checks those tests are still there.
+_OTLP_EXPORTERS: dict[str, str] = {
+    "opentelemetry-exporter-otlp-proto-http": "the customer's collector, over OTLP/HTTP",
+    "opentelemetry-exporter-otlp-proto-grpc": "the customer's collector, over OTLP/gRPC",
+    "opentelemetry-exporter-otlp-proto-common": "the encoding both exporters share",
+    "opentelemetry-exporter-otlp-common": "the encoding both exporters share",
+    "opentelemetry-exporter-http-transport": "the HTTP exporter's transport",
+}
 
 _HOST_IN_URL = re.compile(r"https?://([A-Za-z0-9._%-]+)")
 
@@ -178,6 +228,31 @@ def test_no_telemetry_package_is_installed():
     assert not present, f"telemetry packages in the dependency tree: {present}"
     # And prove the pattern matches this lock file's format at all.
     assert re.search(r'^name = "httpx"$', lock, re.M), "the lock format changed"
+
+
+def test_no_agno_host_is_named_or_allow_listed():
+    named = [h for h in _hosts_named() if h.lower().endswith(_NEVER_NAMED_SUFFIXES)]
+    listed = [h for h in _ALLOWED_HOSTS if h.lower().endswith(_NEVER_NAMED_SUFFIXES)]
+
+    assert not named, f"igni's source names Agno's servers: {named}"
+    assert not listed, f"Agno's servers are on the allow-list: {listed}"
+
+
+def test_every_exporter_in_the_tree_is_one_the_customer_points():
+    """An OTLP exporter is allowed, a vendor's is not, and the allowance
+    rests on three properties that each have a test."""
+    lock = (_ROOT / "uv.lock").read_text()
+    exporters = re.findall(r'^name = "(opentelemetry-exporter-[^"]+)"$', lock, re.M)
+    unexplained = sorted(set(exporters) - set(_OTLP_EXPORTERS))
+
+    assert not unexplained, f"OpenTelemetry exporters with no reason to be here: {unexplained}"
+    proofs = (_ROOT / "tests/test_telemetry_goes_only_to_the_customers_collector.py").read_text()
+    for proof in (
+        "def test_with_no_endpoint_nothing_is_set_up",
+        "def test_a_user_or_project_config_cannot_name_the_collector",
+        "def test_an_external_collector_is_refused_when_air_gapped",
+    ):
+        assert proof in proofs, f"the reason the OTLP exporters are allowed lost its test: {proof}"
 
 
 def test_the_update_check_can_be_turned_off():

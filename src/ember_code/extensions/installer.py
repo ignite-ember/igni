@@ -52,6 +52,7 @@ from typing import TYPE_CHECKING, Any
 
 from ember_code.core.agents.tool_audience import ToolAudience
 from ember_code.core.agents.tool_audience import audience as default_audience
+from ember_code.core.agno_telemetry import AgnoTelemetry
 from ember_code.core.mcp.config import MCPServerConfig, MCPTransport
 from ember_code.core.mcp.hints import ToolHints, ToolHintsRegistry
 from ember_code.core.mcp.naming import bare_tool_name
@@ -663,11 +664,16 @@ class ExtensionInstaller:
         be shadowed by a value the bundle shipped — an extension
         setting ``IGNI_WORKSPACE`` or ``IGNI_SERVICE_TOKEN_URL`` itself
         must not be how it gets one. Then the grants, then the host,
-        the token endpoint and its data directory.
+        the token endpoint and its data directory. Last, Agno's telemetry
+        switch: an MCP stdio launch inherits almost nothing of igni's
+        environment, so an extension built on Agno would otherwise run
+        with Agno's default, which posts every run to os-api.agno.com
+        (``core/agno_telemetry.py``). Last, so a bundle cannot turn it on.
         """
         env = dict(literal)
         env.update(permissions.service_environment(self._project_dir))
         env.update(token_env)
+        env.update(AgnoTelemetry.child_environment())
         return env
 
     def _service_config(

@@ -34,6 +34,7 @@ from ember_code.core.config.schemas.storage_and_paths import (
     GroupPolicyConfig,
     StorageConfig,
 )
+from ember_code.core.config.schemas.telemetry import OtlpConfig, TelemetryConfig
 from ember_code.core.config.schemas.workspace_trust import WorkspaceTrustConfig
 
 __all__ = [
@@ -49,6 +50,7 @@ __all__ = [
     "MemoryConfig",
     "ModelsConfig",
     "NetworkConfig",
+    "OtlpConfig",
     "OrchestrationConfig",
     "PermissionsConfig",
     "PluginsConfig",
@@ -58,5 +60,6 @@ __all__ = [
     "SchedulerConfig",
     "SkillsConfig",
     "StorageConfig",
+    "TelemetryConfig",
     "WorkspaceTrustConfig",
 ]

@@ -78,6 +78,7 @@ from ember_code.core.config.schemas import (
     SchedulerConfig,
     SkillsConfig,
     StorageConfig,
+    TelemetryConfig,
     WorkspaceTrustConfig,
 )
 from ember_code.core.config.settings_loader import SettingsLoader
@@ -224,9 +225,14 @@ class Settings(BaseModel):
     #: (``WorkspaceTrustTier`` in ``merge_plan.py``).
     workspace_trust: WorkspaceTrustConfig = Field(default_factory=WorkspaceTrustConfig)
 
-    # TODO: Add telemetry config so users can wire their own Agno server or
-    #       compatible telemetry endpoint (e.g. telemetry.enabled, telemetry.endpoint).
-    #       igni server does not collect CLI telemetry — usage is tracked server-side.
+    #: OpenTelemetry to the customer's own collector (``core/observability``).
+    #: No default endpoint: with none, nothing is exported. Managed-only: a
+    #: user's, a project's or the CLI's value is discarded (``TelemetryTier``
+    #: in ``merge_plan.py``); the managed file, the group policy and the
+    #: ``OTEL_*`` environment set it. Agno's own telemetry to
+    #: os-api.agno.com is a different thing, and always off
+    #: (``core/agno_telemetry.py``).
+    telemetry: TelemetryConfig = Field(default_factory=TelemetryConfig)
 
     @model_validator(mode="after")
     def _carry_confirm_commands_into_permissions(self) -> Settings:

@@ -55,6 +55,8 @@ from ember_code.cli.options import CliOptions
 from ember_code.cli.trust import trust_command
 from ember_code.core import air_gap
 from ember_code.core import session as _session_module
+from ember_code.core.agno_telemetry import AgnoTelemetry
+from ember_code.core.observability import OtelRuntime
 from ember_code.core.paths import DEFAULT_DATA_DIR
 
 logger = stdlib_logging.getLogger(__name__)
@@ -177,6 +179,10 @@ def cli(ctx: click.Context, **_params: object) -> None:
     # A ``-m`` or pipe run starts igni's decisions service itself, and that
     # process reads no settings: it inherits the air-gap decision instead.
     air_gap.export_to(os.environ, settings.air_gapped)
+    # Agno's own run telemetry stays off when air-gapped; traces go to the
+    # organisation's collector, if it named one (``core/observability``).
+    AgnoTelemetry.enforce(os.environ, air_gapped=settings.air_gapped)
+    OtelRuntime.start(settings)
 
     invocation = CliInvocation(options, settings, ctx)
     invocation.enable_debug_logging()

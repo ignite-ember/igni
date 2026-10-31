@@ -124,7 +124,7 @@ async def _grade_response(
         logger.warning("agno.eval.accuracy not available: %s", exc)
         return None, None, ""
 
-    placeholder = Agent(model=judge_model)
+    placeholder = Agent(model=judge_model, telemetry=False)
     acc = AccuracyEval(
         agent=placeholder,
         input=case.input,

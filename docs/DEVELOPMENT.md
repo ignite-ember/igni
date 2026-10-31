@@ -330,7 +330,7 @@ isolation and none of them becomes the god-class.
 See [GitHub Issues](https://github.com/ignite-ember/ember-code/issues) for the current roadmap.
 
 **Planned features:**
-- [ ] Centralized tracing (OpenTelemetry → igni server)
+- [x] Tracing (OpenTelemetry → the customer's own collector; see CONFIGURATION.md, "OpenTelemetry")
 - [ ] Plugin system (installable agent/tool packages)
 - [ ] Web UI (Agno Playground integration)
 - [ ] Voice mode (speech-to-text input)

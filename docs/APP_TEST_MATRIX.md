@@ -319,7 +319,7 @@ Each was reproduced, and each is recorded on its own row above.
 
 | What | Where | State |
 |---|---|---|
-| Every run POSTed to `os-api.agno.com` — seven per run. Metadata, not content, but an unannounced third party in none of the compliance documents | Agno telemetry, on by default | **fixed** — `AGNO_TELEMETRY` defaulted off in `ember_code/__init__` |
+| Every run POSTed to `os-api.agno.com` — seven per run. Metadata, not content, but an unannounced third party in none of the compliance documents | Agno telemetry, on by default | **fixed** — `AGNO_TELEMETRY` defaulted off in `ember_code/__init__`, `telemetry=False` on every Agent and Team, handed to extension services, and forced off under air-gap (`core/agno_telemetry.py`; `tests/test_no_run_reaches_an_agno_host.py` watches the sockets) |
 | An empty model turn rendered as silence: no text, no warning, exit 0 | `SessionRun._run_turn` | **fixed** — says so and points at `/model` |
 | A missing RPC argument reached the client as a bare key name (`'session_id'`) | `MessageDispatcher._on_rpc_request` | **fixed** — names the method and the argument |
 | `/ctx` raised on **every** invocation and put `PydanticUserError: ContextBreakdownView is not fully defined … errors.pydantic.dev` in a chat bubble. `ContextBreakdown` annotates a Pydantic field and was imported under `TYPE_CHECKING`, so with `from __future__ import annotations` the model never finished building | `backend/schemas_context.py` | **fixed** — runtime import + `model_rebuild()` at the foot of the module; `tests/test_ctx_actually_renders.py` |

@@ -27,18 +27,21 @@ It is still wrong for this product:
   Statement of Applicability. An auditor finding an undeclared
   processor is a finding regardless of payload.
 
-The fix is one ``os.environ.setdefault`` in ``ember_code/__init__``
-rather than ``telemetry=False`` at each construction site. There are a
-dozen of those across agents, pools, ephemeral builders and the
-orchestrator; ``agno.agent._init.set_telemetry`` re-reads the variable
-on every run and overrides whatever the constructor said, so the
-environment covers paths that do not exist yet. The repository already
-passed ``telemetry=False`` in ``core/evals/assertion_runner.py`` — the
-idiom was known, it just had not been applied where users are.
+The switch is ``AGNO_TELEMETRY``, set by ``ember_code/__init__`` before
+anything imports Agno (``core/agno_telemetry.py``):
+``agno.agent._init.set_telemetry`` re-reads the variable on every run and
+overrides whatever the constructor said, so the environment covers
+construction sites that do not exist yet. Every ``Agent`` / ``Team`` igni
+builds passes ``telemetry=False`` as well, for a process whose environment
+lost the variable, and extension services — whose MCP stdio launch
+inherits almost nothing — are handed it.
 
-An explicit value is honoured, deliberately. "Nothing leaves by
-default, and every means to send it is available" is the same line the
-deployment documents take everywhere else.
+An explicit ``AGNO_TELEMETRY=true`` is honoured outside air-gapped mode,
+deliberately: "nothing leaves by default, and every means to send it is
+available" is the line the deployment documents take everywhere else.
+Under air-gapped mode it is forced off with a warning. That the runs
+really reach no Agno host is
+``test_no_run_reaches_an_agno_host.py``, which watches the sockets.
 """
 
 from __future__ import annotations
@@ -47,6 +50,13 @@ import os
 import subprocess
 import sys
 from pathlib import Path
+
+from ember_code.core.agents.schemas import AgentConstructorArgs
+from ember_code.core.agno_telemetry import AgnoTelemetry
+from ember_code.core.session.agent_builder.agent_build_spec import AgentBuildSpec
+from ember_code.extensions.installer import ExtensionInstaller
+from ember_code.extensions.manifest import ExtensionManifest
+from ember_code.extensions.permissions import Permissions
 
 _ROOT = Path(__file__).resolve().parent.parent
 
@@ -62,6 +72,8 @@ def _env_after_import(preset: dict[str, str] | None = None) -> str | None:
     env = {**os.environ, **(preset or {})}
     if preset is None:
         env.pop("AGNO_TELEMETRY", None)
+    if "IGNI_AIR_GAPPED" not in (preset or {}):
+        env.pop("IGNI_AIR_GAPPED", None)
     out = subprocess.run(
         [
             sys.executable,
@@ -103,41 +115,74 @@ class TestTheDefaultIsSilence:
         assert _env_after_import({"AGNO_TELEMETRY": "no"}) == "no"
 
 
-class TestTheMechanismIsStillTheOneAgnoReads:
-    """Guards the fix against Agno moving the switch.
+class TestAnAirGappedProcessKeepsItOff:
+    """Under air-gapped mode an explicit opt-in is overruled, with a warning."""
 
-    The environment override lives in ``agno.agent._init.set_telemetry``
-    and is what makes a single assignment cover every construction
-    site. If that function stops reading the variable, this package's
-    default becomes decorative and every run starts reporting again —
-    silently, because nothing else would change.
-    """
+    def test_the_environment_switch_overrules_it_at_import(self):
+        """A process whose air gap comes from the environment alone — the
+        decisions service, a child of a backend — reads no settings."""
+        preset = {"AGNO_TELEMETRY": "true", "IGNI_AIR_GAPPED": "1"}
+        assert _env_after_import(preset) == "false"
 
-    def test_agno_still_reads_the_environment_variable(self):
-        from agno.agent import _init
+    def test_the_setting_overrules_it_once_settings_are_loaded(self, caplog):
+        environ = {"AGNO_TELEMETRY": "true"}
+        decision = AgnoTelemetry.enforce(environ, air_gapped=True)
 
-        source = Path(_init.__file__).read_text()
+        assert environ["AGNO_TELEMETRY"] == "false"
+        assert decision.overruled is True
+        assert "air-gapped" in caplog.text
 
-        assert "AGNO_TELEMETRY" in source, (
-            "agno no longer reads AGNO_TELEMETRY in `_init`. Find where telemetry is "
-            "switched now and set it there, or pass telemetry=False at every "
-            "Agent/Team construction site."
+    def test_outside_the_air_gap_an_opt_in_stands(self):
+        environ = {"AGNO_TELEMETRY": "true"}
+        decision = AgnoTelemetry.enforce(environ, air_gapped=False)
+
+        assert environ["AGNO_TELEMETRY"] == "true"
+        assert decision.overruled is False
+
+    def test_an_unset_variable_is_set_off(self):
+        environ: dict[str, str] = {}
+        AgnoTelemetry.enforce(environ, air_gapped=False)
+        assert environ == {"AGNO_TELEMETRY": "false"}
+
+
+class TestTheConstructorsSayItToo:
+    """``telemetry=False`` wherever igni builds an Agent or Team, so a
+    process whose environment lost the variable still sends nothing."""
+
+    def test_the_main_agent_spec_passes_it(self):
+        assert AgentBuildSpec.model_fields["telemetry"].default is False
+
+    def test_a_defined_agent_passes_it(self):
+        kwargs = AgentConstructorArgs(
+            name="a",
+            model=None,
+            description="",
+            instructions=None,
+            tools=None,
+            num_history_runs=1,
+            retries=0,
+        ).to_agno_kwargs()
+        assert kwargs["telemetry"] is False
+
+    def test_a_sub_team_passes_it(self):
+        source = (_ROOT / "src/ember_code/core/tools/orchestrate_spawn.py").read_text()
+        assert '"telemetry": AgnoTelemetry.CONSTRUCTOR_VALUE' in source
+
+    def test_an_extension_service_is_handed_it_and_cannot_turn_it_on(self, tmp_path, monkeypatch):
+        """An MCP stdio launch passes on only ``PATH``, ``HOME`` and a few
+        more, so an extension built on Agno would run with Agno's default."""
+        monkeypatch.setenv("AGNO_TELEMETRY", "false")
+        installer = ExtensionInstaller.__new__(ExtensionInstaller)
+        installer._project_dir = tmp_path
+        manifest = ExtensionManifest.model_validate(
+            {
+                "id": "acme.scanner",
+                "version": "1.0.0",
+                "contract": ">=1.0 <2",
+                "trust": "unsigned",
+                "dev": {"command": ["node", "server.js"], "env": {"AGNO_TELEMETRY": "true"}},
+            }
         )
+        env = installer._process_environment(dict(manifest.dev.env), Permissions(manifest), {})
 
-    def test_the_telemetry_payload_is_still_metadata_only(self):
-        """The claim in this module's docstring, checked against the code.
-
-        If Agno starts including prompts or file paths, "metadata, not
-        content" stops being true and the finding changes from a
-        compliance one to a confidentiality one.
-        """
-        from agno.agent import _telemetry
-
-        source = Path(_telemetry.__file__).read_text()
-
-        for leaked in ("messages", "input", "prompt", "content"):
-            assert f'"{leaked}"' not in source, (
-                f"agno telemetry now sends {leaked!r}. This is no longer metadata; "
-                "the disable above is load-bearing for confidentiality, not just for "
-                "the processor list."
-            )
+        assert env["AGNO_TELEMETRY"] == "false"

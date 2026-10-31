@@ -39,10 +39,12 @@ from ember_code.backend.session_orchestrator import SessionOrchestrator
 from ember_code.backend.supervisor import BackendSupervisor
 from ember_code.backend.workspace_signals import WorkspaceSignals
 from ember_code.core import air_gap
+from ember_code.core.agno_telemetry import AgnoTelemetry
 from ember_code.core.config.settings import Settings, load_settings
 from ember_code.core.db.locator import StorageLocator
 from ember_code.core.db.scope import tenancy
 from ember_code.core.layer import Layers
+from ember_code.core.observability import OtelRuntime
 from ember_code.core.plugins.installer import PluginInstaller
 from ember_code.core.prompts.contributions import prompt_contributions
 from ember_code.extensions.contributions import (
@@ -248,6 +250,8 @@ class BackendApp:
             # Whatever ended the process, the layer tidies what it keeps
             # (the cloud's: ``ready`` and the activity file).
             await self._guest.stop()
+            # And what traces are held go to the collector before it ends.
+            OtelRuntime.stop()
 
     async def _boot_and_serve(self) -> None:
         # The layer's (``core/layer.py``); the desktop's do nothing.
@@ -268,6 +272,11 @@ class BackendApp:
         # The processes this backend starts — the decisions service above
         # all, which reads no settings — inherit the air-gap decision.
         air_gap.export_to(os.environ, settings.air_gapped)
+        # Agno's own run telemetry stays off when air-gapped, whatever the
+        # environment said; and traces go to the organisation's collector,
+        # if it named one (``core/observability``).
+        AgnoTelemetry.enforce(os.environ, air_gapped=settings.air_gapped)
+        OtelRuntime.start(settings)
         # Whose rows a shared database holds: the producer signed in
         # here (docs/CLOUD.md §9). Asked only when ``IGNI_DATABASE_URL``
         # names one — the desktop's files are nobody else's.

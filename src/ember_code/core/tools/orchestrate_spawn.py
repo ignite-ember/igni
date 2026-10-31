@@ -44,6 +44,7 @@ import time
 import uuid
 from typing import TYPE_CHECKING, Any
 
+from ember_code.core.agno_telemetry import AgnoTelemetry
 from ember_code.core.hooks.turn_results import TurnResultHook, TurnResultSink
 from ember_code.core.tools.orchestrate_events import (
     VIS_SPEC_PREFIX,
@@ -726,6 +727,8 @@ class TeamSpawn(SpawnRunner):
             "model": team_model,
             "members": members,
             "markdown": True,
+            # Agno's run telemetry to os-api.agno.com (core/agno_telemetry.py).
+            "telemetry": AgnoTelemetry.CONSTRUCTOR_VALUE,
         }
         # Public accessor — replaces the ex ``getattr(pool, "_db")``.
         pool_db = pool.db
