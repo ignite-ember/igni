@@ -147,7 +147,7 @@ class ToolPermissions:
         tool in a final category gets the organisation's level, and any
         argument rule from the settings files that would loosen it is dropped.
         """
-        final = getattr(cfg, "final_fields", frozenset())
+        final: frozenset[str] = getattr(cfg, "final_fields", frozenset())
         if not final:
             return
         for category, tools in self._category_map.iter_config_fields(cfg):

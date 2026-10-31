@@ -66,8 +66,8 @@ def main(argv: list[str]) -> int:
         if option != "--forward":
             print(f"bridge.py: unknown option {option}", file=sys.stderr)
             return 2
-        port, _, path = next(it).partition("=")
-        forwards.append((int(port), path))
+        port_text, _, path = next(it).partition("=")
+        forwards.append((int(port_text), path))
     for port, path in forwards:
         listener = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
