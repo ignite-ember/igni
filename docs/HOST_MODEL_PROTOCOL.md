@@ -1,7 +1,7 @@
 # The host model's wire — for SDK maintainers
 
 **Extension authors never read this.** They write `ext.host.chat.post(…)`
-(`igni-extension`) or `bridge.host.chat.post(…)` (`@igni/extension-bridge`)
+(`igni-extension`) or `bridge.host.chat.post(…)` (`@ignite-ember/extension-bridge`)
 and the SDK does the rest. This page is for whoever maintains those SDKs,
 or writes one for another language. The model itself — its objects,
 members, permissions and stages — is `docs/HOST_OBJECT_MODEL.md`, and is

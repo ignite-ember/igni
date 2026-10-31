@@ -94,7 +94,7 @@ import {
 } from "./components/Icons";
 // Aliased: ``Icons`` exports a ``MenuIcon`` too, and that one is the
 // hamburger. This is the glyph set the panels draw from.
-import { MenuIcon as Glyph } from "@igni/ui-react";
+import { MenuIcon as Glyph } from "@ignite-ember/ui-react";
 import { NotificationsPanel } from "./components/NotificationsPanel";
 import { unreadFor, useNotificationCounts } from "./notifications/model";
 import {

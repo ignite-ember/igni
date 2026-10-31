@@ -26,7 +26,7 @@
  * real published surface. It cannot run, for two reasons that are
  * tracked and neither of which is about this file:
  *
- *   1. `@igni/extension-bridge` and `@igni/ui-react` are not
+ *   1. `@ignite-ember/extension-bridge` and `@ignite-ember/ui-react` are not
  *      published packages — they are a tsconfig alias inside
  *      `clients/web`.
  *   2. Nothing installs an extension. `ExtensionRegistry` takes a
@@ -54,7 +54,7 @@ import {
 } from "react";
 import { createRoot } from "react-dom/client";
 
-import { connect, type Bridge } from "@igni/extension-bridge";
+import { connect, type Bridge } from "@ignite-ember/extension-bridge";
 import {
   Badge,
   Button,
@@ -75,7 +75,7 @@ import {
   Text,
   Textarea,
   Toolbar,
-} from "@igni/ui-react";
+} from "@ignite-ember/ui-react";
 
 import {
   messageOf,

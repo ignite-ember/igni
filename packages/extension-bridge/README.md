@@ -1,11 +1,11 @@
-# `@igni/extension-bridge`
+# `@ignite-ember/extension-bridge`
 
 The guest half of the bridge between an igni extension's page and igni:
 `connect()`, RPC to the extension's tools, navigation, and the theme. The
 host imports the same `protocol`, so there is one description of the wire.
 
 ```ts
-import { connect } from "@igni/extension-bridge";
+import { connect } from "@ignite-ember/extension-bridge";
 
 const bridge = await connect();          // igni has said hello; the theme is applied
 bridge.onParams((params) => render(params));
@@ -13,8 +13,8 @@ const found = await bridge.rpc("ext.example.teamnotes.search", { query: "" });
 ```
 
 `connect()` resolves once igni has told the page which extension it is,
-its launch params and the theme. Subpaths: `@igni/extension-bridge/protocol`
-(the wire format) and `@igni/extension-bridge/tokens` (the design tokens).
+its launch params and the theme. Subpaths: `@ignite-ember/extension-bridge/protocol`
+(the wire format) and `@ignite-ember/extension-bridge/tokens` (the design tokens).
 
 ## The host: `bridge.host`
 
@@ -71,27 +71,19 @@ cross-origin with nothing to configure (`igni.install(app)`).
 
 ## Installing
 
-From igni's npm registry, not npmjs — the `@igni` scope is mapped to it,
-so no `@igni/*` package is ever taken from anywhere else:
-
-```ini
-# .npmrc, beside your package.json
-@igni:registry=https://us-central1-npm.pkg.dev/ember-prod-491411/ember-prod-npm/
-//us-central1-npm.pkg.dev/ember-prod-491411/ember-prod-npm/:_authToken=${IGNI_INDEX_TOKEN}
-```
+From npm:
 
 ```bash
-export IGNI_INDEX_TOKEN="$(gcloud auth print-access-token)"   # an hour
-npm install @igni/extension-bridge
+npm install @ignite-ember/extension-bridge
 ```
 
-Your Google account needs read access to the registry (igni's developers'
-group has it). Versions and the other ways to authenticate are in igni's
-`docs/PUBLISHING_THE_SDKS.md`.
+Each release's tarballs are also attached to igni's GitHub release
+(`sdk-v<version>`), for a build that cannot reach npmjs. Versions are in
+igni's `docs/PUBLISHING_THE_SDKS.md`.
 
 ## Source, not a build
 
-Like `@igni/ui-react`, this package ships its TypeScript source. A bundler
+Like `@ignite-ember/ui-react`, this package ships its TypeScript source. A bundler
 that compiles TypeScript (Vite, esbuild, Rollup with a TS plugin) consumes
 it as is; one that does not compile `node_modules` (Next.js, Jest) needs
 it listed for transpilation (`transpilePackages`, `transformIgnorePatterns`).

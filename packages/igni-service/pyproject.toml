@@ -10,9 +10,14 @@ readme = "README.md"
 license = "Apache-2.0"
 requires-python = ">=3.12"
 authors = [{ name = "Ignite Ember" }]
+keywords = ["igni", "fastapi", "service", "sdk", "air-gapped"]
 classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "Operating System :: OS Independent",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
     "Framework :: FastAPI",
     "Typing :: Typed",
 ]
@@ -30,6 +35,12 @@ dependencies = [
     # service this is for is.
     "sqlalchemy[asyncio]>=2.0.40,<2.1",
 ]
+
+[project.urls]
+Homepage = "https://github.com/ignite-ember/igni"
+Documentation = "https://github.com/ignite-ember/igni/tree/main/packages/igni-service#readme"
+Source = "https://github.com/ignite-ember/igni/tree/main/packages/igni-service"
+Issues = "https://github.com/ignite-ember/igni/issues"
 
 [project.scripts]
 igni-service-bundle = "igni_service.bundle:main"

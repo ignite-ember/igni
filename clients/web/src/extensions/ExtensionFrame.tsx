@@ -38,8 +38,8 @@ import {
   type HostRequestMessage,
   isGuestMessage,
   methodAllowed,
-} from "@igni/extension-bridge/protocol";
-import { readThemeTokens } from "@igni/extension-bridge/tokens";
+} from "@ignite-ember/extension-bridge/protocol";
+import { readThemeTokens } from "@ignite-ember/extension-bridge/tokens";
 
 /**
  * Are these the same parameters?

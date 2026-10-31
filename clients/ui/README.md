@@ -16,7 +16,7 @@ Bundle `igni-ui.css` into your extension. Do not link it from igni's origin — 
 Then connect. The bridge applies the live theme before your first paint:
 
 ```ts
-import { connect } from "@igni/extension-bridge";  // not published yet — see below
+import { connect } from "@ignite-ember/extension-bridge";
 
 const igni = await connect();          // tokens are on :root by now
 const status = await igni.rpc("ext.acme.scanner.status");
@@ -93,11 +93,21 @@ There is deliberately **no `ui-title`**. Titles varied across four type steps, a
 
 **Remaining:** igni's own 231 feature classes still carry their own copies. The primitives exist and are what an extension builds against; migrating the app onto them moves pixels in 64 files, and is worth doing behind the visual suite rather than blind.
 
-## Not installable yet
+## Installing
 
-`@igni/extension-bridge` and `@igni/ui-react` are a tsconfig `paths` entry and a Vite alias inside `clients/web`. There is no package.json, no registry entry, no build. **You cannot `npm install` either of them today**, and vendoring them by hand means maintaining a fork of the thing that was handed to you as a compatibility floor.
+This stylesheet is `@ignite-ember/ui-css` on npm; the bridge and the React
+components are `@ignite-ember/extension-bridge` and `@ignite-ember/ui-react`:
 
-This is a build change rather than a code change, and it is the first thing to do before anyone outside this repository is asked to build against this.
+```bash
+npm install @ignite-ember/ui-css @ignite-ember/extension-bridge @ignite-ember/ui-react
+```
+
+```ts
+import "@ignite-ember/ui-css";
+```
+
+Each release's tarballs are also attached to igni's GitHub release
+(`sdk-v<version>`), for a build that cannot reach npmjs.
 
 ## What an extension still cannot do
 

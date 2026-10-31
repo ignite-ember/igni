@@ -1,7 +1,7 @@
 /**
  * Nothing under the floor imports the app.
  *
- * `@igni/ui-react` is consumed from outside this repository, where
+ * `@ignite-ember/ui-react` is consumed from outside this repository, where
  * `../components/` and `../chat/` do not exist. An import that leaves
  * this directory is therefore a module that cannot be published —
  * and if it is reachable from `index.ts`, it takes whatever it

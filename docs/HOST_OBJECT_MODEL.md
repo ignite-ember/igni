@@ -25,7 +25,7 @@ async def review(run: Run) -> None:
         await ext.host.chat.post("Two issues in the files you just changed: …")
 ```
 
-The extension's page sees the same model through `@igni/extension-bridge`
+The extension's page sees the same model through `@ignite-ember/extension-bridge`
 (`await bridge.host.sessions.current.get()`, `bridge.on(bridge.host.chat.run_completed, fn)`),
 so the process and the page never disagree about what igni looks like.
 A property is read with `await prop` (Python) or `prop.get()`, written

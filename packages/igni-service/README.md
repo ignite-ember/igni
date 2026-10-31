@@ -65,28 +65,15 @@ async def org_settings(person: Person = Depends(igni.web.org_admin)) -> Page: ..
 
 ## Installing
 
-From igni's package index, not PyPI. Name the index and pin the package
-to it, so nothing called `igni-service` is ever taken from anywhere else:
-
-```toml
-[[tool.uv.index]]
-name = "igni"
-url = "https://us-central1-python.pkg.dev/ember-prod-491411/ember-prod-python/simple/"
-explicit = true
-
-[tool.uv.sources]
-igni-service = { index = "igni" }
-```
+From PyPI:
 
 ```bash
-export UV_INDEX_IGNI_USERNAME=oauth2accesstoken
-export UV_INDEX_IGNI_PASSWORD="$(gcloud auth print-access-token)"   # an hour
-uv add igni-service
+uv add igni-service        # or: pip install igni-service
 ```
 
-Your Google account needs read access to the index (igni's developers'
-group has it). The versions, the other ways to authenticate, and working
-against an igni checkout instead are in igni's
+Each release's wheels and sdists are also attached to igni's GitHub
+release (`sdk-v<version>`), for a build that cannot reach PyPI. The
+versions, and working against an igni checkout instead, are in igni's
 `docs/PUBLISHING_THE_SDKS.md`.
 
 ## What happens on its own

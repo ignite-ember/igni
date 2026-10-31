@@ -2,12 +2,12 @@
   "compilerOptions": {
     "baseUrl": ".",
     "paths": {
-      "@igni/ui-react": ["../../packages/ui-react/src/index.ts"],
-      "@igni/ui-react/*": ["../../packages/ui-react/src/*"],
-      "@igni/test-utils/*": ["../../packages/test-utils/*"],
-      "@igni/extension-bridge": ["../../packages/extension-bridge/src/index.ts"],
-      "@igni/extension-bridge/*": ["../../packages/extension-bridge/src/*"],
-      "@igni/ui-css": ["../ui/igni-ui.css"],
+      "@ignite-ember/ui-react": ["../../packages/ui-react/src/index.ts"],
+      "@ignite-ember/ui-react/*": ["../../packages/ui-react/src/*"],
+      "@ignite-ember/test-utils/*": ["../../packages/test-utils/*"],
+      "@ignite-ember/extension-bridge": ["../../packages/extension-bridge/src/index.ts"],
+      "@ignite-ember/extension-bridge/*": ["../../packages/extension-bridge/src/*"],
+      "@ignite-ember/ui-css": ["../ui/igni-ui.css"],
       /*
        * ``examples/`` and ``packages/`` sit outside this directory,
        * so Node resolution walking up from them never reaches our

@@ -1,27 +1,19 @@
-# `@igni/ui-react`
+# `@ignite-ember/ui-react`
 
 The React components an igni extension is allowed to build on.
 Everything exported here is under the compatibility floor: removing
 one, renaming it, or changing a prop's meaning is a breaking change
 under `docs/EXTENSIBILITY.md` §8.
 
-From igni's npm registry, not npmjs — the `@igni` scope is mapped to it,
-so no `@igni/*` package is ever taken from anywhere else:
-
-```ini
-# .npmrc, beside your package.json
-@igni:registry=https://us-central1-npm.pkg.dev/ember-prod-491411/ember-prod-npm/
-//us-central1-npm.pkg.dev/ember-prod-491411/ember-prod-npm/:_authToken=${IGNI_INDEX_TOKEN}
-```
+From npm, with the stylesheet it is drawn with:
 
 ```bash
-export IGNI_INDEX_TOKEN="$(gcloud auth print-access-token)"   # an hour
-npm install @igni/ui-react @igni/ui-css
+npm install @ignite-ember/ui-react @ignite-ember/ui-css
 ```
 
 ```tsx
-import { AppShell, Scroll, Table, Toolbar } from "@igni/ui-react";
-import "@igni/ui-css";
+import { AppShell, Scroll, Table, Toolbar } from "@ignite-ember/ui-react";
+import "@ignite-ember/ui-css";
 ```
 
 ## Peer dependencies
@@ -36,7 +28,7 @@ you use `MermaidBlock`.
 
 ## The stylesheet is not optional
 
-`@igni/ui-css` must be bundled into your extension, not linked from
+`@ignite-ember/ui-css` must be bundled into your extension, not linked from
 igni's origin. Your page runs under its own origin with
 `default-src 'self'`, so a cross-origin stylesheet is refused — and
 that refusal is deliberate.

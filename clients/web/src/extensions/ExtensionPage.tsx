@@ -12,7 +12,7 @@
  */
 import { useCallback, useMemo } from "react";
 
-import { Banner, Button, Empty } from "@igni/ui-react";
+import { Banner, Button, Empty } from "@ignite-ember/ui-react";
 
 import { ExtensionFrame, type ExtensionFrameProps } from "./ExtensionFrame";
 import { OpenOnWeb } from "./OpenOnWeb";

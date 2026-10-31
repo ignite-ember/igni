@@ -22,7 +22,7 @@
  */
 import { useEffect, useRef, useState } from "react";
 
-import { Status, Tooltip } from "@igni/ui-react";
+import { Status, Tooltip } from "@ignite-ember/ui-react";
 
 import { badgeText } from "../notifications/model";
 

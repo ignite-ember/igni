@@ -77,12 +77,15 @@ clean: ## Remove build artifacts and caches
 
 # ── Publishing the SDKs ─────────────────────────────────────────────────
 #
-# Five packages, one version — docs/PUBLISHING_THE_SDKS.md. Python:
-# igni-service, igni-extension. npm: @igni/extension-bridge,
-# @igni/ui-react, and the stylesheet @igni/ui-css (clients/ui), which
-# @igni/ui-react's README tells an extension to install beside it. They
-# are released together by pushing the tag `sdk-v<version>`
-# (.github/workflows/sdk-release.yml), which runs the targets below.
+# Five packages, one version — docs/PUBLISHING_THE_SDKS.md. Python, on
+# PyPI: igni-service, igni-extension. npm, on npmjs:
+# @ignite-ember/extension-bridge, @ignite-ember/ui-react, and the
+# stylesheet @ignite-ember/ui-css (clients/ui), which @ignite-ember/ui-react's
+# README tells an extension to install beside it. They are released
+# together by pushing the tag `sdk-v<version>`
+# (.github/workflows/sdk-release.yml), which runs `sdk-build` and then
+# publishes what it made with PyPI's and npm's trusted publishing — no
+# token is kept anywhere, so there is no publish target here.
 SDK_PY_PACKAGES := $(PY_PACKAGES)
 SDK_NPM_PACKAGES := packages/extension-bridge packages/ui-react clients/ui
 SDK_DIST := dist/sdk
@@ -113,7 +116,7 @@ print(f"SDK version {version}")
 endef
 export SDK_VERSIONS_PY
 
-.PHONY: sdk-version sdk-version-check sdk-build sdk-publish
+.PHONY: sdk-version sdk-version-check sdk-build
 
 sdk-version-check: ## Check the five SDK packages carry one version (and VERSION=, when given)
 	@uv run --no-project --python 3.12 python -c "$$SDK_VERSIONS_PY" "$(VERSION)" "$(SDK_PY_PACKAGES)" "$(SDK_NPM_PACKAGES)"
@@ -136,34 +139,3 @@ sdk-build: sdk-version-check ## Build the five SDK packages into dist/sdk/ (whee
 		(cd $$pkg && npm pack --silent --pack-destination $(abspath $(SDK_DIST))/npm) || exit 1; \
 	done
 	@ls -1 $(SDK_DIST)/python $(SDK_DIST)/npm
-
-# Uploads what `sdk-build` made. The release workflow runs this; a person
-# should not need to. Needs SDK_INDEX_TOKEN — an OAuth access token for an
-# account with write access to both repositories — and the repositories'
-# URLs (`terraform output sdk_python_repository_url sdk_npm_registry_url`
-# in igni_iac). Safe to re-run: a file or version already there is skipped.
-SDK_PYTHON_URL ?=
-SDK_NPM_URL ?=
-NPM_DIST_TAG ?= latest
-
-sdk-publish: ## Upload dist/sdk/ to the SDK index (CI): SDK_PYTHON_URL=… SDK_NPM_URL=… SDK_INDEX_TOKEN=…
-	@test -n "$(SDK_PYTHON_URL)" -a -n "$(SDK_NPM_URL)" || { echo "SDK_PYTHON_URL and SDK_NPM_URL are required"; exit 1; }
-	@test -n "$$SDK_INDEX_TOKEN" || { echo "SDK_INDEX_TOKEN is required (gcloud auth print-access-token)"; exit 1; }
-	@set -eu; \
-	scratch=$$(mktemp -d); trap 'rm -rf "$$scratch"' EXIT; \
-	py_url="$(patsubst %/,%,$(SDK_PYTHON_URL))/"; npm_url="$(patsubst %/,%,$(SDK_NPM_URL))/"; \
-	py_host=$$(echo "$$py_url" | sed -E 's#^[a-z]+://([^/:]+).*#\1#'); \
-	printf 'machine %s\nlogin oauth2accesstoken\npassword %s\n' "$$py_host" "$$SDK_INDEX_TOKEN" > "$$scratch/netrc"; \
-	NETRC="$$scratch/netrc" UV_PUBLISH_USERNAME=oauth2accesstoken UV_PUBLISH_PASSWORD="$$SDK_INDEX_TOKEN" \
-		uv publish --publish-url "$$py_url" --check-url "$${py_url}simple/" $(SDK_DIST)/python/*; \
-	printf '@igni:registry=%s\n//%s:_authToken=%s\n' "$$npm_url" "$${npm_url#*://}" "$$SDK_INDEX_TOKEN" > "$$scratch/npmrc"; \
-	for pkg in $(SDK_NPM_PACKAGES); do \
-		name=$$(node -p "require('./$$pkg/package.json').name"); \
-		version=$$(node -p "require('./$$pkg/package.json').version"); \
-		tarball="$(SDK_DIST)/npm/$$(echo "$$name" | sed 's#^@##; s#/#-#')-$$version.tgz"; \
-		if npm view "$$name@$$version" version --userconfig "$$scratch/npmrc" >/dev/null 2>&1; then \
-			echo "$$name@$$version is already published"; \
-		else \
-			npm publish "$$tarball" --tag "$(NPM_DIST_TAG)" --userconfig "$$scratch/npmrc"; \
-		fi; \
-	done

@@ -56,7 +56,7 @@ import {
 } from "react";
 import { createRoot } from "react-dom/client";
 
-import { connect, type Bridge } from "@igni/extension-bridge";
+import { connect, type Bridge } from "@ignite-ember/extension-bridge";
 import {
   AppShell,
   Badge,
@@ -84,7 +84,7 @@ import {
   Toolbar,
   useToast,
   type Tone,
-} from "@igni/ui-react";
+} from "@ignite-ember/ui-react";
 
 import {
   ConflictError,

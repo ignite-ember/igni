@@ -2,7 +2,7 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react
 import type { IgniClient } from "../../protocol/client";
 import { Drawer } from "./Drawer";
 import { ChevronIcon } from "../Icons";
-import { Skeleton } from "@igni/ui-react";
+import { Skeleton } from "@ignite-ember/ui-react";
 
 interface McpResource {
   uri: string;

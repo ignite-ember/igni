@@ -13,12 +13,12 @@ export default defineConfig({
       // specifier an extension author writes. An alias rather than a
       // workspace link because the app is built, tested and shipped
       // from here and a link would make `npm install` a build step.
-      "@igni/ui-react/": resolvePath(__dirname, "../../packages/ui-react/src") + "/",
-      "@igni/ui-react": resolvePath(
+      "@ignite-ember/ui-react/": resolvePath(__dirname, "../../packages/ui-react/src") + "/",
+      "@ignite-ember/ui-react": resolvePath(
         __dirname,
         "../../packages/ui-react/src/index.ts",
       ),
-      "@igni/test-utils/": resolvePath(__dirname, "../../packages/test-utils") + "/",
+      "@ignite-ember/test-utils/": resolvePath(__dirname, "../../packages/test-utils") + "/",
       // The floor's peer dependencies, pointed at this package's
       // ``node_modules``. ``packages/`` is outside it, so a bare
       // import from there resolves nowhere — the same hole the
@@ -36,9 +36,9 @@ export default defineConfig({
         __dirname,
         "./node_modules/@testing-library/react",
       ),
-      "@igni/extension-bridge/": resolvePath(__dirname, "../../packages/extension-bridge/src") + "/",
-      "@igni/extension-bridge": resolvePath(__dirname, "../../packages/extension-bridge/src/index.ts"),
-      "@igni/ui-css": resolvePath(__dirname, "../ui/igni-ui.css"),
+      "@ignite-ember/extension-bridge/": resolvePath(__dirname, "../../packages/extension-bridge/src") + "/",
+      "@ignite-ember/extension-bridge": resolvePath(__dirname, "../../packages/extension-bridge/src/index.ts"),
+      "@ignite-ember/ui-css": resolvePath(__dirname, "../ui/igni-ui.css"),
     },
   },
   plugins: [react()],

@@ -214,7 +214,7 @@ async def review(run: Run) -> None:
 The process reaches it as `ext.host` (`igni-extension`) over a loopback
 WebSocket igni gives it (`IGNI_HOST_URL`, guarded by the same per-process
 secret as the token endpoint, `IGNI_HOST_SECRET`); the page reaches the
-same model as `bridge.host` (`@igni/extension-bridge`) through the window
+same model as `bridge.host` (`@ignite-ember/extension-bridge`) through the window
 it is framed in. `docs/HOST_MODEL_PROTOCOL.md` is the wire, for SDK
 maintainers only.
 
@@ -831,7 +831,7 @@ Three published things, and nothing else about how igni is drawn:
 |---|---|
 | **Design tokens** | `PUBLISHED_TOKENS` in `packages/extension-bridge/src/tokens.ts` — colours, the spacing scale, the type scale, shape. Pushed live over the bridge, so an extension follows dark mode, light mode and a group's branding without asking. |
 | **CSS classes** | The classes defined in `clients/ui/igni-ui.css` — `btn`, `chip`, `ui-card`, `ui-row` and the rest. Named deliberately the same as igni's own, so a change lands in both. |
-| **React components** | The exports of `@igni/ui-react`. What the first two extensions actually import, plus the primitives any extension would need. |
+| **React components** | The exports of `@ignite-ember/ui-react`. What the first two extensions actually import, plus the primitives any extension would need. |
 
 These three are a promise. **Everything else about igni's appearance is not**, and the distinction is what keeps restyling the app possible: `theme.css` holds about two thousand classes and three dozen of them are published.
 
@@ -840,7 +840,7 @@ This replaces a line that read "the React component tree, CSS class names, any t
 ## Not in the floor
 
 - Importing anything from `ember_code.*` — the contributions are the interface, not the package.
-- **Any CSS class not defined in `igni-ui.css`**, any component not exported from `@igni/ui-react`, any token not in `PUBLISHED_TOKENS`. Naming a class is not the same as publishing it: an extension that reaches for `.kb-row` because it saw it in the DOM has taken a dependency we never offered.
+- **Any CSS class not defined in `igni-ui.css`**, any component not exported from `@ignite-ember/ui-react`, any token not in `PUBLISHED_TOKENS`. Naming a class is not the same as publishing it: an extension that reaches for `.kb-row` because it saw it in the DOM has taken a dependency we never offered.
 - The markup those classes are applied to — which element, which nesting. The class is the contract; the tree under it is ours.
 - `RpcMethod` members not namespaced to a capability.
 - Database schemas, on-disk layouts.

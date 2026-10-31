@@ -1,8 +1,20 @@
 {
-  "name": "@igni/extension-bridge",
+  "name": "@ignite-ember/extension-bridge",
   "version": "0.1.0",
   "description": "The guest half of the bridge between an igni extension's page and igni: connect(), RPC, navigation, theme. The host imports the same protocol, so there is one description of the wire.",
+  "keywords": [
+    "igni",
+    "extension",
+    "bridge",
+    "iframe",
+    "postmessage"
+  ],
   "license": "Apache-2.0",
+  "author": "Ignite Ember (https://ignite-ember.sh/)",
+  "homepage": "https://github.com/ignite-ember/igni/tree/main/packages/extension-bridge#readme",
+  "bugs": {
+    "url": "https://github.com/ignite-ember/igni/issues"
+  },
   "repository": {
     "type": "git",
     "url": "git+https://github.com/ignite-ember/igni.git",
@@ -19,7 +31,9 @@
   "files": [
     "src",
     "!src/**/*.test.ts",
-    "README.md"
+    "README.md",
+    "LICENSE",
+    "NOTICE"
   ],
   "publishConfig": {
     "access": "public"

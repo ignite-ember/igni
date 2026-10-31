@@ -8,7 +8,7 @@
  * read and a scan.
  */
 
-import type { Bridge } from "@igni/extension-bridge";
+import type { Bridge } from "@ignite-ember/extension-bridge";
 
 /** Where a release is in its life. */
 export const STATES = ["draft", "published", "superseded"] as const;

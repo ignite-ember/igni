@@ -21,7 +21,7 @@ import { cleanup, render, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { ExtensionFrame } from "./ExtensionFrame";
-import { BRIDGE_VERSION, isGuestMessage, isHostMessage } from "@igni/extension-bridge/protocol";
+import { BRIDGE_VERSION, isGuestMessage, isHostMessage } from "@ignite-ember/extension-bridge/protocol";
 
 afterEach(cleanup);
 

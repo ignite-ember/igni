@@ -10,7 +10,11 @@ readme = "README.md"
 license = "Apache-2.0"
 requires-python = ">=3.12"
 authors = [{ name = "Ignite Ember" }]
+keywords = ["igni", "extension", "mcp", "sdk", "air-gapped"]
 classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "Operating System :: OS Independent",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.12",
     "Typing :: Typed",
@@ -26,6 +30,12 @@ dependencies = [
     # The host object model's socket (`ext.host`) and `ext.service.websocket`.
     "websockets>=15,<17",
 ]
+
+[project.urls]
+Homepage = "https://github.com/ignite-ember/igni"
+Documentation = "https://github.com/ignite-ember/igni/tree/main/packages/igni-extension#readme"
+Source = "https://github.com/ignite-ember/igni/tree/main/packages/igni-extension"
+Issues = "https://github.com/ignite-ember/igni/issues"
 
 [dependency-groups]
 dev = [

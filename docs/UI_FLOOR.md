@@ -1,6 +1,6 @@
 # The UI floor — what an extension can build with
 
-What `@igni/ui-react` and `igni-ui.css` must contain before "build any
+What `@ignite-ember/ui-react` and `igni-ui.css` must contain before "build any
 extension" is true, and how a deployment restyles all of it without
 forking.
 

@@ -140,7 +140,7 @@ complete:
 This compiles, is type-checked in CI, and **cannot run**. Two reasons,
 neither of them about this code:
 
-1. `@igni/extension-bridge` and `@igni/ui-react` are not published
+1. `@ignite-ember/extension-bridge` and `@ignite-ember/ui-react` are not published
    packages — they are a tsconfig alias inside `clients/web`.
 2. Nothing installs an extension. `ExtensionRegistry` takes a
    validated manifest and `ExtensionRpc.bind` takes a service, but

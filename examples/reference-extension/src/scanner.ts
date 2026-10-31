@@ -28,7 +28,7 @@
  * or throws a sentence a person can act on.
  */
 
-import type { Bridge } from "@igni/extension-bridge";
+import type { Bridge } from "@ignite-ember/extension-bridge";
 
 /** How bad, worst first. The order is the sort order. */
 export const SEVERITIES = ["critical", "high", "medium", "low"] as const;

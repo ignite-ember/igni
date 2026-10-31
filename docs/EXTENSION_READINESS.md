@@ -29,7 +29,7 @@ Nothing here is hard. All of it is missing.
 
 | # | State | Note |
 |---|---|---|
-| A1 | ✅ mostly | `@igni/ui-react` and `@igni/ui-css` are packages that pack — 16 files, 31 kB, tests excluded. Not pushed to a registry; for an air-gapped deployment the tarball in the bundle is the delivery anyway. `@igni/extension-bridge` is still a `clients/web` alias. |
+| A1 | ✅ mostly | `@ignite-ember/ui-react` and `@ignite-ember/ui-css` are packages that pack — 16 files, 31 kB, tests excluded. Not pushed to a registry; for an air-gapped deployment the tarball in the bundle is the delivery anyway. `@ignite-ember/extension-bridge` is still a `clients/web` alias. |
 | A2 | ✅ | `list_extensions` tells the client what is installed, its state, its grant list and which loopback port its UI is on; `ExtensionPage` mounts `ExtensionFrame` for a page whose kind the registry says an extension owns. |
 | A3 | ✅ | `ExtensionRpc` is constructed in `BackendApp` and shared by the boot router and every per-session one, so one registry serves the whole backend. |
 | A4 | ✅ | `ExtensionInstaller` validates, checks trust, registers `PREPARING`, starts or reaches the service, serves the UI on its own origin, binds and marks `READY`. Failures after registration are `FAILED` with a reason. |

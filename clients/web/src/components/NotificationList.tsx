@@ -16,7 +16,7 @@
  * work would be a second place to do everything, quietly disagreeing
  * with the first.
  */
-import { Monogram } from "@igni/ui-react";
+import { Monogram } from "@ignite-ember/ui-react";
 
 import type { FloorNotification } from "../notifications/model";
 

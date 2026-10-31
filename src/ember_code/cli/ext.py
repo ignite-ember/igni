@@ -524,7 +524,7 @@ _PAGE = """<!doctype html>
     <div id="root">Loading…</div>
     <script type="module">
       // The bridge, inlined so this scaffold has no build step. A
-      // real extension imports @igni/extension-bridge and gets this
+      // real extension imports @ignite-ember/extension-bridge and gets this
       // with types — see examples/reference-extension.
       const host = window.parent;
       let nonce = null;
@@ -597,8 +597,8 @@ Then restart igni. The page appears in the sidebar.
 - **`server.py`** is where your data comes from. A tool that returns
   JSON arrives in the UI as data rather than a string.
 - **`ui/index.html`** inlines a minimal bridge so this has no build
-  step. For anything real, use `@igni/ui-react` and
-  `@igni/extension-bridge` — see `examples/reference-extension`.
+  step. For anything real, use `@ignite-ember/ui-react` and
+  `@ignite-ember/extension-bridge` — see `examples/reference-extension`.
 
 ## Before anybody else installs it
 

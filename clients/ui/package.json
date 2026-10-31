@@ -1,15 +1,39 @@
 {
-  "name": "@igni/ui-css",
+  "name": "@ignite-ember/ui-css",
   "version": "0.1.0",
   "description": "The stylesheet an igni extension bundles. Classes match igni's own, values are tokens the host pushes live.",
+  "keywords": [
+    "igni",
+    "extension",
+    "css",
+    "design-tokens",
+    "theme"
+  ],
   "license": "Apache-2.0",
+  "author": "Ignite Ember (https://ignite-ember.sh/)",
+  "homepage": "https://github.com/ignite-ember/igni/tree/main/clients/ui#readme",
+  "bugs": {
+    "url": "https://github.com/ignite-ember/igni/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ignite-ember/igni.git",
+    "directory": "clients/ui"
+  },
   "type": "module",
-  "files": ["igni-ui.css", "README.md"],
+  "files": [
+    "igni-ui.css",
+    "README.md",
+    "LICENSE",
+    "NOTICE"
+  ],
   "exports": {
     ".": "./igni-ui.css",
     "./igni-ui.css": "./igni-ui.css"
   },
-  "sideEffects": ["*.css"],
+  "sideEffects": [
+    "*.css"
+  ],
   "publishConfig": {
     "access": "public"
   }

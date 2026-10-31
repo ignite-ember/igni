@@ -10,7 +10,7 @@ Everything here was measured from the tree, not remembered.
 > **Status (2026-10-25): Artifacts is out.** The store and its RPCs
 > moved to `igni__artifacts/extension` first; its panels followed into
 > the extension's own page (`extension/page`, framed by igni and talking
-> to `ext.igni.artifacts.*` through `@igni/extension-bridge`), and the
+> to `ext.igni.artifacts.*` through `@ignite-ember/extension-bridge`), and the
 > prompt text about its documents and its archivist into the extension's
 > `prompt.edits` (four sections of the main prompt it replaces). igni has no `artifact_*` RPC, no Artifacts panel,
 > no `/artifacts` builtin and no prompt text naming either. What is

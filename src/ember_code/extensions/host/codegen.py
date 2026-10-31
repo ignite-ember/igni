@@ -315,7 +315,7 @@ class PythonGenerator:
 
 
 class TypeScriptGenerator:
-    """``hostModel.generated.ts`` in ``@igni/extension-bridge``."""
+    """``hostModel.generated.ts`` in ``@ignite-ember/extension-bridge``."""
 
     def __init__(self, schema: HostSchema = HOST_SCHEMA) -> None:
         self.schema = schema

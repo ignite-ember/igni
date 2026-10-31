@@ -1,5 +1,5 @@
 /**
- * @igni/ui-react — the components an extension is allowed to build on.
+ * @ignite-ember/ui-react — the components an extension is allowed to build on.
  *
  * This list is not a guess at what an extension might want. It is
  * what the first two extensions actually import. CodeIndex needs

@@ -1,4 +1,4 @@
-import { Monogram } from "@igni/ui-react";
+import { Monogram } from "@ignite-ember/ui-react";
 
 import type { StatusUpdate } from "../protocol/messages";
 import { ChevronIcon } from "./Icons";

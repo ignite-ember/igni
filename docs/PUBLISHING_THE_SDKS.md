@@ -1,40 +1,36 @@
 # Publishing the SDKs
 
-igni's SDKs are what services and extensions build on. Five packages, released
-together to igni's private package index:
+igni's SDKs are what services and extensions build on. Five packages,
+released together to the public registries — PyPI and npmjs — from this
+repository, which is public under Apache-2.0:
 
-| Package | Ecosystem | Source | For |
+| Package | Registry | Source | For |
 |---|---|---|---|
-| `igni-service` | Python | `packages/igni-service` | a service: its key, registration, people's tokens, the directory, notifications, erasure and export, its extension bundle |
-| `igni-extension` | Python | `packages/igni-extension` | an extension's process: tools over MCP, its service as the person, the host |
-| `@igni/extension-bridge` | npm | `packages/extension-bridge` | an extension's page: `connect()`, RPC, navigation, theme |
-| `@igni/ui-react` | npm | `packages/ui-react` | the React components under the compatibility floor |
-| `@igni/ui-css` | npm | `clients/ui` | the stylesheet `@igni/ui-react` is drawn with |
+| `igni-service` | PyPI | `packages/igni-service` | a service: its key, registration, people's tokens, the directory, notifications, erasure and export, its extension bundle |
+| `igni-extension` | PyPI | `packages/igni-extension` | an extension's process: tools over MCP, its service as the person, the host |
+| `@ignite-ember/extension-bridge` | npmjs | `packages/extension-bridge` | an extension's page: `connect()`, RPC, navigation, theme |
+| `@ignite-ember/ui-react` | npmjs | `packages/ui-react` | the React components under the compatibility floor |
+| `@ignite-ember/ui-css` | npmjs | `clients/ui` | the stylesheet `@ignite-ember/ui-react` is drawn with |
 
-`@igni/ui-css` is the fifth because `@igni/ui-react`'s README tells every
-extension to install it beside it, and a component package whose stylesheet
-cannot be installed is not installable either.
+`@ignite-ember/ui-css` is the fifth because `@ignite-ember/ui-react`'s README
+tells every extension to install it beside it, and a component package whose
+stylesheet cannot be installed is not installable either.
 
-## Where they go
+The npm scope is `@ignite-ember`, the organisation's name on npmjs; `@igni`
+there is not ours. The Python names are the import names' (`igni_service`,
+`igni_extension`).
 
-Two Artifact Registry repositories per environment, made by igni_iac's
-`modules/artifact-registry` (its SDK package repositories guide has the
-infrastructure and the one-time setup):
-
-| | Python | npm |
-|---|---|---|
-| **prod — the index** | `https://us-central1-python.pkg.dev/ember-prod-491411/ember-prod-python/simple/` | `https://us-central1-npm.pkg.dev/ember-prod-491411/ember-prod-npm/` |
-| dev — rehearsals | `…/ember-dev-491411/ember-dev-python/simple/` | `…/ember-dev-491411/ember-dev-npm/` |
-
-Consumers install from prod. Nothing is published to PyPI or npmjs.
+Every release is also a GitHub Release of this repository, `sdk-v<version>`,
+carrying the same wheels, sdists and npm tarballs and their `SHA256SUMS`: what
+the offline bundle and an air-gapped build take instead of a registry.
 
 ## Versions
 
 **One version for all five (lockstep), semver.** §8 of
 [EXTENSIBILITY.md](EXTENSIBILITY.md) versions the floor independently of the
 product, as semver, declared as a range — and the five packages *are* the
-floor's code: the bridge's protocol is the host's, `@igni/ui-react` is drawn
-with `@igni/ui-css`, `igni-service` builds the bundles `igni-extension` runs
+floor's code: the bridge's protocol is the host's, `@ignite-ember/ui-react` is drawn
+with `@ignite-ember/ui-css`, `igni-service` builds the bundles `igni-extension` runs
 in. Independent versions would ask every extension author to find a
 combination that works together; one version is that combination, and "built
 on SDK 0.3" means one thing. The cost is that a release bumps a package that
@@ -49,7 +45,7 @@ read a changelog for it.
 - **Pre-releases**: `0.4.0-rc.1` (also `-alpha.N`, `-beta.N`). npm reads it as
   written; Python normalises it to `0.4.0rc1`, which is the same version.
   npm publishes a pre-release under the dist-tag `next`, so `npm install
-  @igni/ui-react` never picks one; uv and pip skip pre-releases unless asked.
+  @ignite-ember/ui-react` never picks one; uv and pip skip pre-releases unless asked.
 
 The versions live in the five manifests (`pyproject.toml`, `package.json`) and
 nowhere else. `make sdk-version VERSION=0.4.0` sets all five (and the Python
@@ -62,9 +58,9 @@ itself (`release.yml`), and the two must never trigger each other.
 
 ## TypeScript ships as source
 
-`@igni/extension-bridge` and `@igni/ui-react` are published as their
+`@ignite-ember/extension-bridge` and `@ignite-ember/ui-react` are published as their
 TypeScript source — `main`, `types` and `exports` name `.ts` files — not as
-compiled JavaScript. It is the decision `@igni/ui-react`'s README already
+compiled JavaScript. It is the decision `@ignite-ember/ui-react`'s README already
 records ("Source, not a build"): an extension bundles its own React and runs
 its own build, so a compiled copy would pin a JSX runtime and a target the
 extension may not share.
@@ -80,8 +76,8 @@ alias table the source checkout needed.
 What it asks of a consumer:
 
 - A bundler that compiles TypeScript — Vite, esbuild, Rollup with a TS
-  plugin. Next.js needs `transpilePackages: ["@igni/ui-react",
-  "@igni/extension-bridge"]`; Jest a `transformIgnorePatterns` exception.
+  plugin. Next.js needs `transpilePackages: ["@ignite-ember/ui-react",
+  "@ignite-ember/extension-bridge"]`; Jest a `transformIgnorePatterns` exception.
 - `tsc` type-checks the packages' source under the consumer's own
   `compilerOptions` (`skipLibCheck` covers `.d.ts` only). The source is
   written to `strict`; a consumer with stricter flags than that
@@ -102,119 +98,228 @@ Checks the versions agree, then writes to `dist/sdk/`:
 ```
 dist/sdk/python/igni_service-<v>-py3-none-any.whl  igni_service-<v>.tar.gz
 dist/sdk/python/igni_extension-<v>-py3-none-any.whl  igni_extension-<v>.tar.gz
-dist/sdk/npm/igni-extension-bridge-<v>.tgz  igni-ui-react-<v>.tgz  igni-ui-css-<v>.tgz
+dist/sdk/npm/ignite-ember-extension-bridge-<v>.tgz  ignite-ember-ui-react-<v>.tgz  ignite-ember-ui-css-<v>.tgz
 ```
 
 Python with `uv build --no-sources` (proving the packages build with no
 checkout around them), npm with `npm pack` (each package's `files` list
-leaves its tests out). Install a built one somewhere to try it:
-`uv pip install dist/sdk/python/igni_service-*.whl`, `npm install
-dist/sdk/npm/igni-ui-react-*.tgz`.
+leaves its tests out). Every package carries `LICENSE` and `NOTICE`. To check
+what the registries would see:
+
+```bash
+uvx twine check --strict dist/sdk/python/*                 # PyPI's metadata and README checks
+for t in dist/sdk/npm/*.tgz; do tar -tzf "$t"; done          # what each tarball carries
+for t in dist/sdk/npm/*.tgz; do npm publish "$t" --dry-run --access public; done
+```
+
+Install a built one somewhere to try it: `uv pip install
+dist/sdk/python/igni_service-*.whl`, `npm install
+dist/sdk/npm/ignite-ember-ui-react-*.tgz`.
+
+## The workflow
+
+`.github/workflows/sdk-release.yml` does the publishing; a person only
+versions, rehearses and tags. No publishing credential is stored anywhere:
+PyPI, TestPyPI and npmjs trust the workflow itself, through OIDC (*trusted
+publishing*), and only from the GitHub environment named for each.
+
+| Job | Runs on | |
+|---|---|---|
+| Authorize | both | stops unless the actor is a repository admin (as `release.yml` does) |
+| Resolve | both | a tag is a **release**, a manual run a **rehearsal**; checks a tag names the manifests' version (`make sdk-version-check VERSION=…`) and the five agree; picks the npm dist-tag (`next` for a pre-release, `latest` otherwise) |
+| Verify Python / Verify npm | both | `make packages-check`; `clients/web`'s typecheck and vitest, which cover `packages/` — what ci.yml's `packages` and `web` jobs run, on the released commit |
+| Build | both | `make sdk-build`, `twine check --strict`, `SHA256SUMS`, and each tarball's file list in the run summary; kept as a workflow artifact for 30 days |
+| Rehearse on TestPyPI | rehearsal | environment `testpypi`: uploads the wheels and sdists to test.pypi.org (`pypa/gh-action-pypi-publish`, trusted publishing) |
+| Rehearse npm (dry run) | rehearsal | `npm publish --dry-run --provenance --access public` for each tarball, under the dist-tag a release would use, and the tarballs as an artifact (`npm-tarballs-<v>`) |
+| Publish to PyPI | release | environment `pypi`: uploads to pypi.org (trusted publishing; PEP 740 attestations) |
+| Publish to npmjs | release | environment `npm`: `npm publish --provenance --access public --tag <dist-tag>` for each tarball (trusted publishing; `NPM_TOKEN` only until it is configured — below) |
+| Attach to the GitHub Release | release | creates the `sdk-v<v>` release (a pre-release for `-rc.N` and the like; never marked *latest*, which the desktop app's updater reads) and uploads every file plus `SHA256SUMS` |
+
+**Re-running is safe.** PyPI files already there are skipped
+(`skip-existing`), an npm version already in the registry is skipped, and the
+GitHub Release's files are replaced with the same bytes. A release that failed
+half-way is finished by re-running the workflow. A published version is never
+replaced — PyPI and npm refuse it — so fix forward with the next patch.
+
+**Provenance.** npm records which workflow run built each version, and checks
+the tarball's `repository.url` (`git+https://github.com/ignite-ember/igni.git`)
+against the repository that ran it; the three `package.json`s carry it. PyPI
+attaches the equivalent attestations on its own.
+
+## One-time setup (founder)
+
+Done once, by an owner of the `ignite-ember` GitHub organisation, before the
+first rehearsal. Enable two-factor authentication on every account below;
+PyPI and npm require it to publish.
+
+### 1. PyPI and TestPyPI
+
+TestPyPI is a separate service with separate accounts.
+
+1. Create an account on [pypi.org](https://pypi.org/account/register/) and one
+   on [test.pypi.org](https://test.pypi.org/account/register/), both with 2FA.
+2. Optionally, request an organisation `ignite-ember` on PyPI (Your
+   organisations → Create; a company organisation is reviewed by PyPI, which
+   takes a while). Not needed to publish: the projects can be moved into it
+   later.
+3. On **pypi.org**, Your account → Publishing → *Add a new pending publisher*
+   (GitHub), twice:
+
+   | PyPI project name | Owner | Repository name | Workflow name | Environment name |
+   |---|---|---|---|---|
+   | `igni-service` | `ignite-ember` | `igni` | `sdk-release.yml` | `pypi` |
+   | `igni-extension` | `ignite-ember` | `igni` | `sdk-release.yml` | `pypi` |
+
+4. On **test.pypi.org**, the same two, with environment name `testpypi`.
+
+A pending publisher becomes the project's trusted publisher on the first
+upload, which also creates the project under your account. It does not
+reserve the name until then, so rehearse soon after adding it.
+
+### 2. npmjs
+
+npm's trusted publishing is configured on a package's settings page, so a
+package must exist before it can trust anything. The first publish therefore
+uses a token, and the token is removed straight after.
+
+1. Create an account on [npmjs.com](https://www.npmjs.com/signup), with 2FA.
+2. Create the organisation **`ignite-ember`** (Add organization → the free
+   plan, which is for public packages). The scope `@ignite-ember` is then
+   yours.
+3. For the first release, create a **granular access token** (Access Tokens
+   → Generate New Token → Granular): permission *Read and write*, packages
+   and scopes *`@ignite-ember`*, organisation *`ignite-ember`*, a short
+   expiry (7 days), and *Bypass two-factor authentication* ticked so CI can
+   use it. Store it as the secret **`NPM_TOKEN`** of the GitHub environment
+   `npm` (below) — of the environment, not of the repository.
+4. After the first release has published the three packages, on each
+   package's page → Settings → *Trusted Publisher* → GitHub Actions:
+
+   | Field | Value |
+   |---|---|
+   | Organization or user | `ignite-ember` |
+   | Repository | `igni` |
+   | Workflow filename | `sdk-release.yml` |
+   | Environment name | `npm` |
+
+   for `@ignite-ember/extension-bridge`, `@ignite-ember/ui-react` and
+   `@ignite-ember/ui-css`. Then delete the `NPM_TOKEN` secret and revoke the
+   token, and on each package → Settings → Publishing access choose *Require
+   two-factor authentication and disallow tokens*. From then on the workflow
+   publishes with its OIDC token alone, and nothing else can.
+
+(The alternative to step 3 is to publish `0.1.0` of each package by hand,
+from a laptop signed in with `npm login`, from the tarballs a rehearsal
+uploads — then configure step 4 before the first tagged release. The
+workflow skips a version that is already published.)
+
+### 3. GitHub environments
+
+In `ignite-ember/igni` → Settings → Environments, create three:
+
+| Environment | Required reviewers | Deployment branches and tags | Secrets |
+|---|---|---|---|
+| `testpypi` | the admin | all (a rehearsal runs from any branch) | none |
+| `pypi` | the admin | selected: tag pattern `sdk-v*` | none |
+| `npm` | the admin | selected: tag pattern `sdk-v*` | `NPM_TOKEN`, until npm trusted publishing is configured |
+
+The names must match the trusted publishers above exactly. A release's
+`pypi` and `npm` jobs wait together, so one review approves both. Leave
+*Prevent self-review* off while there is one admin.
+
+## Rehearsing
+
+From any branch whose manifests carry the version to rehearse:
+
+1. Actions → **SDK release** → *Run workflow* on that branch.
+2. Approve the `testpypi` deployment when the run asks.
+3. Check the result:
+   - <https://test.pypi.org/project/igni-service/> and
+     `…/igni-extension/` show the version, with the README and project links
+     rendered.
+   - Install from TestPyPI, taking the dependencies from PyPI (TestPyPI does
+     not have them):
+
+     ```bash
+     uv venv /tmp/sdk-try && uv pip install --python /tmp/sdk-try \
+       --index-url https://test.pypi.org/simple/ --extra-index-url https://pypi.org/simple/ \
+       --index-strategy unsafe-best-match igni-service==<v> igni-extension==<v>
+     ```
+
+   - The run's summary lists each npm tarball's files, and the
+     `npm-tarballs-<v>` artifact holds them: `npm install ./ignite-ember-ui-react-<v>.tgz`
+     in a scratch project.
+
+TestPyPI, like PyPI, never takes the same file twice: a second rehearsal of
+one version uploads nothing. Rehearse changed code under a new pre-release
+(`make sdk-version VERSION=0.4.0-rc.2`).
 
 ## Releasing
 
-`.github/workflows/sdk-release.yml` does the publishing; a person only
-versions and tags.
-
 1. On a branch: `make sdk-version VERSION=0.4.0`, commit, open a PR, merge.
-2. Optionally rehearse on dev: Actions → **SDK release** → Run workflow on
-   `main`, environment `dev`. It publishes the manifests' version to
-   `ember-dev-*`. Re-rehearsing changed code under the same version uploads
-   nothing (the files are already there) — use a pre-release version for a
-   second rehearsal.
+2. Rehearse (above) on `main`.
 3. Tag the merge commit and push the tag:
 
    ```bash
    git tag sdk-v0.4.0 && git push origin sdk-v0.4.0
    ```
 
-The workflow then:
+4. Approve the `pypi` and `npm` deployments when the run asks.
+5. Check <https://pypi.org/project/igni-service/>,
+   <https://pypi.org/project/igni-extension/>,
+   <https://www.npmjs.com/package/@ignite-ember/ui-react> (and the other two;
+   the version page shows *Provenance*), and the `sdk-v0.4.0` GitHub Release.
 
-| Job | |
-|---|---|
-| Authorize | stops unless the actor is a repository admin (as `release.yml` does) |
-| Resolve | prod for a tag (dev or prod for a manual run, prod only on an `sdk-v*` tag); checks the tag names the manifests' version; picks the npm dist-tag |
-| Verify Python / Verify npm | `make packages-check`; `clients/web`'s typecheck and vitest, which cover `packages/` — the same checks ci.yml's `packages` and `web` jobs run, on the released commit |
-| Build | `make sdk-build`, kept as a workflow artifact for 30 days |
-| Publish | in the GitHub environment `sdk-<env>`: signs in through Workload Identity Federation as `ember-<env>-sdk-publish`, then `make sdk-publish` uploads the Python files (`uv publish`) and the npm tarballs (`npm publish`) |
+A pre-release (`sdk-v0.4.0-rc.1`) goes the same way: npm's dist-tag `next`,
+a GitHub pre-release, and PyPI, where installers skip it unless asked.
 
-**Re-running is safe.** `uv publish --check-url` skips files the index already
-has; an npm version already in the registry is skipped. A release that failed
-half-way is finished by re-running the workflow. A published version is never
-replaced — fix forward with the next patch.
+## The first release
 
-`make sdk-publish` can be run by hand by someone with write access
-(`SDK_INDEX_TOKEN=$(gcloud auth print-access-token) make sdk-publish
-SDK_PYTHON_URL=… SDK_NPM_URL=…`), but the workflow is the way: it is what
-checks the versions and runs the tests first.
+In order — the consumers cannot resolve the SDKs before they are published.
+
+1. **One-time setup**, above.
+2. **Rehearse** `0.1.0`, the version all five carry today.
+3. **Release** it: `git tag sdk-v0.1.0 && git push origin sdk-v0.1.0`.
+4. **npm trusted publishing**: configure the three packages, delete
+   `NPM_TOKEN` (one-time setup, step 2.4).
+5. **Consumers' lockfiles**, which do not hold the SDKs from PyPI yet:
+
+   ```bash
+   # igni__code-index and igni__artifacts
+   make lock && make test && git add uv.lock && git commit
+   # optionally, their pages' npm locks
+   make extension-ui-lock && git add extension/page/package-lock.json
+   ```
+
+   Until then their `IGNI_SDK=local` targets are what run, and their image
+   builds stop at the first stage with a message saying exactly this.
 
 ## Installing them
 
-Everything below is what igni__artifacts and igni__extension-starter do.
-
-**Python (uv).** Name the index, make it explicit, pin the SDKs to it:
-
-```toml
-[[tool.uv.index]]
-name = "igni"
-url = "https://us-central1-python.pkg.dev/ember-prod-491411/ember-prod-python/simple/"
-explicit = true
-
-[tool.uv.sources]
-igni-service = { index = "igni" }
-igni-extension = { index = "igni" }
-```
-
-`explicit` means uv asks this index for nothing but what `[tool.uv.sources]`
-pins to it, and the SDKs are pinned to nothing else: a package called
-`igni-service` on PyPI is never a candidate.
-
-**npm.** Map the scope, beside `package.json`:
-
-```ini
-@igni:registry=https://us-central1-npm.pkg.dev/ember-prod-491411/ember-prod-npm/
-//us-central1-npm.pkg.dev/ember-prod-491411/ember-prod-npm/:_authToken=${IGNI_INDEX_TOKEN}
-```
-
-Every `@igni/*` package then comes from igni's registry, and nothing else does.
-
-**Credentials.** Artifact Registry takes a Google OAuth access token, with
-the username `oauth2accesstoken`. On a laptop, signed in with `gcloud` as a
-member of the developers' group:
+**Python.** From PyPI, like anything else:
 
 ```bash
-export IGNI_INDEX_TOKEN="$(gcloud auth print-access-token)"   # an hour
-export UV_INDEX_IGNI_USERNAME=oauth2accesstoken
-export UV_INDEX_IGNI_PASSWORD="$IGNI_INDEX_TOKEN"
+uv add igni-service        # a service
+uv add igni-extension      # an extension's process
 ```
 
-(The consumers' Makefiles set the two `UV_INDEX_IGNI_*` from
-`IGNI_INDEX_TOKEN`.) Longer-lived alternatives, which refresh the token
-themselves: for uv, `uv tool install keyring --with
-keyrings.google-artifactregistry-auth` and `UV_KEYRING_PROVIDER=subprocess`
-(keep `UV_INDEX_IGNI_USERNAME`); for npm, `npx google-artifactregistry-auth`,
-which writes the token into your user `~/.npmrc`.
+**npm.** From npmjs:
 
-**CI** signs in through Workload Identity Federation as the read-only
-`ember-prod-sdk-read` account. Both consumers carry the same composite action,
-`.github/actions/igni-index`, which exports the token to uv, npm and docker
-builds; it needs `id-token: write` and the repository variables
-`IGNI_INDEX_WIF_PROVIDER` and `IGNI_INDEX_SERVICE_ACCOUNT`.
+```bash
+npm install @ignite-ember/extension-bridge @ignite-ember/ui-react @ignite-ember/ui-css
+```
 
-**Docker builds** take the token as a netrc, as a build secret
-(`--secret id=igni_index_netrc,src=.igni-index.netrc`, mounted at
-`/root/.netrc` for the `RUN`s that install), so it is in no layer and no
-history. The image installs from `uv export --frozen` with hashes,
-`igni-service` included — so pip, which has no per-package index, can still
-only install the lock's files.
+Nothing to configure, no token. A consumer's lockfile (`uv.lock`,
+`package-lock.json`) records each file's hash, so a same-named package from
+anywhere else cannot match it.
 
 ### Working against an igni checkout
 
-Both consumers keep a local override, `IGNI_SDK=local`, for changing an SDK
+The consumers keep a local override, `IGNI_SDK=local`, for changing an SDK
 and its consumer together:
 
 ```bash
-make test IGNI_SDK=local                       # igni__artifacts (IGNI=<checkout>, default the sibling)
+make test IGNI_SDK=local                       # igni__artifacts, igni__code-index (IGNI=<checkout>, default the sibling)
 make install IGNI_SDK=local IGNI_REPO=<path>   # igni__extension-starter, then IGNI_SDK=local on every make
 ```
 
@@ -222,66 +327,39 @@ It installs everything else from the committed lockfiles (`uv sync --frozen
 --no-install-package igni-…`), puts the checkout's SDKs over them —
 editable for Python; copies for npm (`npm install --no-save
 --install-links`) — and sets `UV_NO_SYNC` so `uv run` does not undo it. No
-manifest or lockfile changes, and the index is never contacted, so it works
-before a first release, offline, and without index access. Extension bundles
-built this way take igni-extension from wheels of the checkout. Images always
-install from an index.
+manifest or lockfile changes, and no registry is contacted for the SDKs, so it
+works before a release and offline. Extension bundles built this way take
+igni-extension from wheels of the checkout. Images always install from a
+registry.
 
 ### Air-gapped and mirrored builds
 
 Nothing here is needed to *run* igni's services or extensions: an image
 carries its installed SDK and a bundle its wheelhouse. To *build* without
-reaching Google, mirror the repositories — or only the versions the lockfiles
-pin — into an index the build can reach (Artifact Registry in another
-project, Nexus, devpi, Verdaccio), and point the build at it:
+reaching PyPI or npmjs, use a mirror the build can reach (devpi, Nexus,
+Artifactory, Verdaccio) holding the versions the lockfiles pin — the SDKs'
+files are on PyPI and npmjs like the rest, and also attached to each
+`sdk-v<version>` GitHub Release, checksummed, for a mirror that is filled by
+hand:
 
 ```bash
-docker build --build-arg PIP_INDEX_URL=https://mirror.example/pypi/simple/ \
-             --build-arg IGNI_INDEX_URL=https://mirror.example/igni/simple/ …
+gh release download sdk-v0.4.0 --repo ignite-ember/igni --dir sdk-0.4.0
+(cd sdk-0.4.0 && sha256sum -c SHA256SUMS)
 ```
 
-The images install from `uv export` requirements, which carry hashes but
-no URLs, so the mirror only has to serve the same files. `uv sync` is
-different: `uv.lock` records the URL each SDK came from, so a uv-driven
-build against a mirror re-resolves first —
-`UV_INDEX="igni=https://mirror.example/igni/simple/" uv lock` overrides the
-named index without touching `pyproject.toml`, and the lock then records the
-mirror. For npm, `npm config set @igni:registry <mirror>` in the user
-config; `package-lock.json`'s integrity hashes still hold.
+Point the image at the mirror:
 
-## The first release
+```bash
+docker build --build-arg PIP_INDEX_URL=https://mirror.example/pypi/simple/ …
+```
 
-In order — the consumers cannot resolve against an index that is empty.
-
-1. **Infrastructure** (igni_iac): `terraform apply` for prod (and dev for a
-   rehearsal), then the steps in its SDK package repositories guide: the WIF
-   provider's attribute condition, the `sdk-<env>` GitHub environments here
-   with `WIF_PROVIDER`/`WIF_SERVICE_ACCOUNT`, the consumers' repository
-   variables, the developers' group in `sdk_reader_members`.
-2. **Release** `0.1.0`, the version all five carry today: optionally rehearse
-   on dev (above), then `git tag sdk-v0.1.0 && git push origin sdk-v0.1.0`.
-3. **Consumers' lockfiles**, which still describe the SDKs as a checkout:
-
-   ```bash
-   export IGNI_INDEX_TOKEN="$(gcloud auth print-access-token)"
-   # igni__artifacts
-   make lock && make test && git add uv.lock && git commit
-   # igni__extension-starter
-   make lock && make install && make test && git add uv.lock ui/package-lock.json && git commit
-   ```
-
-   Until then their `IGNI_SDK=local` targets are what run, and their CI fails
-   at install — it reads the index, and the index is empty.
+The images install from `uv export` requirements, which carry hashes but no
+URLs, so the mirror only has to serve the same files. For npm, `npm config
+set registry <mirror>`; `package-lock.json`'s integrity hashes still hold.
 
 ## Not done
 
-- **The names on the public registries.** Nothing depends on them any
-  more. The consumers use an explicit index, the `@igni` scope mapping and
-  hashes. The extension-bundle builder resolves with hashes and downloads
-  with `--require-hashes`, so a same-named public package cannot match;
-  an extension's assets are pinned by SHA-256 in its manifest the same way.
-  Registering `igni-service`, `igni-extension` and the `@igni` npm
-  organisation as empty placeholders is still worth doing, so nobody else
-  can publish under those names.
-- **A changelog.** The release workflow writes a run summary, not release
-  notes.
+- **A changelog.** The release writes a run summary and a one-paragraph
+  GitHub Release, not release notes.
+- **A PyPI organisation.** The projects belong to the account that first
+  publishes them until they are moved into one.

@@ -15,7 +15,7 @@
  * Class names match igni's own, and that is the point: a control
  * here is the control there. When one changes, both change.
  *
- * What this covers is every class a `@igni/ui-react` component can
+ * What this covers is every class a `@ignite-ember/ui-react` component can
  * render — checked, not asserted. `ui-react/styled.test.ts` reads
  * each component's `className=` expressions and fails on the first
  * name this file does not define, and the fallback values below are

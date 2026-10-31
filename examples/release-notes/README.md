@@ -101,7 +101,7 @@ workaround. The fix is an envelope kind, additive like `params` and
 ## What does not work yet
 
 One thing, and it is not about this code:
-`@igni/extension-bridge` and `@igni/ui-react` are a tsconfig alias
+`@ignite-ember/extension-bridge` and `@ignite-ember/ui-react` are a tsconfig alias
 inside `clients/web` rather than an install, so `ui/panel.js` is not
 built here.
 
