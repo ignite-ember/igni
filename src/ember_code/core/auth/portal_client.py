@@ -52,6 +52,7 @@ from ember_code.core.config.group_policy import (
     PACK_UNCHANGED,
     GroupPolicyEntry,
     GroupPolicyPack,
+    SignedAbsence,
     UnchangedPack,
 )
 
@@ -259,11 +260,39 @@ class PortalClient:
         except Exception:
             return None
 
+    async def fetch_jwks(self) -> dict | None:
+        """igni server's published signing keys, or ``None``.
+
+        What a group pack's signature is checked against when no key is
+        pinned (``group_policy.trusted_keys``). Fetched from the
+        configured ``api_url`` — over TLS, which is what makes the answer
+        worth trusting; ``PackVerifier`` refuses an unpinned plain-HTTP one.
+        """
+        from ember_code.core.config.group_policy_signature import jwks_url_for
+
+        url = jwks_url_for(self._base("Fetching igni server's signing keys"))
+        try:
+            async with (
+                busy_call("igni-server"),
+                httpx.AsyncClient(timeout=self._http_timeout) as client,
+            ):
+                resp = await client.get(url)
+        except Exception as exc:
+            logger.debug("fetch_jwks network error: %s", exc)
+            return None
+        if resp.status_code != 200:
+            return None
+        try:
+            payload = resp.json()
+        except Exception:
+            return None
+        return payload if isinstance(payload, dict) else None
+
     async def fetch_group_pack(
         self,
         token: str,
         etag: str | None = None,
-    ) -> GroupPolicyPack | None | UnchangedPack:
+    ) -> GroupPolicyPack | SignedAbsence | None | UnchangedPack:
         """Fetch the group pack, or learn that it has not changed.
 
         Three answers, and the caller has to tell them apart:
@@ -271,6 +300,8 @@ class PortalClient:
         * a :class:`GroupPolicyPack` — here is the group's configuration
         * ``None`` — no group, or the request failed; keep what you have
         * :data:`PACK_UNCHANGED` — the server says your copy is current
+        * a :class:`SignedAbsence` — the server says, signed, that you have
+          no pack; once verified, the cached one is cleared
 
         Passing ``etag`` is what makes the third possible. Sessions poll
         this every few minutes, and the answer is nearly always the
@@ -307,6 +338,11 @@ class PortalClient:
             logger.debug("fetch_group_pack decode error: %s", exc)
             return None
 
+        if isinstance(payload, dict) and payload.get("no_pack") and payload.get("signed_pack"):
+            # "No pack for you", signed — verified by ``PackVerifier`` before
+            # it clears anything.
+            return SignedAbsence(payload["signed_pack"], etag=resp.headers.get("etag"))
+
         try:
             entries = [GroupPolicyEntry(**o) for o in payload.get("entries", [])]
             return GroupPolicyPack(
@@ -318,6 +354,10 @@ class PortalClient:
                 default_model=payload.get("default_model"),
                 entries=entries,
                 etag=resp.headers.get("etag"),
+                # The same pack, signed. Only this is applied, after
+                # ``PackVerifier`` has checked it; the fields above are
+                # what an older server sends, and alone they apply nothing.
+                signed_pack=payload.get("signed_pack"),
             )
         except Exception as exc:
             logger.debug("fetch_group_pack schema error: %s", exc)

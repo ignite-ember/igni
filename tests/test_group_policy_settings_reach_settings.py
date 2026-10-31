@@ -13,8 +13,9 @@ got an unexpected keyword argument``.
 The rest pins the other half — that *production* uses it. For a long time
 nothing did, and nothing could: ``GroupPolicyCache.materialize`` never wrote
 ``kind == "settings"`` entries to disk, so between one process and the next
-there was nothing for a fetcher to read. Now the cache persists them
-(``group_settings.json``), ``CachedSettingsFetcher`` reads them, and both
+there was nothing for a fetcher to read. Now the cache persists the pack as
+igni server signed it (``pack.jws``), ``CachedSettingsFetcher`` verifies and
+reads it, and both
 entry points that build a real ``Settings`` — ``BackendApp.run`` and
 ``load_settings_from_options`` — construct one. The end-to-end claim being
 tested is the one an admin makes: publish ``{"learning": {"enabled": false}}``
@@ -38,8 +39,10 @@ from ember_code.core.config.group_policy import (
     GroupPolicyCache,
     GroupPolicyEntry,
     GroupPolicyPack,
+    PackTrust,
 )
 from ember_code.core.config.settings import load_settings
+from tests.group_policy_signing import ISSUER, sign_in, store
 
 
 def _pack(payload: dict, *, enabled: bool = True) -> GroupPolicyPack:
@@ -120,15 +123,17 @@ def _data_dir() -> Path:
     return Path.home() / ".igni"
 
 
-def _publish(payload: dict, *, group_name: str = "Platform") -> GroupPolicyCache:
-    """Act as an admin publishing a policy: materialise it into the cache.
+def _publish(payload: dict, *, group_name: str = "Platform", version: int | None = None) -> Path:
+    """Act as an admin publishing a policy, and igni fetching it.
 
-    Deliberately the real :meth:`GroupPolicyCache.materialize`, not a
-    hand-written file. The claim under test spans the writer and the reader,
-    and a test that wrote ``group_settings.json`` itself would still pass on
-    the day ``_write_settings`` stopped writing it.
+    The cache is left the way a verified hydrate leaves it — the pack
+    materialised, and stored exactly as igni server signed it — with this
+    install configured for that server and its person signed in. Settings
+    are read back from the signed pack and nowhere else.
     """
-    cache = GroupPolicyCache(cache_dir=_data_dir() / "group-policy")
+    _data_dir().mkdir(parents=True, exist_ok=True)
+    (_data_dir() / "config.yaml").write_text(f"api_url: {ISSUER}\n")
+    sign_in(_data_dir() / "credentials.json")
     pack = GroupPolicyPack(
         group_id="g1",
         group_name=group_name,
@@ -140,10 +145,17 @@ def _publish(payload: dict, *, group_name: str = "Platform") -> GroupPolicyCache
                 content=json.dumps(payload),
                 content_type="json",
             )
-        ],
+        ]
+        if payload
+        else [],
     )
-    cache.materialize(pack)
-    return cache
+    store(_data_dir() / "group-policy", pack, version=version)
+    return _data_dir() / "group-policy"
+
+
+def _fetcher() -> CachedSettingsFetcher:
+    """Built the way production builds it: from the local-only settings."""
+    return CachedSettingsFetcher.for_settings(load_settings())
 
 
 class TestTheCachedFetcher:
@@ -153,23 +165,16 @@ class TestTheCachedFetcher:
         """SWP-23, end to end: the published policy reaches ``Settings``."""
         _publish({"learning": {"enabled": False}})
 
-        settings = load_settings(
-            project_dir=tmp_path,
-            group_policy_fetcher=CachedSettingsFetcher(_data_dir()),
-        )
+        settings = load_settings(project_dir=tmp_path, group_policy_fetcher=_fetcher())
 
         assert settings.learning.enabled is False
 
     def test_a_policy_survives_the_process_that_fetched_it(self, tmp_path: Path):
-        """The point of persisting settings: the fetch and the read are in
+        """The point of persisting the pack: the fetch and the read are in
         different processes, so the pack has to come back off disk."""
         _publish({"learning": {"enabled": False}})
 
-        # A fetcher built from nothing but the data directory — no pack
-        # object handed over, no network, no token.
-        assert CachedSettingsFetcher(_data_dir())().to_settings_dict() == {
-            "learning": {"enabled": False}
-        }
+        assert _fetcher()().to_settings_dict() == {"learning": {"enabled": False}}
 
     def test_it_says_in_the_log_that_a_policy_applied(self, tmp_path: Path, caplog):
         """A policy that applies silently is as hard to trust as one that
@@ -177,7 +182,7 @@ class TestTheCachedFetcher:
         _publish({"learning": {"enabled": False}}, group_name="Legal")
 
         with caplog.at_level(logging.INFO, logger="ember_code.core.config.group_policy"):
-            CachedSettingsFetcher(_data_dir())()
+            _fetcher()()
 
         assert any(
             "org group policy applied" in r.message and "Legal" in r.getMessage()
@@ -187,33 +192,30 @@ class TestTheCachedFetcher:
     def test_the_cache_is_read_once_per_fetcher(self):
         """Memoized, so a second tier apply (or a second load) costs nothing
         and cannot disagree with the first."""
-        _publish({"learning": {"enabled": False}})
-        fetcher = CachedSettingsFetcher(_data_dir())
+        cache_dir = _publish({"learning": {"enabled": False}})
+        fetcher = _fetcher()
         first = fetcher()
 
-        (_data_dir() / "group-policy" / GroupPolicyCache.SETTINGS_FILE).unlink()
+        (cache_dir / GroupPolicyCache.SIGNED_PACK_FILE).unlink()
 
         assert fetcher() is first
 
     def test_withdrawing_a_policy_restores_the_default(self, tmp_path: Path):
         """An admin who deletes the settings entry gets the default back —
         the last policy does not stay in force forever."""
-        cache = _publish({"learning": {"enabled": False}})
-        cache.materialize(
-            GroupPolicyPack(
-                group_id="g1",
-                group_name="Platform",
-                fetched_at=datetime.now(timezone.utc),
-                entries=[],
-            )
-        )
+        _publish({"learning": {"enabled": False}}, version=1)
+        _publish({}, version=2)
 
-        settings = load_settings(
-            project_dir=tmp_path,
-            group_policy_fetcher=CachedSettingsFetcher(_data_dir()),
-        )
+        settings = load_settings(project_dir=tmp_path, group_policy_fetcher=_fetcher())
 
         assert settings.learning.enabled is True
+
+    def test_no_unsigned_settings_file_is_written(self):
+        """Settings come back from the signed pack; a derived unsigned copy
+        would be a second thing to forge."""
+        cache_dir = _publish({"learning": {"enabled": False}})
+
+        assert not (cache_dir / GroupPolicyCache.SETTINGS_FILE).exists()
 
 
 class TestItDegradesInsteadOfFailing:
@@ -221,7 +223,7 @@ class TestItDegradesInsteadOfFailing:
 
     def test_no_cache_at_all_is_the_ordinary_case(self, tmp_path: Path):
         """Everyone outside an org. Not an error, not a warning."""
-        fetcher = CachedSettingsFetcher(_data_dir())
+        fetcher = _fetcher()
 
         assert fetcher() is None
         assert load_settings(project_dir=tmp_path, group_policy_fetcher=fetcher).learning.enabled
@@ -232,53 +234,43 @@ class TestItDegradesInsteadOfFailing:
         assert fetcher() is None
         assert load_settings(project_dir=tmp_path, group_policy_fetcher=fetcher)
 
-    def test_a_truncated_cache_file_is_reported_not_raised(self, tmp_path: Path, caplog):
-        """A crash mid-write leaves half a JSON object. Settings still load,
-        and the log distinguishes this from 'your group publishes nothing'."""
-        _publish({"learning": {"enabled": False}})
-        path = _data_dir() / "group-policy" / GroupPolicyCache.SETTINGS_FILE
-        path.write_text('{"learning": {"enab', encoding="utf-8")
+    def test_a_truncated_pack_is_reported_not_raised(self, tmp_path: Path, caplog):
+        """A crash mid-write leaves half a JWS. Settings still load, without
+        the policy, and the log says the pack was ignored."""
+        cache_dir = _publish({"learning": {"enabled": False}})
+        path = cache_dir / GroupPolicyCache.SIGNED_PACK_FILE
+        path.write_text(path.read_text()[:40], encoding="utf-8")
 
         with caplog.at_level(logging.WARNING, logger="ember_code.core.config.group_policy"):
-            settings = load_settings(
-                project_dir=tmp_path,
-                group_policy_fetcher=CachedSettingsFetcher(_data_dir()),
-            )
+            settings = load_settings(project_dir=tmp_path, group_policy_fetcher=_fetcher())
 
         assert settings.learning.enabled is True
-        assert any("malformed" in r.getMessage() for r in caplog.records)
+        assert any("ignored" in r.getMessage() for r in caplog.records)
 
     def test_a_cache_holding_a_list_is_not_a_policy(self, tmp_path: Path):
-        _publish({"learning": {"enabled": False}})
-        path = _data_dir() / "group-policy" / GroupPolicyCache.SETTINGS_FILE
-        path.write_text("[1, 2, 3]", encoding="utf-8")
+        cache_dir = _publish({"learning": {"enabled": False}})
+        (cache_dir / GroupPolicyCache.SIGNED_PACK_FILE).write_text("[1, 2, 3]", encoding="utf-8")
 
-        assert CachedSettingsFetcher(_data_dir())() is None
+        assert _fetcher()() is None
 
     def test_a_policy_outlives_its_metadata(self, tmp_path: Path):
-        """``pack_meta.json`` is identity for the log line and the FE, never
-        input to the merge — losing it must not cost the group its policy."""
-        _publish({"learning": {"enabled": False}})
-        (_data_dir() / "group-policy" / "pack_meta.json").unlink()
+        """``pack_meta.json`` is identity for the FE, never input to the
+        merge — losing it must not cost the group its policy."""
+        cache_dir = _publish({"learning": {"enabled": False}})
+        (cache_dir / "pack_meta.json").unlink()
 
-        settings = load_settings(
-            project_dir=tmp_path,
-            group_policy_fetcher=CachedSettingsFetcher(_data_dir()),
-        )
+        settings = load_settings(project_dir=tmp_path, group_policy_fetcher=_fetcher())
 
         assert settings.learning.enabled is False
 
     def test_unparseable_metadata_does_not_cost_the_policy(self, tmp_path: Path):
-        _publish({"learning": {"enabled": False}})
-        (_data_dir() / "group-policy" / "pack_meta.json").write_text(
+        cache_dir = _publish({"learning": {"enabled": False}})
+        (cache_dir / "pack_meta.json").write_text(
             json.dumps({"group_id": "g1", "group_name": "P", "fetched_at": "not a date"}),
             encoding="utf-8",
         )
 
-        settings = load_settings(
-            project_dir=tmp_path,
-            group_policy_fetcher=CachedSettingsFetcher(_data_dir()),
-        )
+        settings = load_settings(project_dir=tmp_path, group_policy_fetcher=_fetcher())
 
         assert settings.learning.enabled is False
 
@@ -287,8 +279,9 @@ class TestItDegradesInsteadOfFailing:
         hands back an object. Better the default directory than a coerced
         path nobody writes to."""
         _publish({"learning": {"enabled": False}})
+        trust = PackTrust.from_settings(load_settings())
 
-        assert CachedSettingsFetcher(object())() is not None
+        assert CachedSettingsFetcher(object(), trust=trust)() is not None
 
 
 class TestTheEntryPointsBuildOne:

@@ -44,15 +44,59 @@ class PluginInstaller:
         data_dir: str | Path = DEFAULT_DATA_DIR,
         git_client: GitClient | None = None,
         source_policy: PluginSourcePolicy | None = None,
+        plugins_dir: str | Path | None = None,
     ) -> None:
         self._data_dir = Path(str(data_dir)).expanduser()
-        self._plugins_dir = self._data_dir / "plugins"
+        #: ``<data_dir>/plugins`` — the user's own — unless a caller names
+        #: another directory (:meth:`scoped_to`, for a group's pack).
+        self._plugins_dir = (
+            Path(str(plugins_dir)).expanduser() if plugins_dir else self._data_dir / "plugins"
+        )
+        #: Only the user's installs are pinned in ``plugins.json`` and
+        #: updated by ``/plugin update``; a group's are its pack's.
+        self._records_pins = plugins_dir is None
         self._tmp_dir = self._data_dir / "_plugin_install_tmp"
         self._git = git_client or GitClient()
         #: Which URLs install and update may clone or fetch from. Callers
         #: holding a session pass ``PluginSourcePolicy.from_settings``; an
         #: installer built without one is not air-gapped.
         self._source_policy = source_policy or PluginSourcePolicy()
+
+    def scoped_to(self, plugins_dir: str | Path) -> PluginInstaller:
+        """This installer, cloning into ``plugins_dir`` and recording no pins.
+
+        For plugins an organisation's group pack installs: they belong in
+        ``<data_dir>/group-policy/plugins``, where the pack rebuilds and
+        removes them, not among the user's own (``/plugin update`` and
+        ``/plugin remove`` act on those). Same git client, same source
+        policy — an air-gapped install still clones only from inside.
+        """
+        return PluginInstaller(
+            data_dir=self._data_dir,
+            git_client=self._git,
+            source_policy=self._source_policy,
+            plugins_dir=plugins_dir,
+        )
+
+    def release_installed_from(self, url: str) -> list[Path]:
+        """The user-tier plugins recorded as installed from ``url``, forgotten.
+
+        For the one-time move of a group's plugins out of the user's
+        directory, where older releases put them: their pins and sources
+        are dropped from ``plugins.json`` and their directories returned
+        for the caller to move or delete. Only ``<data_dir>/plugins`` is
+        considered, whatever this installer's own directory is.
+        """
+        state = load_state(self._data_dir)
+        names = [name for name, source in state.sources.items() if source == url]
+        if not names:
+            return []
+        for name in names:
+            state.sources.pop(name, None)
+            state.pins.pop(name, None)
+        save_state(state, data_dir=self._data_dir)
+        user_dir = self._data_dir / "plugins"
+        return [user_dir / name for name in names if (user_dir / name).is_dir()]
 
     @property
     def plugins_dir(self) -> Path:
@@ -74,8 +118,14 @@ class PluginInstaller:
         *,
         ref: str | None = None,
         subdir: str | None = None,
+        directory_name: str | None = None,
     ) -> PluginManifest:
         """Install a plugin from *url* into ``~/.igni/plugins/<name>/``.
+
+        ``directory_name`` names the directory instead of the manifest's
+        ``name`` — a group pack's entry name, so the pack can tell its own
+        installs from anything else in its directory. The plugin's identity
+        is still its manifest's ``name``.
 
         ``ref`` may be a branch, tag, or SHA. Branches and tags are
         passed directly to ``git clone --branch``; SHAs are checked
@@ -144,7 +194,7 @@ class PluginInstaller:
             shutil.rmtree(self._tmp_dir, ignore_errors=True)
             raise PluginError(f"plugin.json at {url} is malformed: {e}") from e
 
-        dest = self._plugins_dir / manifest.name
+        dest = self._plugins_dir / (directory_name or manifest.name)
         if dest.exists():
             shutil.rmtree(self._tmp_dir, ignore_errors=True)
             raise PluginError(
@@ -167,10 +217,11 @@ class PluginInstaller:
         # the only commit ID we have; ``update`` re-clones with the
         # same subdir spec to track upstream changes.
         sha = self._git.current_sha(dest) if not subdir else _safe_current_sha(self._git, dest)
-        state = load_state(self._data_dir)
-        state.pins[manifest.name] = sha or ""
-        state.sources[manifest.name] = url
-        save_state(state, data_dir=self._data_dir)
+        if self._records_pins:
+            state = load_state(self._data_dir)
+            state.pins[manifest.name] = sha or ""
+            state.sources[manifest.name] = url
+            save_state(state, data_dir=self._data_dir)
 
         logger.info(
             "Installed plugin '%s' at %s (pin=%s, subdir=%s)",

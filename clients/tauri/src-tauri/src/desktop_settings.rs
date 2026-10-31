@@ -8,10 +8,15 @@
 //! a check that reads the file it is about cannot.
 //!
 //! The layers, in the backend's precedence: the managed-settings file a
-//! sysadmin or MDM deploys, then the organisation's group policy (as cached
-//! on disk by the backend), then `~/.igni/config.yaml`. A project's own
-//! `.igni/config.yaml` is not consulted: the shell has no project when it
-//! reads these.
+//! sysadmin or MDM deploys, then the organisation's group policy, then
+//! `~/.igni/config.yaml`. A project's own `.igni/config.yaml` is not
+//! consulted: the shell has no project when it reads these.
+//!
+//! The group policy layer is the pack the backend cached exactly as igni
+//! server signed it (`group-policy/pack.jws`), and it counts only if its
+//! signature, issuer, subject and version verify (`group_pack.rs`). The
+//! unsigned `group_settings.json` this used to read is gone: a file anyone
+//! who can write the directory can edit is not the organisation's policy.
 //!
 //! Parsed by hand rather than with a YAML crate. A few scalars at known
 //! top-level keys are not worth a dependency in a binary that ships to
@@ -55,8 +60,8 @@ impl DesktopSettings {
         }
     }
 
-    /// A layer from a JSON object's text (the group-policy cache, or a
-    /// managed file written as JSON — which is also YAML, but not the
+    /// A layer from a JSON object's text (a verified group pack's settings,
+    /// or a managed file written as JSON — which is also YAML, but not the
     /// line-per-key YAML the hand parser reads).
     pub fn from_json(text: &str) -> Self {
         let Ok(serde_json::Value::Object(map)) = serde_json::from_str::<serde_json::Value>(text) else {
@@ -98,13 +103,50 @@ impl DesktopSettings {
 
     /// Every layer on this machine, merged: managed over group over user.
     pub fn load() -> Self {
-        let read = |path: Option<PathBuf>| {
-            path.and_then(|p| std::fs::read_to_string(p).ok()).map(|t| DesktopSettings::from_text(&t)).unwrap_or_default()
-        };
+        let text = |path: Option<PathBuf>| path.and_then(|p| std::fs::read_to_string(p).ok());
         let home = dirs::home_dir();
-        read(managed_settings_path())
-            .over(read(home.as_ref().map(|h| h.join(".igni/group-policy/group_settings.json"))))
-            .over(read(home.as_ref().map(|h| h.join(".igni/config.yaml"))))
+        let managed = text(managed_settings_path());
+        let user = text(home.as_ref().map(|h| h.join(".igni/config.yaml")));
+        let group = home.as_ref().map(|h| verified_group_layer(h, managed.as_deref(), user.as_deref())).unwrap_or_default();
+        let layer = |t: Option<&String>| t.map(|t| DesktopSettings::from_text(t)).unwrap_or_default();
+        layer(managed.as_ref()).over(group).over(layer(user.as_ref()))
+    }
+}
+
+/// The organisation's layer, from the signed pack under `home/.igni`, or
+/// nothing when there is no pack or it does not verify.
+///
+/// `api_url` (the pack's issuer) is read from the managed file over the
+/// user's, as the backend reads it; the pinned keys from the environment or
+/// else the managed file only — a pin the user could write would let them
+/// sign their own policy.
+fn verified_group_layer(home: &std::path::Path, managed: Option<&str>, user: Option<&str>) -> DesktopSettings {
+    let dir = home.join(".igni/group-policy");
+    let read = |name: &str| std::fs::read_to_string(dir.join(name)).ok();
+    let Some(compact) = read("pack.jws") else {
+        return DesktopSettings::default();
+    };
+    let jwks = read("jwks.json").and_then(|t| serde_json::from_str(&t).ok()).unwrap_or(serde_json::Value::Null);
+    let api_url = managed
+        .and_then(|t| top_level_string(t, "api_url"))
+        .or_else(|| user.and_then(|t| top_level_string(t, "api_url")));
+    let env_pins = crate::group_pack::pins_from_env(std::env::var(crate::group_pack::TRUSTED_KEYS_ENV).ok().as_deref());
+    let trust = crate::group_pack::Trust {
+        api_url,
+        subject: std::fs::read_to_string(home.join(".igni/credentials.json"))
+            .ok()
+            .and_then(|t| crate::group_pack::subject_from_credentials(&t)),
+        pins: if env_pins.is_empty() { managed.map(crate::group_pack::pins_from_managed).unwrap_or_default() } else { env_pins },
+        min_version: read("pack_state.json")
+            .and_then(|t| serde_json::from_str::<serde_json::Value>(&t).ok())
+            .and_then(|v| v.get("version").and_then(serde_json::Value::as_i64)),
+    };
+    match crate::group_pack::verify(&compact, &jwks, &trust) {
+        Ok(policy) => DesktopSettings::from_json(&crate::group_pack::settings_json(&policy)),
+        Err(why) => {
+            eprintln!("igni: group policy pack ignored ({why})");
+            DesktopSettings::default()
+        }
     }
 }
 
@@ -198,6 +240,19 @@ mod tests {
         );
         assert_eq!(DesktopSettings::from_text("runtime_python:\n").runtime_python, None);
         assert_eq!(DesktopSettings::from_text("x:\n  runtime_python: /evil\n").runtime_python, None, "nested");
+    }
+
+    #[test]
+    fn an_unsigned_group_settings_file_is_not_a_layer() {
+        let home = std::env::temp_dir().join(format!("igni-desktop-settings-{}", std::process::id()));
+        let dir = home.join(".igni/group-policy");
+        std::fs::create_dir_all(&dir).unwrap();
+        // What the cache used to hold, and a pack that is not signed.
+        std::fs::write(dir.join("group_settings.json"), "{\"runtime_python\": \"/evil/python\"}").unwrap();
+        assert_eq!(verified_group_layer(&home, None, Some("api_url: https://igni.example.invalid\n")), DesktopSettings::default());
+        std::fs::write(dir.join("pack.jws"), "e30.eyJydW50aW1lX3B5dGhvbiI6Ii9ldmlsIn0.").unwrap();
+        assert_eq!(verified_group_layer(&home, None, Some("api_url: https://igni.example.invalid\n")), DesktopSettings::default());
+        let _ = std::fs::remove_dir_all(&home);
     }
 
     #[test]

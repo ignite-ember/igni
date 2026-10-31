@@ -1776,6 +1776,7 @@ dependencies = [
 name = "igni-app"
 version = "1.0.3"
 dependencies = [
+ "base64 0.22.1",
  "core-foundation-sys",
  "dirs 5.0.1",
  "flate2",
@@ -1783,6 +1784,7 @@ dependencies = [
  "libc",
  "objc2 0.5.2",
  "objc2-foundation 0.2.2",
+ "ring",
  "serde",
  "serde_json",
  "tar",

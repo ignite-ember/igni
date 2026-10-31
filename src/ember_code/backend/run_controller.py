@@ -463,6 +463,17 @@ class RunController:
         procedural blob.
         """
         self._transition_to(RunPhase.starting)
+
+        # ``group_policy.required`` and no verified pack at start-up: no
+        # agent run, and the person is told how to get one (``GroupPolicyGate``).
+        from ember_code.core.config.group_policy import GroupPolicyGate
+
+        refusal = GroupPolicyGate.reason()
+        if refusal:
+            yield msg.Error(text=refusal)
+            self._transition_to(RunPhase.done)
+            return
+
         team = self._session.main_team
 
         # Consume the one-shot interrupted-summary + drain any

@@ -99,6 +99,13 @@ class SchedulerController:
         :class:`SchedulerRunner` covers both callers: the poller and the
         "run it now" RPC. Both are a stored task firing, not a live turn.
         """
+        from ember_code.core.config.group_policy import GroupPolicyGate
+
+        refusal = GroupPolicyGate.reason()
+        if refusal:
+            # Raised, not returned: a returned string would be recorded as
+            # the task's successful result.
+            raise RuntimeError(refusal)
         team = self._session.main_team
         response = await team.arun(wrap_scheduled_prompt(description), stream=False)
         return extract_response_text(response)

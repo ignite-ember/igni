@@ -19,6 +19,10 @@ import pytest
 
 from ember_code.backend.server_auth import AuthController
 from ember_code.core.config.group_policy import GroupPolicyEntry, GroupPolicyPack
+from tests.group_policy_signing import ISSUER, KEY, session_token
+
+#: Hydration verifies the pack against the person this token names.
+TOKEN = session_token()
 
 
 def _make_controller(tmp_path: Path) -> AuthController:
@@ -32,12 +36,15 @@ def _make_controller(tmp_path: Path) -> AuthController:
     """
 
     settings = SimpleNamespace(
-        api_url="https://api.example.invalid",
+        api_url=ISSUER,
         storage=SimpleNamespace(data_dir=str(tmp_path)),
         auth=SimpleNamespace(credentials_file=str(tmp_path / "credentials.json")),
+        group_policy=SimpleNamespace(trusted_keys=[], required=False),
     )
     portal = MagicMock()
     portal.fetch_group_pack = AsyncMock()
+    # igni server's published keys, which a fetched pack is verified against.
+    portal.fetch_jwks = AsyncMock(return_value=KEY.jwks)
 
     # Bypass __init__ — we only want _hydrate_group_policy reachable.
     ctrl = AuthController.__new__(AuthController)
@@ -48,6 +55,11 @@ def _make_controller(tmp_path: Path) -> AuthController:
 
 
 def _sample_pack() -> GroupPolicyPack:
+    """A pack as the portal client returns it: plain fields and the signed form."""
+    return KEY.signed(_unsigned_pack())
+
+
+def _unsigned_pack() -> GroupPolicyPack:
     return GroupPolicyPack(
         group_id="g-1",
         group_name="Engineering",
@@ -70,11 +82,11 @@ async def test_hydrate_fetches_and_materializes(tmp_path: Path):
     pack = _sample_pack()
     ctrl._portal.fetch_group_pack.return_value = pack
 
-    refreshed = await ctrl._hydrate_group_policy(token="t-1")
+    refreshed = await ctrl._hydrate_group_policy(token=TOKEN)
 
     assert refreshed is True
     # Called with the tag we hold, so an unchanged pack costs a 304.
-    ctrl._portal.fetch_group_pack.assert_awaited_once_with("t-1", None)
+    ctrl._portal.fetch_group_pack.assert_awaited_once_with(TOKEN, None)
     # Cache directory should now have the materialized agent file.
     agent_file = tmp_path / "group-policy" / "agents" / "reviewer.md"
     assert agent_file.exists()
@@ -89,7 +101,7 @@ async def test_hydrate_handles_fetch_failure(tmp_path: Path):
     # Must not raise; the controller returns False to signal "no
     # update landed" so callers / audit logs can distinguish from
     # "cache was fresh, no fetch needed".
-    refreshed = await ctrl._hydrate_group_policy(token="t-2")
+    refreshed = await ctrl._hydrate_group_policy(token=TOKEN)
     assert refreshed is False
     assert not (tmp_path / "group-policy").exists()
 
@@ -99,7 +111,7 @@ async def test_hydrate_handles_none_pack(tmp_path: Path):
     ctrl = _make_controller(tmp_path)
     ctrl._portal.fetch_group_pack.return_value = None
 
-    refreshed = await ctrl._hydrate_group_policy(token="t-3")
+    refreshed = await ctrl._hydrate_group_policy(token=TOKEN)
     # No update landed (None pack), so the controller reports False.
     assert refreshed is False
     # No files written.
@@ -116,7 +128,7 @@ async def test_hydrate_skipped_when_cache_fresh(tmp_path: Path):
     cache.materialize(_sample_pack())
 
     ctrl = _make_controller(tmp_path)
-    refreshed = await ctrl._hydrate_group_policy(token="t-4")
+    refreshed = await ctrl._hydrate_group_policy(token=TOKEN)
     # The fetch was attempted because we constructed cache directly
     # with ``cache_dir`` not derived from ``data_dir`` — but actually
     # the helper derives cache_dir from data_dir when omitted, so we
@@ -151,7 +163,7 @@ async def test_hydrate_passes_plugin_installer_to_cache(tmp_path: Path):
         ],
     )
     ctrl = _make_controller(tmp_path)
-    ctrl._portal.fetch_group_pack.return_value = pack
+    ctrl._portal.fetch_group_pack.return_value = KEY.signed(pack)
 
     # Verify the installer constructor was reached by monkey-patching it
     # and asserting it was called with the controller's data_dir.
@@ -165,7 +177,7 @@ async def test_hydrate_passes_plugin_installer_to_cache(tmp_path: Path):
     import unittest.mock
 
     with unittest.mock.patch.object(PluginInstaller, "__init__", spy_init):
-        refreshed = await ctrl._hydrate_group_policy(token="t-5")
+        refreshed = await ctrl._hydrate_group_policy(token=TOKEN)
 
     assert refreshed is True
     assert calls, "AuthController must instantiate PluginInstaller"
@@ -193,8 +205,8 @@ async def test_concurrent_hydrations_serialize(tmp_path: Path):
 
     # Fire two hydrations concurrently.
     results = await asyncio.gather(
-        ctrl._hydrate_group_policy(token="t-6a"),
-        ctrl._hydrate_group_policy(token="t-6b"),
+        ctrl._hydrate_group_policy(token=TOKEN),
+        ctrl._hydrate_group_policy(token=TOKEN),
     )
 
     # One ran, one was blocked on the lock and saw the fresh cache.
@@ -230,7 +242,7 @@ async def test_hydrate_logs_warning_on_failure(tmp_path, monkeypatch):
 
     ctrl = _make_controller(tmp_path)
     ctrl._portal.fetch_group_pack.side_effect = RuntimeError("portal down")
-    refreshed = await ctrl._hydrate_group_policy(token="t-fail")
+    refreshed = await ctrl._hydrate_group_policy(token=TOKEN)
 
     assert refreshed is False
     assert any("portal down" in m for m in messages), (
@@ -261,7 +273,7 @@ async def test_hydrate_logs_info_on_success(tmp_path, monkeypatch):
     pack = _sample_pack()
     ctrl = _make_controller(tmp_path)
     ctrl._portal.fetch_group_pack.return_value = pack
-    refreshed = await ctrl._hydrate_group_policy(token="t-ok")
+    refreshed = await ctrl._hydrate_group_policy(token=TOKEN)
 
     assert refreshed is True
     assert any("refreshed" in m for m in messages), (

@@ -55,6 +55,7 @@ __all__ = ["AuthController", "CloudPlan", "LoginResult"]
 
 
 if TYPE_CHECKING:
+    from ember_code.core.config.group_policy import PackVerifier
     from ember_code.core.config.settings import Settings
     from ember_code.core.session import Session
 
@@ -333,6 +334,7 @@ class AuthController:
                     data_dir=data_dir,
                     installer=installer,
                     force=force,
+                    verifier=self._pack_verifier(token),
                 )
                 if refreshed:
                     await _emit("group policy pack refreshed")
@@ -350,6 +352,26 @@ class AuthController:
                 with contextlib.suppress(Exception):
                     self._status_provider()
                 return False
+
+    def _pack_verifier(self, token: str) -> PackVerifier:
+        """What checks a fetched pack before any of it is written.
+
+        Bound to the person this token is for (``sub``) and its organisation
+        (``org``, when it names one), the configured
+        ``api_url`` (``iss``) and the pinned keys, which only the managed
+        file or the environment can set. The keys themselves come from igni
+        server's JWKS, fetched now. See ``core/config/group_policy_signature.py``.
+        """
+        from ember_code.core.config.group_policy import PackVerifier
+
+        claims = JwtClaims.decode(token)
+        return PackVerifier(
+            api_url=self._settings.api_url or None,
+            subject=claims.sub if claims else None,
+            pins=tuple(self._settings.group_policy.trusted_keys or ()),
+            jwks_fetch=self._portal.fetch_jwks,
+            org=claims.org if claims else None,
+        )
 
     async def revalidate_for_new_dialogue(self) -> bool:
         """Ask the server whether the group changed, bounded by a timeout.
