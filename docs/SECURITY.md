@@ -15,6 +15,7 @@ igni is an AI agent that reads, writes, and executes code on behalf of the user.
 | **Data exfiltration** | Agent sends code to external services | Network restrictions, web access controls |
 | **Supply chain** | Malicious agents or MCP servers | Agent loading from trusted directories, MCP approval |
 | **Cost runaway** | Agent makes excessive API calls | Token limits, rate limiting, max tool calls |
+| **A web page or local process driving the backend** | Browsers apply no CORS to WebSockets: any page could open `ws://127.0.0.1:<port>` and run tools | Origin allowlist and a per-launch token at the handshake (see [10](#10-the-backends-local-websocket)) |
 
 ---
 
@@ -300,6 +301,10 @@ Hooks extend the security model — they can add custom validation:
 
 See [Hooks](HOOKS.md) for examples: blocking destructive commands, protecting sensitive paths, enforcing test execution.
 
+### Workspace trust
+
+Opening a folder never runs its code or loosens safety until the person trusts it: an untrusted folder's tools, hooks, workflows, language servers, monitors, plugins and markdown-command shell tokens do not run, and its config cannot set `permissions.*`, `safety.*` or the mode. Decisions live in `~/.igni/workspace-trust.json`, keyed by path and git remote. Organisations set `workspace_trust.mode` (`ask` / `trusted_remotes` / `never`) from managed settings or group policy only, and managed permission values are final against every lower tier. See [Workspace trust](CONFIGURATION.md#workspace-trust).
+
 ### 9. Guardrails (AI Safety)
 
 Built-in safety guardrails run as Agno pre-hooks before each agent turn, catching problems before they reach the model:
@@ -320,6 +325,56 @@ guardrails:
 Guardrails are applied via `AgnoFeatures.apply_to_agent()` — they attach as pre-hooks that execute before the model is called. If a guardrail triggers, the agent is informed and can adjust its approach. Guardrails work alongside (not instead of) the permission system and protected paths.
 
 **Enterprise use:** Guardrails are especially valuable for teams where agents process user-provided content (URLs, files, pasted text) that could contain injection attempts or sensitive data.
+
+### 10. The backend's local WebSocket
+
+The desktop app (and the IDE webviews) talk to the backend over a WebSocket
+on `127.0.0.1`, on a port picked at launch and published in
+`<project>/.igni/backend.lock`. Loopback keeps the network out, but not the
+person's own browser: browsers apply no CORS to WebSockets, so any page they
+open could connect and drive an agent that has shell and file access. Two
+checks run at the handshake, before the connection is upgraded
+(`src/ember_code/transport/ws_auth.py`); a refused connection gets
+`403 Forbidden` and a log line that names the reason (`foreign origin`,
+`no token`, `wrong token`) but never the token.
+
+**Origin, always.** A browser always sends `Origin`. Allowed: the Tauri
+webview (`tauri://localhost`, `http://tauri.localhost`,
+`https://tauri.localhost`), VS Code webviews (`vscode-webview://…`) and
+loopback pages (`http(s)://127.0.0.1`, `localhost`, `[::1]`, any port: the
+JetBrains panel's own server, the Vite dev server). Everything else is
+refused, including a DNS-rebound name and `null` (sandboxed iframes,
+`file://`). A request without `Origin` comes from a non-browser client.
+
+**A per-launch token, where the launcher made one.** The desktop app
+generates 32 random bytes (base64url) at each launch of the backend:
+
+| Step | How | Why that way |
+|---|---|---|
+| App → backend | `IGNI_WS_TOKEN` in the child's environment; the backend removes it from its own environment at start | Never on the command line, which `ps` shows; never inherited by the agent's shell commands, hooks or MCP servers |
+| App → its webview | The URL fragment, `index.html?ws=…#igni_ws_token=…` | A fragment is never sent to a server or written to a request log, and it survives reloads |
+| Webview → backend | `Sec-WebSocket-Protocol: igni.v1, igni-token.<token>`; the backend answers `igni.v1` only | The one handshake field a page can set; unlike a query string it ends up in no log |
+| Another igni client on the same project | `ws_token` in `.igni/backend.lock`, which is then written owner-only (0600) | A second desktop window or instance attaches to the running backend instead of starting a duplicate |
+
+The backend compares with `hmac.compare_digest` and refuses a connection
+without the token, with a wrong one, or from a foreign origin even with the
+right one. `X-Igni-Gateway: control` does not stand in for the token: on a
+desktop anybody can send that header.
+
+**Where there is no token.** A backend started by hand
+(`python -m ember_code.backend --ws-port …`) or by the VS Code or JetBrains
+plugin gets no token, so only the Origin check applies: web pages are kept
+out, local processes of the same user are not. In the cloud the backend
+listens inside the producer's VM, reachable only through the node agent's
+vsock stream, and the gateway authenticates every client (an igni bearer
+token) before it opens a stream; the gateway's own connections are marked
+`X-Igni-Gateway: control` by the node agent, which strips that header from
+every other stream. See [CLOUD.md](CLOUD.md).
+
+**Development.** `IGNI_DEV_NO_WS_TOKEN=1` drops the token requirement. The
+desktop app honours it only in a debug build (`cargo tauri dev`) and strips
+it from the backend's environment in a release build; the backend honours it
+with a warning in its log. Never set it on a machine you use for real work.
 
 ---
 

@@ -1097,6 +1097,26 @@ class BackendServer:
     def settings(self) -> Settings:
         return self._settings
 
+    # ── Workspace trust ───────────────────────────────────────────
+
+    @property
+    def workspace_trust(self) -> Any:
+        """Status and answers for this runtime's folder
+        (:mod:`ember_code.backend.workspace_trust_controller`)."""
+        from ember_code.backend.workspace_trust_controller import WorkspaceTrustController
+
+        return WorkspaceTrustController(self.project_dir)
+
+    async def apply_workspace_trust(self) -> None:
+        """Rebuild this runtime's session after the folder's trust changed:
+        settings reload with or without the folder's config, then everything
+        the folder contributes (:meth:`Session.apply_workspace_trust`)."""
+        from ember_code.backend.workspace_trust_controller import reload_settings
+
+        settings = reload_settings(self.project_dir)
+        self._settings = settings
+        await self._session.apply_workspace_trust(settings)
+
     @property
     def run_timeout(self) -> int:
         return self._settings.models.max_run_timeout

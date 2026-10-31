@@ -182,6 +182,9 @@ export const VIEW_STATE: Record<string, Partial<Record<Category, string[]>>> = {
   "components/UpdatePrompt.tsx": {
     pending: ["busy", "error"],
   },
+  "components/WorkspaceTrustDialog.tsx": {
+    pending: ["busy", "error"],
+  },
   "components/WatcherIndicator.tsx": {
     data: ["pids"],
   },

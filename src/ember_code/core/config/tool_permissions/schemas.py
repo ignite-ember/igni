@@ -372,6 +372,16 @@ class CategoryToToolMap(BaseModel):
             pairs.append((cfg.web_fetch, self.web_fetch_tools))
         return pairs
 
+    def iter_config_fields(self, cfg: PermissionsConfig) -> list[tuple[str, list[str]]]:
+        """``(PermissionsConfig field name, [tool names])`` for every category
+        this map knows — the field name being what ``final_fields`` records."""
+        pairs: list[tuple[str, list[str]]] = [
+            (category.value, tools) for category, tools in self.canonical.items()
+        ]
+        pairs.append(("web_search", self.web_search_tools))
+        pairs.append(("web_fetch", self.web_fetch_tools))
+        return pairs
+
 
 def _config_level_for(cfg: PermissionsConfig, category: PermissionCategory) -> str | None:
     """Typed lookup: map a :class:`PermissionCategory` enum member to

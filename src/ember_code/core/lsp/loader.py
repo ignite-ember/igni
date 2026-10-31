@@ -102,7 +102,15 @@ class LspConfigLoader:
     def _load_project_tier(self, result: LspConfigLoadResult) -> None:
         """Load ``<project>/.lsp.json`` if present."""
         project_path = self._project_dir / self._PROJECT_CONFIG_NAME
-        if project_path.is_file():
+        if not project_path.is_file():
+            return
+        # Each entry is a command igni starts; a folder's own only once the
+        # folder is trusted (``core/workspace_trust``).
+        from ember_code.core.workspace_trust import WorkspaceTrust
+
+        if WorkspaceTrust.shared().is_trusted(
+            self._project_dir, what="language servers (.lsp.json)"
+        ):
             self._load_file(result, project_path, namespace="")
 
     def _load_plugin_tier(

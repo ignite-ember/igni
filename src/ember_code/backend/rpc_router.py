@@ -55,6 +55,7 @@ from ember_code.backend.rpc_handlers import (
     SessionRpcHandler,
     SkillsRpcHandler,
     WorkflowsRpcHandler,
+    WorkspaceTrustRpcHandler,
 )
 from ember_code.protocol.rpc import RpcMethod, validate_rpc_table
 
@@ -134,6 +135,7 @@ class RpcRouter:
             PanelRpcHandler(ctx),
             PoolGuardRpcHandler(ctx),
             WorkflowsRpcHandler(ctx),
+            WorkspaceTrustRpcHandler(ctx),
         ]
 
     def build_table(self) -> dict[str, Callable[[dict], Any]]:

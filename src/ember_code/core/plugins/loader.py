@@ -103,9 +103,17 @@ class PluginLoader:
         roots: list[tuple[str, Path, int]] = [
             ("user-claude", Path.home() / ".claude" / "plugins", 1),
             ("user-igni", Path.home() / CONFIG_DIR / "plugins", 2),
-            ("project-claude", project_dir / ".claude" / "plugins", 3),
-            ("project-igni", project_dir / CONFIG_DIR / "plugins", 4),
         ]
+        # A folder's own plugins bring hooks, tools, MCP servers, language
+        # servers and monitors — code — so they load only once the folder is
+        # trusted (``core/workspace_trust``).
+        from ember_code.core.workspace_trust import WorkspaceTrust
+
+        if WorkspaceTrust.shared().is_trusted(project_dir, what="plugins"):
+            roots += [
+                ("project-claude", project_dir / ".claude" / "plugins", 3),
+                ("project-igni", project_dir / CONFIG_DIR / "plugins", 4),
+            ]
 
         # Group-policy tier — plugins installed from
         # :class:`GroupPolicyEntry.source_url` by

@@ -62,6 +62,7 @@ from ember_code.core.agents import AgentPool
 from ember_code.core.auth.credentials import CloudCredentials
 from ember_code.core.broadcast_schema import BroadcastEvent
 from ember_code.core.config.models import ModelRegistry
+from ember_code.core.config.permission_eval.schemas import PermissionMode
 from ember_code.core.config.settings import Settings
 from ember_code.core.config.tool_permissions import ToolPermissions
 from ember_code.core.guardrails.runner import GuardrailRunner
@@ -79,6 +80,7 @@ from ember_code.core.mcp.client import MCPClientManager
 from ember_code.core.mcp.config import MCPConfigLoader
 from ember_code.core.memory.manager import StorageManager
 from ember_code.core.monitors import MonitorManager, load_monitor_config
+from ember_code.core.network_policy import NetworkPolicy
 from ember_code.core.output_styles import OutputStyle, discover_output_styles
 from ember_code.core.plugins import PluginLoader, load_state
 from ember_code.core.prompts import load_prompt
@@ -452,6 +454,7 @@ class Session:
         self.mcp_manager = MCPClientManager(
             self.project_dir,
             group_mcps_dir=self._group_mcps_dir,
+            network_policy=NetworkPolicy.from_settings(self.settings),
         )
         # Session-scoped ``{server: reason}`` cache. Written by
         # :meth:`record_mcp_result` (called from
@@ -748,6 +751,7 @@ class Session:
             self.hooks_map,
             mcp_resolver=self._mcp_resolver_obj.resolve,
             rewake_callback=self._reminder_queue.queue,
+            network_policy=NetworkPolicy.from_settings(self.settings),
         )
         # Rebuild the tool-hook factory so it points at the new
         # executor, carrying the live ``PermissionEvaluator`` across.
@@ -780,6 +784,7 @@ class Session:
             ),
         )
         self._tool_hook_factory.bypass_guard = self._build_bypass_guard(settings)
+        self._tool_hook_factory.ask_person = self._ask_about_tool_call
 
     def _build_bypass_guard(self, settings: Settings) -> Any:
         """Bypass mode's last check, asking through the session's approval channel.
@@ -1047,6 +1052,7 @@ class Session:
             self.hooks_map,
             mcp_resolver=self._mcp_resolver_obj.resolve,
             rewake_callback=self._reminder_queue.queue,
+            network_policy=NetworkPolicy.from_settings(self.settings),
         )
         # Recreate tool event hook on the team
         tool_event_hook = self._create_tool_event_hook()
@@ -1059,6 +1065,63 @@ class Session:
     def reload_plugins(self) -> PluginReloadCounts:
         """Hot-reload plugin contents from disk — no session restart."""
         return self.plugin_reload_orchestrator.reload()
+
+    async def apply_workspace_trust(self, settings: Settings | None = None) -> None:
+        """Pick up a changed workspace-trust decision without a restart.
+
+        Everything a folder brings that runs code — its tools, hooks,
+        plugins, language servers, monitors — and its ``permissions`` /
+        ``safety`` config are read through ``core/workspace_trust`` when
+        they are built, so a decision made after the session started only
+        reaches them by building them again. ``settings`` is the freshly
+        loaded :class:`Settings` (with or without the folder's config).
+
+        The permission evaluator is kept — the mode the person is in and the
+        hook pipeline's reference survive — and only its rule lists are
+        replaced. Its mode follows the new settings only when the person had
+        not changed it from what the old settings started in.
+        """
+        from ember_code.core.config.permission_eval.pipeline import PermissionEvaluator
+        from ember_code.core.config.permission_eval.schemas import PermissionMode
+
+        old_mode = self.settings.permissions.mode
+        if settings is not None:
+            self.settings = settings
+        perms = self.settings.permissions
+        cat_deny, cat_ask, cat_allow = perms.category_rules()
+        fresh = PermissionEvaluator.from_strings(
+            mode=perms.mode,
+            deny=[*perms.deny, *cat_deny],
+            ask=[*perms.ask, *cat_ask],
+            allow=[*perms.allow, *cat_allow],
+        )
+        evaluator = self._tool_hook_factory.permission_evaluator
+        evaluator.deny[:] = fresh.deny
+        evaluator.ask[:] = fresh.ask
+        evaluator.allow[:] = fresh.allow
+        if evaluator.mode.value == old_mode and perms.mode != old_mode:
+            with contextlib.suppress(ValueError):
+                evaluator.set_mode(PermissionMode(perms.mode))
+
+        # Language servers and monitors were started from the old config:
+        # stop them before the managers are rebuilt from the new one.
+        for manager in (getattr(self, "lsp_manager", None), getattr(self, "monitor_manager", None)):
+            if manager is None:
+                continue
+            try:
+                await manager.shutdown_all()
+            except Exception as exc:  # noqa: BLE001 — a stuck server must not block the change
+                logger.warning(
+                    "Could not stop %s on a trust change: %s", type(manager).__name__, exc
+                )
+
+        # Plugins, hooks, output styles, skill/agent pools and plugin MCP
+        # configs; then the language-server and monitor managers; then the
+        # main team, whose build re-discovers custom tools and picks up the
+        # new managers.
+        self.plugin_reload_orchestrator.reload()
+        self._init_lsp_and_monitors()
+        self._rebuild_main_team()
 
     async def _disconnect_removed_mcps(self, names: set[str]) -> None:
         """Thin async wrapper — delegates to
@@ -1387,6 +1450,11 @@ class Session:
     def set_permission_mode(self, mode: str) -> str:
         """Delegate to :meth:`RuntimeModeCoordinator.set_permission_mode`."""
         return self._mode_coord().set_permission_mode(mode)
+
+    def permission_starting_mode(self) -> PermissionMode:
+        """The mode this session started in — where leaving a mode
+        returns to. See :attr:`RuntimeModeCoordinator.starting_mode`."""
+        return self._mode_coord().starting_mode
 
     # ── Plan decision delegation ────────────────────────────────
 

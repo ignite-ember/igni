@@ -97,6 +97,11 @@ import {
 import { MenuIcon as Glyph } from "@igni/ui-react";
 import { NotificationsPanel } from "./components/NotificationsPanel";
 import { unreadFor, useNotificationCounts } from "./notifications/model";
+import {
+  TRUST_DIALOG_KIND,
+  isTrustStatus,
+  useWorkspaceTrust,
+} from "./workspaceTrust/model";
 import { ScrollIndicator } from "./components/ScrollIndicator";
 import { SignInWall } from "./components/SignInWall";
 import { Sidebar, type SessionEntry } from "./components/Sidebar";
@@ -107,6 +112,7 @@ import { HooksPanel } from "./components/panels/HooksPanel";
 import { Toasts } from "./components/Toasts";
 import { HostDialog } from "./components/HostDialog";
 import { UpdatePrompt } from "./components/UpdatePrompt";
+import { WorkspaceTrustDialog } from "./components/WorkspaceTrustDialog";
 import { RetryBanner } from "./components/RetryBanner";
 import { host } from "./lib/host";
 import { applyTheme, brandMark, brandName } from "./lib/theme";
@@ -749,6 +755,9 @@ export default function App() {
   // The directory this window's session is locked to (tools + shell
   // cwd) — the window model's, beside the session.
   const projectDir = useWindowField(windowModel, "project_dir");
+  // "Trust this folder?" — opened while the folder's decision is `ask`
+  // (see ``workspaceTrust/model.ts``).
+  useWorkspaceTrust(client, conn === "connected", projectDir, windowModel, dialog);
   const setProjectDir = useCallback(
     (dir: string) => windowModel.write("project_dir", dir),
     [windowModel],
@@ -3877,6 +3886,14 @@ export default function App() {
         <UpdatePrompt
           info={dialog.spec as unknown as UpdateInfo}
           onDismiss={() => windowModel.answerDialog(dialog.id, null)}
+        />
+      )}
+      {dialog?.spec.kind === TRUST_DIALOG_KIND && isTrustStatus(dialog.spec) && (
+        <WorkspaceTrustDialog
+          key={dialog.id}
+          client={client}
+          status={dialog.spec}
+          onClose={() => windowModel.answerDialog(dialog.id, null)}
         />
       )}
       {dialog?.spec.kind === "extension" && (

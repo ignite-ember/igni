@@ -163,6 +163,12 @@ markers = [
     # tests/conftest.py runs every test inside the egress guard; this is
     # the one way out, for a test whose subject is reaching the internet.
     "reaches_the_internet: the test reaches a host outside the customer network on purpose; the egress guard stands down",
+    # tests/conftest.py starts extension processes unsandboxed; this is the
+    # way back in, for a test whose subject is the sandbox.
+    "extension_sandbox: the test runs extension processes in the real OS sandbox and reads the real sandbox settings",
+    # tests/conftest.py opens every folder as a trusted one; this is the way
+    # back to real workspace trust, for a test whose subject it is.
+    "workspace_trust: the test gets real workspace trust (folders start untrusted) instead of the suite's trust-everything default",
 ]
 
 [tool.ruff]

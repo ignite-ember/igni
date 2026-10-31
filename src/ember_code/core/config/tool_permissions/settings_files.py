@@ -75,13 +75,22 @@ class SettingsFileLoader:
         direction for this particular disagreement to fail in.
         """
         home_ember = home_config_dir()
-        project_ember = project_config_dir(self._project_dir)
-        return [
+        paths = [
             home_ember / "settings.json",
             home_ember / "settings.local.json",
-            project_ember / "settings.json",
-            project_ember / "settings.local.json",
         ]
+        # A folder's own rules count only once it is trusted
+        # (``core/workspace_trust``): an untrusted repository could otherwise
+        # commit ``allow: [Bash]`` for whoever opens it.
+        from ember_code.core.workspace_trust import WorkspaceTrust
+
+        if WorkspaceTrust.shared().is_trusted(self._project_dir, what="permission rules"):
+            project_ember = project_config_dir(self._project_dir)
+            paths += [
+                project_ember / "settings.json",
+                project_ember / "settings.local.json",
+            ]
+        return paths
 
     def load_all(self) -> list[LoadResult]:
         """Load every file in :meth:`paths`, in priority order.

@@ -68,6 +68,7 @@ from ember_code.core.config.schemas import (
     LearningConfig,
     MemoryConfig,
     ModelsConfig,
+    NetworkConfig,
     OrchestrationConfig,
     PermissionsConfig,
     PluginsConfig,
@@ -77,6 +78,7 @@ from ember_code.core.config.schemas import (
     SchedulerConfig,
     SkillsConfig,
     StorageConfig,
+    WorkspaceTrustConfig,
 )
 from ember_code.core.config.settings_loader import SettingsLoader
 
@@ -156,22 +158,44 @@ class Settings(BaseModel):
     # (``clients/tauri/src-tauri/src/runtime.rs``), like ``update_endpoint``.
     runtime_python: str = ""
     # One switch for a deployment whose network has no route out: when
-    # set, igni makes no connection outside the customer's network.
-    # What it turns off, each where the request is made:
+    # set, no connection igni starts itself leaves the customer's
+    # network. What it turns off, each where the request is made:
     #
     # * the PyPI update check (``core/utils/update_checker.py``);
     # * the desktop updater's call to github.com — the app asks
     #   ``update_endpoint`` (a mirror inside the network) or nothing
     #   (the Rust side reads this key itself, as it does the two above);
     # * the session-start clone of Anthropic's plugin marketplace, and
-    #   the refresh of any marketplace that is not the customer's own
+    #   any plugin or marketplace clone that is not the customer's own
     #   (``plugins``, ``core/plugins/source_policy.py``);
-    # * WebFetch and WebSearch, denied below so neither toolkit is built.
+    # * WebFetch and WebSearch, denied below so neither toolkit is built;
+    # * the decision model's Hugging Face download — the decisions
+    #   service loads from its local cache only (``decisions_server/model.py``,
+    #   through ``IGNI_AIR_GAPPED``, which the backend exports to it);
+    # * ``igni ext install`` from a repository, an MCP server reached by
+    #   URL, and an ``http`` hook, when the host is outside the network.
+    #   Inside means a local path or ``file://``, loopback, or a host
+    #   ``network`` below names (``core/network_policy.py``).
+    #
+    # What it does not cover, because igni does not make the connection:
+    # the agent's shell commands, stdio MCP servers and ``command``
+    # hooks. Those are processes igni starts, and what they reach is
+    # limited by the network itself — which an air-gapped deployment
+    # has to do anyway.
     #
     # Also set by ``IGNI_AIR_GAPPED=1`` in the environment, and by a
     # managed-settings file or an organisation's group policy carrying
     # ``air_gapped: true`` — both already merge any top-level key.
     air_gapped: bool = False
+    # The hosts inside the customer's network, read only under
+    # ``air_gapped``: ``internal_hosts`` takes exact names and
+    # ``*.acme.internal`` suffix patterns. The hosts of ``api_url``,
+    # ``portal_url``, ``update_endpoint`` and ``plugins.marketplaces``
+    # are inside without being listed, and so is loopback. A project's
+    # ``.igni/config.yaml`` cannot set it (``ProjectYamlTier`` in
+    # ``merge_plan.py``): a cloned repository must not widen the air
+    # gap it runs under.
+    network: NetworkConfig = Field(default_factory=NetworkConfig)
     #: The variable a deployment turns air-gapped mode on with. It only
     #: turns it on: an unset or false variable leaves the file's choice.
     AIR_GAPPED_ENV: ClassVar[str] = AIR_GAPPED_ENV
@@ -195,6 +219,10 @@ class Settings(BaseModel):
     group_policy: GroupPolicyConfig = Field(default_factory=GroupPolicyConfig)
     plugins: PluginsConfig = Field(default_factory=PluginsConfig)
     display: DisplayConfig = Field(default_factory=DisplayConfig)
+    #: Which folders may run their own code (``core/workspace_trust``).
+    #: Managed-only: a user's, a project's or the CLI's value is discarded
+    #: (``WorkspaceTrustTier`` in ``merge_plan.py``).
+    workspace_trust: WorkspaceTrustConfig = Field(default_factory=WorkspaceTrustConfig)
 
     # TODO: Add telemetry config so users can wire their own Agno server or
     #       compatible telemetry endpoint (e.g. telemetry.enabled, telemetry.endpoint).
@@ -370,6 +398,7 @@ __all__ = [
     "LearningConfig",
     "MemoryConfig",
     "ModelsConfig",
+    "NetworkConfig",
     "OrchestrationConfig",
     "PermissionsConfig",
     "PluginsConfig",
@@ -381,5 +410,6 @@ __all__ = [
     "SettingsLoader",
     "SkillsConfig",
     "StorageConfig",
+    "WorkspaceTrustConfig",
     "load_settings",
 ]

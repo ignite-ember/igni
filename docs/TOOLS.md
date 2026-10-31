@@ -427,6 +427,8 @@ def run_tests(test_path: str = "") -> str:
 
 Place custom tools in `~/.igni/tools/` or `.igni/tools/` for project-level tools. They're automatically discovered and available to agents.
 
+Discovering a tool imports its file, which runs it, so a project's `.igni/tools/` is loaded only once the folder is trusted. The same goes for a project's `.lsp.json`, `.monitors.json` and plugins (`.igni/plugins/`, `.claude/plugins/`). See [Workspace trust](CONFIGURATION.md#workspace-trust).
+
 ---
 
 ## Plugins — Claude-Code-compatible bundles

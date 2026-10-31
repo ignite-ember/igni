@@ -142,6 +142,14 @@ def _read_json(path: Path) -> dict | None:
         return None
 
 
+def _project_trusted(project_dir: Path) -> bool:
+    """A folder's ``.monitors.json`` commands start only once it is trusted
+    (``core/workspace_trust``)."""
+    from ember_code.core.workspace_trust import WorkspaceTrust
+
+    return WorkspaceTrust.shared().is_trusted(project_dir, what="monitors (.monitors.json)")
+
+
 def load_monitor_config(
     project_dir: Path,
     plugin_roots: list[tuple[Path, str]] | None = None,
@@ -159,8 +167,10 @@ def load_monitor_config(
         out.update(_parse_monitors_dict(data))
 
     project_path = project_dir / ".monitors.json"
-    if project_path.is_file() and (data := _read_json(project_path)) is not None:
-        out.update(_parse_monitors_dict(data))
+    if project_path.is_file() and _project_trusted(project_dir):
+        data = _read_json(project_path)
+        if data is not None:
+            out.update(_parse_monitors_dict(data))
 
     for root, plugin_name in plugin_roots or []:
         plugin_path = root / ".monitors.json"

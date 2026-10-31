@@ -82,6 +82,9 @@ _SHELL_TOKEN_RE = re.compile(r"!`([^`\n]+)`")
 # templates routinely pull in ``@pyproject.toml`` / ``@Cargo.toml``.
 _AT_FILE_RE = re.compile(r"@([^\s)]+)")
 
+#: What a ``!`cmd``` token becomes in an untrusted folder's command.
+_UNTRUSTED_SHELL_MARKER = "[shell command not run: this folder is not trusted — see `igni trust`]"
+
 # How long any single shell substitution can run before we bail and
 # inline an error marker. 30 seconds keeps a hung command from
 # locking up the entire turn while still leaving room for slow git
@@ -120,9 +123,30 @@ class MarkdownCommand(BaseModel):
         the only shell that ever runs is the shell the command file
         itself wrote.
         """
-        text = await _substitute_shell(self.body, args=args, cwd=project_dir or self.path.parent)
+        if self._shell_allowed(project_dir):
+            text = await _substitute_shell(
+                self.body, args=args, cwd=project_dir or self.path.parent
+            )
+        else:
+            text = _SHELL_TOKEN_RE.sub(_UNTRUSTED_SHELL_MARKER, self.body)
         text = _substitute_files(text, source=self.path, project_dir=project_dir)
         return text.replace("$ARGUMENTS", args)
+
+    def _shell_allowed(self, project_dir: Path | None) -> bool:
+        """A command file from the folder itself runs its ``!`cmd``` tokens
+        only once the folder is trusted (``core/workspace_trust``); the
+        markdown still loads and renders. The user's and the org's commands
+        are not the folder's, and run as before."""
+        if project_dir is None:
+            return True
+        from ember_code.core.data_paths import canonical_project_dir
+
+        folder = canonical_project_dir(project_dir)
+        if not self.path.resolve().is_relative_to(folder):
+            return True
+        from ember_code.core.workspace_trust import WorkspaceTrust
+
+        return WorkspaceTrust.shared().is_trusted(folder, what="markdown-command shell tokens")
 
     @classmethod
     def discover(

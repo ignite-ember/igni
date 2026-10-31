@@ -130,6 +130,50 @@ class ToolPermissions:
             for tool in tools:
                 if defaults.for_tool(tool) != level:
                     self._tool_levels[tool] = level
+        self._apply_final_levels(cfg)
+
+    #: How permissive each level is; a lower tier may only move a final
+    #: level towards the strict end.
+    _LOOSENESS: dict[str, int] = {"deny": 0, "ask": 1, "allow": 2}
+
+    def _apply_final_levels(self, cfg: PermissionsConfig) -> None:
+        """Make the organisation's category levels final.
+
+        The comparison against the default above exists so a config that
+        merely carries the default does not overwrite a settings-file rule —
+        but a level the managed settings or the group policy set is not
+        "merely the default". Without this, a managed ``shell_execute: ask``
+        (the default) left a project's ``allow: [Bash]`` standing. Here each
+        tool in a final category gets the organisation's level, and any
+        argument rule from the settings files that would loosen it is dropped.
+        """
+        final = getattr(cfg, "final_fields", frozenset())
+        if not final:
+            return
+        for category, tools in self._category_map.iter_config_fields(cfg):
+            if category not in final:
+                continue
+            level = getattr(cfg, category, None)
+            if level not in self._LOOSENESS:
+                continue
+            ceiling = self._LOOSENESS[level]
+            for tool in tools:
+                self._tool_levels[tool] = level
+            before = len(self._rules)
+            self._rules = [
+                rule
+                for rule in self._rules
+                if rule.tool_name not in tools or self._LOOSENESS[rule.level] <= ceiling
+            ]
+            if len(self._rules) != before:
+                logger.info(
+                    "Dropped %d permission rule(s) for %s that would loosen the "
+                    "organisation's %s: %s.",
+                    before - len(self._rules),
+                    ", ".join(tools),
+                    category,
+                    level,
+                )
 
     # ── Public API ───────────────────────────────────────────────
 

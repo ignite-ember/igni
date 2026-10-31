@@ -16,6 +16,7 @@ from ember_code.core.config.schemas.llm_behavior import (
     ReasoningConfig,
 )
 from ember_code.core.config.schemas.models import ModelsConfig
+from ember_code.core.config.schemas.network import NetworkConfig
 from ember_code.core.config.schemas.orchestration import (
     AgentsConfig,
     ContextConfig,
@@ -33,6 +34,7 @@ from ember_code.core.config.schemas.storage_and_paths import (
     GroupPolicyConfig,
     StorageConfig,
 )
+from ember_code.core.config.schemas.workspace_trust import WorkspaceTrustConfig
 
 __all__ = [
     "AgentsConfig",
@@ -46,6 +48,7 @@ __all__ = [
     "LearningConfig",
     "MemoryConfig",
     "ModelsConfig",
+    "NetworkConfig",
     "OrchestrationConfig",
     "PermissionsConfig",
     "PluginsConfig",
@@ -55,4 +58,5 @@ __all__ = [
     "SchedulerConfig",
     "SkillsConfig",
     "StorageConfig",
+    "WorkspaceTrustConfig",
 ]

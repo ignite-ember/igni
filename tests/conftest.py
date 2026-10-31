@@ -57,6 +57,57 @@ def _nothing_leaves_the_network(request: pytest.FixtureRequest) -> Iterator[None
         pytest.fail(log.report(), pytrace=False)
 
 
+#: The marker a test carries when the extension sandbox is its subject.
+#: Registered in ``pyproject.toml``; the fixture below stands down for it.
+EXTENSION_SANDBOX = "extension_sandbox"
+
+
+@pytest.fixture(autouse=True)
+def _extension_processes_unsandboxed(request: pytest.FixtureRequest, monkeypatch) -> None:
+    """Extension processes the suite starts run outside the OS sandbox.
+
+    As if ``extensions.sandbox: false`` were in the user's settings. The
+    tests written before the sandbox existed are about other things, and
+    their fixtures do what an unconfined process may (write a pid file
+    beside themselves; run ``config.command`` without its arguments).
+    The sandbox's own tests carry ``@pytest.mark.extension_sandbox`` and
+    get the real settings and the real sandbox.
+    """
+    if request.node.get_closest_marker(EXTENSION_SANDBOX):
+        return
+    from ember_code.extensions.sandbox.settings import SandboxSettings
+
+    monkeypatch.setattr(
+        SandboxSettings,
+        "load",
+        classmethod(lambda cls, **_: cls(enabled=False, disabled_by="test suite's")),
+    )
+
+
+#: The marker a test carries when workspace trust is its subject.
+#: Registered in ``pyproject.toml``; the fixture below stands down for it.
+WORKSPACE_TRUST = "workspace_trust"
+
+
+@pytest.fixture(autouse=True)
+def _workspace_trust(request: pytest.FixtureRequest) -> Iterator[None]:
+    """Every folder the suite opens is trusted, unless the test is about trust.
+
+    Workspace trust (``core/workspace_trust``) starts every folder untrusted,
+    and the tests written before it exist open project folders whose tools,
+    hooks and settings are their subject. Those get a trusted folder, as a
+    person who had trusted it would. A test marked
+    ``@pytest.mark.workspace_trust`` gets the real decision, starting unset.
+    """
+    from ember_code.core.workspace_trust import WorkspaceTrust
+
+    WorkspaceTrust.reset_shared(
+        trust_everything=not request.node.get_closest_marker(WORKSPACE_TRUST)
+    )
+    yield
+    WorkspaceTrust.reset_shared(trust_everything=True)
+
+
 @pytest.fixture(autouse=True)
 def _isolate_user_settings(tmp_path_factory, monkeypatch):
     """Globally redirect ``Path.home()``, ``Path.cwd()``, and the

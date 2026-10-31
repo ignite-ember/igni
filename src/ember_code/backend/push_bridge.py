@@ -334,6 +334,12 @@ class PushNotificationBridge:
             NotificationsChanged(counts=counts).model_dump(),
         )
 
+    def workspace_trust(self, status: dict) -> None:
+        """The folder's workspace-trust status, after an answer (or when a
+        window must ask): every window showing the trust dialog for that
+        folder closes it, or opens it when ``state`` is ``ask``."""
+        self._schedule_push(PushChannel.WORKSPACE_TRUST_REQUIRED, status)
+
     # ── Private helpers ─────────────────────────────────────────
 
     def _schedule_push(self, channel: str, payload: dict) -> None:

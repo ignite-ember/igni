@@ -65,6 +65,7 @@ from ember_code.extensions.profile import DeploymentProfile, DevelopmentFlag
 from ember_code.extensions.python_env import PythonEnvironments
 from ember_code.extensions.registry import ExtensionRegistry
 from ember_code.extensions.rpc import ExtensionRpc
+from ember_code.extensions.sandbox import ExtensionSandbox
 from ember_code.extensions.service_attachments import ServerAttachments
 from ember_code.extensions.service_events import DeliveredEvents, ServiceEventInbox
 from ember_code.extensions.service_landing import Lander
@@ -92,10 +93,21 @@ class TransportBuilder:
     receives every broadcast (via the composite transport's fan-out).
     """
 
-    def __init__(self, *, socket_path: str | None, ws_port: int | None) -> None:
+    def __init__(
+        self, *, socket_path: str | None, ws_port: int | None, ws_token: str | None = None
+    ) -> None:
         self._socket_path = socket_path
         self._ws_port = ws_port
+        # The launcher's per-launch secret; every WS connection must
+        # offer it (``transport/ws_auth.py``). ``None``: Origin check only.
+        self._ws_token = ws_token
         self._ws_transport: Any = None
+
+    @property
+    def ws_token(self) -> str | None:
+        """The token WS clients must offer, published in the lockfile
+        so a second igni client on this project can attach."""
+        return self._ws_token
 
     @property
     def ws_transport(self) -> Any:
@@ -112,7 +124,7 @@ class TransportBuilder:
         if self._ws_port is not None:
             from ember_code.transport.websocket import WebSocketServerTransport
 
-            self._ws_transport = WebSocketServerTransport(port=self._ws_port)
+            self._ws_transport = WebSocketServerTransport(port=self._ws_port, token=self._ws_token)
             children.append(self._ws_transport)
 
         if len(children) == 1:
@@ -143,6 +155,7 @@ class BackendApp:
         project_dir: Path,
         resume_session_id: str | None,
         additional_dirs: list[Path] | None,
+        ws_token: str | None = None,
     ) -> None:
         self._socket_path = socket_path
         self._ws_port = ws_port
@@ -150,7 +163,9 @@ class BackendApp:
         self._resume_session_id = resume_session_id
         self._additional_dirs = additional_dirs
 
-        self._transport_builder = TransportBuilder(socket_path=socket_path, ws_port=ws_port)
+        self._transport_builder = TransportBuilder(
+            socket_path=socket_path, ws_port=ws_port, ws_token=ws_token
+        )
         # Wired in ``run`` — kept as attributes so shutdown/teardown
         # can access whatever the boot happened to build.
         self._transport: Any = None
@@ -199,14 +214,30 @@ class BackendApp:
         live portal call cannot happen here, because the token this process
         authenticates with is read out of the ``Settings`` being built. See
         :class:`~ember_code.core.config.group_policy.CachedSettingsFetcher`.
+
+        The fetcher verifies the pack before any of it is merged, and when the
+        managed setting ``group_policy.required`` is on and no verified pack
+        can be had, it raises. The backend still comes up — on local settings,
+        so the person can sign in, which is how a valid pack is fetched — but
+        with :class:`~ember_code.core.config.group_policy.GroupPolicyGate`
+        closed, so no agent run starts and each attempt says why.
         """
-        from ember_code.core.config.group_policy import CachedSettingsFetcher
+        from ember_code.core.config.group_policy import (
+            CachedSettingsFetcher,
+            GroupPolicyGate,
+            GroupPolicyUnavailable,
+        )
 
         local_only = load_settings(project_dir=self._project_dir)
-        return load_settings(
-            project_dir=self._project_dir,
-            group_policy_fetcher=CachedSettingsFetcher(local_only.storage.data_dir),
-        )
+        try:
+            return load_settings(
+                project_dir=self._project_dir,
+                group_policy_fetcher=CachedSettingsFetcher.for_settings(local_only),
+            )
+        except GroupPolicyUnavailable as exc:
+            logger.error("group-policy: %s", exc)
+            GroupPolicyGate.close(str(exc))
+            return local_only
 
     async def run(self) -> None:
         """Boot, serve, and tear down. Exceptions in the boot or
@@ -612,6 +643,8 @@ class BackendApp:
             environments=PythonEnvironments(store.environments_root),
             service_tokens=self._service_tokens,
             host_channel=self._host_channel,
+            # Its air gap narrows what an extension's process may reach.
+            sandbox=ExtensionSandbox.for_settings(settings),
         )
         launcher = ExtensionLauncher(
             store=store,
@@ -664,7 +697,9 @@ class BackendApp:
             # ``<project>/.igni/backend.lock`` so a second client
             # opening the same project can discover this BE.
             assert self._supervisor is not None
-            self._supervisor.write_discovery_lockfile(ws_transport.port)
+            self._supervisor.write_discovery_lockfile(
+                ws_transport.port, ws_token=self._transport_builder.ws_token
+            )
         if self._socket_path is not None:
             ready.socket = str(self._socket_path)
         # ``exclude_none`` matches the legacy shape: keys the caller

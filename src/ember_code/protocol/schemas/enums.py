@@ -359,6 +359,12 @@ class PushChannel(StrEnum):
     #: one it names opens it. The payload is
     #: :class:`~ember_code.extensions.host.model.ExternalOpen`.
     OPEN_EXTERNAL = "open_external"
+    #: The folder's workspace-trust status (``core/workspace_trust``): sent
+    #: after someone answers the trust dialog, so every window showing it for
+    #: that folder updates; a window opens the dialog while ``state`` is
+    #: ``ask``. The payload is
+    #: :class:`~ember_code.backend.workspace_trust_controller.WorkspaceTrustStatus`.
+    WORKSPACE_TRUST_REQUIRED = "workspace_trust_required"
     UNKNOWN = "unknown"
 
     @classmethod

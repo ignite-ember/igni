@@ -87,7 +87,7 @@ files are `mode: "serial"`; see below for why.
 | Area | Functions | verified | answers | todo |
 |---|---|---|---|---|
 | Conversation | 11 | 3 | 7 | 1 |
-| Tool calls & permissions | 5 | 3 | 2 | 0 |
+| Tool calls & permissions | 7 | 3 | 2 | 2 |
 | Sub-agents & orchestration | 4 | 0 | 4 | 0 |
 | Plan mode | 3 | 0 | 3 | 0 |
 | Sessions | 8 | 4 | 4 | 0 |
@@ -99,7 +99,7 @@ files are `mode: "serial"`; see below for why.
 | Knowledge & learnings | 8 | 0 | 8 | 0 |
 | Files, dirs & attachments | 4 | 0 | 3 | 1 |
 | Client shell & state | 9 | 2 | 6 | 1 |
-| **Total** | **97** | **14** | **76** | **7** |
+| **Total** | **99** | **14** | **76** | **9** |
 
 ## Conversation
 
@@ -131,6 +131,8 @@ Every tool pauses for a human unless a rule says otherwise. The highest-risk sur
 | `run_shell` | A command that fails; one that writes to stderr only; one that never exits. | `verified` |
 | `read_file` | A file outside the project dir; a binary; a file deleted between approval and read. Sweep: **answers** (default run). | `answers` |
 | `complete_files` | No matches; thousands of matches; a path with spaces. Sweep: **answers** (default run). | `answers` |
+| `get_workspace_trust` | A folder nobody decided about (`ask`); one under `workspace_trust.mode: never` (`can_trust` false, with the reason); a clone moved to a new path, or a different remote at a trusted path (`ask` again). `tests/test_workspace_trust_rpc.py`. Not yet driven in the app. | `todo` |
+| `set_workspace_trust` | Trust, Don't trust, This time only; a refusal by policy (the RPC fails with the reason); trusting mid-session brings the folder's hooks, tools, plugins, language servers and permission rules in without a restart, and revoking takes them out again (`tests/test_workspace_trust_rpc.py`). Not yet driven in the app. | `todo` |
 
 ## Sub-agents & orchestration
 

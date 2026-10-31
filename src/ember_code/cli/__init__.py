@@ -39,6 +39,7 @@ import os
 import sys
 import threading as stdlib_threading
 import traceback
+from pathlib import Path
 from typing import Any
 
 import click
@@ -51,6 +52,7 @@ from ember_code.cli.invocation import (
 )
 from ember_code.cli.migrate import migrate
 from ember_code.cli.options import CliOptions
+from ember_code.cli.trust import trust_command
 from ember_code.core import air_gap
 from ember_code.core import session as _session_module
 from ember_code.core.paths import DEFAULT_DATA_DIR
@@ -113,6 +115,14 @@ logger = stdlib_logging.getLogger(__name__)
         "Pair with permissions.allow to opt tools back in"
     ),
 )
+@click.option(
+    "--trust",
+    is_flag=True,
+    help=(
+        "Trust this folder for this run: its tools, hooks, workflows, language "
+        "servers and settings load (if your organisation's policy allows it)"
+    ),
+)
 @click.option("--worktree", is_flag=True, help="Run in an isolated git worktree")
 @click.option(
     "--add-dir",
@@ -141,7 +151,29 @@ def cli(ctx: click.Context, **_params: object) -> None:
         return
 
     options = CliOptions.model_validate(ctx.params)
-    settings = load_settings_from_options(options)
+    from ember_code.core.config.group_policy import GroupPolicyUnavailable
+
+    try:
+        settings = load_settings_from_options(options)
+    except GroupPolicyUnavailable as exc:
+        # ``group_policy.required`` and no verified pack: no session, and
+        # the message says what to do. ``igni login`` still works — it is a
+        # subcommand, handled above.
+        raise click.ClickException(str(exc)) from exc
+    # Workspace trust: the folder's config, tools, hooks and the rest wait for
+    # it (``core/workspace_trust``). Settled after the first load, which read
+    # the organisation's policy, and settings reload with the folder's config
+    # once it is trusted. Only for a run that starts a session.
+    folder = Path.cwd()
+    if options.message or options.pipe:
+        from ember_code.cli.trust import SessionTrust
+
+        became_trusted = SessionTrust(
+            folder, pipe=options.pipe, trust_flag=options.trust, quiet=options.quiet
+        ).settle()
+        if became_trusted:
+            settings = load_settings_from_options(options)
+
     # A ``-m`` or pipe run starts igni's decisions service itself, and that
     # process reads no settings: it inherits the air-gap decision instead.
     air_gap.export_to(os.environ, settings.air_gapped)
@@ -151,6 +183,7 @@ def cli(ctx: click.Context, **_params: object) -> None:
 
     invocation.resolve_resume_id()
     invocation.setup_worktree()
+    _carry_trust_into_worktree(folder, invocation.project_dir)
     invocation.resolve_additional_dirs()
     invocation.store_context()
 
@@ -164,6 +197,18 @@ def cli(ctx: click.Context, **_params: object) -> None:
     # No message + no subcommand → point users at the React clients.
     invocation.echo_help_pointer()
     invocation.cleanup_worktree()
+
+
+def _carry_trust_into_worktree(folder: Path, worktree: Path | None) -> None:
+    """``--worktree`` runs in a new folder of the same repository: trusted for
+    this run when the folder it was made from is (and policy allows it)."""
+    if worktree is None or worktree == folder:
+        return
+    from ember_code.core.workspace_trust import WorkspaceTrust
+
+    service = WorkspaceTrust.shared()
+    if service.is_trusted(folder):
+        service.grant_for_run(worktree)
 
 
 #: How long the drain below waits for leftover tasks before giving up on them.
@@ -288,3 +333,4 @@ if __name__ == "__main__":
 # Registered after the callback so the module reads top to bottom.
 cli.add_command(ext)
 cli.add_command(migrate)
+cli.add_command(trust_command)

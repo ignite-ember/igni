@@ -66,6 +66,13 @@ NOT_REACHABLE: tuple[Unreachable, ...] = (
         "for an event*, below). It does not deliver them.",
     ),
     Unreachable(
+        key="workspace_trust",
+        what="Workspace trust (`get_workspace_trust`, `set_workspace_trust`, the "
+        "`workspace_trust_required` push)",
+        why="Trusting a folder lets it run its own code; that is the person's decision, "
+        "made in igni's own dialog or `igni trust`, never an extension's.",
+    ),
+    Unreachable(
         key="service",
         what="A page's token for its own service (`extension_service_token`)",
         why="Not igni's to model: it is how a page reaches its own service "
@@ -186,6 +193,8 @@ RPC_UNREACHABLE: dict[RpcMethod, str] = {
     RpcMethod.EXTENSION_SERVICE_TOKEN: "service",
     RpcMethod.DELIVER_SERVICE_EVENTS: "events",
     RpcMethod.VM_SIGN_IN: "credentials",
+    RpcMethod.GET_WORKSPACE_TRUST: "workspace_trust",
+    RpcMethod.SET_WORKSPACE_TRUST: "workspace_trust",
 }
 
 
@@ -299,6 +308,7 @@ PUSH_UNREACHABLE: dict[PushChannel, str] = {
     PushChannel.HOST_SIGNAL: "channel",
     PushChannel.OPEN_EXTERNAL: "channel",
     PushChannel.WINDOW_MODEL_CHANGED: "channel",
+    PushChannel.WORKSPACE_TRUST_REQUIRED: "workspace_trust",
 }
 
 #: ``UNKNOWN`` is the enum's catch-all for a channel nobody listed,

@@ -146,7 +146,13 @@ class WorkflowDiscovery:
         it. The per-user layer stays LAST and still beats everything.
         """
         out: list[Path] = []
-        layers = [self._team_dir, self._user_dir]
+        # Discovery *runs* each file (``--discovery`` evaluates it to read its
+        # ``meta``), so a folder's own workflows are neither discovered nor
+        # run until the folder is trusted (``core/workspace_trust``).
+        from ember_code.core.workspace_trust import WorkspaceTrust
+
+        trusted = WorkspaceTrust.shared().is_trusted(self._project_dir, what="workflows")
+        layers = [self._team_dir, self._user_dir] if trusted else []
         if self._group_dir is not None:
             layers.insert(0, self._group_dir)
         for directory in layers:
@@ -496,8 +502,13 @@ class WorkflowRunner:
         result: Any = None
         error: str | None = None
         try:
+            from ember_code.core.config.group_policy import GroupPolicyGate
+
             team = getattr(session, "main_team", None)
-            if team is None:
+            refusal = GroupPolicyGate.reason()
+            if refusal:
+                error = refusal
+            elif team is None:
                 error = "session.main_team not available"
             else:
                 response = await asyncio.wait_for(

@@ -114,6 +114,8 @@ Hooks are defined in settings files, with the same format as Claude Code:
 | `.igni/settings.json` | This project | Yes (commit to repo) |
 | `.igni/settings.local.json` | This project | No (gitignored) |
 
+A project's hooks — in `.igni/settings*.json` and, with cross-tool support, `.claude/settings*.json` — load only once the folder is trusted. In an untrusted folder only your own (`~/.igni`, `~/.claude`) and your organisation's hooks run. See [Workspace trust](CONFIGURATION.md#workspace-trust).
+
 ### Format
 
 ```json
@@ -512,6 +514,10 @@ echo '{"continue": true}'
 - Set `"background": true` for fire-and-forget hooks that don't block the agent
 
 ---
+
+## Workflows and workspace trust
+
+Workflows are `.mjs` scripts in `.claude/workflows/` (the team's, committed) and `.igni/workflows/` (yours), plus any your organisation's group policy ships. Listing them runs each file once to read its `meta` export, so a project's workflows are neither discovered nor run until the folder is trusted; the organisation's still are. See [Workspace trust](CONFIGURATION.md#workspace-trust).
 
 ## Extensions
 

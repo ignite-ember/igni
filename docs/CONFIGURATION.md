@@ -12,6 +12,8 @@ igni is configured through a layered system of config files, environment variabl
 4. **User config** — `~/.igni/config.yaml` (global, generated on first run)
 5. **Defaults** — built-in sensible defaults
 
+A project's config counts only once you trust the folder, and some keys it may never set — see [Workspace trust](#workspace-trust).
+
 Each level deep-merges over the previous. The `~/.igni/config.yaml` file is automatically generated from defaults on first run via `yaml.dump(DEFAULT_CONFIG)` — a single source of truth.
 
 ## Models & Authentication
@@ -410,6 +412,208 @@ display:
   color_theme: "auto"              # auto, dark, light
 ```
 
+## Organisation group policy
+
+An organisation's admins publish settings, agents, hooks and MCP servers for
+each group on igni server. igni fetches the signed-in person's pack at start,
+at sign-in and every `group_policy.poll_seconds`, caches it under
+`<storage.data_dir>/group-policy/`, and applies its `settings` above CLI flags
+and below the managed-settings file at the next start.
+
+### How a pack is verified
+
+igni server signs each pack as a compact JWS, using the key it signs igni
+tokens with and publishes at `<api_url>/.well-known/jwks.json` (`RS256`, `kid`
+in the header, `typ: igni-group-policy+jwt`). The payload carries the pack
+(`policy`), `iss` (the server's public URL), `sub` (the person it was served
+to), `org`, `iat` and a monotonic `version`. It has no expiry, so a cached pack
+keeps working offline.
+
+igni stores the JWS exactly as received (`pack.jws`) and verifies it both when
+it is fetched and every time it is read at start-up, before any of it is
+merged:
+
+- the signature, against a trusted key (below);
+- `iss` against the configured `api_url`;
+- `sub` against the person signed in (`~/.igni/credentials.json`);
+- `version`: not older than the newest pack this install has accepted (a
+  rollback is refused);
+- `org`: when the signed-in session names an organisation, the pack's must be
+  the same one.
+
+A pack that is missing, unsigned, edited, signed by another key, issued by
+another server, person or organisation, or older than one already applied is
+**never merged**.
+
+The pack's agents, hooks, MCP servers, scripts and plugin entries are files
+under `group-policy/` that their loaders read directly. At every start, once
+the pack has verified, igni rebuilds them from it: a deleted or edited org
+agent or hook is written back, and a file or plugin directory added beside
+them is removed. With no pack this install may apply, they are removed. A
+plugin installed from a git `source_url` is not re-cloned at start-up; the
+next fetch does that. If the rebuild fails, the settings still apply, unless
+`group_policy.required` is on, in which case no session starts.
+
+When a person has no pack (no organisation, or no group), igni server says
+so in a signed answer (`no_pack: true`) rather than an empty response. igni
+verifies it like a pack, then removes the cached pack and everything derived
+from it. Because the answer carries a `version`, an older pack put back
+afterwards is refused as a rollback. A verified "no pack" satisfies
+`group_policy.required`. Only the signed content is applied; the plain fields in the
+same response are ignored. The old unsigned `group_settings.json` is no longer
+written or read, by igni or by the desktop app, which verifies the same JWS
+itself before it reads `air_gapped`, `update_endpoint`, `update_check_ttl` or
+`runtime_python` from a group's policy.
+
+### Trusted keys, and what pinning buys
+
+```yaml
+# managed-settings.yaml only (or the environment, below)
+group_policy:
+  trusted_keys:          # RFC 7638 JWK thumbprints of igni server's signing keys
+    - 3q2-7wABCDEF...    # igni server's `kid` for a key it generated is its thumbprint
+  required: true         # no verified pack, no agent session
+```
+
+1. **Pinned keys**, `group_policy.trusted_keys`: thumbprints, computed by igni
+   from the key itself (never read from the `kid`). The key material still comes
+   from igni server's JWKS, but only a key with a pinned thumbprint is used.
+2. **Otherwise**, igni server's JWKS, fetched over TLS when the pack is fetched
+   (an unpinned JWKS over plain HTTP is trusted only from loopback), and cached
+   beside the pack (`jwks.json`) for offline starts.
+
+Without a pin, the cached JWKS lives in the same user-writable directory as the
+pack. It stops a repository, a stray file or a forged pack on its own, but
+**not the person who owns the machine** or malware running as them: whoever can
+write the directory can replace the pack and the keys together. A pinned key
+closes that: a forged pack needs a key whose thumbprint the administrator
+pinned, which only igni server holds. Pin every key igni server publishes,
+including a newly staged one before it activates (igni server stages a
+rotated key before it signs with it), or packs signed after a rotation will not verify.
+
+Deleting the pack is something no signature can prevent. That is what
+`group_policy.required` is for.
+
+### `group_policy.required`
+
+- **On:** a missing or invalid pack is not ignored. If somebody is signed in,
+  igni first tries to fetch a valid pack from igni server. If that fails, no
+  agent session starts: `igni -m` exits with a message, and the desktop backend
+  still comes up (so the person can sign in) but refuses every run, scheduled
+  task and workflow agent step, saying to connect to igni server, sign in and
+  restart igni.
+- **Off (default):** an unusable pack is ignored with a warning and igni runs
+  on local settings.
+
+The desktop app's own four settings never fail closed: with no verified pack
+it uses the managed-settings file and `~/.igni/config.yaml` alone. Put a
+setting that must hold for the desktop shell in the managed-settings file.
+
+### Managed-only settings
+
+`group_policy.trusted_keys` and `group_policy.required` are honoured **only**
+from the managed-settings file and the environment:
+
+- `IGNI_GROUP_POLICY_TRUSTED_KEYS` — comma- or space-separated thumbprints.
+  Replaces the managed file's list when set.
+- `IGNI_GROUP_POLICY_REQUIRED=1` (also `true`, `yes`, `on`) — turns
+  `required` on; it never turns it off.
+
+The same keys in `~/.igni/config.yaml`, a project's config, a CLI flag or the
+group pack itself are ignored with a warning: whoever could set them could pin
+a key of their own, or make a missing policy harmless.
+
+## Workspace trust
+
+Opening a folder never runs its code or loosens igni's safety until you trust
+the folder. A repository is written by whoever can commit to it, so the things
+it brings that run code — or that would switch safety off — wait for trust.
+
+**What an untrusted folder does not get**
+
+| Gated | Where it comes from |
+|---|---|
+| Custom tools (imported = run) | `.igni/tools/*.py` |
+| Hooks | `.igni/settings*.json`, `.claude/settings*.json` |
+| Workflows (discovery evaluates each file) | `.claude/workflows/*.mjs`, `.igni/workflows/*.mjs` |
+| Language servers | `.lsp.json` |
+| Monitors | `.monitors.json` |
+| Project plugins | `.igni/plugins/`, `.claude/plugins/` |
+| Markdown commands' `` !`cmd` `` tokens | `.igni/commands/`, `.claude/commands/` (the token becomes a "not run" marker; the command itself still loads) |
+| `permissions.*` (rules, categories, `mode`) and `safety.*` (safety lists, Bypass guard) | `.igni/config.yaml`, `config.local.yaml`, `settings.json`, `settings.local.json` |
+
+Keys a project may never set, trusted or not, stay as before: `network`,
+`air_gapped`, `api_url`, `portal_url`, `update_endpoint`,
+`plugins.marketplaces`, `storage.data_dir` — and now `workspace_trust`.
+
+Everything else works untrusted: reading files, `igni.md` and rules, markdown
+agents, skills and commands, and the rest of the project's config. A
+project's `.mcp.json` is still governed by its own first-use approval
+([MCP](MCP.md)). Your own `~/.igni` tools, hooks and settings, and your
+organisation's, are not the folder's and are unaffected.
+
+A trusted folder behaves as before, except that **managed values are final**:
+a permission field set in the managed-settings file or the group policy cannot
+be loosened by any lower tier, a trusted project included. A managed
+`shell_execute: ask` holds against a project's `allow: [Bash]` — the category
+is enforced even though `ask` is its default, and a lower tier's looser rules
+for its tools are dropped.
+
+**Where the decision is kept.** `~/.igni/workspace-trust.json` — per user,
+never in the repository. Each entry is keyed by the folder's canonical path
+(symlinks resolved) *and* its git remote, normalised (`git@github.com:acme/app.git`
+→ `github.com/acme/app`, credentials removed). The remote is read from
+`.git/config` directly; igni does not run `git` in a folder it does not trust.
+So a moved or renamed clone asks again, and so does a different repository
+checked out at a trusted path. A folder with no remote is keyed by its path.
+
+**Being asked.** A decision is one of *Trust*, *Don't trust* or *This time
+only* (trusted until the process exits). Until someone answers, the folder
+runs untrusted.
+
+- Desktop and web: the app asks when a folder nobody has decided about opens,
+  showing the path and git remote. Answering *Trust* loads the folder's tools,
+  hooks and settings without reopening it.
+- `igni -m` on a terminal: asks the first time.
+- Headless (`-p`, `-m` with no terminal, CI): never asks. The folder is
+  untrusted unless you trusted it before, pass `--trust` (trusted for this run,
+  if policy allows), or policy trusts it (`auto_trust_remotes`, below).
+  `--worktree` carries the original folder's trust to its worktree for the run.
+
+```bash
+igni trust              # trust the current folder
+igni trust ~/src/app    # …or another one
+igni trust --revoke     # forget the decision; igni asks again
+igni trust --list       # every folder you have decided about
+igni -m "fix the build" --trust   # trusted for this run only
+```
+
+**Organisation policy.** Managed-only: honoured from the managed-settings file,
+the group policy pack, or the environment. A `workspace_trust` block in
+`~/.igni/config.yaml`, a project's config or on the CLI is ignored with a
+warning.
+
+```yaml
+# managed-settings.yaml
+workspace_trust:
+  mode: trusted_remotes        # ask (default) | trusted_remotes | never
+  trusted_remotes:             # shell wildcards; scheme, user and .git ignored
+    - github.com/acme/*
+    - gitlab.acme.internal/platform/*
+  auto_trust_remotes: false    # true: matching remotes are trusted without asking (CI)
+```
+
+- `ask` — the person decides, per folder.
+- `trusted_remotes` — only a folder whose remote matches may be trusted;
+  any other (including one with no remote) stays untrusted, `--trust` and
+  *Trust* are refused, and the prompt says why.
+- `never` — every folder is untrusted.
+
+`IGNI_WORKSPACE_TRUST_MODE` and `IGNI_WORKSPACE_TRUSTED_REMOTES`
+(comma-separated) can only tighten: the mode applies when it is stricter than
+the configured one, the remotes when no tier named any. An invalid policy
+block fails closed (`never`).
+
 ## Air-gapped mode
 
 One switch for a deployment whose network has no route out. Once set, igni
@@ -455,8 +659,27 @@ What it turns off:
 | Desktop first launch | Downloads uv, CPython, `ignite-ember` and the decision model | No download; the app runs on `runtime_python` (below), or refuses with a message naming it |
 | Decision model (Laya, Hugging Face) | Downloaded on first use if not cached | Loaded only from the local cache, with the hub offline; refused with a message saying how to pre-seed it |
 | Plugin marketplace at session start | Clones `github.com/anthropics/claude-plugins-official` | Not registered or refreshed; only local paths and `plugins.marketplaces` |
-| `/plugin marketplace add`, `/plugin install`, `/plugin update`, the plugins panel, group-policy plugins | Any git URL | Local paths and hosts named in `plugins.marketplaces`; others are refused before git runs |
+| `/plugin marketplace add`, `/plugin install`, `/plugin update`, the plugins panel, group-policy plugins | Any git URL | Local paths and hosts inside the network (below); others are refused before git runs |
+| `igni ext install <url>` | Clones any git URL | Hosts inside the network only; others are refused before git runs |
+| MCP servers reached by URL | Connected | Hosts inside the network only; others are refused as a failed connection |
+| HTTP hooks | Sent | Hosts inside the network only; others are not sent and count as a failed hook |
 | WebFetch, WebSearch (DuckDuckGo) | Allowed | Denied; neither toolkit is built |
+
+A host is **inside the network** if it is a local path or `file://`, loopback,
+the host of `api_url`, `portal_url`, `update_endpoint` or `plugins.marketplaces`,
+or listed under `network.internal_hosts` (exact hosts, or `*.suffix`
+patterns):
+
+```yaml
+network:
+  internal_hosts: ["git.acme.internal", "*.svc.acme.internal"]
+```
+
+A project's `.igni/config.yaml` and `config.local.yaml` may not set
+`air_gapped`, `network`, `api_url`, `portal_url`, `update_endpoint` or
+`plugins.marketplaces`: a repository is whoever wrote it, so it may neither
+switch the mode off nor name a host as inside. Those keys are ignored there,
+with a warning.
 
 The plugin clone also has its own switch, independent of air-gapped mode:
 `plugins.default_marketplace: false` stops igni registering Anthropic's
@@ -467,9 +690,11 @@ marketplace and leaves everything else as it was.
 remote) against the same rule. A plugin with neither is not updated while
 air-gapped: reinstall it from a local path or an internal host.
 
-Not covered by the switch: model endpoints, MCP servers, git remotes and the
-other integrations a user or administrator points at a host themselves. Name
-hosts inside your network for those.
+Not covered by the switch: what the agent runs as an ordinary program — shell
+commands (`curl`, `pip`, `git`), MCP servers started as local processes, and
+command hooks — and the model endpoints an administrator configures. Your
+network limits those as it limits any program; run igni behind a deny-all
+egress rule.
 
 ### Providing the desktop runtime
 
@@ -505,6 +730,9 @@ rather than allows.
 Authentication is handled by `/login` — no API key environment variables needed for server-hosted models. The default model is set via `models.default` in your config, and agents can override it per-agent in their `.md` files.
 
 > **Note:** BYOM API keys (OpenAI, Anthropic, etc.) are configured per model in your registry via `api_key_env`, `api_key`, or `api_key_cmd` — you choose the variable name yourself.
+
+`IGNI_WORKSPACE_TRUST_MODE` / `IGNI_WORKSPACE_TRUSTED_REMOTES` tighten the
+organisation's workspace-trust policy ([Workspace trust](#workspace-trust)).
 
 `IGNI_AIR_GAPPED=1` turns on air-gapped mode (above). A backend whose settings
 say `air_gapped: true` sets it for the processes it starts, so igni's decisions
@@ -550,6 +778,10 @@ ignite-ember --resume <session-id>   # resume specific session
 # Direct execution
 ignite-ember -m "add tests for auth module"   # non-interactive single task
 cat src/auth.py | ignite-ember -p              # pipe stdin as context
+
+# Workspace trust
+ignite-ember -m "…" --trust          # trust this folder for this run
+ignite-ember trust [--revoke|--list] # record, forget or list decisions
 ```
 
 ## Project Instructions (Hierarchical Rules)
@@ -727,7 +959,7 @@ Custom agents are auto-discovered and added to the agent pool. If no `model` is 
 
 ## Custom Tools
 
-Drop Python files in `.igni/tools/` to add project-specific tools:
+Drop Python files in `.igni/tools/` to add project-specific tools. They are imported — run — only once the folder is trusted ([Workspace trust](#workspace-trust)):
 
 ```python
 # .igni/tools/docker_helpers.py

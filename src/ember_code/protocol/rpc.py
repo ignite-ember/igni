@@ -56,6 +56,10 @@ class RpcMethod(StrEnum):
     and ``"login"`` compare equal as dict keys / equality checks).
     """
 
+    # ── Workspace trust ───────────────────────────────────────────
+    GET_WORKSPACE_TRUST = "get_workspace_trust"
+    SET_WORKSPACE_TRUST = "set_workspace_trust"
+
     # ── MCP ───────────────────────────────────────────────────────
     ENSURE_MCP = "ensure_mcp"
     MCP_CONNECT = "mcp_connect"

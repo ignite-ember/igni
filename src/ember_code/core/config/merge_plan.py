@@ -76,6 +76,83 @@ class YamlTier(Tier):
         return accumulator.merge(self._source.load())
 
 
+class ProjectYamlTier(YamlTier):
+    """A project's YAML file, less the keys a repository may not set.
+
+    A project's ``.igni/config.yaml`` arrives with the repository: anyone
+    who can commit to it writes it. ``network`` says which hosts an
+    air-gapped igni may reach, so a project that could set it could open
+    the air gap for whoever clones it. It comes from the user's file, the
+    group policy or the managed file, and a project's is dropped with a
+    warning rather than merged.
+    """
+
+    #: Top-level keys a project file may not set.
+    #: Keys a repository may not set. A repository's config is whoever
+    #: wrote the repository, so it may neither switch air-gapped mode off,
+    #: name a host igni would then treat as inside the network, nor move
+    #: ``storage.data_dir`` — the organisation's group policy is read from
+    #: under it, so moving it would hide the policy or plant a forged one.
+    #: A dotted key is one field inside a block.
+    _NOT_FROM_A_PROJECT: tuple[str, ...] = (
+        "storage.data_dir",
+        "network",
+        "air_gapped",
+        "api_url",
+        "portal_url",
+        "update_endpoint",
+        "plugins.marketplaces",
+    )
+
+    #: Further keys a project may set only once the folder is trusted
+    #: (``core/workspace_trust``): its permission rules and mode, and the
+    #: safety lists and Bypass guard. An untrusted repository could otherwise
+    #: empty ``safety.blocked_commands``, ``allow: [Bash]`` or start in
+    #: ``bypassPermissions`` for whoever opens it.
+    _ONLY_WHEN_TRUSTED: tuple[str, ...] = ("permissions", "safety")
+
+    def __init__(self, path: Path, *, trusted: Callable[[], bool] | None = None) -> None:
+        super().__init__(path)
+        #: Asked at :meth:`apply` time; ``None`` means trusted (direct
+        #: construction in tests and tooling, which predates trust).
+        self._trusted = trusted
+
+    def apply(self, accumulator: SettingsAccumulator) -> SettingsAccumulator:
+        payload = drop_project_keys(
+            dict(self._source.load()),
+            self._NOT_FROM_A_PROJECT,
+            source=self._source.path,
+            why="only user, group or managed settings may set",
+        )
+        if self._trusted is not None and payload and not self._trusted():
+            payload = drop_project_keys(
+                payload,
+                self._ONLY_WHEN_TRUSTED,
+                source=self._source.path,
+                why="a project may set only once you trust the folder (igni trust)",
+            )
+        return accumulator.merge(payload)
+
+
+def drop_project_keys(
+    payload: dict[str, Any], keys: tuple[str, ...], *, source: Path, why: str
+) -> dict[str, Any]:
+    """``payload`` less ``keys`` (a dotted key is one field in a block), with a warning."""
+    refused: list[str] = []
+    for key in keys:
+        block, _, field = key.partition(".")
+        if not field:
+            if key in payload:
+                refused.append(key)
+                payload = {k: v for k, v in payload.items() if k != key}
+        elif isinstance(payload.get(block), dict) and field in payload[block]:
+            refused.append(key)
+            payload = {**payload, block: {k: v for k, v in payload[block].items() if k != field}}
+    if refused:
+        logger.warning("%s sets %s, which %s; ignored.", source, ", ".join(refused), why)
+    return payload
+
+
 class JsonFragmentTier(Tier):
     """A CC-style ``settings.json`` file — only whitelisted top-level
     keys are lifted into the accumulator. Silently no-ops on missing
@@ -89,6 +166,63 @@ class JsonFragmentTier(Tier):
         if result.ok and result.data:
             return accumulator.merge(result.data)
         return accumulator
+
+
+class ProjectJsonFragmentTier(JsonFragmentTier):
+    """A project's ``settings.json`` / ``settings.local.json``.
+
+    The lifted keys are ``permissions`` only, so an untrusted folder's file
+    contributes nothing: see :attr:`ProjectYamlTier._ONLY_WHEN_TRUSTED`.
+    """
+
+    def __init__(self, path: Path, *, trusted: Callable[[], bool] | None = None) -> None:
+        super().__init__(path)
+        self._trusted = trusted
+
+    def apply(self, accumulator: SettingsAccumulator) -> SettingsAccumulator:
+        result = ManagedPolicySource.load_json_fragment(self._path)
+        if not (result.ok and result.data):
+            return accumulator
+        payload = dict(result.data)
+        if self._trusted is not None and not self._trusted():
+            payload = drop_project_keys(
+                payload,
+                ProjectYamlTier._ONLY_WHEN_TRUSTED,
+                source=self._path,
+                why="a project may set only once you trust the folder (igni trust)",
+            )
+        return accumulator.merge(payload) if payload else accumulator
+
+
+class WorkspaceTrustTier(Tier):
+    """``workspace_trust`` comes from the organisation, never from below it.
+
+    Runs after the CLI tier and before the group and managed tiers: whatever
+    the user's config, a project's or the command line said is put back to the
+    defaults, and only the group policy pack, the managed file and (applied by
+    ``WorkspaceTrustConfig`` itself, tighten-only) the environment can set it.
+    A repository that could set this could trust itself; a person who could
+    set it could opt out of their organisation's rule.
+    """
+
+    BLOCK = "workspace_trust"
+
+    def apply(self, accumulator: SettingsAccumulator) -> SettingsAccumulator:
+        from ember_code.core.config.schemas.workspace_trust import WorkspaceTrustConfig
+
+        defaults = WorkspaceTrustConfig.model_construct().model_dump()
+        payload = dict(accumulator.payload)
+        block = payload.get(self.BLOCK)
+        if isinstance(block, dict) and any(
+            key in defaults and block[key] != defaults[key] for key in block
+        ):
+            logger.warning(
+                "workspace_trust may be set only in the managed-settings file, the "
+                "group policy or the environment; the value from user, project or CLI "
+                "settings is ignored."
+            )
+        payload[self.BLOCK] = defaults
+        return SettingsAccumulator(payload=payload)
 
 
 class CliTier(Tier):
@@ -159,6 +293,66 @@ class ManagedTier(Tier):
         if path is None:
             return accumulator
         return accumulator.merge(YamlSource(path).load())
+
+
+class ManagedOnlyTier(Tier):
+    """Settings only the managed-settings file (or the environment) may set.
+
+    ``group_policy.trusted_keys`` and ``group_policy.required`` decide whether
+    the organisation's group policy is enforced at all. Whoever could set
+    them could pin a key of their own, or make an unusable pack harmless —
+    so a value from the user's config, a project's, the CLI or the group
+    pack itself is discarded here, and only the managed file's survives.
+    The environment (``IGNI_GROUP_POLICY_TRUSTED_KEYS``,
+    ``IGNI_GROUP_POLICY_REQUIRED``) is applied afterwards by
+    ``GroupPolicyConfig`` — it is a deployment's decision, made where the
+    process is started.
+
+    Runs after :class:`ManagedTier`, reading the same file through the same
+    path provider.
+    """
+
+    #: ``group_policy`` fields only the managed file may set.
+    FIELDS: tuple[str, ...] = ("trusted_keys", "required")
+
+    def __init__(
+        self,
+        path_provider: Callable[[], Path | None] = ManagedPolicySource.platform_path,
+    ) -> None:
+        self._path_provider = path_provider
+
+    @classmethod
+    def managed_values(cls, path_provider: Callable[[], Path | None]) -> dict[str, Any]:
+        """What the managed file sets of :attr:`FIELDS`, and nothing else."""
+        path = path_provider()
+        payload = YamlSource(path).load() if path is not None else {}
+        block = payload.get("group_policy") if isinstance(payload, dict) else None
+        if not isinstance(block, dict):
+            return {}
+        return {field: block[field] for field in cls.FIELDS if field in block}
+
+    def apply(self, accumulator: SettingsAccumulator) -> SettingsAccumulator:
+        from ember_code.core.config.schemas.storage_and_paths import GroupPolicyConfig
+
+        managed = self.managed_values(self._path_provider)
+        defaults = GroupPolicyConfig.model_construct().model_dump()
+        payload = dict(accumulator.payload)
+        block = dict(payload.get("group_policy") or {})
+        refused = [
+            field
+            for field in self.FIELDS
+            if field not in managed and field in block and block[field] != defaults[field]
+        ]
+        if refused:
+            logger.warning(
+                "group_policy.%s may be set only in the managed-settings file or the "
+                "environment; the value from user, project, CLI or group settings is ignored.",
+                ", group_policy.".join(refused),
+            )
+        for field in self.FIELDS:
+            block[field] = managed.get(field, defaults[field])
+        payload["group_policy"] = block
+        return SettingsAccumulator(payload=payload)
 
 
 class CloudMigrationTier(Tier):
@@ -235,6 +429,16 @@ class GroupPolicyTier(Tier):
     — cold start, login, and every ``group_policy.poll_seconds`` — and the read
     lives here; see :class:`CachedSettingsFetcher` for what that split buys and
     what it costs.
+
+    ## Only a pack igni server signed
+
+    The cache is a directory the user can write, so what the fetcher reads is
+    trusted only as far as igni server's signature on it: the pack is stored
+    exactly as signed (``pack.jws``) and verified — signature, ``iss`` against
+    ``api_url``, ``sub`` against the person signed in, no rollback — before it
+    reaches this tier. An unusable pack is never merged; with the managed-only
+    ``group_policy.required`` the fetcher raises instead. See
+    ``core/config/group_policy_signature.py`` and :class:`ManagedOnlyTier`.
 
     Tests and one-off migrations still pass their own fetcher, and a plan built
     without one skips the tier entirely.
@@ -322,6 +526,7 @@ class SettingsMergePlan:
         defaults_models: ModelsConfig,
         managed_path_provider: Callable[[], Path | None] = ManagedPolicySource.platform_path,
         group_policy_fetcher: Callable[[], GroupPolicyPack | None] | None = None,  # type: ignore[name-defined]
+        project_trusted: Callable[[], bool] | None = None,
     ) -> SettingsMergePlan:
         """Build the standard 7-tier plan from filesystem paths.
 
@@ -330,6 +535,11 @@ class SettingsMergePlan:
         both the loader docstring and the test-suite precedence
         assertions reference this method's output. If a future
         refactor needs to reorder tiers, this is the seam.
+
+        ``project_trusted`` says whether the folder is trusted
+        (``core/workspace_trust``); an untrusted folder's config may not set
+        ``permissions`` or ``safety``. Left ``None``, the process's
+        :class:`~ember_code.core.workspace_trust.WorkspaceTrust` is asked.
         """
         # Through the helpers, not ``/ CONFIG_DIR`` — they fall back to
         # the pre-rename directory while that is the one on disk. Built
@@ -341,6 +551,15 @@ class SettingsMergePlan:
         if project_dir is None:
             project_dir = Path.cwd()
         project_ember = project_config_dir(project_dir)
+        if project_trusted is None:
+            folder = project_dir
+
+            def project_trusted() -> bool:
+                from ember_code.core.workspace_trust import WorkspaceTrust
+
+                return WorkspaceTrust.shared().is_trusted(
+                    folder, what="permission and safety settings"
+                )
 
         # Built ahead of the list: ``GroupPolicyTier`` needs the same
         # instance, because the ratchet reads what this one actually set.
@@ -357,18 +576,24 @@ class SettingsMergePlan:
                 YamlTier(user_ember / "config.yaml"),
                 JsonFragmentTier(user_ember / "settings.json"),
                 JsonFragmentTier(user_ember / "settings.local.json"),
-                # Project (committed)
-                YamlTier(project_ember / "config.yaml"),
-                JsonFragmentTier(project_ember / "settings.json"),
+                # Project (committed). An untrusted folder's ``permissions``
+                # and ``safety`` are dropped (``core/workspace_trust``).
+                ProjectYamlTier(project_ember / "config.yaml", trusted=project_trusted),
+                ProjectJsonFragmentTier(project_ember / "settings.json", trusted=project_trusted),
                 # Project local (gitignored)
-                YamlTier(project_ember / "config.local.yaml"),
-                JsonFragmentTier(project_ember / "settings.local.json"),
+                ProjectYamlTier(project_ember / "config.local.yaml", trusted=project_trusted),
+                ProjectJsonFragmentTier(
+                    project_ember / "settings.local.json", trusted=project_trusted
+                ),
             ]
         )
         tiers: list[Tier] = [
             *local_tiers,
             # CLI
             cli_tier,
+            # ``workspace_trust`` back to its defaults: only the organisation
+            # tiers below (and the environment) may set it.
+            WorkspaceTrustTier(),
             # Org-group policy — wins over CLI, loses to sysadmin
             # ManagedPolicy. Handed the CLI tier so it can honour the deny
             # ratchet: a group tightens freely but cannot loosen a
@@ -381,6 +606,9 @@ class SettingsMergePlan:
             ),
             # Managed policy — last, so it wins over CLI and group policy.
             ManagedTier(path_provider=managed_path_provider),
+            # The settings that decide whether group policy is enforced at
+            # all: from the managed file (or the environment), or not at all.
+            ManagedOnlyTier(path_provider=managed_path_provider),
             # Migration — replaces cloud rows with shipping defaults.
             CloudMigrationTier(defaults=defaults_models),
         ]

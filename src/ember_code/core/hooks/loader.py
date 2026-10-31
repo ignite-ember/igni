@@ -69,23 +69,37 @@ class _SettingsPathDiscovery:
         path list stable across runs (useful for logging /
         debugging).
         """
+        # A folder's own hooks (``.igni`` and ``.claude``) are shell commands
+        # it brings with it; they load only once the folder is trusted
+        # (``core/workspace_trust``).
+        from ember_code.core.workspace_trust import WorkspaceTrust
+
+        trusted = WorkspaceTrust.shared().is_trusted(self._project_dir, what="hooks")
         home_ember = Path.home() / CONFIG_DIR
         paths: list[Path] = [
             home_ember / "settings.json",
             home_ember / "settings.local.json",
-            self._project_dir / CONFIG_DIR / "settings.json",
-            self._project_dir / CONFIG_DIR / "settings.local.json",
         ]
+        if trusted:
+            paths += [
+                self._project_dir / CONFIG_DIR / "settings.json",
+                self._project_dir / CONFIG_DIR / "settings.local.json",
+            ]
         if self._cross_tool_support:
             home_claude = Path.home() / ".claude"
             paths.extend(
                 [
                     home_claude / "settings.json",
                     home_claude / "settings.local.json",
-                    self._project_dir / ".claude" / "settings.json",
-                    self._project_dir / ".claude" / "settings.local.json",
                 ]
             )
+            if trusted:
+                paths.extend(
+                    [
+                        self._project_dir / ".claude" / "settings.json",
+                        self._project_dir / ".claude" / "settings.local.json",
+                    ]
+                )
         if self._group_dir is not None:
             paths.append(self._group_dir / "settings.json")
         return paths
