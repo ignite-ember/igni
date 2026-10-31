@@ -103,6 +103,18 @@ ignite-ember --version
 make check
 ```
 
+### Running the web client against a backend
+
+A backend you start by hand (`python -m ember_code.backend --ws-port 8765
+--project-dir .`) requires no WebSocket token, so `npm --prefix clients/web
+run dev` reaches it as before; only pages from a foreign `Origin` are
+refused. A backend the desktop app spawns requires its per-launch token
+(`IGNI_WS_TOKEN`, handed to the webview as `#igni_ws_token=…`; see
+[SECURITY.md](SECURITY.md#10-the-backends-local-websocket)). To connect
+something else to that one during development, start the app with
+`IGNI_DEV_NO_WS_TOKEN=1 cargo tauri dev`: debug builds then spawn the
+backend without a token, and both print a warning. Release builds ignore it.
+
 ## Makefile
 
 All common tasks are available via `make`:

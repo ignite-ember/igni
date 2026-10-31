@@ -18,8 +18,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 interface WindowLike {
-  location: { search: string };
+  location: { search: string; hash?: string };
   __EMBER_WS_URL__?: string;
+  __EMBER_WS_TOKEN__?: string;
 }
 interface MetaTagLike {
   content: string;
@@ -28,6 +29,8 @@ interface MetaTagLike {
 let win: WindowLike;
 let metaTag: MetaTagLike | null;
 let resolveWsUrl: typeof import("./client").resolveWsUrl;
+let resolveWsToken: typeof import("./client").resolveWsToken;
+let wsProtocols: typeof import("./client").wsProtocols;
 
 beforeEach(async () => {
   vi.resetModules();
@@ -40,7 +43,7 @@ beforeEach(async () => {
   // Silence the diagnostic ``console.info`` the resolver always
   // emits — it's noise here, not signal.
   vi.spyOn(console, "info").mockImplementation(() => undefined);
-  ({ resolveWsUrl } = await import("./client"));
+  ({ resolveWsUrl, resolveWsToken, wsProtocols } = await import("./client"));
 });
 
 afterEach(() => {
@@ -109,6 +112,48 @@ describe("resolveWsUrl precedence", () => {
   it("missing document still resolves (e.g. SSR-ish probe)", () => {
     delete (globalThis as { document?: unknown }).document;
     expect(resolveWsUrl()).toBe("ws://127.0.0.1:8765");
+  });
+});
+
+// ── The backend's per-launch WebSocket token ──────────────
+//
+// The desktop shell spawns the backend with a secret and hands it to
+// the webview in the URL fragment; the client offers it as the
+// subprotocol ``igni-token.<token>`` next to ``igni.v1``.
+
+describe("resolveWsToken", () => {
+  it("is empty when nothing carries one (hand-started or IDE backend)", () => {
+    expect(resolveWsToken()).toBe("");
+  });
+
+  it("reads the fragment the desktop shell navigates with", () => {
+    win.location.search = "?ws=ws%3A%2F%2F127.0.0.1%3A1&host=tauri";
+    win.location.hash = "#igni_ws_token=abc-_123";
+    expect(resolveWsToken()).toBe("abc-_123");
+  });
+
+  it("never reads the query string", () => {
+    win.location.search = "?igni_ws_token=from-query";
+    expect(resolveWsToken()).toBe("");
+  });
+
+  it("falls back to the meta tag, then the global", () => {
+    win.__EMBER_WS_TOKEN__ = "from-global";
+    expect(resolveWsToken()).toBe("from-global");
+    metaTag = { content: "from-meta" };
+    expect(resolveWsToken()).toBe("from-meta");
+    win.location.hash = "#igni_ws_token=from-fragment";
+    expect(resolveWsToken()).toBe("from-fragment");
+  });
+});
+
+describe("wsProtocols", () => {
+  it("offers igni.v1 and the token as subprotocols", () => {
+    expect(wsProtocols("abc")).toEqual(["igni.v1", "igni-token.abc"]);
+  });
+
+  it("offers nothing without a token", () => {
+    expect(wsProtocols("")).toBeUndefined();
   });
 });
 

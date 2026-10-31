@@ -10,6 +10,16 @@
  * The WS URL is provided by the embedding shell (Tauri / VSCode /
  * JetBrains) via `?ws=` query param or `window.__EMBER_WS_URL__`;
  * `ws://127.0.0.1:8765` is the dev-server fallback.
+ *
+ * The backend's WebSocket is open to every web page and local process
+ * unless it checks who connects, so a backend the desktop shell spawned
+ * requires the shell's per-launch token. The shell puts it in the URL
+ * fragment (`#igni_ws_token=…`, never sent to a server, kept across
+ * reloads); an embedder can also use `<meta name="ember-ws-token">` or
+ * `window.__EMBER_WS_TOKEN__`. It goes to the backend as the WebSocket
+ * subprotocol `igni-token.<token>` next to `igni.v1` — the one handshake
+ * field a browser lets a page set, and unlike the query string it ends
+ * up in no request log. See `src/ember_code/transport/ws_auth.py`.
  */
 
 import type { RPCResponse, ServerMessage } from "./messages";
@@ -18,6 +28,9 @@ import { fe } from "./messages";
 declare global {
   interface Window {
     __EMBER_WS_URL__?: string;
+    /** The backend's per-launch WebSocket token, for an embedder that
+     *  injects globals rather than navigating with a fragment. */
+    __EMBER_WS_TOKEN__?: string;
     /** Native OS folder picker, injected by the embedding shell
      *  (Tauri dialog plugin, VSCode showOpenDialog, JetBrains
      *  FileChooser). Receives the session's currently locked dir
@@ -69,6 +82,35 @@ export function resolveWsUrl(): string {
   return url;
 }
 
+/** The subprotocol igni's backend speaks (and selects). */
+export const WS_SUBPROTOCOL = "igni.v1";
+/** The offered subprotocol that carries the token. */
+export const WS_TOKEN_PROTOCOL_PREFIX = "igni-token.";
+const WS_TOKEN_FRAGMENT_KEY = "igni_ws_token";
+
+/** The backend's per-launch token, or "" when this backend needs none
+ *  (one started by hand or by an IDE plugin). Never logged. */
+export function resolveWsToken(): string {
+  const hash = (typeof window !== "undefined" && window.location?.hash) || "";
+  const fromFragment = new URLSearchParams(hash.replace(/^#/, "")).get(WS_TOKEN_FRAGMENT_KEY);
+  const metaTag =
+    typeof document !== "undefined"
+      ? (document.querySelector('meta[name="ember-ws-token"]') as HTMLMetaElement | null)
+      : null;
+  return (
+    fromFragment ||
+    metaTag?.content ||
+    (typeof window !== "undefined" ? window.__EMBER_WS_TOKEN__ : "") ||
+    ""
+  ).trim();
+}
+
+/** What to offer as `Sec-WebSocket-Protocol`. Nothing without a token,
+ *  so a client still reaches a backend that predates the check. */
+export function wsProtocols(token: string): string[] | undefined {
+  return token ? [WS_SUBPROTOCOL, `${WS_TOKEN_PROTOCOL_PREFIX}${token}`] : undefined;
+}
+
 export interface ChatSearchMatch {
   /** Position in ``get_chat_history``'s output; caller maps to its
    *  in-memory items index via the parallel mapping. */
@@ -109,6 +151,7 @@ const RPC_TIMEOUT_MS = 60_000;
 export class IgniClient {
   private ws: WebSocket | null = null;
   private url: string;
+  private token: string;
   private closed = false;
   /** Per-request stream handlers, keyed by message id. */
   private streams = new Map<string, StreamHandler>();
@@ -132,8 +175,9 @@ export class IgniClient {
    *  connection that was supposed to be gone. */
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
 
-  constructor(url: string = resolveWsUrl()) {
+  constructor(url: string = resolveWsUrl(), token: string = resolveWsToken()) {
     this.url = url;
+    this.token = token;
   }
 
   connect(): void {
@@ -163,7 +207,8 @@ export class IgniClient {
     }
 
     this.emitState("connecting");
-    const ws = new WebSocket(this.url);
+    const protocols = wsProtocols(this.token);
+    const ws = protocols ? new WebSocket(this.url, protocols) : new WebSocket(this.url);
     this.ws = ws;
     // Every handler checks it still belongs to the active socket —
     // events from a replaced socket must not flip the shared state.

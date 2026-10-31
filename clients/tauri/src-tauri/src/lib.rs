@@ -5,10 +5,20 @@
 //! opens the shared web UI (clients/web) pointed at that port via the
 //! `?ws=` query param. The backend self-terminates if this process dies
 //! (IGNI_PARENT_PID watchdog), and we also kill it on window close.
+//!
+//! The backend's WebSocket is reachable by every web page and local
+//! process, so each launch makes a secret ([`new_ws_token`]): the
+//! backend gets it in its environment (``IGNI_WS_TOKEN``, never argv,
+//! where ``ps`` shows it) and the webview in the URL fragment
+//! (``#igni_ws_token=…``: never sent to any server, kept across
+//! reloads). The web client offers it as the WebSocket subprotocol
+//! ``igni-token.<token>``; the backend refuses connections without it
+//! (``src/ember_code/transport/ws_auth.py``).
 
 mod discovery;
 mod runtime;
 mod desktop_settings;
+mod group_pack;
 mod update_policy;
 
 #[cfg(test)]
@@ -37,6 +47,11 @@ struct BackendHandle(Mutex<Option<Child>>);
 #[derive(Clone)]
 struct BackendConn {
     port: u16,
+    /// The secret the backend requires of every WebSocket connection;
+    /// ``None`` only for a backend that requires none (one an IDE
+    /// plugin or a developer started, or ``IGNI_DEV_NO_WS_TOKEN=1`` in
+    /// a debug build).
+    ws_token: Option<String>,
     expected_cli: String,
     actual_cli: String,
     source: &'static str,
@@ -84,7 +99,48 @@ fn app_url(conn: &BackendConn, project_dir: Option<&str>) -> String {
     if let Some(dir) = project_dir {
         url.push_str(&format!("&dir={}", percent_encode(dir)));
     }
+    // The fragment, not the query: it never reaches a server or a
+    // request log, and it survives the webview reloading.
+    if let Some(token) = &conn.ws_token {
+        url.push_str(&format!("#igni_ws_token={}", percent_encode(token)));
+    }
     url
+}
+
+/// The environment variable the backend reads its token from.
+const WS_TOKEN_ENV: &str = "IGNI_WS_TOKEN";
+/// Development only: start the backend without a token.
+const DEV_NO_WS_TOKEN_ENV: &str = "IGNI_DEV_NO_WS_TOKEN";
+
+/// A fresh per-launch secret: 32 random bytes, base64url, no padding
+/// (43 characters, all valid in a WebSocket subprotocol token).
+fn new_ws_token() -> Result<String, String> {
+    use base64::Engine as _;
+    use ring::rand::SecureRandom as _;
+    let mut bytes = [0u8; 32];
+    ring::rand::SystemRandom::new()
+        .fill(&mut bytes)
+        .map_err(|_| "no secure random source for the WebSocket token".to_string())?;
+    Ok(base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(bytes))
+}
+
+/// ``IGNI_DEV_NO_WS_TOKEN=1``, honoured in debug builds only: a release
+/// build always protects its backend, whatever the environment says.
+fn ws_token_disabled_for_dev(value: Option<&str>) -> bool {
+    cfg!(debug_assertions) && value.map(str::trim) == Some("1")
+}
+
+/// The token for a backend this shell is about to spawn, or ``None``
+/// when a developer turned it off.
+fn ws_token_for_spawn() -> Result<Option<String>, String> {
+    if ws_token_disabled_for_dev(std::env::var(DEV_NO_WS_TOKEN_ENV).ok().as_deref()) {
+        eprintln!(
+            "WARNING: {DEV_NO_WS_TOKEN_ENV}=1 — the igni backend's WebSocket accepts \
+             connections without a token. Any local process can drive it. Development only."
+        );
+        return Ok(None);
+    }
+    new_ws_token().map(Some)
 }
 
 /// Compile-time platform tag injected into the init script so the
@@ -301,6 +357,7 @@ const STDERR_TAIL_LINES: usize = 40;
 
 fn spawn_backend(
     project_dir: &str,
+    ws_token: Option<&str>,
     progress: &(dyn Fn(&str) + Sync),
 ) -> Result<(Child, u16, BackendVersionInfo), String> {
     progress("Preparing the igni backend…");
@@ -334,6 +391,19 @@ fn spawn_backend(
     .stderr(Stdio::piped());
     for (k, v) in &install.env {
         cmd.env(k, v);
+    }
+    // After ``install.env``, so nothing there can override it. The
+    // environment, not argv: ``ps`` shows every process's argv.
+    match ws_token {
+        Some(token) => {
+            cmd.env(WS_TOKEN_ENV, token);
+            // An ``IGNI_DEV_NO_WS_TOKEN`` this app inherited must not
+            // switch the backend's check off behind our back.
+            cmd.env_remove(DEV_NO_WS_TOKEN_ENV);
+        }
+        None => {
+            cmd.env_remove(WS_TOKEN_ENV);
+        }
     }
     let mut child = cmd.spawn().map_err(|e| {
         format!("failed to spawn backend via `{}`: {e}", install.python.display())
@@ -1249,15 +1319,23 @@ fn bootstrap_and_open(app: &AppHandle, project_dir: &str) -> Result<(), String> 
     // spawn path, so the ``RunEvent::Exit`` handler has nothing to
     // kill when we attached, and a backend the plugins own survives
     // this app quitting.
-    let (port, version_info) = match discovery::discover(project_dir, runtime::IGNITE_EMBER_VERSION)
+    let (port, ws_token, version_info) =
+        match discovery::discover(project_dir, runtime::IGNITE_EMBER_VERSION)
     {
-        discovery::Decision::Attach { port, wire_version } => {
+        discovery::Decision::Attach {
+            port,
+            wire_version,
+            ws_token,
+        } => {
             progress("Connecting to the running igni backend…");
             // Skips the whole Python bootstrap — no interpreter
             // resolution, no model prefetch — so this path is near
             // instant on a warm project.
+            // The token that backend's launcher gave it, read from
+            // its owner-only lockfile; ``None`` when it requires none.
             (
                 port,
+                ws_token,
                 BackendVersionInfo {
                     actual: Some(wire_version),
                     expected: runtime::IGNITE_EMBER_VERSION.to_string(),
@@ -1278,9 +1356,11 @@ fn bootstrap_and_open(app: &AppHandle, project_dir: &str) -> Result<(), String> 
             ));
         }
         discovery::Decision::Spawn => {
-            let (child, port, version_info) = spawn_backend(project_dir, &progress)?;
+            let ws_token = ws_token_for_spawn()?;
+            let (child, port, version_info) =
+                spawn_backend(project_dir, ws_token.as_deref(), &progress)?;
             track_backend(app, child);
-            (port, version_info)
+            (port, ws_token, version_info)
         }
     };
 
@@ -1301,6 +1381,7 @@ fn bootstrap_and_open(app: &AppHandle, project_dir: &str) -> Result<(), String> 
     // one component, three surfaces.
     let conn = BackendConn {
         port,
+        ws_token,
         expected_cli: version_info.expected.clone(),
         actual_cli: version_info
             .actual
@@ -1898,6 +1979,7 @@ mod tests {
     fn conn() -> BackendConn {
         BackendConn {
             port: 51234,
+            ws_token: None,
             expected_cli: "1.0.3".to_string(),
             actual_cli: "1.0.3".to_string(),
             source: "managed_venv",
@@ -1923,6 +2005,40 @@ mod tests {
         assert!(url.contains("&host=tauri"));
         assert!(url.contains("&expected_cli=1.0.3"));
         assert!(url.contains("&backend_source=managed_venv"));
+    }
+
+    #[test]
+    fn the_ws_token_rides_in_the_fragment_not_the_query() {
+        // The fragment is never sent to a server, so it reaches no
+        // request log; it comes after every query param, a new
+        // window's ``dir`` included.
+        let mut c = conn();
+        c.ws_token = Some("abc-_123".to_string());
+        let url = app_url(&c, Some("/Users/dev/repo"));
+        let (query, fragment) = url.split_once('#').expect("a fragment");
+        assert!(!query.contains("abc-_123"), "token leaked into the query: {url}");
+        assert_eq!(fragment, "igni_ws_token=abc-_123");
+        assert!(query.contains("&dir=%2FUsers%2Fdev%2Frepo"));
+        // No token, no fragment.
+        assert!(!app_url(&conn(), None).contains('#'));
+    }
+
+    #[test]
+    fn each_launch_gets_a_fresh_urlsafe_token() {
+        let a = new_ws_token().unwrap();
+        let b = new_ws_token().unwrap();
+        assert_ne!(a, b);
+        // 32 bytes, base64url without padding.
+        assert_eq!(a.len(), 43);
+        assert!(a.bytes().all(|c| c.is_ascii_alphanumeric() || c == b'-' || c == b'_'));
+    }
+
+    #[test]
+    fn the_dev_switch_only_works_in_debug_builds() {
+        assert_eq!(ws_token_disabled_for_dev(Some("1")), cfg!(debug_assertions));
+        assert!(!ws_token_disabled_for_dev(Some("0")));
+        assert!(!ws_token_disabled_for_dev(Some("yes")));
+        assert!(!ws_token_disabled_for_dev(None));
     }
 
     #[test]

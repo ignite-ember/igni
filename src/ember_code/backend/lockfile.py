@@ -36,6 +36,7 @@ Module contents:
 
 from __future__ import annotations
 
+import contextlib
 import json
 import logging
 import os
@@ -176,7 +177,14 @@ class Lockfile:
         # on-disk JSON keeps ``{pid, port, wire_version, created_at}``
         # — same key-set out-of-tree readers (jq, VSCode, JB) parse
         # today. Byte-stable wire format is a hard requirement.
-        tmp.write_text(json.dumps(payload.model_dump()) + "\n", encoding="utf-8")
+        # ``exclude_none``: ``ws_token`` only appears when there is one.
+        data = (json.dumps(payload.model_dump(exclude_none=True)) + "\n").encode("utf-8")
+        # Owner-only from creation: the file can carry the WS token.
+        with contextlib.suppress(FileNotFoundError):
+            tmp.unlink()
+        fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        with os.fdopen(fd, "wb") as fh:
+            fh.write(data)
         os.replace(tmp, self._path)
 
 

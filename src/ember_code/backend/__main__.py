@@ -49,6 +49,7 @@ from ember_code.backend.schemas_rpc import (
     UpdateAvailable,
 )
 from ember_code.core.data_paths import canonical_project_dir
+from ember_code.transport.ws_auth import take_token_from_environment
 
 __all__ = [
     "AttachSessionResult",
@@ -144,6 +145,10 @@ def main(
 
     warn_if_unsupported_python()
 
+    # Taken out of the environment at once, before anything is spawned
+    # that would inherit it (shell tools, hooks, MCP servers).
+    ws_token = take_token_from_environment()
+
     extra_dirs = [Path(d) for d in additional_dirs] if additional_dirs else None
     # One spelling of the project dir, shared with ``igni migrate`` and
     # every store, so all of them open the same ``state.db``.
@@ -154,6 +159,7 @@ def main(
         project_dir=resolved_project,
         resume_session_id=resume_session_id,
         additional_dirs=extra_dirs,
+        ws_token=ws_token,
     )
     asyncio.run(app.run())
 

@@ -34,6 +34,8 @@ _ALLOWED_HOSTS: dict[str, str] = {
     # login the user cannot retry. F124.
     "127.0.0.1": "the sign-in callback listener, on this machine",
     "placeholder.invalid": "RFC 2606, a deliberately unroutable stand-in",
+    "tauri.localhost": "not contacted: the desktop webview's Origin, which the "
+    "backend's WebSocket accepts (transport/ws_auth.py)",
     # The one-time Neo4j and JDK downloads left with the local code
     # index: the CodeIndex extension makes them, and declares both hosts
     # in its manifest's `permissions.egress`.

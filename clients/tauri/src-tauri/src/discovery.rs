@@ -47,12 +47,22 @@ pub struct LockfilePayload {
     pub pid: i32,
     pub port: u16,
     pub wire_version: String,
+    /// The per-launch WebSocket token, present only when that backend
+    /// requires one (another desktop-shell launch). The file is then
+    /// owner-only. Absent for a backend an IDE plugin or a developer
+    /// started, which checks the Origin alone.
+    #[serde(default)]
+    pub ws_token: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Decision {
     /// A live BE for this project speaks our wire version — use it.
-    Attach { port: u16, wire_version: String },
+    Attach {
+        port: u16,
+        wire_version: String,
+        ws_token: Option<String>,
+    },
     /// A live BE owns this project but speaks a different version.
     /// Refuse: mixing traffic across wire versions corrupts state,
     /// and spawning alongside it recreates the duplicate.
@@ -104,6 +114,7 @@ pub fn decide(
     Decision::Attach {
         port: payload.port,
         wire_version: payload.wire_version.clone(),
+        ws_token: payload.ws_token.clone(),
     }
 }
 
@@ -174,6 +185,7 @@ mod tests {
             pid: 4242,
             port: 51234,
             wire_version: version.to_string(),
+            ws_token: None,
         }
     }
 
@@ -219,9 +231,32 @@ mod tests {
             decide(Some(&p), true, true, "1.0.3"),
             Decision::Attach {
                 port: 51234,
-                wire_version: "1.0.3".to_string()
+                wire_version: "1.0.3".to_string(),
+                ws_token: None,
             }
         );
+    }
+
+    #[test]
+    fn attaching_carries_the_backends_ws_token() {
+        // A backend another desktop-shell instance spawned refuses
+        // connections without its token; the lockfile is where a
+        // second igni client on the project finds it.
+        let mut p = payload("1.0.3");
+        p.ws_token = Some("tok".to_string());
+        assert_eq!(
+            decide(Some(&p), true, true, "1.0.3"),
+            Decision::Attach {
+                port: 51234,
+                wire_version: "1.0.3".to_string(),
+                ws_token: Some("tok".to_string()),
+            }
+        );
+        let parsed = parse_lockfile(
+            r#"{"pid":1,"port":2,"wire_version":"v","created_at":3,"ws_token":"tok"}"#,
+        )
+        .expect("should parse");
+        assert_eq!(parsed.ws_token.as_deref(), Some("tok"));
     }
 
     // ── parse_lockfile ────────────────────────────────────────
@@ -237,6 +272,7 @@ mod tests {
         assert_eq!(got.pid, 4242);
         assert_eq!(got.port, 51234);
         assert_eq!(got.wire_version, "1.0.3");
+        assert_eq!(got.ws_token, None);
     }
 
     #[test]

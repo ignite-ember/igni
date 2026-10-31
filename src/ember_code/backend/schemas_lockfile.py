@@ -62,15 +62,23 @@ class LockfilePayload(BaseModel):
     ``created_at`` lets a future GC step (``ember doctor --clean``)
     prune ancient locks whose BEs have long since died without
     cleaning up.
+
+    ``ws_token`` is present only when the backend's WebSocket requires
+    the per-launch token (a desktop-shell launch); it is left out of the
+    file otherwise, so the key-set above is unchanged for every other
+    backend. A file that carries it is written owner-only (0600).
     """
 
     pid: int
     port: int
     wire_version: str
     created_at: int
+    ws_token: str | None = None
 
     @classmethod
-    def now(cls, *, pid: int, port: int, wire_version: str) -> LockfilePayload:
+    def now(
+        cls, *, pid: int, port: int, wire_version: str, ws_token: str | None = None
+    ) -> LockfilePayload:
         """Build a payload stamped with the current wall-clock time.
 
         Centralises the ``int(time.time())`` call so
@@ -83,6 +91,7 @@ class LockfilePayload(BaseModel):
             port=port,
             wire_version=wire_version,
             created_at=int(time.time()),
+            ws_token=ws_token,
         )
 
     def matches_version(self, expected: str) -> bool:

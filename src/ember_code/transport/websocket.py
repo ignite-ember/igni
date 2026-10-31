@@ -19,6 +19,10 @@ Other properties callers should know about:
   ``Shutdown``, signals, or the parent watchdog.
 * **Loopback only by default.** The BE executes arbitrary tool
   calls; it must never listen on a routable interface.
+* **Checked at the handshake.** Loopback is not enough: any web page
+  and any local process can reach ``127.0.0.1``. A foreign ``Origin``
+  is refused, and when the launcher gave a per-launch token every
+  connection must offer it (see :mod:`ember_code.transport.ws_auth`).
 """
 
 from __future__ import annotations
@@ -45,6 +49,7 @@ from ember_code.transport.base import ListeningTransport
 # import CompositeTransport`` import path used by tests and callers
 # keeps working after CompositeTransport moved to its own module.
 from ember_code.transport.composite import CompositeTransport
+from ember_code.transport.ws_auth import HandshakeGuard
 
 if TYPE_CHECKING:
     from websockets.asyncio.server import Server, ServerConnection
@@ -120,8 +125,11 @@ class WebSocketServerTransport(ListeningTransport):
         port: int = 0,
         broadcast_send_timeout: float = _BROADCAST_SEND_TIMEOUT,
         registry: MessageRegistry | None = None,
+        token: str | None = None,
     ):
         self._host = host
+        # Origin always; the token too when the launcher gave one.
+        self._guard = HandshakeGuard(token)
         self._port = port
         self._broadcast_send_timeout = broadcast_send_timeout
         self._registry = registry or MessageRegistry.default()
@@ -159,13 +167,25 @@ class WebSocketServerTransport(ListeningTransport):
             self._host,
             self._port,
             max_size=_MAX_FRAME_BYTES,
+            process_request=self._guard.process_request,
+            select_subprotocol=self._guard.select_subprotocol,
         )
         # ``Server.sockets`` may be empty on platforms that don't expose
         # underlying sockets; the ``or []`` fallback keeps us typed.
         sockets = list(self._server.sockets or [])
         if sockets:
             self._port = sockets[0].getsockname()[1]
-        logger.info("BE listening on ws://%s:%d", self._host, self._port)
+        logger.info(
+            "BE listening on ws://%s:%d (%s)",
+            self._host,
+            self._port,
+            "token required" if self._guard.requires_token else "no token; Origin checked",
+        )
+
+    @property
+    def requires_token(self) -> bool:
+        """Whether connections must offer the per-launch token."""
+        return self._guard.requires_token
 
     async def wait_for_connection(self, timeout: float | None = 30.0) -> None:
         """Wait for the first client. ``timeout=None`` waits forever —

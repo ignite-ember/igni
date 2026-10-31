@@ -249,7 +249,7 @@ class BackendSupervisor:
 
     # ── Discovery lockfile ───────────────────────────────────────
 
-    def write_discovery_lockfile(self, ws_port: int) -> None:
+    def write_discovery_lockfile(self, ws_port: int, ws_token: str | None = None) -> None:
         """Publish the bound WS port at ``<project>/.igni/backend.lock``
         so a second client opening the same project can discover this
         BE and connect to it instead of spawning a duplicate.
@@ -257,6 +257,10 @@ class BackendSupervisor:
         Silent no-op on write errors (permissions, missing
         ``.igni`` dir): discovery is a nice-to-have; a duplicate BE
         is a real cost but the FE can survive it.
+
+        ``ws_token``, when the WebSocket requires one, goes in too, and
+        the file is then readable by its owner only: another igni client
+        attaching to this backend needs it, and nobody else may have it.
         """
         version = self._resolve_wire_version()
         lock = Lockfile(self._project_dir)
@@ -264,6 +268,7 @@ class BackendSupervisor:
             pid=os.getpid(),
             port=ws_port,
             wire_version=version,
+            ws_token=ws_token,
         )
         result = lock.write(payload)
         if not result.ok:
