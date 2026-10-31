@@ -31,7 +31,6 @@ from __future__ import annotations
 import logging
 
 from ember_code.backend.command_handler import CommandHandler
-from ember_code.backend.headless_extensions import HeadlessExtensions
 from ember_code.core.session.session_run import SessionRun
 
 logger = logging.getLogger(__name__)
@@ -88,6 +87,11 @@ class SingleMessageRun(SessionRun):
         """
         # The extensions installed here apply to a headless run as they
         # do in the app: their tools, hooks and prompt contributions.
+        # Imported here: the headless extensions reach the host channel,
+        # whose model reaches the session package this module is in, so a
+        # top-level import is a cycle for whoever imports the channel first.
+        from ember_code.backend.headless_extensions import HeadlessExtensions
+
         extensions = HeadlessExtensions(self._session)
         await extensions.start()
         try:

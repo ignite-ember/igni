@@ -153,6 +153,10 @@ async def test_the_manifest_itself_does_not_go_to_the_browser(wired, tmp_path):
         # Why it is faulty — it stopped answering and igni restarted
         # it — as a sentence; empty while it answers.
         "faulty",
+        # Whether its process runs in the OS sandbox, or why not — an
+        # unsandboxed process has the person's own file and network
+        # access, which the person should be able to see.
+        "sandbox",
         # The agent's tools and what each says it is, as a sentence —
         # the hints the permission modes decide on, for the person to
         # read.

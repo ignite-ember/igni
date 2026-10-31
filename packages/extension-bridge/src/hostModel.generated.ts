@@ -1,11 +1,11 @@
-// GENERATED from the igni host schema 1.10.0 by ember_code.extensions.host.codegen — do not edit. Run `make host-sdks` after changing the schema.
+// GENERATED from the igni host schema 1.11.0 by ember_code.extensions.host.codegen — do not edit. Run `make host-sdks` after changing the schema.
 //
 // `bridge.host` as an extension's page sees it. Read
 // `docs/HOST_OBJECT_MODEL.md` in igni for what each object is.
 
 import { HostObject, Property, Signal, type HostLink, type JsonValue } from "./hostModel";
 
-export const SCHEMA_VERSION = "1.10.0";
+export const SCHEMA_VERSION = "1.11.0";
 
 /** One change anywhere in the model, as `host.changed` reports it. */
 export interface Change {
@@ -1588,6 +1588,11 @@ export class HostWorkspace extends HostObject {
   /** Ask the person to pick a folder. */
   pick_dir(): Promise<JsonValue> {
     return this.call<JsonValue>("pick_dir", {});
+  }
+
+  /** Open a file in the project with the application this machine opens it with — what an extension whose process is sandboxed cannot do itself. Only a file the workspace grant reaches (`refused` outside the project, `not_granted` outside `workspacePaths`), and only a document: `.csv`, `.gif`, `.htm`, `.html`, `.jpeg`, `.jpg`, `.md`, `.pdf`, `.png`, `.svg`, `.txt`, `.webp` (`invalid` otherwise, and for an executable file). `failed` when nothing here opened it. */
+  open(path: string): Promise<void> {
+    return this.call<void>("open", { path });
   }
 }
 

@@ -20,22 +20,56 @@ holds the person's igni session.
 Each of these is enforced at the point igni controls, and that point
 differs:
 
-* **egress** — the UI's CSP is written from the manifest and the
-  extension's own service, so a page cannot open a connection to a
-  host nobody declared, and reaches each one over https/wss only
-  (plain http/ws to this machine, in development). The *service*
-  is a separate process and confining its network needs an OS
-  sandbox this does not have; what is enforced there is narrower and
-  stated as such on :meth:`Egress.check_endpoint`.
+* **egress** — on the extension's **pages**, the CSP is written from
+  the manifest and the extension's own service, so a page cannot open
+  a connection to a host nobody declared, and reaches each one over
+  https/wss only (plain http/ws to this machine, in development). On
+  an **endpoint** igni dials, :meth:`Egress.check_endpoint`. On the
+  extension's own **process**, the OS sandbox
+  (:mod:`ember_code.extensions.sandbox`): the kernel refuses every
+  connection but this machine's loopback, and the only way further is
+  igni's egress proxy, which connects to the extension's own service
+  and its ``egress`` hosts and nothing else — narrowed, when
+  air-gapped, to hosts inside the network.
 * **tools** — igni registers an extension's MCP tools with the
   agent, so igni can decline to register one the manifest did not
   declare. This is complete.
-* **workspace** — igni decides what it *tells* a service about the
-  project. A service that goes looking anyway is not stopped by
-  this, and that is also an OS-sandbox problem.
+* **workspace** — igni decides what it *tells* a process about the
+  project (:class:`WorkspaceAccess`), and the OS sandbox decides what
+  the process can open: the workspace is readable only when granted
+  and writable only for ``write``; a ``workspacePaths`` glob is
+  granted as its directory prefix. The rest of the person's home is
+  not readable and nothing outside the grants is writable.
 * **secrets** — a name not declared is never resolved. What a
   declared one resolves to is a value in the service's environment,
   not a handle; see :class:`Secrets`.
+
+What the sandbox is, per platform:
+
+==========  ==========================================================
+macOS       Seatbelt (``sandbox-exec``). Network: this machine only,
+            then the proxy. This machine includes other services
+            listening on it — Seatbelt cannot tell a database the
+            extension started from another local service — apart from
+            igni's own listeners, which are denied. Files:
+            every home directory and ``/private/var/folders`` denied
+            apart from the grants; the rest of the system readable.
+Linux       bubblewrap (``bwrap``), with a network namespace of its
+            own: no address but its own loopback, the proxy and igni's
+            two loopback endpoints bridged in through unix sockets.
+            Files: root read-only; ``/home``, ``/root``, ``$HOME``,
+            ``/run`` and ``/tmp`` empty; the grants bound in.
+Windows     Not sandboxed yet. The process runs with the person's
+            access, as before.
+==========  ==========================================================
+
+Where there is no sandbox (Windows; Linux without a usable ``bwrap``;
+igni itself already inside one) the process runs unconfined, with a
+warning in the log and on the extension's entry —
+unless ``extensions.require_sandbox`` (managed settings, the verified
+group policy, or ``IGNI_EXTENSIONS_REQUIRE_SANDBOX``) is set, which refuses to start it.
+``extensions.sandbox: false`` (managed or user settings, never a
+project's) turns the sandbox off for development.
 
 Writing the limits down is the point. A permission that is partly
 enforced and documented as total is the failure this module exists to
@@ -189,10 +223,11 @@ class Egress:
         """Refuse an endpoint whose host was not declared, or is not https.
 
         Narrow and real: igni makes this connection itself, so igni
-        can refuse it. It is not network confinement of the
-        extension's own process — nothing here stops a service from
-        opening its own sockets, and claiming otherwise would be the
-        kind of overstatement this module exists to remove.
+        can refuse it. An endpoint is somebody else's process, so this
+        is all the confinement it gets. A process igni starts is
+        confined separately, by the OS sandbox and its egress proxy
+        (:mod:`ember_code.extensions.sandbox`), which hold it to the
+        same list.
         """
         parsed = urlparse(url)
         host = parsed.hostname
@@ -295,9 +330,10 @@ class WorkspaceAccess:
         """Whether a path inside the project is within the grant.
 
         For igni's own use when it acts on a service's behalf. A
-        service reading the filesystem directly is not subject to
-        this; confining a process is an OS sandbox and this is not
-        one.
+        process reading the filesystem directly is held to the same
+        grant by the OS sandbox (:class:`~ember_code.extensions.sandbox.SandboxPlan`),
+        which grants a glob as its directory prefix — paths, not
+        patterns — so this is the finer of the two.
         """
         if not self.granted:
             return False

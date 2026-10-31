@@ -33,8 +33,14 @@ from ember_code.extensions.host.spec import (
     typedef,
 )
 
+#: What ``host.workspace.open`` opens: documents, never a program or a
+#: bundle, since the host opens it outside the extension's sandbox.
+OPENABLE_SUFFIXES = frozenset(
+    {"csv", "gif", "htm", "html", "jpeg", "jpg", "md", "pdf", "png", "svg", "txt", "webp"}
+)
+
 #: The model's version. Semver; see the module docstring.
-SCHEMA_VERSION = "1.10.0"
+SCHEMA_VERSION = "1.11.0"
 
 # ── Permissions ───────────────────────────────────────────────────
 
@@ -48,6 +54,12 @@ PERMISSIONS = (
     PermissionSpec(
         name="links",
         doc="Open https links in the person's browser, from the window it is asked about.",
+    ),
+    PermissionSpec(
+        name="files.open",
+        doc="Open a document in the project with the application this machine opens it "
+        "with, as the person would by double-clicking it. Only a file the workspace grant "
+        "reaches, and only a document (`host.workspace.open`).",
     ),
     PermissionSpec(
         name="ui",
@@ -1697,6 +1709,18 @@ OBJECTS = (
             ),
             method("search", "Search the code.", param("query", "str"), result="json"),
             method("pick_dir", "Ask the person to pick a folder.", result="json"),
+            method(
+                "open",
+                "Open a file in the project with the application this machine opens it "
+                "with — what an extension whose process is sandboxed cannot do itself. "
+                "Only a file the workspace grant reaches (`refused` outside the project, "
+                "`not_granted` outside `workspacePaths`), and only a document: "
+                f"{', '.join(f'`.{s}`' for s in sorted(OPENABLE_SUFFIXES))} "
+                "(`invalid` otherwise, and for an executable file). `failed` when nothing "
+                "here opened it.",
+                param("path", "str", "Relative to the project, or absolute inside it."),
+                permission="files.open",
+            ),
         ),
     ),
     ObjectSpec(

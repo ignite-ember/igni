@@ -42,6 +42,10 @@ ALLOWED: dict[tuple[str, str], str] = {
     ("core/activity/background.py", "create_task"): "the helper itself",
     ("core/activity/background.py", "ensure_future"): "the helper itself",
     ("core/activity/background.py", "Thread"): "the helper itself",
+    ("extensions/sandbox/bridge.py", "Thread"): (
+        "runs inside an extension's Linux sandbox under igni's interpreter with -I, "
+        "importing nothing of igni's; its relay threads are not igni's work"
+    ),
 }
 
 

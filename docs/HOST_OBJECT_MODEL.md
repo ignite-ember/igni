@@ -140,7 +140,7 @@ window, another extension, or this one.
   the model's — fails the build, so the model cannot fall behind the
   app.
 - **One schema, two SDKs.** The model is described once —
-  `ember_code.extensions.host.definition`, version **1.10.0** — and
+  `ember_code.extensions.host.definition`, version **1.11.0** — and
   versioned under the compatibility floor (EXTENSIBILITY §8): a new
   member is a minor version, a changed or removed one a major. The Python
   SDK (`igni-extension`, `igni_extension.host_model`) and the TypeScript
@@ -206,7 +206,7 @@ Errors carry a code both SDKs raise (`HostError.code`): `not_granted`,
 | `host.workflows` | `list` | `changed` | `run(name, input)`, `cancel(workflow_run_id)` | `workflows` |
 | `host.scheduler` | `tasks` | `event` | `start()`, `run_now(task_id)`, `cancel(task_id)` | `scheduler` |
 | `host.processes` — background shells | `list` | `changed` | `tail(pid, lines)`, `stop(pid)`, `run(command)` | `processes` |
-| `host.workspace` | `root`, `head {commit_sha, branch}` | `head_changed`, `files_changed` | `read(path)`, `list(dir)`, `complete(prefix)`, `search(query)`, `pick_dir()` | `workspace` (`permissions.workspace`, with its paths) |
+| `host.workspace` | `root`, `head {commit_sha, branch}` | `head_changed`, `files_changed` | `read(path)`, `list(dir)`, `complete(prefix)`, `search(query)`, `pick_dir()`, `open(path)` | `workspace` (`permissions.workspace`, with its paths); `open`: `files.open` as well |
 | `host.models` | `registry`, `current` (writable — switches) | `changed` | — | `models` |
 | `host.mcp` | `servers`, `status`, `details` | `changed` | `connect(name)`, `disconnect(name)`, `ensure()`, `set_tool_enabled(server, tool, on)` | `mcp` |
 | `host.plugins` | `installed`, `marketplaces` | `changed` | `contents(name)`, `preview(source, branch, subdir)`, `install`, `update`, `remove`, `set_enabled`, `add_marketplace`, `remove_marketplace`, `refresh_marketplaces` | `plugins` |
@@ -226,6 +226,25 @@ distribution record's `service_url`, which is the service's `client_uri`,
 RFC 7591's "home page of the client" — or, for a development install,
 its `serviceUrl` setting. igni shows it as **Open on the web** on the
 extension's row and above its page.
+
+## Files out of a sandbox
+
+An extension's process runs in an OS sandbox that cannot launch an
+application, so it cannot open what it wrote. `host.workspace.open(path)`
+asks igni to: the file is opened with whatever opens it on this machine,
+as if the person had double-clicked it.
+
+```python
+await ext.host.workspace.open("exports/design-v3.html")
+```
+
+It needs `files.open` in `permissions.host` besides the workspace grant,
+and opens only a file that grant reaches (`refused` outside the project,
+`not_granted` outside `workspacePaths`, `not_found` for a missing file).
+Whatever opens the file runs outside the sandbox, so only a document
+opens — HTML, PDF, Markdown, text, CSV and images — never a program,
+script or bundle, and never a file with its executable bit set
+(`invalid`). `failed` when nothing on the machine opened it.
 
 ## Links out of igni
 
@@ -405,6 +424,7 @@ rules are EXTENSIBILITY §6, *A page and its own service*.
 | `shutdown` | Quitting igni is the person's decision. |
 | The model's own plumbing: the `host_model` and `window_model` RPCs, and the `host_signal`, `window_model_changed` and `open_external` pushes | They are how the model reaches a page and a window, not things igni does. |
 | Delivering a service's events (`deliver_service_events`) | The platform's: it hands the producer the events services sent their extensions. An extension hears its own as `@ext.on_service_event`, and igni posts nothing for them: the handler acts through its own host calls (*Opening a chat for an event*, below). It does not deliver them. |
+| Workspace trust (`get_workspace_trust`, `set_workspace_trust`, the `workspace_trust_required` push) | Trusting a folder lets it run its own code; that is the person's decision, made in igni's own dialog or `igni trust`, never an extension's. |
 | A page's token for its own service (`extension_service_token`) | Not igni's to model: it is how a page reaches its own service (`bridge.service`), the page's half of what `ext.service` is for the process. No `permissions.host` grant — having a service is the grant — and the audience is that extension's own service, never one it names. |
 
 Anything else missing from this table is a bug in it.

@@ -1,4 +1,4 @@
-"""GENERATED from the igni host schema 1.10.0 by ember_code.extensions.host.codegen — do not edit. Run `make host-sdks` after changing the schema.
+"""GENERATED from the igni host schema 1.11.0 by ember_code.extensions.host.codegen — do not edit. Run `make host-sdks` after changing the schema.
 
 `ext.host` as an extension's process sees it. Read
 `docs/HOST_OBJECT_MODEL.md` in igni for what each object is.
@@ -22,7 +22,7 @@ from igni_extension.members import (
 )
 from igni_extension.notifications import LocalNotification, Target
 
-SCHEMA_VERSION = "1.10.0"
+SCHEMA_VERSION = "1.11.0"
 
 NotificationTarget = Target
 
@@ -1624,6 +1624,10 @@ class HostWorkspace(HostObject):
     async def pick_dir(self) -> JsonValue:
         """Ask the person to pick a folder."""
         return cast(JsonValue, await self._call("pick_dir", {}, JsonValue))
+
+    async def open(self, path: str) -> None:
+        """Open a file in the project with the application this machine opens it with — what an extension whose process is sandboxed cannot do itself. Only a file the workspace grant reaches (`refused` outside the project, `not_granted` outside `workspacePaths`), and only a document: `.csv`, `.gif`, `.htm`, `.html`, `.jpeg`, `.jpg`, `.md`, `.pdf`, `.png`, `.svg`, `.txt`, `.webp` (`invalid` otherwise, and for an executable file). `failed` when nothing here opened it."""
+        await self._call("open", {"path": path}, NO_RESULT)
 
 class HostModels(HostObject):
     """Models."""

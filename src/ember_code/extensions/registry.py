@@ -117,6 +117,10 @@ class InstalledExtension:
     #: row (:class:`~ember_code.extensions.faults.ExtensionFaults`) — or
     #: empty while it answers. Its hooks are not waited on while it is.
     faulty: str = ""
+    #: How its process runs: ``sandboxed (seatbelt)``, ``not sandboxed:
+    #: <why>``, or empty when igni starts no process for it (an endpoint).
+    #: Kept by the installer from :class:`~ember_code.extensions.sandbox.ExtensionSandbox`.
+    sandbox: str = ""
 
     @property
     def id(self) -> str:
@@ -205,6 +209,14 @@ class ExtensionRegistry:
         if entry is None or entry.problems == problems:
             return
         entry.problems = list(problems)
+        self._announce(extension_id)
+
+    def set_sandbox(self, extension_id: str, sandbox: str) -> None:
+        """Record how its process is confined, or why it is not."""
+        entry = self._installed.get(extension_id)
+        if entry is None or entry.sandbox == sandbox:
+            return
+        entry.sandbox = sandbox
         self._announce(extension_id)
 
     def set_faulty(self, extension_id: str, reason: str) -> None:

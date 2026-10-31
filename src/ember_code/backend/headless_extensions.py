@@ -206,6 +206,8 @@ class HeadlessExtensions:
             environments=PythonEnvironments(store.environments_root),
             service_tokens=ServiceTokenEndpoint(exchange, principal=person),
             host_channel=self._channel,
+            # Its air gap narrows what an extension's process may reach.
+            sandbox=self._sandbox(settings),
         )
         launcher = ExtensionLauncher(
             store=store, installer=installer, registry=self._registry, contributions=contributions
@@ -226,6 +228,18 @@ class HeadlessExtensions:
             if entry is not None and entry.state is not ExtensionState.READY:
                 logger.warning("extension %s is %s: %s", extension_id, entry.state, entry.reason)
         session.reload_group_agents()
+
+    @staticmethod
+    def _sandbox(settings: Any) -> Any:
+        """The OS sandbox every extension process here starts in.
+
+        Imported here rather than at the top: this module is reached
+        from ``extensions.host.channel`` through the session runner, and
+        a top-level import of the sandbox package closes that cycle.
+        """
+        from ember_code.extensions.sandbox import ExtensionSandbox
+
+        return ExtensionSandbox.for_settings(settings)
 
     async def stop(self) -> None:
         """Stop the extensions' processes, and take their hooks out of the gate."""

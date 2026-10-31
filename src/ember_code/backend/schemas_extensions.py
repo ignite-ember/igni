@@ -130,6 +130,11 @@ class ExtensionSummary(BaseModel):
     #: Why it is faulty — its calls timed out or crashed too often in a
     #: row, and igni restarted it — or empty while it answers.
     faulty: str = ""
+    #: How its process runs: ``sandboxed (seatbelt)``, ``not sandboxed:
+    #: <why>`` — an indicator to show, since an unsandboxed process has
+    #: the person's full file and network access — or empty for an
+    #: extension igni starts no process for.
+    sandbox: str = ""
     #: The tools it gives the agent, and what each says it is — what
     #: the permission modes decide on.
     tools: list[ExtensionTool] = Field(default_factory=list)
@@ -169,6 +174,7 @@ class ExtensionSummary(BaseModel):
             ],
             problems=list(entry.problems),
             faulty=entry.faulty,
+            sandbox=entry.sandbox,
             tools=[
                 ExtensionTool(name=tool.name, hints=tool.hints.describe())
                 for tool in manifest.permissions.tools

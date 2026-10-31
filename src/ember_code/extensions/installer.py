@@ -76,6 +76,7 @@ from ember_code.extensions.registry import (
     InstalledExtension,
 )
 from ember_code.extensions.rpc import ExtensionRpc
+from ember_code.extensions.sandbox import ExtensionSandbox
 from ember_code.extensions.service import McpExtensionService
 from ember_code.extensions.service_token import ServiceTokenEndpoint
 from ember_code.extensions.store import (
@@ -142,6 +143,7 @@ class ExtensionInstaller:
         host_channel: HostChannel | None = None,
         tool_hints: ToolHintsRegistry | None = None,
         asset_source: AssetSource | None = None,
+        sandbox: ExtensionSandbox | None = None,
     ) -> None:
         """
         Args:
@@ -182,6 +184,10 @@ class ExtensionInstaller:
             asset_source: Where a development install's missing asset
                 is fetched from — its manifest's ``source``. A
                 distributed one never is: its assets came from igni.
+            sandbox: What every process this starts runs inside
+                (:mod:`ember_code.extensions.sandbox`). One reading the
+                managed, env and user settings by default, with no air
+                gap; the backend passes one built from its settings.
         """
         self._registry = registry
         self._rpc = rpc
@@ -197,6 +203,7 @@ class ExtensionInstaller:
         self._host_channel = host_channel
         self._tool_hints = tool_hints if tool_hints is not None else ToolHintsRegistry.shared()
         self._asset_source = asset_source or AssetSource()
+        self._sandbox = sandbox if sandbox is not None else ExtensionSandbox()
         # Where a plugin an extension carries is installed.
         # ``None`` means this deployment does not take them —
         # the extension still installs, and its agents do not
@@ -255,6 +262,17 @@ class ExtensionInstaller:
             entry_point = await self._python_entry(manifest, bundle, distribution)
             token_env = {**await self._process_grants(manifest, service_url), **assets_env}
             config = self._service_config(manifest, bundle, permissions, entry_point, token_env)
+            # Every process igni starts for an extension starts confined
+            # to its grants, or — where there is no sandbox — says so.
+            config = await self._sandbox.confine(
+                manifest,
+                config,
+                bundle=bundle,
+                data_dir=Path(token_env[DATA_DIR_ENV]) if DATA_DIR_ENV in token_env else None,
+                project_dir=self._project_dir,
+                service_url=service_url,
+                development=self._allow_development,
+            )
         except (
             AssetError,
             InstallError,
@@ -265,17 +283,24 @@ class ExtensionInstaller:
             # the extension is installed and not runnable here, which
             # is exactly what an administrator needs to be shown.
             self._revoke_token(manifest.id)
+            await self._sandbox.release(manifest.id)
             self._registry.set_state(manifest.id, ExtensionState.FAILED, str(exc))
             return entry
+
+        confinement = self._sandbox.status(manifest.id)
+        if confinement is not None:
+            self._registry.set_sandbox(manifest.id, confinement.describe())
 
         reason = await self._start(config)
         if reason is not None:
             self._revoke_token(manifest.id)
+            await self._sandbox.release(manifest.id)
             self._registry.set_state(manifest.id, ExtensionState.FAILED, reason)
             return entry
 
         self._restrict_tools(manifest, config.name, permissions)
         await self._apply_tool_hints(manifest, config.name, permissions)
+        self._note_unsandboxed(manifest)
 
         self._rpc.bind(
             manifest.id,
@@ -365,6 +390,7 @@ class ExtensionInstaller:
         self._audience.release(server_name(extension_id))
         self._tool_hints.forget(server_name(extension_id))
         self._revoke_token(extension_id)
+        await self._sandbox.release(extension_id)
         self._registry.remove(extension_id)
         logger.info("extension %s removed", extension_id)
         return True
@@ -776,6 +802,28 @@ class ExtensionInstaller:
                     f"its tool {bare} reports itself as {said.describe()}, and its "
                     f"manifest says {declared.describe()}; the manifest's hints apply"
                 )
+        self._registry.set_problems(manifest.id, problems)
+
+    def _note_unsandboxed(self, manifest: ExtensionManifest) -> None:
+        """A process unconfined for want of a sandbox is a problem the panel shows.
+
+        Turned off by ``extensions.sandbox: false`` it is a choice, and
+        :attr:`InstalledExtension.sandbox` says so without calling it a
+        problem. Not a failure either way — no sandbox here is a
+        machine's state, and
+        ``extensions.require_sandbox`` is how an administrator makes it
+        one — but the person should see that this extension's process
+        has their full file and network access.
+        """
+        confinement = self._sandbox.status(manifest.id)
+        if confinement is None or confinement.confined or confinement.deliberate:
+            return
+        entry = self._registry.get(manifest.id)
+        problems = list(entry.problems) if entry is not None else []
+        problems.append(
+            f"its process is not sandboxed ({confinement.reason}), so it has this "
+            "person's full file and network access rather than its grants"
+        )
         self._registry.set_problems(manifest.id, problems)
 
     @staticmethod

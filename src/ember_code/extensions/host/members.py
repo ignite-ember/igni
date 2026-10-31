@@ -13,7 +13,9 @@ model's promise and igni's internal wire, which is free to change.
 
 from __future__ import annotations
 
+import asyncio
 import json
+import os
 import uuid
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
@@ -24,9 +26,11 @@ from urllib.parse import urlsplit
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 
 from ember_code import __version__
+from ember_code.backend.file_opener import FileOpener
 from ember_code.core.decisions import DecisionRequest, DecisionsUnavailable, DecisionTooLong
+from ember_code.extensions.host.definition import OPENABLE_SUFFIXES
 from ember_code.extensions.host.errors import HostModelError
-from ember_code.extensions.host.grants import HostGrants
+from ember_code.extensions.host.grants import WORKSPACE, HostGrants
 from ember_code.extensions.host.spec import ErrorCode
 from ember_code.extensions.host.windows import WindowModelError, references
 from ember_code.protocol import messages as msg
@@ -1114,6 +1118,28 @@ class WorkspaceMembers(Members):
     @call("workspace.pick_dir")
     async def pick_dir(self, c: Call) -> Any:
         return await self.rpc(RpcMethod.PICK_DIR_NATIVE, {}, c=c)
+
+    @call("workspace.open")
+    async def open_file(self, c: Call) -> Any:
+        """Open a document the workspace grant reaches, as the person would.
+
+        The extension's own process is sandboxed and cannot launch
+        anything; igni can, so it opens the file — and only a document,
+        never a program, a script or a bundle, because whatever opens it
+        runs outside that sandbox.
+        """
+        if not c.grants.workspace.granted:
+            raise HostModelError.not_granted(c.extension_id, "workspace.open", WORKSPACE)
+        relative = self.inside(c, str(c.params["path"]))
+        target = self.root(c).resolve() / relative
+        if not target.is_file():
+            raise HostModelError(ErrorCode.NOT_FOUND, f"{relative!r} is not a file")
+        if target.suffix.lower().lstrip(".") not in OPENABLE_SUFFIXES:
+            raise HostModelError(ErrorCode.INVALID, f"{relative!r} is not a document igni opens")
+        if os.access(target, os.X_OK):
+            raise HostModelError(ErrorCode.INVALID, f"{relative!r} is executable")
+        if not await asyncio.to_thread(FileOpener.open, target):
+            raise HostModelError(ErrorCode.FAILED, f"nothing on this machine opened {relative!r}")
 
 
 # ── models, mcp, plugins, extensions, hooks, permissions ──────────

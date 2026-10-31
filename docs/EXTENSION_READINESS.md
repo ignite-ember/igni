@@ -75,19 +75,36 @@ the extension boundary is a security boundary or a comment.
 | # | Declared | Enforced at | How far |
 |---|---|---|---|
 | B1 | `permissions.rpc` | `ExtensionRegistry.authorise` | ✅ complete |
-| B2 | `permissions.egress` | the page's `connect-src`, written from the manifest; and the endpoint host igni dials | ✅ **complete for what it governs: pages.** The extension's process is the service's own code and is trusted, not confined — approving the service is that decision (EXTENSIBILITY §6, *The process is trusted*). |
+| B2 | `permissions.egress` | the page's `connect-src`, written from the manifest; the endpoint host igni dials; and the extension's **process**, in an OS sandbox whose only way out is igni's egress proxy (`extensions/sandbox/`) | ✅ **pages, endpoints and the process.** The process's own service and its `egress` hosts are reachable through the proxy (exact host and port; a bare host is `:443`), narrowed under `air_gapped` to hosts inside the network; any other connection is refused by the kernel. macOS: services on this machine stay reachable, apart from igni's own listeners (Seatbelt cannot filter loopback by port for a server the extension starts itself). Windows: not sandboxed yet. |
 | B3 | `permissions.secrets` | resolution — an undeclared name is never looked up, and the resolver is the deployment's | ⚠️ **value, not handle.** It reaches the service's environment as `IGNI_SECRET_<NAME>`. **Never a token for the extension's own service**: that the host fetches by token exchange and serves on a loopback endpoint (`IGNI_SERVICE_TOKEN_URL`, §9 of igni server's `service-identity.md`), so the extension never holds the person's igni session. No deployment wires a secret source yet, so a declared secret currently fails the install. |
-| B4 | `permissions.workspace` / `workspacePaths` | what igni *tells* a service | ✅ **told, by design.** An ungranted extension is not told where the project is, and is not given its signals; its process runs with the person's own access, trusted as its service is. |
+| B4 | `permissions.workspace` / `workspacePaths` | what igni *tells* a service; and what its process can open, in the OS sandbox | ✅ **told and confined.** An ungranted extension is not told where the project is, is not given its signals, and cannot read it; `read` makes it readable, `write` writable. A `workspacePaths` glob is granted as its directory prefix (a sandbox grants paths, not patterns). The rest of the person's home — `~/.ssh`, `~/.aws`, `~/.igni`, browser profiles, keychains — is not readable; nothing but the workspace grant, its own data directory and its run's temp directory is writable. Windows: not sandboxed yet. |
 | B5 | `permissions.tools` | tool registration, which is igni's | ✅ complete |
 | B6 | provenance (was `signature`) | the distribution sync, before a bundle is stored: the JWS igni server hands over with the bundle, checked against the approved service's `publisher_jwks` (RS256/ES256) and the archive's SHA-256; then the installer, which trusts a bundle only with that record | ✅ complete. The manifest no longer carries a signature — one cannot cover the archive it is inside — and the administrator-maintained Ed25519 trust store is gone. Anything not distributed by igni is a development install behind `IGNI_DEV_EXTENSIONS`. |
 
-**`egress` and `workspace` are enforced where igni decides, and the
-process is trusted where it acts.** That is a decision, not a gap: an
-extension's process is the code of a service a super admin approved,
-from a bundle that service signed, and confining it would mean an OS
-sandbox per platform for code the deployment has already chosen to run.
-For a regulated deployment the sentence to put in front of an assessor
-is that one, with the Services page as the record of what was approved.
+**`egress` and `workspace` now bind the process, not only its pages.**
+Every process igni starts for an extension starts in an OS sandbox
+(`ember_code/extensions/sandbox/`), with the extension's grants as its
+profile:
+
+| | macOS — Seatbelt (`sandbox-exec`) | Linux — bubblewrap (`bwrap`) | Windows |
+|---|---|---|---|
+| **Network** | Denied by the kernel (`EPERM`) but for this machine; out only through igni's egress proxy (`HTTP(S)_PROXY`, `ALL_PROXY`; HTTP CONNECT, plain HTTP, SOCKS5). Other services listening on this machine stay reachable — not igni's own (its backend socket, other extensions' proxies and pages), which are denied. No DNS. The proxy takes a per-run credential, so no extension can use another's. | A network namespace of its own: its own loopback only. The proxy, the host channel and the token endpoint are bridged in through unix sockets. | not sandboxed |
+| **Read** | Everything but home directories (`/Users`) and `/private/var/folders`, which are denied apart from: its bundle, its Python environment and interpreter, its data directory, its temp directory, the granted workspace. | Root read-only; `/home`, `/root`, `$HOME`, `/run`, `/tmp` empty; the same grants bound in. | — |
+| **Write** | Its data directory, its run's temp directory (also its `HOME`), the workspace for `write`. | The same. | — |
+
+Two settings, each read only from the tiers allowed to set it:
+`extensions.require_sandbox: true` (managed settings, the organisation's
+verified group policy, or `IGNI_EXTENSIONS_REQUIRE_SANDBOX=1`) refuses to start an extension where
+no sandbox is available; without it the process runs unconfined, with
+a warning in the log and on the extension (`problems`, `sandbox`).
+`extensions.sandbox: false` (managed or user settings — never a
+project's) turns the sandbox off for development.
+
+What is not confined: an extension's **endpoint** is somebody else's
+process (only its host is checked); on **Windows** the process runs
+with the person's access; on **macOS** it can reach services listening
+on this machine other than igni's own. The Services page is still the record of what a super
+admin approved.
 
 **Secrets became values rather than handles**, and the contract was
 corrected rather than the other way round. A handle needs an exchange
@@ -197,12 +214,15 @@ runs sees one undifferentiated caller.
 
 **To hand one trusted partner a thing that works** — done. They can
 scaffold, check, install, run, call their own service and see it fail
-legibly, without writing Python. Gate B is enforced; its process is
-trusted rather than sandboxed, and the agreement says so.
+legibly, without writing Python. Gate B is enforced; its process runs
+in an OS sandbox on macOS and Linux, and unconfined on Windows, which
+the agreement says.
 
-**To let a third party build** — Gate B is done. Its process is not
-sandboxed: a deployment approves a third party's service only if it
-trusts that service's code, exactly as it would install its software.
+**To let a third party build** — Gate B is done. Its process is
+sandboxed to its grants on macOS and Linux; on Windows it is not yet, so
+a deployment that runs Windows desktops approves a third party's service
+only if it trusts that service's code, or sets
+`extensions.require_sandbox` and keeps extensions off those machines.
 
 **To serve a group** — G1–G4 are done and G5 is not. A shared backend
 now refuses what it cannot run, which is the half that stops somebody
