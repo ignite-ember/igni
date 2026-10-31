@@ -255,8 +255,40 @@ def load_settings_from_options(options: CliOptions) -> Settings:
     # not stall on a portal call. See ``CachedSettingsFetcher``.
     from ember_code.core.config.group_policy import CachedSettingsFetcher
 
+    # The pack is verified before it is merged; with ``group_policy.required``
+    # set and no verified pack, the fetcher raises ``GroupPolicyUnavailable``
+    # and this run starts no session (``main`` reports it).
     local_only = _settings_module.load_settings(cli_overrides=payload)
-    return _settings_module.load_settings(
+    settings = _settings_module.load_settings(
         cli_overrides=payload,
-        group_policy_fetcher=CachedSettingsFetcher(local_only.storage.data_dir),
+        group_policy_fetcher=CachedSettingsFetcher.for_settings(local_only),
     )
+    if options.auto_approve and _bypass_forbidden(settings):
+        # ``--auto-approve`` is bypass mode plus four categories set to
+        # ``allow``. The loader already refuses the mode; the categories
+        # would still run every shell command and push unasked, which is
+        # bypass under another name. Ignored with a warning — the way the
+        # group tier treats a loosening it refuses — and loaded again
+        # without the flag, so any other flag passed still applies.
+        source = settings.permissions.mode_policy.bypass_source or "policy"
+        click.echo(
+            f"Warning: --auto-approve is turned off by your organisation's {source} "
+            "(permissions.allow_bypass: false); running without it.",
+            err=True,
+        )
+        payload = CliOverrides.from_options(
+            options.model_copy(update={"auto_approve": False})
+        ).to_settings_payload()
+        settings = _settings_module.load_settings(
+            cli_overrides=payload,
+            group_policy_fetcher=CachedSettingsFetcher.for_settings(local_only),
+        )
+    return settings
+
+
+def _bypass_forbidden(settings: Settings) -> bool:
+    """Did the organisation's managed settings or group policy turn bypass off?"""
+    from ember_code.core.config.permission_eval.mode_policy import ModePolicy
+
+    policy = getattr(getattr(settings, "permissions", None), "mode_policy", None)
+    return isinstance(policy, ModePolicy) and not policy.allow_bypass

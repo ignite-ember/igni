@@ -6,9 +6,12 @@ schema — no methods.
 
 from __future__ import annotations
 
-from typing import ClassVar
+from typing import TYPE_CHECKING, Any, ClassVar
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, PrivateAttr
+
+if TYPE_CHECKING:
+    from ember_code.core.config.permission_eval.mode_policy import ModePolicy
 
 #: The shell tool every git invocation arrives as. igni has no git tool and no
 #: read tool — a commit, a push and a ``cat`` are all ``run_shell_command`` — so
@@ -59,6 +62,14 @@ class PermissionsConfig(BaseModel):
     # ``allow`` are lists of ``Tool`` or ``Tool(pattern)`` strings
     # (e.g. ``"Bash(rm *)"``, ``"Read(./.env)"``).
     mode: str = "default"
+    #: ``false`` forbids ``bypassPermissions`` outright — by flag, by
+    #: ``/bypass``, by a tool. Honoured only from the managed-settings file
+    #: or the group policy: the loader reads those two tiers on their own
+    #: (:class:`~ember_code.core.config.permission_eval.mode_policy.ModePolicy`)
+    #: and never consults the merged value, so a user's or a project's
+    #: ``allow_bypass`` changes nothing. Defaults to ``true``: with no
+    #: organisation policy every mode, fully automatic included, is open.
+    allow_bypass: bool = True
     deny: list[str] = Field(default_factory=list)
     ask: list[str] = Field(default_factory=list)
     allow: list[str] = Field(default_factory=list)
@@ -75,6 +86,32 @@ class PermissionsConfig(BaseModel):
     #: them into the merge base and a user who set ``require_confirmation: []``
     #: could never take them back out.
     confirm_commands: list[str] = Field(default_factory=list, exclude=True)
+
+    #: What the managed settings and group policy say about modes, recorded by
+    #: ``SettingsLoader.load`` from those two tiers alone. Private so no config
+    #: file can write it; ``None`` means no policy was read (tests, tooling).
+    _mode_policy: Any = PrivateAttr(default=None)
+
+    #: Permission fields the managed settings or the group policy set,
+    #: recorded by ``SettingsLoader.load``. These are final: a lower tier —
+    #: a user's file, a trusted project's — cannot loosen them, and a
+    #: category level here is emitted even when it equals its default
+    #: (see :meth:`category_rules`). Private so no config file can write it.
+    _final_fields: frozenset[str] = PrivateAttr(default=frozenset())
+
+    @property
+    def final_fields(self) -> frozenset[str]:
+        return self._final_fields
+
+    def set_final_fields(self, fields: frozenset[str]) -> None:
+        self._final_fields = frozenset(fields)
+
+    @property
+    def mode_policy(self) -> ModePolicy | None:
+        return self._mode_policy
+
+    def set_mode_policy(self, policy: ModePolicy | None) -> None:
+        self._mode_policy = policy
 
     #: What each per-category level governs, as permission-rule strings.
     #: Function-name categories use the registry's own names rather than a
@@ -167,7 +204,15 @@ class PermissionsConfig(BaseModel):
             # ``--strict``, handing the web back to a flag whose whole job is to
             # take it away. Measured, not assumed — the probe showed exactly that
             # before this line changed.
-            if value is None or value == type(self).model_fields[category].default:
+            #
+            # Except a level the organisation set: managed and group values are
+            # final, so ``shell_execute: ask`` from them is emitted even though
+            # it is the default — otherwise a project's ``allow: [Bash]`` met no
+            # ask rule and won.
+            if value is None or (
+                value == type(self).model_fields[category].default
+                and category not in self._final_fields
+            ):
                 continue
             target = bucket.get(value)
             if target is None:

@@ -103,6 +103,19 @@ class PermissionModeStrategy:
         """
         return True
 
+    def ask_rules_bind_allows(self) -> bool:
+        """Does a matching ``ask`` rule outrank this mode's own ALLOW?
+
+        The pipeline runs the mode step before the ask list so that
+        ``/bypass`` and ``acceptEdits`` really do stop asking — that is
+        what a person choosing an automatic mode wants. Plan mode is not
+        an automatic mode: it must never run unasked what ``default``
+        would have asked about, so for it the ask list (and
+        ``safety.require_confirmation``, which arrives as ask rules) is
+        checked before the mode's ALLOW stands.
+        """
+        return False
+
     def dont_ask_fallback(self) -> bool:
         """Does this mode treat the final step-6 fall-through as a
         DENY (rather than DEFER)? True exactly when the mode cannot
@@ -199,7 +212,10 @@ class BypassPermissionsMode(PermissionModeStrategy):
 
 class PlanMode(PermissionModeStrategy):
     """``plan`` — blocks file mutations + mutating shell commands,
-    auto-allows reads, defers unknown tools to the user."""
+    runs read-only shell from an allow-list and the read tools, asks
+    about any other shell command, defers unknown tools to the user.
+    Never looser than ``default``: an ask rule that matches still asks.
+    """
 
     mode = PermissionMode.PLAN
 
@@ -219,6 +235,9 @@ class PlanMode(PermissionModeStrategy):
         "for the user to approve execution."
     )
 
+    def ask_rules_bind_allows(self) -> bool:
+        return True
+
     def hinted_step(self, hints: ToolHints) -> PermissionDecision:
         """Reads run — in plan mode the point is to look. Anything else waits for the plan."""
         return PermissionDecision.ALLOW if hints.read_only else PermissionDecision.DENY
@@ -232,12 +251,19 @@ class PlanMode(PermissionModeStrategy):
         if catalog.is_edit(tool_name):
             return PermissionDecision.DENY
         if catalog.is_shell(tool_name):
-            # Shell commands may or may not mutate. Block the
-            # obvious writers (sed -i, > redirect, rm, mv, cp, ...)
-            # and let read-only shell calls through.
+            # Three outcomes. The obvious writers (sed -i, > redirect,
+            # rm, mv, cp, ...) are denied, with a reason that points at
+            # exit_plan_mode. A command built only from the read-only
+            # allow-list runs. Everything else — git push, terraform
+            # apply, kubectl delete, curl -o, anything the regex has
+            # never heard of — is put to the person. The allow-list,
+            # not the regex, is the boundary: a command nobody
+            # anticipated is asked about, not run.
             if catalog.bash_mutates(tool_args):
                 return PermissionDecision.DENY
-            return PermissionDecision.ALLOW
+            if catalog.bash_read_only(tool_args):
+                return PermissionDecision.ALLOW
+            return PermissionDecision.ASK
         if catalog.is_read(tool_name):
             return PermissionDecision.ALLOW
         # Custom / unknown tool — fall through to step 5/6 so the

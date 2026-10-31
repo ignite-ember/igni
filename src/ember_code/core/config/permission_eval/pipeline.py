@@ -76,6 +76,11 @@ class PermissionEvaluator:
     tool to always ask, they should remove it from bypass mode
     (the footer chip is one click) — not add an ask rule that
     silently overrides the mode they just chose.
+
+    The one exception is ``plan``: it is a mode for looking, not an
+    automatic mode, so an ALLOW from its mode step still yields to a
+    matching ask rule (:meth:`PermissionModeStrategy.ask_rules_bind_allows`).
+    Plan mode is therefore never looser than ``default``.
       5. ``allow`` — any matching allow rule → ``ALLOW``.
       6. ``defer`` — return ``DEFER`` so the caller routes to its
          interactive/UI/canUseTool fallback.
@@ -198,6 +203,16 @@ class PermissionEvaluator:
                 source="mode",
             )
         if mode_decision is PermissionDecision.ALLOW:
+            if strategy.ask_rules_bind_allows():
+                # Plan mode is never looser than default: what an ask
+                # rule would have asked about there, it asks about here.
+                ask_rule = self._first_match(self.ask, tool_name, tool_args)
+                if ask_rule is not None:
+                    return self._ask_or_deny(
+                        strategy,
+                        reason=f"ask rule '{ask_rule.display()}' matched",
+                        source="ask",
+                    )
             return PermissionOutcome(
                 decision=PermissionDecision.ALLOW,
                 reason=f"{self.mode.value} mode auto-allowed {tool_name}",

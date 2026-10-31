@@ -34,6 +34,7 @@ from typing import TYPE_CHECKING, ClassVar
 
 from ember_code.core.broadcast_schema import BroadcastEvent
 from ember_code.core.config.permission_eval import PermissionMode
+from ember_code.core.config.permission_eval.mode_policy import ModePolicy
 from ember_code.core.session.schemas import (
     OutputStyleChangedBroadcast,
     PermissionModeChangedBroadcast,
@@ -100,6 +101,38 @@ class RuntimeModeCoordinator:
     def __init__(self, session: Session) -> None:
         self._session = session
         self._patcher = OutputStyleInstructionsPatcher()
+        # Recorded once, at session start: the mode the session began in
+        # (where ``off`` returns to) and the organisation's mode policy
+        # (the floor and ``allow_bypass``). Read from the settings the
+        # session was built with; a stub without settings resolves the
+        # starting mode from its evaluator on first use and has no policy.
+        perms = getattr(getattr(session, "settings", None), "permissions", None)
+        self._starting_mode: PermissionMode | None = None
+        raw_start = getattr(perms, "mode", None)
+        if isinstance(raw_start, str):
+            try:
+                self._starting_mode = PermissionMode(raw_start)
+            except ValueError:
+                self._starting_mode = None
+        policy = getattr(perms, "mode_policy", None)
+        self._policy: ModePolicy = policy if isinstance(policy, ModePolicy) else ModePolicy()
+
+    @property
+    def policy(self) -> ModePolicy:
+        """The organisation's mode policy recorded at session start."""
+        return self._policy
+
+    @property
+    def starting_mode(self) -> PermissionMode:
+        """The mode this session started in — where ``/accept off`` and
+        friends return to."""
+        if self._starting_mode is None:
+            evaluator = getattr(self._session, "permission_evaluator", None)
+            mode = getattr(evaluator, "mode", None)
+            self._starting_mode = (
+                mode if isinstance(mode, PermissionMode) else PermissionMode.DEFAULT
+            )
+        return self._starting_mode
 
     def set_output_style(self, name: str) -> str:
         """Switch the active output style at runtime.
@@ -149,6 +182,16 @@ class RuntimeModeCoordinator:
         except ValueError:
             valid = ", ".join(m.value for m in PermissionMode)
             return f"Error: unknown permission mode {mode!r}. Valid: {valid}"
+        # Every runtime switch — the slash commands, the HITL "accept all
+        # edits" flip, ``enter_plan_mode`` and plan approval — arrives here,
+        # so this is the one place the organisation's floor and
+        # ``allow_bypass: false`` are enforced. Callers match on "Error".
+        refusal = self._policy.refusal(new_mode)
+        if refusal is not None:
+            return refusal
+        # Pin the starting mode before the first switch changes what the
+        # evaluator would report.
+        _ = self.starting_mode
         prev = session.permission_evaluator.mode
         session.permission_evaluator.mode = new_mode
         if prev == new_mode:

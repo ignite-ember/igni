@@ -26,6 +26,7 @@ from typing import Any, ClassVar
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from ember_code.core.config.permission_eval.read_only_shell import is_read_only
 from ember_code.core.mcp.hints import ToolHints, ToolHintsRegistry
 
 # ── Tool sets — kept as module-level frozensets so the package
@@ -161,6 +162,12 @@ class BashCommand:
                 cmd_str = args
         return cls(cmd_str)
 
+    def is_read_only(self) -> bool:
+        """Is this invocation built only from allow-listed read-only
+        commands? See :mod:`.read_only_shell` — the opposite question
+        from :meth:`mutates`, and the one plan mode allows on."""
+        return is_read_only(self._command)
+
     def mutates(self) -> bool:
         """Heuristic: does this Bash invocation write to the
         filesystem? Returns ``True`` for any match of the mutation
@@ -214,6 +221,10 @@ class ToolCategoryCatalog(BaseModel):
         strategies already have a catalog reference and shouldn't
         need to know about the ``BashCommand`` type directly."""
         return BashCommand.from_args(tool_args).mutates()
+
+    def bash_read_only(self, tool_args: dict[str, Any]) -> bool:
+        """Convenience: is this shell call on the read-only allow-list?"""
+        return BashCommand.from_args(tool_args).is_read_only()
 
     @classmethod
     def default(cls) -> ToolCategoryCatalog:

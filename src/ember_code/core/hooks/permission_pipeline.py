@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import fnmatch
 import logging
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
@@ -94,6 +95,9 @@ class ToolCallContext:
     func: Any  # Callable | None — ``Any`` skips Pydantic introspection.
     args: dict[str, Any]
     agent: Any = None
+    #: The team running the call, for a tool that belongs to a team rather
+    #: than to one of its agents (Agno passes one or the other).
+    team: Any = None
 
     @classmethod
     def for_check(cls, name: str, args: dict[str, Any]) -> ToolCallContext:
@@ -440,9 +444,11 @@ class PermissionEvaluatorStage(PermissionStage):
         self,
         evaluator: PermissionEvaluator | None,
         firer: HookFirer,
+        ask_person: AskPerson | None = None,
     ) -> None:
         self._evaluator = evaluator
         self._firer = firer
+        self._ask_person = ask_person
 
     async def evaluate(self, ctx: ToolCallContext) -> StageOutcome:
         if self._evaluator is None:
@@ -475,11 +481,48 @@ class PermissionEvaluatorStage(PermissionStage):
                 ctx.name,
                 PermissionRequestPayload.from_call(ctx.name, ctx.args),
             )
+            if _built_with_pause(ctx) is False:
+                # Nobody was asked. The tool was built to run without an
+                # approval pause — the session started in bypass, or the
+                # category is ``allow`` — and the mode has since changed
+                # to one that asks (plan mode, most often, entered by
+                # ``/plan`` or ``enter_plan_mode`` mid-session). Treating
+                # this ASK as answered would run ``git push`` in plan mode.
+                return await self._ask_now(ctx, outcome.reason)
             logger.info(
                 "Permission ASK for %s — falling through to HITL (already resolved by Agno)",
                 ctx.name,
             )
         return Continue()
+
+    async def _ask_now(self, ctx: ToolCallContext, reason: str) -> StageOutcome:
+        """Put a call that skipped its pause to the person, or refuse it.
+
+        Asks through the session's in-run approval channel (the one the
+        Bypass guard uses). With nobody there to answer — a headless run,
+        or no channel wired — the call is refused, with a message that
+        tells the model how to proceed rather than retry.
+        """
+        answer: bool | None = None
+        if self._ask_person is not None:
+            agent = getattr(ctx.agent, "name", None)
+            try:
+                answer = await self._ask_person(
+                    ctx.name, ctx.args, reason, [agent] if agent else []
+                )
+            except Exception as exc:  # fail closed
+                logger.warning("asking about %s failed: %s — refusing", ctx.name, exc)
+                answer = None
+        if answer is True:
+            return Continue()
+        await self._firer.fire(
+            HookEvent.PERMISSION_DENIED,
+            ctx.name,
+            PermissionDeniedPayload.from_call(ctx.name, ctx.args, "permission_evaluator"),
+        )
+        if answer is False:
+            return Block(f"Blocked: the person declined '{ctx.name}'.")
+        return Block(_unasked_message(ctx.name, reason))
 
     def _tool_is_off_entirely(self, tool_name: str) -> bool:
         """Is this tool denied for *every* argument list, or just this one?
@@ -529,6 +572,50 @@ _DENIAL_ALTERNATIVES: dict[str, str] = {
         "why, rather than retrying."
     ),
 }
+
+
+#: ``(tool_name, args, reason, agent_path) -> True / False / None`` — the
+#: session's in-run approval channel; ``None`` means nobody can answer.
+AskPerson = Callable[[str, dict[str, Any], str, list[str]], Awaitable[bool | None]]
+
+
+def _built_with_pause(ctx: ToolCallContext) -> bool | None:
+    """Was this tool built to pause for approval before it runs?
+
+    Agno pauses a call only when its ``Function`` carries
+    ``requires_confirmation``, and a paused call reaches this hook only
+    once someone confirmed it. So ``True`` means an ASK here has been
+    answered; ``False`` means nobody was asked. ``None`` when the tool
+    cannot be found on the agent or team running it.
+    """
+    for owner in (ctx.agent, ctx.team):
+        tools = getattr(owner, "tools", None)
+        if not isinstance(tools, list):
+            continue
+        for tool in tools:
+            functions = getattr(tool, "functions", None)
+            if isinstance(functions, dict):
+                if ctx.name in (getattr(tool, "requires_confirmation_tools", None) or []):
+                    return True
+                async_functions = getattr(tool, "async_functions", None) or {}
+                func = functions.get(ctx.name) or async_functions.get(ctx.name)
+                if func is not None:
+                    return bool(getattr(func, "requires_confirmation", False))
+            elif getattr(tool, "name", None) == ctx.name and hasattr(tool, "requires_confirmation"):
+                return bool(tool.requires_confirmation)
+    return None
+
+
+def _unasked_message(tool_name: str, reason: str) -> str:
+    """What the model reads when a call needed a yes nobody could give."""
+    text = f"Blocked: '{tool_name}' needs the person's approval"
+    if reason:
+        text += f" ({reason})"
+    return text + (
+        ", and this session has no way to ask for it here. Ask the person in your "
+        "reply instead of retrying. In plan mode, put the step in your plan and call "
+        "exit_plan_mode(plan)."
+    )
 
 
 def _denial_message(
@@ -609,11 +696,12 @@ class PermissionPipeline:
         blocked_commands: list[str],
         permission_evaluator: PermissionEvaluator | None,
         bypass_guard: Any | None = None,
+        ask_person: AskPerson | None = None,
     ) -> None:
         self._pre = PreToolUseHookStage(firer)
         self._protected = ProtectedPathStage(protected_paths)
         self._blocked = BlockedCommandStage(blocked_commands)
-        self._evaluator_stage = PermissionEvaluatorStage(permission_evaluator, firer)
+        self._evaluator_stage = PermissionEvaluatorStage(permission_evaluator, firer, ask_person)
         self._bypass_guard = BypassGuardStage(bypass_guard)
 
     async def evaluate(self, ctx: ToolCallContext) -> str | None:

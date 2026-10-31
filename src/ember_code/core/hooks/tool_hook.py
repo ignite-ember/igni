@@ -78,6 +78,7 @@ class ToolEventHook:
         project_dir: Path | None = None,
         permission_evaluator: PermissionEvaluator | None = None,
         bypass_guard: Any | None = None,
+        ask_person: Any | None = None,
     ):
         # Agno's ``aexecute`` checks ``inspect.iscoroutinefunction``
         # — mark this callable-instance so the async path is used.
@@ -91,6 +92,7 @@ class ToolEventHook:
             blocked_commands=blocked_commands or [],
             permission_evaluator=permission_evaluator,
             bypass_guard=bypass_guard,
+            ask_person=ask_person,
         )
         self._invoker = ToolCallInvoker(firer)
         self._suffixer = RulesSuffixer(
@@ -105,6 +107,7 @@ class ToolEventHook:
         func: Callable | None = None,
         args: dict[str, Any] | None = None,
         agent: Any = None,
+        team: Any = None,
         **kwargs: Any,
     ) -> Any:
         """Agno-owned signature — ``**kwargs`` absorbs any extra
@@ -118,6 +121,7 @@ class ToolEventHook:
             func=func,
             args=args or {},
             agent=agent,
+            team=team,
         )
         # Extensions' PreToolUse hooks are asked first, with the real
         # arguments, so igni's own checks — the configured PreToolUse

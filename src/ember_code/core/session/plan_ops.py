@@ -33,6 +33,7 @@ import logging
 from typing import TYPE_CHECKING
 
 from ember_code.core.broadcast_schema import BroadcastEvent
+from ember_code.core.config.permission_eval import PermissionMode
 from ember_code.core.session.schemas import (
     PlanDecidedBroadcast,
     PlanDecisionResult,
@@ -139,7 +140,16 @@ class PlanCoordinator:
             logger.debug("plan decision persist failed: %s", exc)
         mode_status = ""
         if flip_mode:
-            mode_status = session.set_permission_mode("default")
+            # Out of plan mode to the mode the session started in, or
+            # ``default`` when it started in plan mode. Goes through
+            # ``set_permission_mode`` like every other switch, so an
+            # organisation's floor still holds: a plan-mode floor keeps
+            # the session in plan mode and ``mode_status`` says why.
+            starting = getattr(session, "permission_starting_mode", None)
+            start = starting() if callable(starting) else PermissionMode.DEFAULT
+            if not isinstance(start, PermissionMode) or start is PermissionMode.PLAN:
+                start = PermissionMode.DEFAULT
+            mode_status = session.set_permission_mode(start.value)
         # ``mode="json"`` collapses :class:`PlanDecision` StrEnum
         # to its ``.value`` string so downstream broadcast
         # consumers (transport adapters, TS clients) see the

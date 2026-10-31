@@ -68,6 +68,9 @@ class ToolEventHookFactory:
         self._permission_evaluator: PermissionEvaluator | None = permission_evaluator
         #: Bypass mode's last check; set by the session once it can ask.
         self.bypass_guard: Any = None
+        #: The session's in-run approval channel, for a call the evaluator
+        #: wants asked about that was built without an approval pause.
+        self.ask_person: Any = None
 
     @property
     def permission_evaluator(self) -> PermissionEvaluator:
@@ -116,6 +119,7 @@ class ToolEventHookFactory:
             project_dir=self._project_dir,
             permission_evaluator=self.permission_evaluator,
             bypass_guard=self.bypass_guard,
+            ask_person=self.ask_person,
         )
 
     def evaluator_for_session(self, session: Any) -> PermissionEvaluator:

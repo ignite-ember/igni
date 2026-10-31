@@ -260,6 +260,12 @@ class HitlController:
                 target_mode,
                 status,
             )
+            if status.startswith("Error"):
+                # Refused — by the organisation's mode policy, most often.
+                # Said to the person on the same channel this flow reports
+                # its other errors, the same words ``/accept`` would use;
+                # the approvals themselves still go through.
+                yield msg.Error(text=status)
             break  # first non-empty wins; ignore later decisions
 
         team = self._session.main_team
