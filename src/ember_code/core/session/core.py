@@ -68,6 +68,7 @@ from ember_code.core.config.tool_permissions import ToolPermissions
 from ember_code.core.guardrails.runner import GuardrailRunner
 from ember_code.core.hooks.events import HookEvent
 from ember_code.core.hooks.executor import HookExecutor
+from ember_code.core.hooks.group_hook_gate import GroupHookGate
 from ember_code.core.hooks.loader import HookLoader
 from ember_code.core.hooks.memory_sync import MemorySyncHook
 from ember_code.core.hooks.tool_hook import ToolEventHook
@@ -752,6 +753,7 @@ class Session:
             mcp_resolver=self._mcp_resolver_obj.resolve,
             rewake_callback=self._reminder_queue.queue,
             network_policy=NetworkPolicy.from_settings(self.settings),
+            group_hook_gate=self._group_hook_gate(),
         )
         # Rebuild the tool-hook factory so it points at the new
         # executor, carrying the live ``PermissionEvaluator`` across.
@@ -822,6 +824,23 @@ class Session:
                 else None
             ),
         )
+
+    def _group_hook_gate(self) -> GroupHookGate:
+        """Whether the group policy's hooks run here (``hooks.group``).
+
+        One per session, so an answer given once is not asked again while
+        it runs (and is kept on disk for the next). The mode is read live
+        from ``self.settings``, and a question goes out on the same in-run
+        approval channel as the Bypass guard's.
+        """
+        gate = getattr(self, "_group_hook_gate_instance", None)
+        if gate is None:
+            gate = GroupHookGate(
+                mode=lambda: self.settings.hooks.group,
+                ask=self._ask_about_tool_call,
+            )
+            self._group_hook_gate_instance = gate
+        return gate
 
     async def _ask_about_tool_call(
         self,
@@ -1053,6 +1072,7 @@ class Session:
             mcp_resolver=self._mcp_resolver_obj.resolve,
             rewake_callback=self._reminder_queue.queue,
             network_policy=NetworkPolicy.from_settings(self.settings),
+            group_hook_gate=self._group_hook_gate(),
         )
         # Recreate tool event hook on the team
         tool_event_hook = self._create_tool_event_hook()

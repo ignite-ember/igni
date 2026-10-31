@@ -8,9 +8,17 @@ the schemas package from bloating.
 
 from __future__ import annotations
 
+from typing import Literal
+
 from pydantic import BaseModel, Field
 
 from ember_code.core.paths import PROJECT_CONTEXT_FILE
+
+#: What igni does with a hook your organisation's group policy ships.
+#: Ordered from most to least permissive; :data:`GROUP_HOOK_MODES` is the
+#: order the strictest-wins rule reads.
+GroupHookMode = Literal["run", "ask", "refuse"]
+GROUP_HOOK_MODES: tuple[GroupHookMode, ...] = ("run", "ask", "refuse")
 
 
 class OrchestrationConfig(BaseModel):
@@ -45,6 +53,21 @@ class RulesConfig(BaseModel):
 
 class HooksConfig(BaseModel):
     cross_tool_support: bool = True
+    #: What igni does with the hooks the organisation's group policy ships
+    #: (``group-policy/hooks`` and the hooks of a group-installed plugin):
+    #:
+    #: * ``run`` — run them, as before (the default);
+    #: * ``ask`` — show the hook's command and where it came from, and run it
+    #:   only once you say yes; asked once per version of the hook, and with
+    #:   nobody to ask (a headless run) an unanswered hook is refused;
+    #: * ``refuse`` — never run them.
+    #:
+    #: Yours alone: only ``~/.igni/config.yaml`` and the command line
+    #: (``--strict`` means at least ``ask``) set it. A project's config, the
+    #: group policy and the managed file cannot — the person this protects
+    #: you from is whoever administers the organisation
+    #: (``DeveloperOnlyTier``).
+    group: GroupHookMode = "run"
 
 
 class SchedulerConfig(BaseModel):

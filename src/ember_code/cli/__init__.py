@@ -96,9 +96,13 @@ logger = stdlib_logging.getLogger(__name__)
     is_flag=True,
     # Two things this is NOT, both of which the help text used to imply.
     #
-    # It is not "deny all dangerous operations": hooks run shell commands on a
-    # separate path that no permission gates, so a group-supplied hook still
-    # executes here. See tests/test_hooks_are_outside_the_permission_ratchet.py.
+    # It is not "deny all dangerous operations" on its own: hooks run shell
+    # commands on a separate path the agent's permissions do not gate. What
+    # ``--strict`` does for hooks is ``hooks.group: ask`` — a hook the
+    # organisation's group policy ships runs only once the person says yes,
+    # and in a headless run, where nobody can, it does not run. The
+    # developer's own hooks run as they always do. See
+    # tests/test_group_hooks_are_the_developers_call.py.
     #
     # And it is not "deny the dangerous ones, keep the safe ones". ``--strict``
     # selects ``dontAsk``, whose whole point is never to prompt, so anything
@@ -113,8 +117,10 @@ logger = stdlib_logging.getLogger(__name__)
     # states the real behaviour instead of implying a gentler one.
     help=(
         "Headless deny-by-default for the agent's own tool use: anything without "
-        "an explicit allow rule is denied, including reads (hooks are unaffected). "
-        "Pair with permissions.allow to opt tools back in"
+        "an explicit allow rule is denied, including reads. Pair with "
+        "permissions.allow to opt tools back in. Hooks your organisation's group "
+        "policy ships run only once you approve them (hooks.group: ask), and not "
+        "at all in a headless run; your own hooks are unaffected"
     ),
 )
 @click.option(

@@ -59,6 +59,9 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+#: The root a group-policy-installed plugin is loaded from.
+GROUP_POLICY_ROOT = "group-policy-igni"
+
 
 def _platform_managed_plugins_root() -> Path | None:
     """OS-specific sysadmin-controlled directory that may host
@@ -127,7 +130,7 @@ class PluginLoader:
         # hidden dependence.
         roots.append(
             (
-                "group-policy-igni",
+                GROUP_POLICY_ROOT,
                 self._data_dir / "group-policy" / "plugins",
                 5,
             )
@@ -268,7 +271,12 @@ class PluginLoader:
         for plugin in self._plugins.values():
             if plugin.name in disabled or not plugin.has_hooks:
                 continue
-            plugin_result = hook_loader.load_plugin_hooks(plugin.root_path, registry)
+            # A plugin the group policy installed brings the group's hooks.
+            plugin_result = hook_loader.load_plugin_hooks(
+                plugin.root_path,
+                registry,
+                from_group=plugin.source.root == GROUP_POLICY_ROOT,
+            )
             combined = combined.merge(plugin_result)
         return combined
 

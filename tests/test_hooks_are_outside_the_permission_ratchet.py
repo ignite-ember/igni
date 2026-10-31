@@ -26,6 +26,15 @@ not a setting to discover afterwards.
 So this file exists to make anyone who changes hook gating confront the
 reasoning, and to fail if the ``--strict`` help text goes back to
 promising more than it delivers.
+
+**Since then (F39, the client's half):** the handler still consults no
+permissions, and the agent's ``shell_execute`` still does not gate hooks —
+but the hooks a *group* ships are no longer beyond the developer's reach.
+``hooks.group: run | ask | refuse`` is a setting only the developer's own
+config and command line set, ``--strict`` means at least ``ask``, and it is
+enforced before the handler is reached (``HookHandlerRegistry.run``). See
+``test_group_hooks_are_the_developers_call.py``. The handler-level facts
+below still hold, and are still pinned.
 """
 
 from __future__ import annotations

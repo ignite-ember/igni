@@ -34,6 +34,7 @@ from ember_code.core.activity import background
 from ember_code.core.hooks.envelope import HookEnvelope
 from ember_code.core.hooks.events import HookEvent
 from ember_code.core.hooks.extension_gate import ExtensionHookGate
+from ember_code.core.hooks.group_hook_gate import GroupHookGate
 from ember_code.core.hooks.handlers import HookHandlerRegistry, MCPResolver
 from ember_code.core.hooks.matcher import HookMatcher
 from ember_code.core.hooks.merger import HookResultMerger
@@ -85,6 +86,7 @@ class HookExecutor:
         mcp_resolver: MCPResolver | None = None,
         rewake_callback: Callable[[str], None] | None = None,
         network_policy: NetworkPolicy | None = None,
+        group_hook_gate: GroupHookGate | None = None,
     ):
         # ``.hooks`` stays public as the raw dict — tool_hook.py
         # (and any plugin doing hot-reloads) reads it directly.
@@ -94,6 +96,9 @@ class HookExecutor:
             mcp_resolver=mcp_resolver,
             rewake_callback=rewake_callback,
             network_policy=network_policy,
+            # ``hooks.group``: whether the group policy's hooks run. Without
+            # one, they do not (``GroupHookGate.unwired``).
+            group_gate=group_hook_gate,
         )
         # Strong references to the fire-and-forget tasks. asyncio only
         # holds a weak reference to a running task, so a bare

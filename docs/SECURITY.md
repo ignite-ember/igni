@@ -91,7 +91,7 @@ Pattern matching uses glob syntax. Exact entries come from "always allow", patte
 |---|---|
 | `ignite-ember` (default) | Asks for writes and shell commands |
 | `ignite-ember --accept-edits` | Auto-approves file edits, asks for shell |
-| `ignite-ember --strict` | Denies anything without an explicit allow rule, including reads — it never asks |
+| `ignite-ember --strict` | Denies anything without an explicit allow rule, including reads — it never asks about the agent's tools. Hooks your organisation's group policy ships run only once you approve them (`hooks.group: ask`), and not at all headless |
 | `ignite-ember --read-only` | Denies the write tools **and the shell** — a hard wall (see below) |
 | `ignite-ember --auto-approve` | Auto-approves everything (use with caution) |
 
@@ -300,6 +300,8 @@ Hooks extend the security model — they can add custom validation:
 ```
 
 See [Hooks](HOOKS.md) for examples: blocking destructive commands, protecting sensitive paths, enforcing test execution.
+
+Hooks also run code. Your organisation's group policy can ship hooks, and they run on every member's machine outside the agent's permissions, so `--strict` does not stop them on its own. `hooks.group` (`run` / `ask` / `refuse`, default `run`) is your control over them. Only your own `~/.igni/config.yaml` and the command line set it, never the group policy, the managed file or a project. `--strict` sets at least `ask`, and in a headless run `ask` means a group hook you have not approved does not run. See [Your organisation's hooks](HOOKS.md#your-organisations-hooks-hooksgroup).
 
 ### Workspace trust
 

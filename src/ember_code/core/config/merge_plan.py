@@ -25,6 +25,10 @@ their ``apply`` runs last):
     9. Built-in defaults (from ``Settings.default_dict()`` — seeded
        into the accumulator BEFORE the plan runs)
 
+Two kinds of block step outside that order: ``workspace_trust`` and
+``telemetry`` come only from the organisation (``OrganisationOnlyTier``),
+and ``hooks.group`` only from the developer (``DeveloperOnlyTier``).
+
 Managed sits ABOVE CLI on purpose — the whole point is that a user
 can't override an org policy by adding ``--auto-approve`` on the
 command line.
@@ -281,6 +285,10 @@ class CliTier(Tier):
     #: this" are different facts, and only the first is a ratchet.
     denied_by_cli: frozenset[str] = frozenset()
 
+    #: ``hooks.group`` as the command line set it (``--strict`` sets
+    #: ``ask``), or ``None``. Read by :class:`DeveloperOnlyTier`.
+    hooks_group: str | None = None
+
     def apply(self, accumulator: SettingsAccumulator) -> SettingsAccumulator:
         if self._overrides is None:
             return accumulator
@@ -297,6 +305,8 @@ class CliTier(Tier):
         self.denied_by_cli = frozenset(
             field for field, value in permissions.items() if value == "deny"
         )
+        hooks = payload.get("hooks")
+        self.hooks_group = hooks.get("group") if isinstance(hooks, dict) else None
         return accumulator.merge(payload)
 
 
@@ -387,6 +397,76 @@ class ManagedOnlyTier(Tier):
         for field in self.FIELDS:
             block[field] = managed.get(field, defaults[field])
         payload["group_policy"] = block
+        return SettingsAccumulator(payload=payload)
+
+
+class DeveloperOnlyTier(Tier):
+    """Settings only the developer may set: their own config and their command line.
+
+    The mirror of :class:`OrganisationOnlyTier`. ``hooks.group`` decides
+    whether the hooks an organisation's group policy ships run on this
+    machine. Those hooks run ``bash -c`` outside the agent's permissions, and
+    the person a developer needs protecting from there is whoever administers
+    the organisation — who writes the group policy, and may well write the
+    managed file too. So the group pack, the managed file and a project's
+    config (whoever wrote the repository) cannot set it: a value from any of
+    them is discarded, with a warning, and what stands is the stricter of
+    ``~/.igni/config.yaml`` and the command line (``--strict`` means
+    ``ask``).
+
+    Runs after every tier that could have set it.
+    """
+
+    #: ``(block, field)`` for each developer-only setting.
+    FIELDS: tuple[tuple[str, str], ...] = (("hooks", "group"),)
+
+    def __init__(self, user_config: Path | None, cli_tier: CliTier | None = None) -> None:
+        #: ``~/.igni/config.yaml``, or ``None`` where this layer reads no
+        #: local settings (the cloud's).
+        self._user_config = user_config
+        self._cli_tier = cli_tier
+
+    def _user_value(self) -> str | None:
+        from ember_code.core.config.schemas.orchestration import GROUP_HOOK_MODES
+
+        if self._user_config is None:
+            return None
+        block = YamlSource(self._user_config).load().get("hooks")
+        value = block.get("group") if isinstance(block, dict) else None
+        if value is not None and value not in GROUP_HOOK_MODES:
+            logger.warning(
+                "%s sets hooks.group to %r; it must be one of %s. Using 'ask'.",
+                self._user_config,
+                value,
+                ", ".join(GROUP_HOOK_MODES),
+            )
+            # A typo in a safety setting is read as the cautious middle,
+            # not as the permissive default.
+            return "ask"
+        return value
+
+    def apply(self, accumulator: SettingsAccumulator) -> SettingsAccumulator:
+        from ember_code.core.config.schemas.orchestration import GROUP_HOOK_MODES
+
+        chosen = [
+            v
+            for v in (self._user_value(), self._cli_tier.hooks_group if self._cli_tier else None)
+            if v in GROUP_HOOK_MODES
+        ]
+        value = max(chosen, key=GROUP_HOOK_MODES.index, default="run")
+
+        payload = dict(accumulator.payload)
+        block = dict(payload.get("hooks") or {})
+        if "group" in block and block["group"] != value:
+            logger.warning(
+                "hooks.group may be set only in your own ~/.igni/config.yaml or on the "
+                "command line; %r from a project, the group policy or the managed file "
+                "is ignored, and %r stands.",
+                block["group"],
+                value,
+            )
+        block["group"] = value
+        payload["hooks"] = block
         return SettingsAccumulator(payload=payload)
 
 
@@ -646,6 +726,13 @@ class SettingsMergePlan:
             # The settings that decide whether group policy is enforced at
             # all: from the managed file (or the environment), or not at all.
             ManagedOnlyTier(path_provider=managed_path_provider),
+            # And the settings only the developer may set — ``hooks.group``,
+            # whether the group's hooks run here: from their own config and
+            # command line, whatever the tiers above said.
+            DeveloperOnlyTier(
+                user_ember / "config.yaml" if local_tiers else None,
+                cli_tier=cli_tier,
+            ),
             # Migration — replaces cloud rows with shipping defaults.
             CloudMigrationTier(defaults=defaults_models),
         ]

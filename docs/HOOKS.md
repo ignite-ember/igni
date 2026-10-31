@@ -116,6 +116,23 @@ Hooks are defined in settings files, with the same format as Claude Code:
 
 A project's hooks — in `.igni/settings*.json` and, with cross-tool support, `.claude/settings*.json` — load only once the folder is trusted. In an untrusted folder only your own (`~/.igni`, `~/.claude`) and your organisation's hooks run. See [Workspace trust](CONFIGURATION.md#workspace-trust).
 
+### Your organisation's hooks (`hooks.group`)
+
+Hooks your organisation's group policy ships — its hooks file under `group-policy/hooks/` and the hooks of any plugin the policy installs — run on your machine, as you, outside the agent's permissions. The agent's `--strict` / `--read-only` denies do not reach them. Whether they run is your call, set in your own `~/.igni/config.yaml`:
+
+```yaml
+hooks:
+  group: run      # run | ask | refuse
+```
+
+| Value | What happens |
+|---|---|
+| `run` (default) | The group's hooks run. |
+| `ask` | Before a group hook first runs you see its command (or URL, MCP tool, prompt) and the file it came from, and it runs only if you say yes. The answer is kept in `~/.igni/group-hook-decisions.json` per version of the hook: if the group changes the hook, you are asked again. With nobody to answer — a headless run (`-m`, `-p`), or an event that fires outside a run — an unanswered hook does not run. |
+| `refuse` | No group hook runs. |
+
+`--strict` means at least `ask`. Only your own `~/.igni/config.yaml` and the command line set this: a value in a project's `.igni/config*.yaml`, the group policy or the managed-settings file is ignored with a warning. A group hook that is not run is skipped the way a failing hook is: it neither runs nor blocks the tool call. Your own hooks and your project's are not affected. Delete `~/.igni/group-hook-decisions.json` to be asked again about every hook.
+
 ### Format
 
 ```json

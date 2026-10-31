@@ -34,6 +34,7 @@ from ember_code.core.config.null_model import NoModelConfigured
 from ember_code.core.config.permission_eval import PermissionMode
 from ember_code.core.config.provider_builders import ProviderClientBuilder
 from ember_code.core.config.provider_catalog import ProviderCatalog
+from ember_code.core.config.schemas.orchestration import GroupHookMode
 from ember_code.core.config.settings import Settings
 
 logger = logging.getLogger(__name__)
@@ -136,6 +137,10 @@ class CliOverrides(BaseModel):
     show_reasoning: bool | None = None
     show_tool_calls: bool | None = None
     permissions: PermissionOverrides = Field(default_factory=PermissionOverrides)
+    #: ``hooks.group`` from the command line: ``--strict`` asks before a
+    #: group-policy hook runs. Combined with the user's own setting by
+    #: ``DeveloperOnlyTier`` — strictest wins.
+    hooks_group: GroupHookMode | None = None
 
     @classmethod
     def from_options(cls, opts: CliOptions) -> CliOverrides:
@@ -194,6 +199,10 @@ class CliOverrides(BaseModel):
             perms.shell_execute = "deny"
             perms.git_push = "deny"
             perms.git_destructive = "deny"
+            # The agent's denies do not reach the hooks a group ships, which
+            # run ``bash -c`` outside the permission system; ``--strict``
+            # asks before one runs (and, headless, refuses it).
+            overrides.hooks_group = "ask"
         if opts.no_web:
             perms.web_search = "deny"
             perms.web_fetch = "deny"
@@ -211,6 +220,7 @@ class CliOverrides(BaseModel):
             or self.show_routing is not None
             or self.show_reasoning is not None
             or self.show_tool_calls is not None
+            or self.hooks_group is not None
         ):
             return False
         return not self.permissions.to_payload()
@@ -237,6 +247,8 @@ class CliOverrides(BaseModel):
         perms_payload = self.permissions.to_payload()
         if perms_payload:
             payload["permissions"] = perms_payload
+        if self.hooks_group is not None:
+            payload["hooks"] = {"group": self.hooks_group}
         return payload
 
     def as_merge_dict(self) -> dict[str, Any]:

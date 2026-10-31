@@ -281,7 +281,7 @@ Control how much the agent can do without asking:
 | `ignite-ember` | Asks for file writes and shell commands |
 | `ignite-ember --accept-edits` | Auto-approves file edits, asks for shell |
 | `ignite-ember --read-only` | No file modifications allowed |
-| `ignite-ember --strict` | Asks for everything |
+| `ignite-ember --strict` | Denies the agent anything without an allow rule; asks before an organisation group hook runs |
 | `ignite-ember --auto-approve` | Auto-approves everything (use with caution) |
 
 When prompted for approval, you can:
@@ -421,7 +421,7 @@ All flags at a glance:
 | `--read-only` | No file modifications allowed |
 | `--accept-edits` | Auto-approve file edits, ask for shell |
 | `--auto-approve` | Auto-approve everything (use with caution) |
-| `--strict` | Deny all dangerous operations |
+| `--strict` | Deny the agent anything without an explicit allow rule (reads included); run your organisation's group hooks only once you approve them (`hooks.group: ask`) |
 | `--no-web` | Disable web search/fetch tools |
 | `--no-color` | Disable color output |
 | `--worktree` | Run in an isolated git worktree |

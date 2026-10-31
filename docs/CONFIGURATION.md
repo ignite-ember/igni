@@ -445,6 +445,11 @@ A pack that is missing, unsigned, edited, signed by another key, issued by
 another server, person or organisation, or older than one already applied is
 **never merged**.
 
+A group's hooks run on your machine outside the agent's permissions. Whether
+they run is yours to decide with `hooks.group` (`run`, `ask` or `refuse`) in
+your own `~/.igni/config.yaml` or with `--strict` (at least `ask`); the pack
+cannot set it. See [Hooks](HOOKS.md#your-organisations-hooks-hooksgroup).
+
 The pack's agents, hooks, MCP servers, scripts and plugin entries are files
 under `group-policy/` that their loaders read directly. At every start, once
 the pack has verified, igni rebuilds them from it: a deleted or edited org
@@ -1000,7 +1005,9 @@ ignite-ember
 # Permissive — auto-allows edits, asks for shell
 ignite-ember --accept-edits
 
-# Strict — asks for everything including reads
+# Strict — denies the agent anything without an allow rule, reads included,
+# and asks before a hook your organisation's group policy ships runs
+# (hooks.group: ask; headless, an unapproved one does not run)
 ignite-ember --strict
 
 # CI/CD — auto-allows everything (use with caution)
