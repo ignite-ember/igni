@@ -176,6 +176,7 @@ test.describe("push notifications", () => {
     backend,
     browser,
     appUrl,
+    baseURL,
   }) => {
     // Drives the FE-side composition of the multi-session contract:
     // each tab binds to its own ``session_id`` via ``get_session_id``;
@@ -213,8 +214,8 @@ test.describe("push notifications", () => {
     // both hit ``get_session_id`` fresh (no leaked SESSION_KEY).
     // Fresh contexts get no inherited ``baseURL``; pass it explicitly
     // so the ``?ws=…`` relative path resolves to the dev server.
-    const ctxA = await browser.newContext({ baseURL: "http://127.0.0.1:5179" });
-    const ctxB = await browser.newContext({ baseURL: "http://127.0.0.1:5179" });
+    const ctxA = await browser.newContext({ baseURL });
+    const ctxB = await browser.newContext({ baseURL });
     try {
       const pageA = await ctxA.newPage();
       const pageB = await ctxB.newPage();
@@ -285,6 +286,7 @@ test.describe("push notifications", () => {
     backend,
     browser,
     appUrl,
+    baseURL,
   }) => {
     // Two tabs of the same project (e.g. user duplicated the window):
     // every event for "shared" must paint on BOTH. Catches the
@@ -303,8 +305,8 @@ test.describe("push notifications", () => {
 
     // Fresh contexts get no inherited ``baseURL``; pass it explicitly
     // so the ``?ws=…`` relative path resolves to the dev server.
-    const ctxA = await browser.newContext({ baseURL: "http://127.0.0.1:5179" });
-    const ctxB = await browser.newContext({ baseURL: "http://127.0.0.1:5179" });
+    const ctxA = await browser.newContext({ baseURL });
+    const ctxB = await browser.newContext({ baseURL });
     try {
       const pageA = await ctxA.newPage();
       const pageB = await ctxB.newPage();

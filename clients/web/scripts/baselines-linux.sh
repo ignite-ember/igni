@@ -70,14 +70,23 @@ fi
 # x86_64 emulation — while the portal's 32 passed, which is luck
 # rather than portability. Pinned so the whole environment is
 # stated: image, version, architecture.
+# The repository root, not just this client: vite.config.ts aliases
+# `@ignite-ember/ui-react`, `@ignite-ember/test-utils` and the bridge to
+# `../../packages/*`, so a copy of clients/web alone fails every screen
+# with "Failed to resolve import @ignite-ember/ui-react" before a single
+# pixel is compared. node_modules is left behind (it is darwin-built
+# here, and `npm ci` makes the container's own).
+REPO_DIR="$(cd "$CLIENT_DIR/../.." && pwd)"
 docker run --rm --platform linux/amd64 \
-  -v "$CLIENT_DIR":/src:ro \
+  -v "$REPO_DIR":/src:ro \
   ${MOUNT_OUT[@]+"${MOUNT_OUT[@]}"} \
   -e CI= \
   "$IMAGE" \
   bash -euc "
-    cp -r /src /work
-    cd /work
+    mkdir -p /work/clients
+    tar -C /src --exclude=node_modules --exclude=test-results --exclude=dist \
+      -cf - clients/web clients/ui packages | tar -C /work -xf -
+    cd /work/clients/web
     npm ci --no-audit --no-fund > /dev/null
     # No backend needed: every screen is a ?demo= route driven from
     # canned events in src/dev/.

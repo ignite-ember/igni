@@ -193,6 +193,43 @@ async function writeStubConfig(projectDir: string): Promise<void> {
   );
 }
 
+/**
+ * A home directory of the backend's own, in which the fixture's project is
+ * already trusted.
+ *
+ * Since workspace trust (2fb3bd3e) a folder opened for the first time runs
+ * untrusted and the web client shows "Trust this folder?" — a modal whose
+ * backdrop covers the composer, the header and the watcher pill. Every
+ * spawned project is a fresh temp directory, so every live spec met that
+ * dialog and timed out clicking through it (38 CI failures and ~170 serial
+ * siblings that "did not run").
+ *
+ * Trust is recorded per user in ``~/.igni/workspace-trust.json`` and never in
+ * the project (a folder must not be able to trust itself), and the backend
+ * has no ``--trust`` flag. So the backend gets a ``HOME`` of its own, and the
+ * decision is written into it through igni's own trust service — the same
+ * record the dialog's "Trust" button writes. This also keeps the spawned
+ * backend off the developer's real ``~/.igni``.
+ */
+async function trustedHome(projectDir: string): Promise<string> {
+  const home = await fsp.mkdtemp(path.join(os.tmpdir(), "igni-live-be-home-"));
+  await run(
+    VENV_PYTHON,
+    [
+      "-c",
+      "import sys; from ember_code.core.workspace_trust.service import WorkspaceTrust; " +
+        "WorkspaceTrust().trust(sys.argv[1])",
+      projectDir,
+    ],
+    { cwd: REPO_ROOT, env: { ...process.env, ...homeEnv(home) } },
+  );
+  return home;
+}
+
+function homeEnv(home: string): NodeJS.ProcessEnv {
+  return { HOME: home, USERPROFILE: home };
+}
+
 function readyUrl(proc: ChildProcessWithoutNullStreams): Promise<string> {
   let stderrBuf = "";
   proc.stderr.on("data", (chunk) => {
@@ -288,11 +325,14 @@ const SEED_SCRIPT = path.join(
 async function seedOrphan(
   projectDir: string,
   scenario: OrphanScenario,
+  home: string,
 ): Promise<void> {
+  // Under the backend's HOME: the row goes into the project's state.db,
+  // which lives in ``~/.igni/data/projects/<id>/`` — not in the project.
   const { stdout } = await run(
     VENV_PYTHON,
     [SEED_SCRIPT, "--scenario", scenario, "--project-dir", projectDir],
-    { cwd: REPO_ROOT },
+    { cwd: REPO_ROOT, env: { ...process.env, ...homeEnv(home) } },
   );
   // The script prints ``scenario=… pid=… pgid=… cmd=…``. If it ever
   // stops seeding and starts no-opping, the spec's own count assertion
@@ -302,16 +342,14 @@ async function seedOrphan(
   }
 }
 
-async function cleanupOrphans(projectDir: string): Promise<void> {
+async function cleanupOrphans(projectDir: string, home: string): Promise<void> {
   // Kills every process group the rows reference. Best-effort: a
   // failure here must not mask a test failure, but it must be visible.
   try {
     await run(
       VENV_PYTHON,
       [SEED_SCRIPT, "--cleanup", "--project-dir", projectDir],
-      {
-        cwd: REPO_ROOT,
-      },
+      { cwd: REPO_ROOT, env: { ...process.env, ...homeEnv(home) } },
     );
   } catch (err) {
     console.error(`orphan cleanup failed for ${projectDir}: ${String(err)}`);
@@ -383,7 +421,8 @@ export const test = base.extend<{
     await writeProjectFiles(projectDir);
     // Before the backend starts, or its rehydrate pass has nothing to
     // find and the orphan never appears.
-    if (orphanScenario) await seedOrphan(projectDir, orphanScenario);
+    const home = await trustedHome(projectDir);
+    if (orphanScenario) await seedOrphan(projectDir, orphanScenario, home);
 
     const proc: ChildProcessWithoutNullStreams = spawn(
       VENV_PYTHON,
@@ -399,6 +438,7 @@ export const test = base.extend<{
         cwd: REPO_ROOT,
         env: {
           ...process.env,
+          ...homeEnv(home),
           // ``_watch_parent`` self-terminates the backend when our PID
           // disappears — no orphaned backends even if Playwright dies
           // mid-test.
@@ -416,8 +456,9 @@ export const test = base.extend<{
       // design (that is what makes them orphans), so they have to be
       // killed explicitly, and while the rows naming their pids still
       // exist.
-      if (orphanScenario) await cleanupOrphans(projectDir);
+      if (orphanScenario) await cleanupOrphans(projectDir, home);
       await fsp.rm(projectDir, { recursive: true, force: true });
+      await fsp.rm(home, { recursive: true, force: true });
     }
   },
 
