@@ -92,9 +92,11 @@ jobs:
 
       # The core alone — the desktop's wheel, without psycopg or the
       # cloud layer: everything it does must work, and every cloud test
-      # lives in packages/igni-cloud.
+      # lives in packages/igni-cloud. Plus the otel extra: its tests
+      # (test_telemetry_goes_only_to_the_customers_collector.py) import
+      # the exporters, and without them the module failed to collect.
       - name: Install dependencies
-        run: uv sync --extra dev
+        run: uv sync --extra dev --extra otel
 
       - name: Run tests
         run: uv run pytest tests/ -q -rs
