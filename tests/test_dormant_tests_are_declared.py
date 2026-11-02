@@ -35,6 +35,11 @@ DECLARED_GATES: dict[str, str] = {
         "Which model the live tests use. Read alongside the key above; "
         "absent it, those tests skip with it."
     ),
+    "ANTHROPIC_API_KEY": (
+        "One live call to Anthropic's API through `provider: anthropic` "
+        "(tests/test_anthropic_live.py), which costs money per run. Not "
+        "in CI; the provider's other tests run against a local stub."
+    ),
     "IGNI_TEST_DATABASE_URL": (
         "A PostgreSQL server the storage tests may create and drop "
         "databases on (tests/test_storage_backends.py). The suite runs "

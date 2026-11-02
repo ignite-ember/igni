@@ -28,6 +28,13 @@ _SRC = _ROOT / "src/ember_code"
 _ALLOWED_HOSTS: dict[str, str] = {
     # ── The customer's own deployment, or a provider they connected ──
     "github.com": "the provider, for release links and clone URLs",
+    # Contacted only for a model entry that names `provider: anthropic`
+    # and no `url`: the customer chose Anthropic's API for that model.
+    # With a `url` the request goes there instead, and the builder never
+    # lets the SDK take an endpoint or a credential from the machine
+    # (`tests/test_anthropic_provider.py` runs a turn under the guard).
+    "api.anthropic.com": "the anthropic provider's default endpoint, for a model "
+    "entry that selects it without a `url`",
     # 127.0.0.1 rather than `localhost`: the callback server binds the
     # literal address, and `localhost` resolves to ::1 first on a
     # dual-stack machine — a connection refused on the one step of a

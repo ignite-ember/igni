@@ -18,6 +18,7 @@ import logging
 import os
 import shlex
 import subprocess
+from typing import Any
 from urllib.parse import urlparse
 
 from pydantic import BaseModel, ConfigDict
@@ -57,9 +58,10 @@ class ModelRegistryEntry(BaseModel):
     """One entry in ``settings.models.registry``.
 
     Everything the registry needs to know about a specific model
-    lives here. Providers other than ``openai_like`` (currently only
+    lives here. Providers other than ``openai_like`` (``anthropic``,
     ``gemini``) use a subset of these fields — the extras are
-    ignored during kwarg construction on the provider side.
+    ignored during kwarg construction on the provider side. The last
+    three below are the ``anthropic`` provider's own.
     """
 
     # Allow arbitrary extra keys so we tolerate cloud-server payload
@@ -78,6 +80,14 @@ class ModelRegistryEntry(BaseModel):
     timeout: int = 60
     vision: bool = False
     context_window: int | None = None
+    #: Sent as the Messages API's ``thinking`` object, unchanged — for
+    #: example ``{"type": "adaptive"}``. ``anthropic`` only.
+    thinking: dict[str, Any] | None = None
+    #: ``output_config.effort`` (``low`` .. ``max``). ``anthropic`` only.
+    effort: str | None = None
+    #: ``cache_control`` on the system prompt and the tool list, so a
+    #: turn re-reads them from Anthropic's prompt cache. ``anthropic`` only.
+    prompt_caching: bool = True
 
     # ── Context-window hint ────────────────────────────────────────
 
