@@ -510,6 +510,58 @@ class Contributes(Strict):
     plugin: str | None = None
 
 
+#: One package as its manager names it — ``chromium``,
+#: ``requests==2.32.3``, ``@playwright/mcp@0.0.84`` — and nothing a
+#: shell would read as more than one word. igni server's own rule for a
+#: VM profile's packages.
+VM_PACKAGE = re.compile(r"^[A-Za-z0-9@][A-Za-z0-9@/._+:=<>~^*!,-]{0,199}$")
+
+VmPackage = Annotated[str, Field(pattern=VM_PACKAGE.pattern)]
+
+
+class VmPackages(Strict):
+    """What the VM profile's read-only layer is built with, per package manager."""
+
+    apt: list[VmPackage] = Field(default_factory=list, max_length=200)
+    pip: list[VmPackage] = Field(default_factory=list, max_length=200)
+    npm: list[VmPackage] = Field(default_factory=list, max_length=200)
+
+
+class VmRequest(Strict):
+    """What the extension needs in a producer's VM in igni's cloud.
+
+    A **request**, not a grant: igni server keeps it pending in every
+    organisation until that organisation's admin approves it, and only
+    their approval makes it a VM profile — the packages and the setup
+    script run as root when the profile's layer is built, so nothing
+    reaches a VM that an org admin has not read (igni server's
+    ``docs/service-identity.md`` §12). A field left out takes the
+    deployment's Standard value. A desktop install ignores it: there is
+    no VM on a person's machine.
+
+    Read by its camelCase names only, as the schema spells them: the
+    server's snake_case is refused rather than taken, so an author never
+    has a field the editor flags and the installer accepts.
+    """
+
+    packages: VmPackages = Field(default_factory=VmPackages)
+    setup_script: str | None = Field(default=None, alias="setupScript", max_length=65536)
+    memory_mib: int | None = Field(default=None, alias="memoryMib", ge=128, le=1_048_576)
+    normal_memory_mib: int | None = Field(
+        default=None, alias="normalMemoryMib", ge=128, le=1_048_576
+    )
+    expected_memory_mib: int | None = Field(
+        default=None, alias="expectedMemoryMib", ge=128, le=1_048_576
+    )
+    vcpus: int | None = Field(default=None, ge=1, le=256)
+    idle_before_pause_s: int | None = Field(default=None, alias="idleBeforePauseS", ge=0)
+    volume_gib: int | None = Field(default=None, alias="volumeGib", ge=1, le=65536)
+    volume_max_gib: int | None = Field(default=None, alias="volumeMaxGib", ge=1, le=65536)
+    erase_after_idle_days: int | None = Field(
+        default=None, alias="eraseAfterIdleDays", ge=1, le=3650
+    )
+
+
 class ExtensionManifest(Strict):
     """Everything an extension declares about itself."""
 
@@ -536,6 +588,11 @@ class ExtensionManifest(Strict):
     #: pinned by size and digest, shipped beside the bundle so a machine
     #: with no network installs it. See :mod:`ember_code.extensions.assets`.
     assets: list[ExtensionAsset] = Field(default_factory=list)
+
+    #: What it needs in a producer's VM in igni's cloud — packages, a
+    #: setup script, more memory. Requested of every organisation's
+    #: admin; see :class:`VmRequest`.
+    vm: VmRequest | None = None
 
     #: Present in the file so an editor finds the schema; carried so a
     #: round trip does not drop it.

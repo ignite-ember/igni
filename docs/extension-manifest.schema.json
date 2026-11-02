@@ -508,6 +508,144 @@
         ]
       ]
     },
+    "vm": {
+      "type": "object",
+      "description": "What this extension needs in a producer's VM in igni's cloud: packages, a setup script, more memory or vCPUs. A request, not a grant — igni server keeps it pending in every organisation until that organisation's admin approves it on the portal's VM profiles page, where they see exactly what would run; only their approval makes it a VM profile, which they give to the groups and apps that use the extension. The packages and the setup script run as root when the profile's read-only layer is built, so nothing reaches a VM that an org admin has not read (igni server's service-identity §12). A changed request is pending again, and VMs keep the approved profile until then. A field left out takes the deployment's Standard value. A desktop install ignores it. In an air-gapped install everything comes from inside the network: packages from the organisation's own mirrors, anything else placed by the setup script from an internal store — a browser for Playwright included, never `playwright install`, which downloads from the internet (on Fleet's Ubuntu 24.04 `apt` `chromium` is only a snap stub).",
+      "additionalProperties": false,
+      "properties": {
+        "packages": {
+          "type": "object",
+          "description": "Built into the profile's read-only layer, from the deployment's package mirrors. One package per entry, as its manager names it (`libnss3`, `requests==2.32.3`, `@playwright/mcp@0.0.84`) — nothing a shell would split.",
+          "additionalProperties": false,
+          "properties": {
+            "apt": {
+              "type": "array",
+              "maxItems": 200,
+              "items": {
+                "type": "string",
+                "pattern": "^[A-Za-z0-9@][A-Za-z0-9@/._+:=<>~^*!,-]{0,199}$"
+              }
+            },
+            "pip": {
+              "type": "array",
+              "maxItems": 200,
+              "items": {
+                "type": "string",
+                "pattern": "^[A-Za-z0-9@][A-Za-z0-9@/._+:=<>~^*!,-]{0,199}$"
+              }
+            },
+            "npm": {
+              "type": "array",
+              "maxItems": 200,
+              "items": {
+                "type": "string",
+                "pattern": "^[A-Za-z0-9@][A-Za-z0-9@/._+:=<>~^*!,-]{0,199}$"
+              }
+            }
+          }
+        },
+        "setupScript": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 65536,
+          "description": "Run as root when the profile's layer is built, after the packages. The org admin reads it before approving."
+        },
+        "memoryMib": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 128,
+          "description": "The most memory the VM may have, in MiB: its size at boot.",
+          "maximum": 1048576
+        },
+        "normalMemoryMib": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 128,
+          "description": "What the VM normally has, in MiB; the node lends the rest while it needs it. At most `memoryMib`.",
+          "maximum": 1048576
+        },
+        "expectedMemoryMib": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 128,
+          "description": "What the node expects the VM to use, for placing it; null: the node's own rule.",
+          "maximum": 1048576
+        },
+        "vcpus": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 1,
+          "description": "vCPUs.",
+          "maximum": 256
+        },
+        "idleBeforePauseS": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0,
+          "description": "Seconds idle before the VM is paused; null is never (the platform's caps may refuse it)."
+        },
+        "volumeGib": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 1,
+          "description": "A new VM's volume, in GiB.",
+          "maximum": 65536
+        },
+        "volumeMaxGib": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 1,
+          "description": "How far an admin may grow a VM's volume, in GiB.",
+          "maximum": 65536
+        },
+        "eraseAfterIdleDays": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 1,
+          "description": "An app's VM not woken for this many days is erased; null is never.",
+          "maximum": 3650
+        }
+      },
+      "examples": [
+        {
+          "packages": {
+            "apt": [
+              "fonts-liberation",
+              "libnss3",
+              "libgbm1",
+              "ca-certificates",
+              "curl",
+              "unzip"
+            ],
+            "npm": [
+              "@playwright/mcp@0.0.84"
+            ]
+          },
+          "setupScript": "#!/bin/sh\nset -eu\ncurl -fsSL -o /tmp/chrome-linux.zip https://artifacts.bank.internal/playwright/chrome-linux.zip\nmkdir -p /opt/chromium /opt/google/chrome\nunzip -q -o /tmp/chrome-linux.zip -d /opt/chromium\nln -sf /opt/chromium/chrome-linux/chrome /opt/google/chrome/chrome\n",
+          "memoryMib": 4096,
+          "normalMemoryMib": 2048,
+          "vcpus": 2
+        }
+      ]
+    },
     "contributes": {
       "type": "object",
       "description": "What this extension adds beyond tools. MCP carries tools; none of the below travels over it.",

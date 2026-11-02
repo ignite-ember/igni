@@ -58,6 +58,8 @@ from ember_code.extensions.manifest import (
     Setting,
     Sidecar,
     ToolGrant,
+    VmPackages,
+    VmRequest,
 )
 from tests.manifest_corpus import BASE, REFUSALS
 
@@ -84,6 +86,8 @@ PAIRS: list[tuple[str, type[BaseModel]]] = [
     ("permissions.tools[]", ToolGrant),
     ("permissions.tools[].annotations", ToolHints),
     ("assets[]", ExtensionAsset),
+    ("vm", VmRequest),
+    ("vm.packages", VmPackages),
     ("contributes", Contributes),
     ("contributes.pages[]", PageContribution),
     ("contributes.menu[]", MenuContribution),
@@ -221,3 +225,27 @@ def test_a_round_trip_keeps_what_it_was_given() -> None:
     )
     assert not list(VALIDATOR.iter_errors(dumped))
     assert dumped["$schema"] == raw["$schema"]
+
+
+def test_both_sides_accept_a_vm_request_for_a_headless_browser() -> None:
+    """The worked example: Chromium's libraries from apt, Playwright MCP from npm."""
+    manifest = {
+        **BASE,
+        "vm": {
+            "packages": {
+                "apt": ["fonts-liberation", "libnss3"],
+                "npm": ["@playwright/mcp@0.0.84"],
+            },
+            "setupScript": "#!/bin/sh\nset -eu\n",
+            "memoryMib": 4096,
+            "normalMemoryMib": 2048,
+            "vcpus": 2,
+            "idleBeforePauseS": None,
+        },
+    }
+
+    assert not list(VALIDATOR.iter_errors(manifest))
+    parsed = ExtensionManifest.model_validate(manifest)
+    assert parsed.vm is not None
+    assert parsed.vm.packages.npm == ["@playwright/mcp@0.0.84"]
+    assert (parsed.vm.memory_mib, parsed.vm.vcpus) == (4096, 2)

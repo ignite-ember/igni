@@ -567,6 +567,42 @@ extension's own service, the host object model, notifications, and its
 decision model (`host.decide`). Those are the same everywhere, which is
 why they are the floor and a database is not.
 
+### What it needs in a cloud VM: `vm`, asked of each organisation
+
+In igni's cloud each producer runs in a microVM built from a **VM
+profile**, and an extension that needs something in it — a headless
+browser, a native library, more memory — says so in its manifest:
+
+```jsonc
+"vm": {
+  "packages": { "apt": ["fonts-liberation", "libnss3", "…"], "npm": ["@playwright/mcp@0.0.84"] },
+  "setupScript": "#!/bin/sh\nset -eu\n…",   // runs as root when the profile's layer is built
+  "memoryMib": 4096, "normalMemoryMib": 2048, "vcpus": 2
+  // also expectedMemoryMib, idleBeforePauseS, volumeGib, volumeMaxGib, eraseAfterIdleDays
+}
+```
+
+It is a **request**, not a grant. Packages and the setup script run as
+root, so a VM gets nothing an org admin has not approved: igni server
+keeps the request **pending in every organisation** until that
+organisation's admin approves it on the portal's *VM profiles* page,
+where they read exactly what would run. Approval makes it a profile,
+which the admin gives to the groups and apps that use the extension
+(profiles are per group and per app; an extension is per organisation,
+so the admin decides where). A new version whose `vm` differs is
+pending again, and VMs keep the approved profile until then. Every value
+is still held to the platform's caps; a field left out takes the
+deployment's Standard value. The service that ships the extension reads
+what became of it with `igni.host(org_id).vm_profile()` (igni-service).
+
+It only matters in igni's cloud: a desktop install ignores it. Air-gapped,
+everything comes from inside the network — packages from the
+organisation's own mirrors, anything else placed by the setup script
+from an internal store. A browser for Playwright is one of those: never
+`playwright install`, which downloads from the internet, and not `apt`
+`chromium` either, which on Fleet's Ubuntu 24.04 is only a snap stub.
+The igni-service README has the worked example.
+
 **A sidecar is a single instance, and that is the trade.** If it dies, one user is blocked. That is the correct blast radius for a laptop, and the reason none of a remote service's HA machinery belongs here.
 
 **A remote extension is registered, not installed.** Its availability, scaling and failover are its own. We check that the endpoint answers, that the contract range matches, and that this principal's group is entitled to it.

