@@ -79,7 +79,7 @@ dependencies = [
     # at their email domain's web root. Pure Python, no system
     # resolver dependency, and the async resolver matters: a blocking
     # lookup here would hold the sign-in screen.
-    "dnspython~=2.8.0",
+    "dnspython~=2.9.0",
 ]
 
 [project.urls]
