@@ -61,7 +61,7 @@ async def test_igni_failing_is_retried_then_reported(igni: IgniService, fake: Fa
     from igni_service import IgniUnavailable
 
     fake.failing[IgniPaths.SERVICE_EVENTS] = 503
-    igni.events._sleep = _no_sleep  # type: ignore[attr-defined]
+    igni.events._sleep = _no_sleep
     with pytest.raises(IgniUnavailable):
         await igni.host(ORG).send_event(Producer.person("u-max"), "claim.created")
 
