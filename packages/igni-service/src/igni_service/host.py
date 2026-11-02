@@ -9,6 +9,7 @@ from igni_service.agents import Agent
 from igni_service.directory import Directory, DirectoryClient
 from igni_service.events import EventAccepted, Producer
 from igni_service.notifications import Delivered, Notification, Notifier
+from igni_service.vm_profiles import ServiceVmProfile, ServiceVmProfiles
 
 
 class Host:
@@ -25,12 +26,14 @@ class Host:
         notifier: Notifier,
         directory: DirectoryClient,
         agents: AgentWire | None = None,
+        vm_profiles: ServiceVmProfiles | None = None,
     ) -> None:
         if not org_id:
             raise ValueError("a host is for one organisation, and none was named")
         self._org_id = org_id
         self._notifier = notifier
         self._agents = agents
+        self._vm_profiles = vm_profiles
         self.directory = Directory(directory, org_id)
 
     @property
@@ -46,6 +49,19 @@ class Host:
         A caller for whom notifying is best effort catches `IgniError`.
         """
         return await self._notifier.send(self._org_id, notifications)
+
+    async def vm_profile(self) -> ServiceVmProfile:
+        """What became of this service's extension's VM request here.
+
+        The request is the extension manifest's `vm` section; this
+        organisation's admin approves or rejects it. Answers the request's
+        state (`pending`, `approved`, `rejected`, with the admin's reason),
+        the profile an approval made and how many groups and apps have it.
+        Raises `IgniUnavailable`.
+        """
+        if self._vm_profiles is None:
+            raise RuntimeError("this host was made without the VM profiles' client")
+        return await self._vm_profiles.of(self._org_id)
 
     def agent(self, producer: Producer) -> Agent:
         """`producer`'s agent: send it messages, files and events, open chats (`igni_service.agents`)."""

@@ -49,6 +49,20 @@ class IgniPaths:
     REVOCATIONS = "/v1/revocations"
     #: Every organisation this service serves (service-identity §21).
     SERVED = "/v1/organisations/served"
+    #: A service's extension's VM profile request in one organisation (service-identity §12).
+    SERVICE_VM_PROFILE = "/v1/service-vm-profile"
+    #: An app, acting as itself (service-identity §11.1, §17).
+    APPS = "/v1/apps"
+
+    @classmethod
+    def app_vm_profile_request(cls, app_id: str) -> str:
+        """An app's own request for what its VM needs."""
+        return f"{cls.APPS}/{app_id}/vm-profile-request"
+
+    @classmethod
+    def app_vm_profile(cls, app_id: str) -> str:
+        """The profile an app's VM gets now."""
+        return f"{cls.APPS}/{app_id}/vm-profile"
 
     @classmethod
     def service_event(cls, event_id: str) -> str:

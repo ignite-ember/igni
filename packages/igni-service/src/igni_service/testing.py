@@ -36,19 +36,22 @@ import jwt
 from jwt.api_jws import PyJWS
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
+from igni_service.app import IgniApp
 from igni_service.bundle import BundleArchive
 from igni_service.clock import Clock
 from igni_service.crypto import ALGORITHM, AssetClaim, Base64Url, BundleClaim, Jwk, RsaKeyPair
 from igni_service.directory import Member, Organisation
-from igni_service.keystore import KeyStore, MemoryKeyStore
+from igni_service.keystore import KeyStore, MemoryKeyStore, StoredKey
 from igni_service.notifications import Notification, NotificationBatch, Notifier
 from igni_service.registration import PublishedExtension
 from igni_service.revocations import Revocation, RevocationPage, RevokedKind
 from igni_service.service import IgniService
 from igni_service.settings import IgniSettings
 from igni_service.testing_items import FakeAgents, SentEvent
+from igni_service.testing_vm_profiles import FakeCaps, FakeVmProfiles
 from igni_service.tokens import PEOPLE_ONLY, CallerKind
 from igni_service.urls import IgniPaths, ServiceUrl
+from igni_service.vm_profiles import VmProfileRequestRecord
 
 
 class ManualClock(Clock):
@@ -83,6 +86,19 @@ class SeenRequest(BaseModel):
         return {k: v[0] for k, v in parse_qs(self.body.decode()).items()}
 
 
+class HeldKeyStore:
+    """A key store that already holds one key: an app whose key the fake registered."""
+
+    def __init__(self, key: StoredKey) -> None:
+        self._key = key
+
+    async def get(self) -> StoredKey | None:
+        return self._key
+
+    async def claim(self, key: StoredKey) -> StoredKey:
+        return self._key
+
+
 class FakeClient(BaseModel):
     """A registration, as igni keeps it."""
 
@@ -94,6 +110,8 @@ class FakeClient(BaseModel):
     state: str = "pending"
     thumbprint: str
     jwk: Jwk
+    #: An app's organisation; empty for a service.
+    org_id: str = ""
 
 
 class IssuedCode(BaseModel):
@@ -122,6 +140,7 @@ class HeldExtension(BaseModel):
     sha256: str
     archive: bytes
     pages: list[str] = Field(default_factory=list)
+    manifest: dict[str, Any] = Field(default_factory=dict)
 
 
 class NotifyCall(BaseModel):
@@ -208,9 +227,14 @@ class FakeIgni:
             is_member=lambda org_id, user_id: self._member(org_id, user_id) is not None,
             clock=self.clock.wall,
         )
+        #: VM profiles: requests, an org admin's decisions, what a VM gets
+        #: (`igni_service.testing_vm_profiles`).
+        self.vm_profiles = FakeVmProfiles()
         #: Path prefix → status to answer instead, to play igni failing.
         self.failing: dict[str, int] = {}
         self._service_tokens: dict[str, tuple[str, str]] = {}
+        #: App tokens issued at the token endpoint: token → (app id, organisation).
+        self._app_tokens: dict[str, tuple[str, str]] = {}
         self._jtis: set[str] = set()
         self._told: set[tuple[str, str, str]] = set()
         self._codes: dict[str, IssuedCode] = {}
@@ -321,6 +345,60 @@ class FakeIgni:
         )
         service.notifier = Notifier(service.tokens, sleep=self.no_sleep)
         return service
+
+    def app(self, app_id: str, *, org_id: str, name: str = "") -> IgniApp:
+        """An app an org admin registered in `org_id`, as an `IgniApp` wired to this fake.
+
+        Its key is made now and its public half registered, as the admin's
+        paste on the portal's Apps page does; approved by that act.
+        """
+        if org_id not in self.organisations:
+            self.add_organisation(org_id)
+        pair = RsaKeyPair.generate()
+        store = HeldKeyStore(StoredKey(kid=pair.thumbprint(), private_pem=pair.private_pem()))
+        self.clients[app_id] = FakeClient(
+            client_id=app_id,
+            client_name=name or app_id,
+            client_uri="",
+            kind="app",
+            redirect_uris=[],
+            state="approved",
+            thumbprint=pair.thumbprint(),
+            jwk=pair.public_jwk(),
+            org_id=org_id,
+        )
+        return IgniApp(
+            app_id,
+            igni_server_url=self.base_url,
+            key_store=store,
+            http=self.http_client(),
+            clock=self.clock,
+        )
+
+    def approve_vm_profile(
+        self, org_id: str, *, app: str | None = None, extension: str | None = None
+    ) -> VmProfileRequestRecord:
+        """Play an org admin approving an app's or an extension's VM profile request."""
+        kind, subject = self._subject(app, extension)
+        return self.vm_profiles.approve(org_id, kind, subject)
+
+    def reject_vm_profile(
+        self,
+        org_id: str,
+        *,
+        app: str | None = None,
+        extension: str | None = None,
+        reason: str | None = None,
+    ) -> VmProfileRequestRecord:
+        """Play an org admin rejecting an app's or an extension's VM profile request."""
+        kind, subject = self._subject(app, extension)
+        return self.vm_profiles.reject(org_id, kind, subject, reason=reason)
+
+    @staticmethod
+    def _subject(app: str | None, extension: str | None) -> tuple[str, str]:
+        if (app is None) == (extension is None):
+            raise ValueError("name exactly one of app= and extension=")
+        return ("app", app) if app is not None else ("extension", str(extension))
 
     @staticmethod
     async def no_sleep(_: float) -> None:
@@ -539,6 +617,8 @@ class FakeIgni:
             return self._issue(seen)
         if path == IgniPaths.REVOKE:
             return self._revoke(seen)
+        if path.startswith(f"{IgniPaths.APPS}/"):
+            return self._app_route(seen)
         if (
             path.startswith(f"{IgniPaths.DIRECTORY}/")
             or path == IgniPaths.NOTIFICATIONS
@@ -548,6 +628,7 @@ class FakeIgni:
             or path == IgniPaths.SERVICE_ATTACHMENTS
             or path == IgniPaths.REVOCATIONS
             or path == IgniPaths.SERVED
+            or path == IgniPaths.SERVICE_VM_PROFILE
         ):
             held = self._service_tokens.get(
                 seen.headers.get("authorization", "").removeprefix("Bearer ")
@@ -564,6 +645,14 @@ class FakeIgni:
                 return self._served()
             if path == IgniPaths.NOTIFICATIONS:
                 return self._notify(seen, client_id, org_id)
+            if path == IgniPaths.SERVICE_VM_PROFILE and seen.method == "GET":
+                shipped = self.extensions.get(client_id)
+                return self.vm_profiles.service(
+                    org_id,
+                    client_id,
+                    shipped.extension_id if shipped else None,
+                    shipped.manifest if shipped else None,
+                )
             if path == IgniPaths.SERVICE_EVENTS and seen.method == "POST":
                 return self.agents.event(seen.body, client_id, org_id)
             if path == IgniPaths.SERVICE_ITEMS and seen.method == "POST":
@@ -578,6 +667,28 @@ class FakeIgni:
             if path.startswith(f"{IgniPaths.SERVICE_EVENTS}/") and seen.method == "GET":
                 return self.agents.status(path.rsplit("/", 1)[1], client_id)
             return self._directory(seen, org_id)
+        return httpx.Response(404, json={"detail": "Not Found"})
+
+    # ── An app, as itself (service-identity §11.1, §12) ─────────────
+
+    def _app_route(self, seen: SeenRequest) -> httpx.Response:
+        held = self._app_tokens.get(seen.headers.get("authorization", "").removeprefix("Bearer "))
+        client = self._client(held[0]) if held else None
+        if held is None or client is None or client.state == "revoked":
+            return httpx.Response(401, json={"detail": "Not authenticated"})
+        caller, org_id = held
+        parts = seen.path.split("/")  # "", "v1", "apps", app_id, what
+        if len(parts) != 5:
+            return httpx.Response(404, json={"detail": "Not Found"})
+        app_id, what = parts[3], parts[4]
+        if app_id != caller:
+            return httpx.Response(403, json={"detail": "Only the app itself asks for its VM"})
+        if what == "vm-profile-request" and seen.method == "PUT":
+            return self.vm_profiles.app_put(org_id, app_id, client.client_name, seen.body)
+        if what == "vm-profile-request" and seen.method == "GET":
+            return self.vm_profiles.app_get(org_id, app_id)
+        if what == "vm-profile" and seen.method == "GET":
+            return self.vm_profiles.app_profile(org_id, app_id)
         return httpx.Response(404, json={"detail": "Not Found"})
 
     # ── Revocations (service-identity §21) ──────────────────────────
@@ -729,6 +840,7 @@ class FakeIgni:
             sha256=claim.sha256,
             archive=seen.body,
             pages=pages,
+            manifest=manifest,
         )
         return httpx.Response(200, json=self._published(self.extensions[client_id]).model_dump())
 
@@ -841,6 +953,15 @@ class FakeIgni:
         return client
 
     def _client_credentials(self, client: FakeClient, form: dict[str, str]) -> httpx.Response:
+        if client.kind == "app":
+            # An app's own token: `organisation` optional, and only its own (§11.1).
+            if form.get("organisation") not in (None, "", client.org_id):
+                return httpx.Response(400, json={"error": "invalid_target"})
+            token = f"app-{uuid.uuid4().hex}"
+            self._app_tokens[token] = (client.client_id, client.org_id)
+            return httpx.Response(
+                200, json={"access_token": token, "token_type": "Bearer", "expires_in": 600}
+            )
         if form.get("scope") == "revocations" and not form.get("organisation"):
             # A token for no organisation: revocations and served only (§3, §21).
             token = f"revocations-{uuid.uuid4().hex}"
@@ -1044,6 +1165,8 @@ class FakeIgni:
 __all__ = [
     "BundleArchive",
     "Delivery",
+    "FakeCaps",
+    "FakeVmProfiles",
     "FakeAgents",
     "FakeIgni",
     "IgniPaths",

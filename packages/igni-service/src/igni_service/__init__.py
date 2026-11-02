@@ -9,6 +9,7 @@ See the package README for the whole surface.
 
 from igni_service.agent_wire import ItemStatus
 from igni_service.agents import Agent, Attachment, Chat
+from igni_service.app import IgniApp
 from igni_service.cors import BearerCors
 from igni_service.directory import Directory, Member, Organisation
 from igni_service.errors import (
@@ -19,6 +20,7 @@ from igni_service.errors import (
     IgniUnavailable,
     KeyStoreError,
     NotificationRefused,
+    VmProfileRefused,
 )
 from igni_service.events import EventAccepted, Producer
 from igni_service.host import Host
@@ -39,6 +41,14 @@ from igni_service.tokens import (
     Space,
     TokenRefused,
 )
+from igni_service.vm_profiles import (
+    AppVmProfile,
+    EffectiveVmProfile,
+    ServiceVmProfile,
+    VmPackages,
+    VmProfileRequest,
+    VmProfileRequestRecord,
+)
 from igni_service.web import WebSignIn
 from igni_service.web_sessions import (
     MemoryWebSessionStore,
@@ -48,6 +58,14 @@ from igni_service.web_sessions import (
 )
 
 __all__ = [
+    "AppVmProfile",
+    "EffectiveVmProfile",
+    "IgniApp",
+    "ServiceVmProfile",
+    "VmPackages",
+    "VmProfileRefused",
+    "VmProfileRequest",
+    "VmProfileRequestRecord",
     "BearerCors",
     "BundleError",
     "ConfigurationError",

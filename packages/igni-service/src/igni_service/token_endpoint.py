@@ -9,11 +9,12 @@ igni's issuer.
 
 from __future__ import annotations
 
+from typing import Protocol
+
 import httpx
 from pydantic import BaseModel, ValidationError
 
 from igni_service.errors import IgniError, IgniUnavailable
-from igni_service.registration import ServiceRegistration
 from igni_service.server import IgniServer
 from igni_service.signing import SigningKey
 from igni_service.urls import IgniPaths
@@ -39,12 +40,17 @@ class GrantRefused(IgniError):
         self.detail = detail
 
 
-class TokenEndpoint:
-    """`POST /v1/oauth/token` and `POST /v1/oauth/revoke`, authenticated as this service."""
+class ClientIdentity(Protocol):
+    """Whatever knows the client id to authenticate as: a service's
+    registration, or an app's id as its org admin registered it."""
 
-    def __init__(
-        self, igni: IgniServer, registration: ServiceRegistration, key: SigningKey
-    ) -> None:
+    async def client_id(self) -> str: ...
+
+
+class TokenEndpoint:
+    """`POST /v1/oauth/token` and `POST /v1/oauth/revoke`, authenticated as this client."""
+
+    def __init__(self, igni: IgniServer, registration: ClientIdentity, key: SigningKey) -> None:
         self._igni = igni
         self._registration = registration
         self._key = key

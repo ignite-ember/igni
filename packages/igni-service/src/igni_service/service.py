@@ -67,6 +67,7 @@ from igni_service.tokens import (
     TokenRefused,
     TokenVerifier,
 )
+from igni_service.vm_profiles import ServiceVmProfiles
 from igni_service.web import WebSignIn
 from igni_service.web_sessions import MemoryWebSessionStore, SqlWebSessionStore, WebSessionStore
 
@@ -154,6 +155,7 @@ class IgniService:
         self.notifier = Notifier(self.tokens)
         self.events = EventSender(self.tokens)
         self.agents = AgentWire(self.tokens, self.events)
+        self.vm_profiles = ServiceVmProfiles(self.tokens)
         self.web = WebSignIn(
             self.server,
             self.registration,
@@ -386,8 +388,14 @@ class IgniService:
     # ── Talking to igni ─────────────────────────────────────────────
 
     def host(self, org_id: str) -> Host:
-        """igni for one organisation: `notify`, `agent(producer)`, `send_event`, and its `directory`."""
-        return Host(org_id, notifier=self.notifier, directory=self.directory, agents=self.agents)
+        """igni for one organisation: `notify`, `agent(producer)`, `send_event`, `vm_profile`, and its `directory`."""
+        return Host(
+            org_id,
+            notifier=self.notifier,
+            directory=self.directory,
+            agents=self.agents,
+            vm_profiles=self.vm_profiles,
+        )
 
     async def thumbprint(self) -> str:
         """The key's RFC 7638 thumbprint: what a super admin compares."""

@@ -41,12 +41,13 @@ class IgniServer:
         self,
         *,
         base_url: str,
-        own_url: str,
+        own_url: str = "",
         timeout: float = 10.0,
         http: httpx.AsyncClient | None = None,
     ) -> None:
         self._base_url = (base_url or "").strip().rstrip("/")
-        self._own_url = ServiceUrl.normalise(own_url)
+        # An app has no URL of its own: nobody brings it tokens (`IgniApp`).
+        self._own_url = ServiceUrl.normalise(own_url) if own_url else ""
         self._timeout = timeout
         self._http = http
         self._owns_http = http is None

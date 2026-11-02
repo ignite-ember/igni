@@ -9,6 +9,8 @@ Below it the split is about what to do next:
   again sends the same refusal.
 * `EventRefused` — igni read the event and said no: the producer is not in
   the organisation, does not have the extension on, or the event is invalid.
+* `VmProfileRefused` — igni read a VM profile request and said no: over
+  the platform's caps, malformed, or for an app that is not the caller.
 * `KeyStoreError` — this service cannot keep or read its own key. An
   operator has to fix the configuration.
 * `BundleError` — the extension bundle is unreadable, or cannot be built.
@@ -40,6 +42,15 @@ class EventRefused(IgniError):
 
     def __init__(self, status: int, detail: str) -> None:
         super().__init__(f"igni refused the event: {status} {detail}")
+        self.status = status
+        self.detail = detail
+
+
+class VmProfileRefused(IgniError):
+    """igni read the VM profile request and refused it. Sending it again will not help."""
+
+    def __init__(self, status: int, detail: str) -> None:
+        super().__init__(f"igni refused the VM profile request: {status} {detail}")
         self.status = status
         self.detail = detail
 
