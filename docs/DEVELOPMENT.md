@@ -151,6 +151,7 @@ The `make check` target is the single command to verify everything is clean befo
 
 - `mcp` — Model Context Protocol (`pip install ember-code[mcp]`)
 - `google-genai` — Gemini models (`pip install ember-code[gemini]`)
+- `anthropic` — Claude over the native Messages API (`pip install ember-code[anthropic]`)
 - `duckduckgo-search` — Web search (`pip install ember-code[web]`)
 
 **Dev:**

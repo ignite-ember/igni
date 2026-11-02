@@ -124,25 +124,51 @@ models:
       api_key_env: OPENAI_API_KEY
       vision: true
 
-    # Or use a shell command (e.g., 1Password, vault)
-    claude-sonnet:
-      provider: openai_like
-      model_id: claude-sonnet-4-6
-      url: https://api.anthropic.com/v1
+    # Claude, native Messages API, key from a shell command (e.g., 1Password, vault)
+    claude:
+      provider: anthropic
+      model_id: claude-opus-5-5
       api_key_cmd: "op read op://Dev/anthropic/api-key"
+      context_window: 1000000
+      vision: true
+
+    # Claude through an Anthropic-compatible gateway inside your network
+    claude-internal:
+      provider: anthropic
+      model_id: claude-opus-5-5
+      url: https://llm-gateway.bank.internal/anthropic
+      api_key_env: LLM_GATEWAY_KEY
+      context_window: 1000000
+      thinking: {type: adaptive, display: summarized}
+      effort: high
+      max_tokens: 32000
 ```
 
-Now agents can reference `model: gpt-4o` or `model: claude-sonnet` in their `.md` files.
+Now agents can reference `model: gpt-4o` or `model: claude` in their `.md` files.
 
-Works with MiniMax, OpenAI, Anthropic, Groq, Together AI, OpenRouter, Ollama, or any OpenAI-compatible API.
+There are three providers:
+
+- **`openai_like`** — any OpenAI-compatible chat-completions API: MiniMax, OpenAI, Groq, Together AI, OpenRouter, Ollama, vLLM, llama.cpp.
+- **`anthropic`** — Claude over Anthropic's native Messages API, or any Anthropic-compatible API ("Anthropic-like": a gateway or proxy that serves `POST /v1/messages`). Native means prompt caching, extended thinking, and images and PDFs sent as Claude's own content blocks, none of which survive Anthropic's OpenAI-compatibility layer. Use it for Claude rather than `openai_like` with Anthropic's `/v1` URL.
+- **`gemini`** — Google's Gemini API through `google-genai`.
+
+#### The `anthropic` provider
+
+- **`url`** is optional. Without it requests go to `https://api.anthropic.com`; with it they go to your gateway instead. Give the base URL — the SDK adds `/v1/messages` itself, and a trailing `/v1` is dropped if you write one.
+- **Keys** resolve exactly as for `openai_like` (`api_key`, `api_key_env`, `api_key_cmd`, `cloud_token`), and the key is sent as `x-api-key`. With `cloud_token`, igni server's current token also goes as `Authorization: Bearer`, read at each request.
+- **Nothing is taken from the machine's environment.** The Anthropic SDK would otherwise read `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`, `ANTHROPIC_BASE_URL` and an `ant` CLI profile; igni passes the endpoint and the key explicitly, so the registry entry is the whole story. To use `ANTHROPIC_API_KEY`, say so: `api_key_env: ANTHROPIC_API_KEY`.
+- **Prompt caching** is on by default: the system prompt and the tool list carry `cache_control`, so each turn re-reads them from the cache. `prompt_caching: false` turns it off.
+- **Thinking** is off unless the model does it by default. `thinking` is passed to the API unchanged — `{type: adaptive}` on current models (Opus 4.6 and later), `{type: enabled, budget_tokens: N}` only on older ones that still take it. `effort` (`low`, `medium`, `high`, `xhigh`, `max`) sets `output_config.effort`. Current models reject `temperature`; leave it unset for them.
+- **`max_tokens`** defaults to 8192 (Agno's default) when unset.
+- **`context_window`**: set it. Without it igni assumes 128k.
 
 ### Registry Entry Fields
 
 | Field | Type | Required | Description |
 |---|---|---|---|
-| `provider` | string | yes | Agno model class to use. `openai_like` for any OpenAI-compatible API |
-| `model_id` | string | yes | Model identifier sent to the API (e.g., `MiniMax-Text-01`, `gpt-4o`) |
-| `url` | string | yes | API base URL (e.g., `https://api.openai.com/v1`). Omit only for OpenAI models that use the default endpoint |
+| `provider` | string | yes | `openai_like` for any OpenAI-compatible API, `anthropic` for Claude or an Anthropic-compatible API, `gemini` for Gemini |
+| `model_id` | string | yes | Model identifier sent to the API (e.g., `MiniMax-Text-01`, `gpt-4o`, `claude-opus-5-5`) |
+| `url` | string | yes* | API base URL (e.g., `https://api.openai.com/v1`). Omit only for OpenAI models that use the default endpoint. *Optional for `anthropic`, which defaults to `https://api.anthropic.com` |
 | `api_key` | string | no | API key value, or `cloud_token` to use your igni server login credentials |
 | `api_key_env` | string | no | Environment variable name containing the API key |
 | `api_key_cmd` | string | no | Shell command that outputs the API key (e.g., `op read ...` for 1Password) |
@@ -150,7 +176,10 @@ Works with MiniMax, OpenAI, Anthropic, Groq, Together AI, OpenRouter, Ollama, or
 | `vision` | bool | no | Whether the model supports image input. Default `false`. When `true`, file references (images, PDFs) are attached as multimodal content. When `false`, file paths are resolved so the AI can read them via tools |
 | `temperature` | float | no | Default temperature for this model |
 | `max_tokens` | int | no | Default max output tokens |
-| `timeout` | int | no | Request timeout in seconds. Default 120 |
+| `timeout` | int | no | Request timeout in seconds. Default 60 |
+| `thinking` | object | no | `anthropic` only. The Messages API `thinking` object, sent as written (e.g. `{type: adaptive}`) |
+| `effort` | string | no | `anthropic` only. `output_config.effort`: `low`, `medium`, `high`, `xhigh` or `max` |
+| `prompt_caching` | bool | no | `anthropic` only. `cache_control` on the system prompt and tools. Default `true` |
 
 > **API key resolution order:** `api_key` (direct) → `api_key_env` (env var) → `api_key_cmd` (shell command). The special value `cloud_token` resolves to your your igni server login credentials (from `/login`).
 
@@ -169,7 +198,7 @@ Claude Code uses a simple alias map (`"sonnet"` → `"claude-sonnet-4-6"`) becau
 | Adding new models | Not supported (Anthropic only) | Add a registry entry in config |
 | Key helper script | `apiKeyHelper` | `api_key_env` or `api_key_cmd` per model |
 
-The key difference: Claude Code only supports Anthropic models through different providers. igni supports **any model from any provider** — MiniMax, OpenAI, Anthropic, Groq, local Ollama, etc. The config-driven registry means adding a new provider is a config change, not a code change.
+The key difference: Claude Code only supports Anthropic models through different providers. igni supports **any model from any provider** — MiniMax, OpenAI, Anthropic (natively, through `provider: anthropic`), Groq, local Ollama, etc. The config-driven registry means adding a new provider is a config change, not a code change.
 
 ---
 
@@ -212,12 +241,18 @@ models:
     #   url: https://api.openai.com/v1
     #   api_key_env: OPENAI_API_KEY
 
-    # Example: Anthropic (shell command)
-    # claude-sonnet:
-    #   provider: openai_like
-    #   model_id: claude-sonnet-4-6
-    #   url: https://api.anthropic.com/v1
+    # Example: Claude, native Messages API (shell command)
+    # claude:
+    #   provider: anthropic
+    #   model_id: claude-opus-5-5
     #   api_key_cmd: "op read op://Dev/anthropic/api-key"
+
+    # Example: Claude through an Anthropic-compatible gateway
+    # claude-internal:
+    #   provider: anthropic
+    #   model_id: claude-opus-5-5
+    #   url: https://llm-gateway.bank.internal/anthropic
+    #   api_key_env: LLM_GATEWAY_KEY
 
     # Example: local Ollama model (no key needed)
     # local-llama:

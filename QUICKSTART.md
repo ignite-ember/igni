@@ -42,7 +42,7 @@ command`. This guide used to say to run it that way.
 
 **Option B: Bring your own model**
 
-Use OpenAI, Anthropic, or any OpenAI-compatible API. Two steps:
+Use OpenAI, Anthropic (Claude, natively), or any OpenAI- or Anthropic-compatible API. Two steps:
 
 1. Set your API key:
 
@@ -62,6 +62,15 @@ models:
       model_id: gpt-4o
       url: https://api.openai.com/v1
       api_key: sk-...              # or api_key_env: OPENAI_API_KEY
+```
+
+For Claude, the entry is `provider: anthropic` (the native Messages API; add `url` to go through a gateway):
+
+```yaml
+    claude:
+      provider: anthropic
+      model_id: claude-opus-5-5
+      api_key_env: ANTHROPIC_API_KEY
 ```
 
 That's it — agents will now use GPT-4o. See [Configuration](docs/CONFIGURATION.md) for more providers (Anthropic, Groq, Ollama, OpenRouter, etc.).
