@@ -210,13 +210,28 @@ service's.
 
 Playwright normally **downloads Chromium from the internet** (`npx
 playwright install chromium`, or when a launch finds none). An
-air-gapped installation cannot: the browser must come from inside the
-network — the bank's **package mirror** (`apt` `chromium`), or the setup
-script fetching it from an internal artefact store. Installing the npm
-packages downloads no browser (neither `@playwright/mcp` nor `playwright`
-has an install script), so nothing reaches out when the layer is built;
-the request below points Playwright MCP at the system Chromium instead of
-a downloaded one, and never runs `playwright install`.
+air-gapped installation cannot: the browser must come from **inside the
+network**. Installing the npm packages downloads no browser (neither
+`@playwright/mcp` nor `playwright` has an install script), so the
+request below brings Chromium itself and never runs `playwright install`.
+
+Where Chromium comes from is the part to get right. Fleet's VMs run
+Ubuntu 24.04 (noble), and there `apt` `chromium` and `chromium-browser`
+are only transitional packages for the **snap**, which does not work in
+the chroot the layer is built in, nor in a Firecracker VM; Ubuntu's
+archive has no real Chromium `.deb`. So either the bank's mirror carries
+a real Chromium `.deb` (then name it under `apt`), or — as below — the
+setup script places a Playwright Chromium build (`chrome-linux.zip`)
+from inside the network.
+
+How Fleet builds the layer (`image/profile/build_layer.sh` in
+igni__cloudvm): the `apt` packages from the customer's mirror, with
+`--no-install-recommends` (and `nodejs npm` added when there are npm
+packages); pip and npm through the mirror or offline caches; then the
+setup script as root in the chroot, with only `APT_MIRROR` in its
+environment. A strict air-gapped build (`OFFLINE=1`) runs all of it with
+no network at all, so the script can only read files — such as a
+`file://` mirror directory, which is mounted at the same path.
 
 ```python
 BROWSER = VmProfileRequest(
@@ -224,39 +239,52 @@ BROWSER = VmProfileRequest(
     normal_memory_mib=2048,
     vcpus=2,
     packages=VmPackages(
-        # From the bank's Debian mirror: the browser, and fonts so pages
-        # do not render as boxes.
-        apt=["chromium", "fonts-liberation", "fonts-noto-color-emoji"],
+        # From the bank's Ubuntu mirror: what Chromium needs to run, and
+        # what the setup script needs to place it.
+        apt=[
+            "fonts-liberation", "libnss3", "libatk-bridge2.0-0t64", "libgbm1",
+            "libasound2t64", "libxkbcommon0", "libxcomposite1", "libxdamage1",
+            "libxrandr2", "libpango-1.0-0", "libcups2t64",
+            "ca-certificates", "curl", "unzip",
+        ],
         # From the bank's npm mirror. Pinned: the admin approves this version.
         npm=["@playwright/mcp@0.0.84"],
     ),
     setup_script=SETUP,
 )
 
-# Runs as root when the layer is built, after the packages: Playwright MCP
-# launches the browser named here, never one it downloads.
+# Runs as root in the layer's chroot, after the packages. Chromium comes
+# from inside the network — never from Playwright's CDN.
 SETUP = r"""#!/bin/sh
 set -eu
-chromium="$(command -v chromium)"
-cat > /usr/local/bin/playwright-mcp-chromium <<WRAPPER
-#!/bin/sh
-exec playwright-mcp --headless --isolated --executable-path "$chromium" "\$@"
-WRAPPER
-chmod 0755 /usr/local/bin/playwright-mcp-chromium
+case "${APT_MIRROR:-}" in
+  file://*)  # an offline mirror directory: the only way under OFFLINE=1
+    archive="${APT_MIRROR#file://}/playwright/chrome-linux.zip" ;;
+  *)         # the bank's own artefact store
+    archive=/tmp/chrome-linux.zip
+    curl -fsSL -o "$archive" https://artifacts.bank.internal/playwright/chrome-linux.zip ;;
+esac
+mkdir -p /opt/chromium
+unzip -q -o "$archive" -d /opt/chromium
+# Where Playwright MCP's default channel, chrome, looks for the browser.
+mkdir -p /opt/google/chrome
+ln -sf /opt/chromium/chrome-linux/chrome /opt/google/chrome/chrome
 """
 ```
 
-The MCP server the agent runs is then `playwright-mcp-chromium` (stdio).
-The flags are Playwright MCP's own: `--headless`, `--isolated` (the
-browser profile stays in memory) and `--executable-path` (also
-`PLAYWRIGHT_MCP_EXECUTABLE_PATH`). Chromium's sandbox needs user
-namespaces in the VM; if the image does not allow them, the wrapper needs
-`--no-sandbox` — a decision for the admin reviewing the script, which is
-why they see it. An extension asks for the same in its manifest:
+The agent then runs Playwright MCP as `playwright-mcp --headless
+--isolated` (stdio). The flags are Playwright MCP's own: `--headless` is
+required — it runs headed by default and the VM has no display;
+`--isolated` keeps the browser profile in memory; add `--no-sandbox` if
+the agent runs as root. Instead of the symlink, `--executable-path
+/opt/chromium/chrome-linux/chrome` (or `PLAYWRIGHT_MCP_EXECUTABLE_PATH`)
+names the browser directly. Replace `artifacts.bank.internal` with the
+bank's own store; the admin reviewing the request sees that URL. An
+extension asks for the same in its manifest:
 
 ```json
 "vm": {
-  "packages": {"apt": ["chromium", "fonts-liberation"], "npm": ["@playwright/mcp@0.0.84"]},
+  "packages": {"apt": ["fonts-liberation", "libnss3", "…", "unzip"], "npm": ["@playwright/mcp@0.0.84"]},
   "setupScript": "#!/bin/sh\nset -eu\n…",
   "memoryMib": 4096,
   "normalMemoryMib": 2048,
