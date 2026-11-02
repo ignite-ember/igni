@@ -155,6 +155,129 @@ whatever the service accepts, so a route meant for people never takes an
 app for one. `igni.caller_of(token)` is the same outside a request, and
 `FakeIgni.app_token` / `space_token` make tokens for tests.
 
+## What a VM needs: VM profile requests
+
+In igni's cloud every producer — a person, an app, an app's space — runs
+in a microVM of its own, built from a **VM profile**: memory, vCPUs, idle
+before a pause, its volume, and the **packages and setup script** baked
+into the profile's read-only layer. Those run **as root** when the layer
+is built, so the rule is: **a VM runs nothing as root that an org admin
+has not approved.** An app or an extension that needs more — a headless
+browser, a native library, more memory — **asks**, and igni keeps the
+request **pending** until an org admin of that organisation approves it
+on the portal's *VM profiles* page, where they see exactly what would run.
+
+| Who asks | How | What approval does |
+|---|---|---|
+| an **app**, as itself | `IgniApp.request_vm_profile(...)`, with the app's own token | makes a profile from the request and assigns it to the app (its spaces' VMs get it too) |
+| an **extension** | its manifest's `vm` section (see *The extension bundle*) | makes a profile from the request, which the admin gives to the groups and apps that use the extension |
+
+A service is not an app: a service token names a service and an
+organisation, never an app, so a service cannot ask for an app's VM. A
+service reads what became of its own extension's request in an
+organisation with `await igni.host(org_id).vm_profile()` — `request.state`
+(`pending`, `approved`, `rejected`, with the admin's `reason`), the
+`profile` the approval made, and how many groups and apps were `assigned`
+it.
+
+The same request sent again changes nothing and keeps its state. A
+**changed** request (anything in it — a package, the script, the memory)
+is pending again, and **the VM keeps the profile it has until the admin
+approves the change**. Every value is still subject to the platform's
+caps: a request over them is refused (`VmProfileRefused`, status 400, in
+igni's words). A field left out takes the deployment's Standard value.
+
+### An app asking
+
+An org admin registers the app on the portal (*Apps*) by pasting the
+app's **public** key; the private half never leaves the app.
+
+```python
+from igni_service import IgniApp, VmPackages, VmProfileRequest
+
+async with IgniApp(APP_ID, igni_server_url=IGNI_SERVER_URL, key_store=store) as app:
+    print(await app.public_jwks())                   # once, for the admin to paste
+    record = await app.request_vm_profile(BROWSER)   # below
+    record.state                                     # "pending"
+    await app.vm_profile_request()                   # later: "approved" / "rejected" + reason
+    await app.vm_profile()                           # what the VM gets now: the default until approved
+```
+
+`store` is any `KeyStore` — `SqlKeyStore` on the app's own database, as a
+service's.
+
+### Worked example: a headless browser (Chromium + Playwright MCP)
+
+Playwright normally **downloads Chromium from the internet** (`npx
+playwright install chromium`, or when a launch finds none). An
+air-gapped installation cannot: the browser must come from inside the
+network — the bank's **package mirror** (`apt` `chromium`), or the setup
+script fetching it from an internal artefact store. Installing the npm
+packages downloads no browser (neither `@playwright/mcp` nor `playwright`
+has an install script), so nothing reaches out when the layer is built;
+the request below points Playwright MCP at the system Chromium instead of
+a downloaded one, and never runs `playwright install`.
+
+```python
+BROWSER = VmProfileRequest(
+    memory_mib=4096,           # Chromium peaks well above igni's own needs
+    normal_memory_mib=2048,
+    vcpus=2,
+    packages=VmPackages(
+        # From the bank's Debian mirror: the browser, and fonts so pages
+        # do not render as boxes.
+        apt=["chromium", "fonts-liberation", "fonts-noto-color-emoji"],
+        # From the bank's npm mirror. Pinned: the admin approves this version.
+        npm=["@playwright/mcp@0.0.84"],
+    ),
+    setup_script=SETUP,
+)
+
+# Runs as root when the layer is built, after the packages: Playwright MCP
+# launches the browser named here, never one it downloads.
+SETUP = r"""#!/bin/sh
+set -eu
+chromium="$(command -v chromium)"
+cat > /usr/local/bin/playwright-mcp-chromium <<WRAPPER
+#!/bin/sh
+exec playwright-mcp --headless --isolated --executable-path "$chromium" "\$@"
+WRAPPER
+chmod 0755 /usr/local/bin/playwright-mcp-chromium
+"""
+```
+
+The MCP server the agent runs is then `playwright-mcp-chromium` (stdio).
+The flags are Playwright MCP's own: `--headless`, `--isolated` (the
+browser profile stays in memory) and `--executable-path` (also
+`PLAYWRIGHT_MCP_EXECUTABLE_PATH`). Chromium's sandbox needs user
+namespaces in the VM; if the image does not allow them, the wrapper needs
+`--no-sandbox` — a decision for the admin reviewing the script, which is
+why they see it. An extension asks for the same in its manifest:
+
+```json
+"vm": {
+  "packages": {"apt": ["chromium", "fonts-liberation"], "npm": ["@playwright/mcp@0.0.84"]},
+  "setupScript": "#!/bin/sh\nset -eu\n…",
+  "memoryMib": 4096,
+  "normalMemoryMib": 2048,
+  "vcpus": 2
+}
+```
+
+### No admin calls here
+
+This SDK cannot approve, reject, define or assign profiles, and has no
+helper for those portal calls: they take an org admin's portal session
+(`/v1/portal/...`), and neither a service token nor an app token is one —
+nor is a person's token for a service, whose audience is the service's
+URL, not igni's. Automation that holds an admin's credentials calls the
+portal API directly (igni server's `docs/service-identity.md` §12).
+
+In tests, `fake.app(app_id, org_id=...)` is an `IgniApp` wired to the
+fake; `fake.approve_vm_profile(org_id, app=...)` (or `extension=...`) and
+`fake.reject_vm_profile(..., reason=...)` play the org admin;
+`fake.vm_profiles.caps` are the platform's caps.
+
 ## Somebody removed
 
 A person removed from an organisation (or deactivated, erased, their
@@ -229,6 +352,8 @@ the first frame (`igni.person_of`).
   members(query=..., limit=..., include_former=...)`, `await
   person(user_id)` (`None` for somebody never in the organisation),
   `await resolve([...])` (ids or addresses → members, keyed by both).
+- `await host.vm_profile()` — what became of this service's extension's VM
+  profile request here (see *What a VM needs* above).
 
 ## Reaching a producer's agent
 
