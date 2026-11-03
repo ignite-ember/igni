@@ -97,7 +97,7 @@ export const BECAUSE: Record<string, Record<string, string>> = {
 /** Every view state, by file and category. */
 export const VIEW_STATE: Record<string, Partial<Record<Category, string[]>>> = {
   "App.tsx": {
-    data: ["conn", "items", "runPhase", "status", "hitl", "extensions", "pendingUpdate", "sessions", "skills", "backendCommands", "cloudName", "historyIndexToItemIndex"],
+    data: ["conn", "sessionBound", "items", "runPhase", "status", "hitl", "extensions", "pendingUpdate", "sessions", "skills", "backendCommands", "cloudName", "historyIndexToItemIndex"],
     menu: ["modelMenuSignal", "accountMenu"],
     measure: ["scrollEl"],
     animation: ["pulsingItemId"],

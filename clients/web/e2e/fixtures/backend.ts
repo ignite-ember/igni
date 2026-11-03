@@ -195,14 +195,18 @@ export async function startFixtureBackend(
         const id = String(msg.id || "");
         const handler = handlers[method];
         if (handler) {
-          try {
-            const result = handler((msg.args as Record<string, unknown>) || {});
-            ws.send(JSON.stringify({ type: "rpc_response", id, result }));
-          } catch (exc) {
-            ws.send(
-              JSON.stringify({ type: "rpc_response", id, error: String(exc) }),
-            );
-          }
+          // A handler may answer later (return a promise): that is how a
+          // test holds a reply back to see what the app does meanwhile.
+          void (async () => {
+            try {
+              const result = await handler((msg.args as Record<string, unknown>) || {});
+              ws.send(JSON.stringify({ type: "rpc_response", id, result }));
+            } catch (exc) {
+              ws.send(
+                JSON.stringify({ type: "rpc_response", id, error: String(exc) }),
+              );
+            }
+          })();
         } else {
           // Unhandled RPC — surface as error so the FE doesn't hang
           // waiting for a response. Tests that don't care about a

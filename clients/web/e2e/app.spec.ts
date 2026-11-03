@@ -57,6 +57,42 @@ test.describe("connection lifecycle", () => {
   });
 });
 
+test.describe("the composer waits for the window's session", () => {
+  test("it stays 'Connecting…' until the session is bound, so nothing typed is lost", async ({
+    page,
+    backend,
+    appUrl,
+  }) => {
+    // T19. The composer enabled on the socket alone. The window binds
+    // its session a few RPCs later, and binding a session shows *that
+    // session's* draft — the backend pushes it (windows.py, "The draft
+    // is the session's"). Text typed in between was replaced by the
+    // new session's empty draft. Under load the gap was long enough for
+    // live-slash's `/skills` to type its command into it and find the
+    // composer empty; alone it never was. Hold the binding back and
+    // the composer must not offer itself in the meantime.
+    let bind: () => void = () => {};
+    const bound = new Promise<void>((resolve) => (bind = resolve));
+    backend.onRpc("get_session_id", async () => {
+      await bound;
+      return "test-session-001";
+    });
+
+    await page.goto(appUrl);
+    await expect.poll(() => backend.clientCount()).toBe(1);
+    const editor = page.locator(".composer-editable");
+    // Long enough for every RPC before the binding to have answered.
+    await expect
+      .poll(() => backend.received().some((m) => m.method === "get_session_id"))
+      .toBe(true);
+    await page.waitForTimeout(500);
+    await expect(editor).toHaveAttribute("data-placeholder", /Connecting/);
+
+    bind();
+    await expect(editor).toHaveAttribute("data-placeholder", /Message (Ember|igni)/);
+  });
+});
+
 test.describe("user message round-trip", () => {
   test("typing + Enter sends a user_message envelope to the BE", async ({
     page,

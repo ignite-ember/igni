@@ -291,6 +291,11 @@ export default function App() {
     [client],
   );
   const [conn, setConn] = useState<ConnectionState>("connecting");
+  // Whether this window has bound its session since the socket came up.
+  // The composer waits for it as well as for the socket: binding a
+  // session shows that session's draft (the backend pushes it), so
+  // anything typed before the binding was replaced by it. T19.
+  const [sessionBound, setSessionBound] = useState(false);
   const [items, setItems] = useState<ChatItem[]>([]);
   // Mirror of ``items`` for callbacks whose deps don't include
   // ``items`` (e.g. ``submit`` — see its long comment for why).
@@ -1156,6 +1161,7 @@ export default function App() {
   useEffect(() => {
     const offState = client.onStateChange((s) => {
       setConn(s);
+      if (s !== "connected") setSessionBound(false);
       if (s === "connected") {
         void (async () => {
           try {
@@ -1245,6 +1251,9 @@ export default function App() {
           } catch {
             /* ignore */
           }
+          // Bound, or failed to and working with what it has: either
+          // way nothing will replace the draft now.
+          setSessionBound(true);
           // Recompute the real session-context size before fetching
           // status — the BE's ``_last_input_tokens`` may still be the
           // inflated value latched by ``RunCompleted.input_tokens``
@@ -3749,7 +3758,7 @@ export default function App() {
             ) : null
           }
           client={client}
-          connected={conn === "connected"}
+          connected={conn === "connected" && sessionBound}
           processing={processing}
           skills={skills}
           backendCommands={backendCommands}
