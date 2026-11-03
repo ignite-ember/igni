@@ -27,7 +27,8 @@ DECLARED_GATES: dict[str, str] = {
         "An interpreter with igni-extension and igni-service installed, to run "
         "the tests `igni ext init --service` writes. igni's own environment "
         "does not carry the SDKs — they are packages of their own under "
-        "packages/ — so the test skips without one."
+        "packages/ — so the test skips without one. CI's test job builds "
+        "one and sets it, and under CI the test fails rather than skip."
     ),
     "IGNI_TEST_LLM_API_KEY": (
         "Live model calls, which cost money per run. Not in the per-push "

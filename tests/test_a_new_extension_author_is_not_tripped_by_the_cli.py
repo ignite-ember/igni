@@ -238,13 +238,18 @@ def test_the_service_scaffold_tests_pass_as_written(run, tmp_path):
 
     igni's own environment does not carry the SDKs, so this runs with an
     interpreter that does — ``IGNI_SDK_PYTHON`` — and is skipped without
-    one.
+    one, except in CI: CI's test job builds that interpreter, and a test
+    that skipped there never ran anywhere (X39).
     """
+    import os
     import subprocess
 
     python = _sdk_python()
     if python is None:
-        pytest.skip("no interpreter with igni-extension and igni-service (set IGNI_SDK_PYTHON)")
+        why = "no interpreter with igni-extension and igni-service (set IGNI_SDK_PYTHON)"
+        if os.environ.get("CI"):
+            pytest.fail(f"{why}; CI's test job is meant to provide one")
+        pytest.skip(why)
     target = tmp_path / "tickets"
     assert run("init", str(target), "--service", "--id", "acme.tickets").exit_code == 0
     done = subprocess.run(
@@ -256,6 +261,14 @@ def test_the_service_scaffold_tests_pass_as_written(run, tmp_path):
     )
     assert done.returncode == 0, done.stdout + done.stderr
     assert "3 passed" in done.stdout
+
+
+def test_ci_gives_the_scaffold_tests_an_interpreter_with_both_sdks():
+    """The test job sets IGNI_SDK_PYTHON for the suite, built from packages/."""
+    ci = (Path(__file__).parent.parent / ".github" / "workflows" / "ci.yml").read_text()
+    test_job = ci.split("\n  test:\n", 1)[1].split("\n  sandbox-linux:\n", 1)[0]
+    assert "IGNI_SDK_PYTHON" in test_job
+    assert "packages/igni-extension" in test_job and "packages/igni-service" in test_job
 
 
 # ── C14: $schema names the schema, at a URL that is published ──────
