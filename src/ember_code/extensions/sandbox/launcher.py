@@ -58,7 +58,9 @@ logger = logging.getLogger(__name__)
 SANDBOX_ENV = "IGNI_SANDBOX"
 
 #: Where the proxy is not used: this machine.
-NO_PROXY = "localhost,.localhost,127.0.0.1,::1"
+#: Not ``.localhost``: the sandbox has no DNS, so such a name is reached
+#: through the proxy, which resolves it outside (RFC 6761: to loopback).
+NO_PROXY = "localhost,127.0.0.1,::1"
 
 
 class SandboxRefused(PermissionDenied):

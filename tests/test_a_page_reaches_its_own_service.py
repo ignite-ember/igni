@@ -150,10 +150,15 @@ def test_a_dot_localhost_egress_host_and_endpoint_are_this_machine():
     )
 
 
-def test_a_sandboxed_process_reaches_dot_localhost_without_the_proxy():
+def test_a_sandboxed_process_reaches_dot_localhost_through_the_proxy():
+    """The sandbox has no DNS (Seatbelt denies mDNSResponder; bubblewrap's
+    namespace has its own loopback), so a process told to go to
+    ``tickets.localhost`` directly fails to resolve it: "nodename nor
+    servname provided" on the tutorial's walk-through. The proxy resolves
+    it outside, and its allow-list already holds the extension's service."""
     from ember_code.extensions.sandbox import NO_PROXY
 
-    assert ".localhost" in NO_PROXY.split(",")
+    assert ".localhost" not in NO_PROXY.split(",")
 
 
 def test_a_localhost_egress_host_gets_plain_http_only_in_development():
