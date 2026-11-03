@@ -79,7 +79,7 @@ Nothing is hardcoded. The Orchestrator is a reasoning-enabled meta-agent that re
 
 This means the system adapts to new agents automatically. Drop a `database.md` into the agents folder — the Orchestrator can start including it in teams immediately, without any code changes.
 
-When no existing agent fits a task, the Orchestrator can **generate an ephemeral agent** on the fly — writing a new `.md` file to `.igni/agents.ephemeral/` with a task-specific system prompt and tools. Ephemeral agents are session-scoped and auto-cleaned, but can be promoted to permanent agents by the user.
+When no existing agent fits a task, the Orchestrator can **generate an ephemeral agent** on the fly — writing a new `.md` file to `.igni/agents.tmp/` with a task-specific system prompt and tools. Ephemeral agents are session-scoped and auto-cleaned, but can be promoted by the user — to `.igni/agents/` (shared through git) or `.igni/agents.local/` (personal); see [AGENTS.md](AGENTS.md#the-lifecycle-create-promote-discard).
 
 ### 2. Agents as Data, Not Code
 
@@ -197,7 +197,7 @@ Startup
     ├── Scan ~/.igni/agents/              (global)
     ├── Scan ~/.igni/skills/              (global)
     │
-    ├── Scan .igni/agents.local/          (project, gitignored)
+    ├── Scan .igni/agents.local/          (project, personal; .igni/.gitignore)
     ├── Scan .igni/agents/                (project)
     ├── Scan .igni/skills.local/          (project, gitignored)
     ├── Scan .igni/skills/                (project)

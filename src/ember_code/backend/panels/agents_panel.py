@@ -52,10 +52,14 @@ class AgentsPanelController:
             )
         return results
 
-    def promote(self, name: str) -> PromoteEphemeralResult:
-        """Save an ephemeral agent permanently (called from the panel)."""
+    def promote(self, name: str, target: str = "project") -> PromoteEphemeralResult:
+        """Save an ephemeral agent permanently (called from the panel).
+
+        ``target``: ``"project"`` (``.igni/agents/``, shared through git) or
+        ``"personal"`` (``.igni/agents.local/``, yours only).
+        """
         try:
-            dest = self._session.pool.promote_ephemeral(name, self._session.project_dir)
+            dest = self._session.pool.promote_ephemeral(name, self._session.project_dir, target)
         except (KeyError, ValueError, RuntimeError) as e:
             return PromoteEphemeralResult(ok=False, name=name, reason=str(e))
         return PromoteEphemeralResult(ok=True, name=name, dest=str(dest))

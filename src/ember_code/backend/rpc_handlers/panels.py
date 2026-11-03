@@ -91,7 +91,10 @@ class PanelRpcHandler(RpcHandler):
 
     @rpc(RpcMethod.PROMOTE_EPHEMERAL_AGENT)
     def promote_ephemeral_agent(self, args: dict) -> PromoteEphemeralResult:
-        return self._ctx.backend.promote_ephemeral_agent(args["name"])
+        # ``target``: "project" (the default) or "personal".
+        return self._ctx.backend.promote_ephemeral_agent(
+            args["name"], str(args.get("target") or "project")
+        )
 
     @rpc(RpcMethod.DISCARD_EPHEMERAL_AGENT)
     def discard_ephemeral_agent(self, args: dict) -> DiscardEphemeralResult:

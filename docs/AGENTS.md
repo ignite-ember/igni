@@ -147,9 +147,9 @@ By default, the agent pool loads from **igni directories only**:
 | Scope | Location | Format |
 |---|---|---|
 | Project | `.igni/agents/` (committed) | `.md` with YAML frontmatter |
-| Project | `.igni/agents.local/` (gitignored) | `.md` with YAML frontmatter |
+| Project | `.igni/agents.local/` (yours; ignored by `.igni/.gitignore`) | `.md` with YAML frontmatter |
 | Global | `~/.igni/agents/` | `.md` with YAML frontmatter |
-| Ephemeral | `.igni/agents.tmp/` (session-scoped) | `.md` with YAML frontmatter |
+| Ephemeral | `.igni/agents.tmp/` (session-scoped; ignored by `.igni/.gitignore`) | `.md` with YAML frontmatter |
 
 > **Built-in agents** are copied from the package into `.igni/agents/` on first project init (checksum-merged on subsequent runs). They appear as project-level agents.
 
@@ -449,8 +449,8 @@ Only spawn sub-teams when genuinely needed. For simple tasks, just do the work y
 
 Sometimes no agent in the pool fits the task. Instead of forcing a generic agent, the Orchestrator can **generate a new agent definition on the fly** — tailored to the specific task, with the right tools, model, and system prompt.
 
-These are **ephemeral agents** — they exist only for the duration of the task (or session). They live in a `.igni/agents.ephemeral/` directory that is:
-- **Gitignored** — not committed to the repo
+These are **ephemeral agents** — they exist only for the duration of the task (or session). They live in a `.igni/agents.tmp/` directory that is:
+- **Not in git** — `.igni/.gitignore` ignores it
 - **Session-scoped** — cleaned up when the session ends (or kept if the user promotes them)
 - **Visible** — the user can see and inspect them like any other `.md` file
 
@@ -464,8 +464,8 @@ Orchestrator analyzes task
                             ▼
                     ┌──────────────────────────┐
                     │ Write to                 │
-                    │ .igni/                  │
-                    │   agents.ephemeral/      │
+                    │ .igni/                   │
+                    │   agents.tmp/            │
                     │     terraform-migrator.md│
                     └──────────────────────────┘
                             │
@@ -500,7 +500,7 @@ class EphemeralAgent(BaseModel):
 ```
 
 When the Orchestrator decides to generate an ephemeral agent, it:
-1. Writes the `.md` file to `.igni/agents.ephemeral/`
+1. Writes the `.md` file to `.igni/agents.tmp/` (the `create_agent` tool)
 2. Loads it into the pool
 3. Includes it in the team for the current task
 
@@ -542,21 +542,39 @@ You are a Terraform migration specialist. Your task is to migrate AWS provider v
 - Back up state files before any state migration
 ```
 
-### Promoting Ephemeral Agents
-
-If an ephemeral agent turns out to be useful, the user can promote it to a permanent agent:
+### The lifecycle: create, promote, discard
 
 ```
-/agents promote terraform-migrator
+create  ──►  .igni/agents.tmp/<name>.md       not in git, this session only
+   │
+   ├── promote --project  ──►  .igni/agents/<name>.md        committed, the team's
+   ├── promote --personal ──►  .igni/agents.local/<name>.md  not in git, yours only
+   └── discard            ──►  deleted
 ```
 
-This moves it from `.igni/agents.ephemeral/` to `.igni/agents/` — now it's a permanent part of the pool and available in future sessions.
+1. **Create.** The orchestrator's `create_agent` tool writes the agent to
+   `.igni/agents.tmp/`. `.igni/.gitignore` keeps that directory out of git, and
+   the agent is removed when the session ends (`orchestration.auto_cleanup`)
+   unless you keep it.
+2. **Promote it for the project** — `/agents promote <name>` or
+   `/agents promote <name> --project`, or **Keep** in the Agents panel. It
+   moves to `.igni/agents/`, which is committed: the next `git commit` shares
+   it with everyone on the project.
+3. **Or keep it for yourself** — `/agents promote <name> --personal`, or
+   **Keep for me** in the panel. It moves to `.igni/agents.local/`, which
+   `.igni/.gitignore` keeps out of git; it loads in your sessions on this
+   project only.
+4. **Or discard it** — `/agents discard <name>`, or **Discard** in the panel.
+
+Promote does not replace a file already at the destination — an agent of the
+same file name the team already has — and says so instead.
 
 ```
-/agents list               # shows all agents, marks ephemeral ones
-/agents promote <name>     # move ephemeral → permanent
-/agents discard <name>     # delete an ephemeral agent
-/agents ephemeral          # list only ephemeral agents
+/agents                              # open the Agents panel; ephemeral ones are marked
+/agents promote <name> [--project]   # keep it, shared through git (the default)
+/agents promote <name> --personal    # keep it, yours only
+/agents discard <name>               # delete an ephemeral agent
+/agents ephemeral                    # list only ephemeral agents
 ```
 
 ### Configuration

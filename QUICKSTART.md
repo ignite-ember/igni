@@ -119,8 +119,12 @@ The first run in a folder:
    built-in agents in `.igni/agents/` and skills in `.igni/skills/`. Signed
    in to an igni server whose group policy ships agents (the Default group
    does), `.igni/agents/` is not written: the agents are your group's, in
-   `~/.igni/group-policy/agents/`. Neither is gitignored for you; commit
-   `igni.md`, and decide about `.igni/`.
+   `~/.igni/group-policy/agents/`. In a trusted folder it also writes
+   `.igni/.gitignore`, which keeps the personal and runtime files out of git
+   (`*.local` overrides, `agents.tmp/`, databases, credentials, logs, igni's
+   bookkeeping) and leaves the shared ones — `agents/`, `skills/`, `hooks/`,
+   `workflows/`, `config.yaml`, `settings.json` — to commit. igni rewrites only
+   its marked block in that file. Commit `igni.md` and `.igni/`.
 
 ### A headless run cannot ask you anything
 

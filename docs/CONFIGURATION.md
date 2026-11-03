@@ -16,6 +16,29 @@ A project's config counts only once you trust the folder, and some keys it may n
 
 Each level deep-merges over the previous. The `~/.igni/config.yaml` file is automatically generated from defaults on first run via `yaml.dump(DEFAULT_CONFIG)` — a single source of truth.
 
+### What in `.igni/` goes into git
+
+`.igni/` holds both what a team shares and what is one person's. In a trusted
+folder igni keeps a marked block in `.igni/.gitignore` (rewritten on every
+start; lines outside it are left alone) that ignores only the personal and
+runtime files:
+
+| Ignored | Why |
+|---|---|
+| `*.local`, `*.local.*` — `agents.local/`, `skills.local/`, `settings.local.json`, `config.local.yaml` | one person's overrides |
+| `agents.tmp/` | ephemeral agents; `/agents promote` keeps one ([AGENTS.md](AGENTS.md#the-lifecycle-create-promote-discard)) |
+| `*.db` (and `-wal`/`-shm`/`-journal`) | sessions, memory, state |
+| `credentials.json`, `workspace-trust.json`, `mcp-approved.json`, `mcp-tool-state.json` | credentials and this machine's decisions |
+| `*.log`, `logs/`, `process_logs/`, `attachments/`, `worktrees/`, `projects/` | what a run leaves behind |
+| `.initialized`, `.checksums.json`, `.update-check`, `*.new` | igni's bookkeeping, and an update it could not apply over your edit |
+| `group-policy/` | the organisation's policy, pulled from the server |
+
+Everything else is meant to be committed: `agents/`, `skills/`, `hooks/`,
+`workflows/`, `output-styles/`, `tools/`, `evals/`, `config.yaml`,
+`settings.json`, `rules.md`, `.mcp.json`, `plugins.json`, and the
+`.gitignore` itself. Most runtime files live under `~/.igni`, not the
+project's `.igni`; they are listed anyway, for a home directory kept in git.
+
 ## Models & Authentication
 
 igni needs an LLM to run. Models are resolved through a **config-driven registry** — agent `.md` files reference models by name (e.g., `model: MiniMax-M2.7`), and the registry maps that name to a provider, endpoint URL, model ID, and API key.

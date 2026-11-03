@@ -479,8 +479,8 @@ class AgentPool(LegacyAgentPoolMixin):
             return []
         return self._ephemeral.list_agents()
 
-    def promote_ephemeral(self, name: str, project_dir: Path) -> Path:
-        return self.ephemeral.promote(name, project_dir)
+    def promote_ephemeral(self, name: str, project_dir: Path, target: str = "project") -> Path:
+        return self.ephemeral.promote(name, project_dir, target)
 
     def discard_ephemeral(self, name: str) -> None:
         self.ephemeral.discard(name)

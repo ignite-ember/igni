@@ -95,8 +95,8 @@ class PanelsController:
     def agent_details(self) -> list[AgentInfo]:
         return self._agents.snapshot()
 
-    def promote_ephemeral_agent(self, name: str) -> PromoteEphemeralResult:
-        return self._agents.promote(name)
+    def promote_ephemeral_agent(self, name: str, target: str = "project") -> PromoteEphemeralResult:
+        return self._agents.promote(name, target)
 
     def discard_ephemeral_agent(self, name: str) -> DiscardEphemeralResult:
         return self._agents.discard(name)

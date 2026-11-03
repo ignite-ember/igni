@@ -1140,9 +1140,9 @@ class BackendServer:
         """See :meth:`PanelsController.agent_details`."""
         return self.panels.agent_details()
 
-    def promote_ephemeral_agent(self, name: str) -> PromoteEphemeralResult:
+    def promote_ephemeral_agent(self, name: str, target: str = "project") -> PromoteEphemeralResult:
         """See :meth:`PanelsController.promote_ephemeral_agent`."""
-        return self.panels.promote_ephemeral_agent(name)
+        return self.panels.promote_ephemeral_agent(name, target)
 
     def discard_ephemeral_agent(self, name: str) -> DiscardEphemeralResult:
         """See :meth:`PanelsController.discard_ephemeral_agent`."""
