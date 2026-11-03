@@ -31,6 +31,8 @@ import re
 import shlex
 from collections.abc import Callable, Sequence
 
+from ember_code.core.config.permission_eval.pipe_filters import _long_name_hits
+
 #: Redirects that write to no file, removed before tokenising.
 _HARMLESS_REDIRECT_RE = re.compile(r"(?<![^\s|])(?:[12]?>&[12]|&?[12]?>\s*/dev/null)(?=$|[\s|])")
 
@@ -58,14 +60,15 @@ def _refuses(*flags: str, prefixes: tuple[str, ...] = ()) -> Callable[[Sequence[
 def _refuses_short(letter: str, *long_flags: str) -> Callable[[Sequence[str]], bool]:
     """Allowed unless a short-option cluster contains ``letter`` (``-o``,
     ``-ro``, ``-ofile``) or an argument is one of ``long_flags`` (with or
-    without ``=value``)."""
+    without ``=value``), or a prefix of one GNU would accept (``--outp``)."""
+    refused = frozenset(long_flags)
 
     def check(args: Sequence[str]) -> bool:
         for arg in args:
             if arg == "--":
                 break
             if arg.startswith("--"):
-                if arg.split("=", 1)[0] in long_flags:
+                if _long_name_hits(arg.split("=", 1)[0], refused):
                     return False
             elif arg.startswith("-") and letter in arg[1:]:
                 return False
@@ -255,6 +258,39 @@ def is_read_only(command: str) -> bool:
 _JOINERS = frozenset({"|", "&&", "||", ";"})
 
 
+def command_segments(command: str) -> list[tuple[str | None, str]] | None:
+    """:func:`command_parts`, each with the operator that joined it on.
+
+    ``ls | head && rm x`` → ``[(None, "ls"), ("|", "head"), ("&&", "rm x")]``.
+    The first command has ``None``. Same ``None`` result, for the same lines,
+    as :func:`command_parts`.
+    """
+    if not command or not command.strip():
+        return None
+    if any(marker in command for marker in _SUBSTITUTION_MARKERS):
+        return None
+    tokens = _tokens(_HARMLESS_REDIRECT_RE.sub(" ", command))
+    if not tokens:
+        return None
+    if not any(token and set(token) <= _OPERATOR_CHARS for token in tokens):
+        return [(None, command)]
+    joiners: list[str | None] = [None]
+    segments: list[list[str]] = [[]]
+    for token in tokens:
+        if token and set(token) <= _OPERATOR_CHARS:
+            if token not in _JOINERS:
+                return None
+            joiners.append(token)
+            segments.append([])
+            continue
+        segments[-1].append(token)
+    if any(not segment for segment in segments):
+        return None
+    return [
+        (joiner, shlex.join(segment)) for joiner, segment in zip(joiners, segments, strict=True)
+    ]
+
+
 def command_parts(command: str) -> list[str] | None:
     """The commands a shell line runs, one string each, or ``None``.
 
@@ -273,26 +309,10 @@ def command_parts(command: str) -> list[str] | None:
       ``>/dev/null`` excepted), ``&``, a subshell, or a line that does not
       tokenise.
     """
-    if not command or not command.strip():
+    segments = command_segments(command)
+    if segments is None:
         return None
-    if any(marker in command for marker in _SUBSTITUTION_MARKERS):
-        return None
-    tokens = _tokens(_HARMLESS_REDIRECT_RE.sub(" ", command))
-    if not tokens:
-        return None
-    if not any(token and set(token) <= _OPERATOR_CHARS for token in tokens):
-        return [command]
-    segments: list[list[str]] = [[]]
-    for token in tokens:
-        if token and set(token) <= _OPERATOR_CHARS:
-            if token not in _JOINERS:
-                return None
-            segments.append([])
-            continue
-        segments[-1].append(token)
-    if any(not segment for segment in segments):
-        return None
-    return [shlex.join(segment) for segment in segments]
+    return [part for _joiner, part in segments]
 
 
-__all__ = ["READ_ONLY_COMMANDS", "command_parts", "is_read_only"]
+__all__ = ["READ_ONLY_COMMANDS", "command_parts", "command_segments", "is_read_only"]

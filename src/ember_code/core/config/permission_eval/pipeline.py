@@ -33,7 +33,11 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from ember_code.core.config.permission_eval.catalog import BashCommand, ToolCategoryCatalog
-from ember_code.core.config.permission_eval.read_only_shell import command_parts
+from ember_code.core.config.permission_eval.pipe_filters import is_pipe_filter
+from ember_code.core.config.permission_eval.read_only_shell import (
+    command_parts,
+    command_segments,
+)
 from ember_code.core.config.permission_eval.resolver import FriendlyToolNameResolver
 from ember_code.core.config.permission_eval.schemas import (
     PermissionDecision,
@@ -357,14 +361,23 @@ class PermissionEvaluator:
         allowed only when each one is, and a line no rule can vouch for —
         a substitution, a redirect into a file, a subshell — is not allowed
         by a rule at all. It is asked about (or denied where nothing asks).
+
+        One exception: a pure filter directly after a ``|`` (``tail -20``,
+        ``grep -n x``, ``wc -l`` — the fixed list in :mod:`.pipe_filters`)
+        needs no rule of its own. It only reads what the allowed command
+        before it printed. Deny and ask rules still match it.
         """
-        parts = self._shell_parts(tool_name, tool_args)
-        if parts is None:
+        if not self.catalog.is_shell(tool_name):
+            return self._first_match(self.allow, tool_name, tool_args)
+        segments = command_segments(BashCommand.from_args(tool_args).command)
+        if segments is None:
             return None
-        if len(parts) <= 1:
+        if len(segments) <= 1:
             return self._first_match(self.allow, tool_name, tool_args)
         first: PermissionRule | None = None
-        for part in parts:
+        for joiner, part in segments:
+            if joiner == "|" and is_pipe_filter(part):
+                continue
             rule = self._first_match(self.allow, tool_name, {**tool_args, "command": part})
             if rule is None:
                 return None

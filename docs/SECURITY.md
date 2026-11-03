@@ -96,6 +96,21 @@ allowlist:
 
 Pattern matching uses glob syntax. Exact entries come from "always allow", pattern entries from "allow similar". When a new command comes in, it checks the allowlist first, then falls back to the permission level from config.
 
+**A rule covers one command.** A line of several commands (`a && b`, `a; b`,
+`a | b`) is allowed only when every command on it is, and deny and ask rules
+match any command on it: `Bash(rm *)` catches `cd build && rm -rf .`. One
+exception: a pure filter directly after a `|` needs no rule of its own —
+`head`, `tail`, `wc`, `sort`, `uniq`, `grep`/`egrep`/`fgrep`, `rg`, `cut`,
+`tr`, `nl`, `jq` — as long as it only reads its input: no file operand, and no
+option that writes (`sort -o`, `uniq IN OUT`), follows (`tail -f`), recurses
+(`grep -r`), reads another file (`grep -f`, `jq --rawfile`) or runs a program
+(`rg --pre`, `rg -z`, `sort --compress-program`). So `Bash(pytest *)` allows
+`pytest -q 2>&1 | tail -20`, while `ls | tee x`, `cat x | sh` and
+`ls | xargs rm` still need rules for `tee`, `sh` and `xargs`. The list is
+fixed (`permission_eval/pipe_filters.py`); `tee`, `xargs`, `sed`, `awk` and the
+pagers `less`/`more` are not on it. The command before the first `|` always
+needs its rule, and a deny or ask rule naming a filter still applies to it.
+
 **Permission modes (CLI shortcuts):**
 
 | Mode | What It Does |

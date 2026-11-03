@@ -143,13 +143,14 @@ permissions:
     - "Bash(python3 -m pytest *)"
     - "Bash(cat *)"
     - "Bash(rg *)"
-    - "Bash(tail *)"      # models pipe into tail and head: `pytest -q 2>&1 | tail -20`
-    - "Bash(head *)"
 ```
 
 and pass `--accept-edits` to let it edit files. A rule covers one command: `Bash(cat *)`
 does not allow `cat x && rm -rf y` — every command on the line must be
-allowed, the ones after a `|` included. `--auto-approve` allows everything; do not use it in a repository you
+allowed. A pure filter after a `|` (`tail -20`, `head`, `grep x`, `wc -l`, …)
+needs no rule of its own, so `pytest -q 2>&1 | tail -20` runs under the
+pytest rule; `| tee`, `| sh` and `| xargs` do not
+([the list](docs/SECURITY.md#1-permission-system)). `--auto-approve` allows everything; do not use it in a repository you
 care about.
 
 ---
