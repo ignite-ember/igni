@@ -123,17 +123,28 @@ out in the [Developer Certificate of Origin 1.1](https://developercertificate.or
 Signed-off-by: Your Name <you@example.com>
 ```
 
-`git commit -s` adds it for you, using your `user.name` and `user.email`. To
-sign off commits you have already made on a branch:
+`git commit -s` adds it for you, using your `user.name` and `user.email`
+(`git config --global format.signOff true` does not cover `git commit`; use
+`-s` or an alias).
+
+Every pull request runs the DCO check (`.github/workflows/dco.yml`), which
+fails on any commit in it without a sign-off and names that commit. To fix a
+missed sign-off:
 
 ```bash
+# the last commit only
+git commit --amend -s --no-edit
+# every commit on your branch
 git rebase --signoff main
+git push --force-with-lease
 ```
 
+The force-push replaces your branch's commits with signed-off copies; the
+check runs again on the new ones. Commits already on `main` before the check
+existed are not re-checked.
+
 Contributions are accepted under Apache-2.0, the licence of this repository
-(its section 5, "inbound = outbound"). This is igni server's policy too; the
-pull-request check that enforces it there is not yet enabled here, so a
-reviewer asks for the sign-off instead.
+(its section 5, "inbound = outbound"). This is igni server's policy too.
 
 ## Conduct
 
