@@ -116,7 +116,7 @@ class McpBinding(Strict):
 
 
 class Sidecar(Strict):
-    """Packaging A: a signed image igni installs and supervises."""
+    """``sidecar`` packaging: a signed image igni installs and supervises."""
 
     #: With a tag, and present in the bundle. Never pulled at install:
     #: an air-gapped deployment has no registry to pull from.
@@ -131,7 +131,7 @@ class EndpointAuth(Strict):
 
 
 class Endpoint(Strict):
-    """Packaging B: a service someone else runs, registered rather
+    """``endpoint`` packaging: a service someone else runs, registered rather
     than installed. Always inside the customer's network."""
 
     url: str
@@ -139,7 +139,7 @@ class Endpoint(Strict):
 
 
 class PythonPackage(Strict):
-    """Packaging D: a Python package igni installs and runs here.
+    """``python`` packaging: a Python package igni installs and runs here.
 
     How a service's extension reaches people's machines
     (igni server's ``docs/service-identity.md`` §8). The bundle carries the package
@@ -164,7 +164,7 @@ class PythonPackage(Strict):
 
 
 class DevCommand(Strict):
-    """Packaging C: a command igni runs here, speaking MCP over stdio.
+    """``dev`` packaging: a command igni runs here, speaking MCP over stdio.
 
     Development only. The other two packagings each need something an
     author does not have on their laptop — a container registry, or a

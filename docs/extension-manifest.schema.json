@@ -1,8 +1,8 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://igni.sh/schema/extension-manifest-1.json",
+  "$id": "https://ignite-ember.sh/schema/extension-manifest-1.json",
   "title": "igni extension manifest",
-  "description": "Everything an extension declares about itself. One manifest per extension; packaging decides which of `sidecar` and `endpoint` applies. The contract this describes is docs/EXTENSIBILITY.md — read §2 for the reasoning and this file for the shape. Point your editor at it with \"$schema\": \"https://igni.sh/schema/extension-manifest-1.json\" and it will complete and check as you type.",
+  "description": "Everything an extension declares about itself. One manifest per extension; packaging decides which of `sidecar` and `endpoint` applies. The contract this describes is docs/EXTENSIBILITY.md — read §2 for the reasoning and this file for the shape. Point your editor at it with \"$schema\": \"https://ignite-ember.sh/schema/extension-manifest-1.json\" and it will complete and check as you type.",
   "type": "object",
   "required": [
     "id",
@@ -60,7 +60,7 @@
     },
     "sidecar": {
       "type": "object",
-      "description": "Packaging A: a signed image igni installs and supervises. Single-user backends only — a sidecar is one process, so on a shared backend it would be one instance shared by every principal on it.",
+      "description": "`sidecar` packaging: a signed image igni installs and supervises. Single-user backends only — a sidecar is one process, so on a shared backend it would be one instance shared by every principal on it.",
       "required": [
         "image",
         "mcp"
@@ -93,7 +93,7 @@
     },
     "endpoint": {
       "type": "object",
-      "description": "Packaging B: a service someone else runs, registered rather than installed. Its availability, scaling and failover are its own. Always inside the customer's network — igni hosts nothing.",
+      "description": "`endpoint` packaging: a service someone else runs, registered rather than installed. Its availability, scaling and failover are its own. Always inside the customer's network — igni hosts nothing.",
       "required": [
         "url"
       ],
@@ -133,7 +133,7 @@
     },
     "python": {
       "type": "object",
-      "description": "Packaging D: a Python package igni installs into a private environment and starts here, speaking MCP over stdio. How a service ships its extension (service-identity §8). The bundle carries the package and every dependency as wheels (cp312 or pure-Python, for each platform igni runs on), and igni installs from that wheelhouse only — never an index, because an air-gapped deployment has none. A development install of a source checkout with no wheelhouse builds the package from the directory instead.",
+      "description": "`python` packaging: a Python package igni installs into a private environment and starts here, speaking MCP over stdio. How a service ships its extension through igni server. The bundle carries the package and every dependency as wheels (cp312 or pure-Python, for each platform igni runs on), and igni installs from that wheelhouse only — never an index, because an air-gapped deployment has none. A development install of a source checkout with no wheelhouse builds the package from the directory instead.",
       "required": [
         "package",
         "entry",
@@ -181,7 +181,7 @@
     },
     "dev": {
       "type": "object",
-      "description": "Packaging C: a command igni runs on this machine, speaking MCP over stdio. Development only, and the schema refuses it on anything but `trust: unsigned` — it is an arbitrary command out of a text file. It exists so an author can run an extension while writing it, before there is a service to ship it from.",
+      "description": "`dev` packaging: a command igni runs on this machine, speaking MCP over stdio. Development only, and the schema refuses it on anything but `trust: unsigned` — it is an arbitrary command out of a text file. It exists so an author can run an extension while writing it, before there is a service to ship it from.",
       "required": [
         "command"
       ],

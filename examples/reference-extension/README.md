@@ -33,7 +33,7 @@ that you `await connect()` before rendering.
 how to use it. `manifest.json` here opens with
 
 ```json
-"$schema": "https://igni.sh/schema/extension-manifest-1.json"
+"$schema": "https://ignite-ember.sh/schema/extension-manifest-1.json"
 ```
 
 which gives you completion, inline descriptions and red squiggles for

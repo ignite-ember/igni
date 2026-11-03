@@ -1,5 +1,5 @@
 {
-  "$schema": "https://igni.sh/schema/extension-manifest-1.json",
+  "$schema": "https://ignite-ember.sh/schema/extension-manifest-1.json",
 
   "id": "acme.scanner",
   "version": "1.0.0",
