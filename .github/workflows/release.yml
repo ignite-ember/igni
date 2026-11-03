@@ -5,8 +5,11 @@ on:
     tags:
       - "v*"
 
+# Read-only by default. The jobs that write to the release say so
+# themselves (`contents: write`), and the one job that mints provenance
+# asks for `id-token` and `attestations` on its own.
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   authorize:
@@ -30,6 +33,7 @@ jobs:
     needs: ci
     runs-on: ubuntu-latest
     permissions:
+      contents: read
       id-token: write  # trusted publishing
     steps:
       - uses: actions/checkout@v4
@@ -97,6 +101,20 @@ jobs:
       - name: Build package
         run: uv build
 
+      # The same bytes PyPI gets, for release-evidence: it attaches them to
+      # the GitHub release (for installs that cannot reach PyPI), lists them
+      # in SHA256SUMS and attests their provenance.
+      - name: Keep the wheel and sdist
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: python-dist
+          path: dist/
+          if-no-files-found: error
+          retention-days: 30
+
+      # With trusted publishing this also uploads PEP 740 attestations to
+      # PyPI (the action's default), so `pypi.org` shows where each file
+      # was built.
       - name: Publish to PyPI
         uses: pypa/gh-action-pypi-publish@release/v1
         with:
@@ -736,8 +754,214 @@ jobs:
           echo "latest.json uploaded:"
           cat /tmp/latest.json
 
-  github-release:
+  # SBOMs, checksums, provenance and (once the key exists) a signature,
+  # for every file this release ships — before the draft is published, so
+  # a release is never public without them. docs/VERIFYING_RELEASES.md is
+  # the user's side of this job.
+  #
+  # One SHA256SUMS covers everything: the desktop installers and updater
+  # payload already on the draft, the IDE plugins, the wheel and sdist, and
+  # the SBOMs. Provenance is minted for every line of it in one
+  # attestation, and the cosign signature is over it too, so one signed
+  # file vouches for every other — the shape of igni server's bundle
+  # MANIFEST.
+  release-evidence:
     needs: [prepare-release, publish-pypi, build-jetbrains-plugin, build-vscode-plugin, build-tauri, updater-json]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write      # read the draft's assets, attach the evidence
+      id-token: write      # Sigstore certificate for the attestation
+      attestations: write  # store it on this repository
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      RELEASE_ID: ${{ needs.prepare-release.outputs.release_id }}
+      TAG: ${{ github.ref_name }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+
+      - name: Version
+        id: v
+        run: echo "version=${TAG#v}" >> "$GITHUB_OUTPUT"
+
+      - name: Download the wheel and sdist
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: python-dist
+          path: dist/python
+
+      - name: Download the JetBrains plugin
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: jetbrains-plugin
+          path: dist/release
+
+      - name: Download the VS Code extension
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: vscode-extension
+          path: dist/release
+
+      # By release ID, not tag: a draft cannot be looked up by its tag
+      # (see github-release below). Evidence from an earlier attempt of this
+      # job is skipped, so a re-run hashes the shipped files only.
+      - name: Download the desktop assets from the draft
+        run: |
+          set -euo pipefail
+          gh api --paginate "repos/${GITHUB_REPOSITORY}/releases/${RELEASE_ID}/assets" \
+            --jq '.[] | [.id, .name] | @tsv' |
+          while IFS=$'\t' read -r id name; do
+            case "$name" in
+              SHA256SUMS|SHA256SUMS.sig|*.cdx.json|*.sigstore.json) continue ;;
+            esac
+            echo "  $name"
+            gh api -H 'Accept: application/octet-stream' \
+              "repos/${GITHUB_REPOSITORY}/releases/assets/${id}" > "dist/release/${name}"
+          done
+          cp dist/python/* dist/release/
+          ls -la dist/release
+
+      # ── SBOMs: one per kind of thing a user installs ─────────────────
+      #
+      # The wheel's from uv.lock, every extra but `dev` — what `pip install
+      # 'ignite-ember[…]'` can bring in. The clients' from their lockfiles,
+      # staged per artifact so each SBOM is one installable: the web UI's
+      # npm tree is inside the desktop app, the VS Code extension and the
+      # JetBrains plugin alike, and the desktop app adds the Tauri shell's
+      # crates. Neither IDE plugin has runtime dependencies of its own (the
+      # IntelliJ Platform provides the JetBrains one's), so theirs is the web
+      # UI's. Development dependencies are left out: they do not ship.
+      - name: SBOM — Python package
+        run: |
+          uv export --frozen --no-dev --all-extras --no-extra dev \
+            --format cyclonedx1.5 --preview-features sbom-export \
+            -o "dist/release/ignite-ember-${{ steps.v.outputs.version }}.cdx.json"
+
+      - name: Stage the clients' lockfiles
+        run: |
+          set -euo pipefail
+          for client in desktop vscode jetbrains; do
+            mkdir -p "sbom-src/igni-${client}/web"
+            cp clients/web/package.json clients/web/package-lock.json "sbom-src/igni-${client}/web/"
+          done
+          mkdir -p sbom-src/igni-desktop/shell sbom-src/igni-vscode/extension
+          cp clients/tauri/src-tauri/Cargo.toml clients/tauri/src-tauri/Cargo.lock sbom-src/igni-desktop/shell/
+          cp clients/vscode/package.json clients/vscode/package-lock.json sbom-src/igni-vscode/extension/
+
+      - name: SBOM — desktop app
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          scan-type: fs
+          scan-ref: sbom-src/igni-desktop
+          format: cyclonedx
+          output: dist/release/igni-desktop-${{ steps.v.outputs.version }}.cdx.json
+
+      - name: SBOM — VS Code extension
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          scan-type: fs
+          scan-ref: sbom-src/igni-vscode
+          format: cyclonedx
+          output: dist/release/igni-vscode-${{ steps.v.outputs.version }}.cdx.json
+
+      - name: SBOM — JetBrains plugin
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          scan-type: fs
+          scan-ref: sbom-src/igni-jetbrains
+          format: cyclonedx
+          output: dist/release/igni-jetbrains-${{ steps.v.outputs.version }}.cdx.json
+
+      - name: SHA256SUMS
+        run: |
+          set -euo pipefail
+          mkdir -p dist/evidence
+          (cd dist/release && sha256sum -- *) > dist/evidence/SHA256SUMS
+          cat dist/evidence/SHA256SUMS
+          { echo "### ${TAG}"; echo; echo '```'; cat dist/evidence/SHA256SUMS; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+
+      # SLSA build provenance for every file in SHA256SUMS, signed with a
+      # short-lived Sigstore certificate bound to this workflow run and
+      # recorded in Sigstore's public transparency log (this repository is
+      # public; the log entry says nothing the repository does not).
+      - name: Attest build provenance
+        id: attest
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-checksums: dist/evidence/SHA256SUMS
+
+      # The attestation also lives on GitHub (`gh attestation verify`
+      # fetches it); attaching the bundle lets a machine with no network
+      # verify it with `--bundle` and a trusted root.
+      - name: Keep the attestation bundle
+        run: cp "${{ steps.attest.outputs.bundle-path }}" "dist/evidence/igni-${{ steps.v.outputs.version }}.provenance.sigstore.json"
+
+      # ── Signature ────────────────────────────────────────────────────
+      #
+      # igni server's approach: a cosign key pair, not keyless, so a user
+      # needs only the public key to verify, and `--tlog-upload=false`
+      # keeps the signature out of the public log. igni server's offline
+      # bundle signs its images, not anything this repository publishes, so
+      # this is the only signature on these files.
+      #
+      # The key ceremony has not happened. Until COSIGN_PRIVATE_KEY,
+      # COSIGN_PASSWORD (secrets) and COSIGN_PUBLIC_KEY (variable) are all
+      # set, the release goes out unsigned and says so; with only some of
+      # them set it fails, because that is a mistake rather than a state.
+      - name: Is there a signing key?
+        id: key
+        env:
+          COSIGN_PRIVATE_KEY: ${{ secrets.COSIGN_PRIVATE_KEY }}
+          COSIGN_PASSWORD: ${{ secrets.COSIGN_PASSWORD }}
+          COSIGN_PUBLIC_KEY: ${{ vars.COSIGN_PUBLIC_KEY }}
+        run: |
+          set -euo pipefail
+          missing=()
+          [ -n "${COSIGN_PRIVATE_KEY}" ] || missing+=("secret COSIGN_PRIVATE_KEY")
+          [ -n "${COSIGN_PASSWORD}" ] || missing+=("secret COSIGN_PASSWORD")
+          [ -n "${COSIGN_PUBLIC_KEY}" ] || missing+=("variable COSIGN_PUBLIC_KEY")
+          if [ "${#missing[@]}" -eq 3 ]; then
+            echo "::notice title=Unsigned release::No cosign key is configured (the key ceremony has not happened); SHA256SUMS is not signed. Provenance and SBOMs are still attached."
+            echo "present=false" >> "$GITHUB_OUTPUT"
+          elif [ "${#missing[@]}" -gt 0 ]; then
+            echo "::error::cosign is half-configured; missing: ${missing[*]}"
+            exit 1
+          else
+            echo "present=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: sigstore/cosign-installer@dc72c7d5c4d10cd6bcb8cf6e3fd625a9e5e537da # v3.7.0
+        if: steps.key.outputs.present == 'true'
+        with:
+          cosign-release: v2.4.1
+
+      - name: Sign SHA256SUMS
+        if: steps.key.outputs.present == 'true'
+        env:
+          COSIGN_PRIVATE_KEY: ${{ secrets.COSIGN_PRIVATE_KEY }}
+          COSIGN_PASSWORD: ${{ secrets.COSIGN_PASSWORD }}
+          COSIGN_PUBLIC_KEY: ${{ vars.COSIGN_PUBLIC_KEY }}
+        run: |
+          set -euo pipefail
+          cosign sign-blob --yes --key env://COSIGN_PRIVATE_KEY --tlog-upload=false \
+            --output-signature dist/evidence/SHA256SUMS.sig dist/evidence/SHA256SUMS
+          printf '%s\n' "${COSIGN_PUBLIC_KEY}" > "${RUNNER_TEMP}/cosign.pub"
+          cosign verify-blob --key "${RUNNER_TEMP}/cosign.pub" --insecure-ignore-tlog=true \
+            --signature dist/evidence/SHA256SUMS.sig dist/evidence/SHA256SUMS
+
+      # Only what this job adds: the desktop assets are already on the
+      # draft, and github-release attaches the IDE plugins.
+      - name: Attach to the draft release
+        run: |
+          set -euo pipefail
+          gh release upload "$TAG" --repo "$GITHUB_REPOSITORY" --clobber \
+            dist/python/* dist/release/*.cdx.json dist/evidence/*
+
+  github-release:
+    needs: [prepare-release, publish-pypi, build-jetbrains-plugin, build-vscode-plugin, build-tauri, updater-json, release-evidence]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -839,6 +1063,15 @@ jobs:
 
           Both IDE plugins bootstrap uv + Python + ignite-ember on
           first launch — no manual setup required.
+
+          ## Verify
+
+          ``SHA256SUMS`` lists every file on this release. Each one has
+          GitHub build provenance (``gh attestation verify <file> --repo
+          ${{ github.repository }}``; the bundle is attached for offline
+          checks), the ``*.cdx.json`` files are CycloneDX SBOMs, and
+          ``SHA256SUMS.sig``, when present, is a cosign signature over the
+          checksums. See docs/VERIFYING_RELEASES.md.
           BODY_EOF
           )
 

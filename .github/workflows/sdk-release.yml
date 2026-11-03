@@ -183,12 +183,28 @@ jobs:
       - name: Check the Python distributions
         run: uvx twine check --strict dist/sdk/python/*
 
+      # A CycloneDX SBOM per Python SDK, from its own uv.lock: every extra,
+      # no development group. The npm packages declare no dependencies
+      # (ui-react's are peers, the application's to choose), so an SBOM of
+      # one would list only itself; npm's provenance covers them instead.
+      - name: SBOMs
+        env:
+          VERSION: ${{ needs.resolve.outputs.version }}
+        run: |
+          set -euo pipefail
+          mkdir -p dist/sdk/sbom
+          for pkg in igni-service igni-extension; do
+            uv export --frozen --directory "packages/$pkg" --no-dev --all-extras \
+              --format cyclonedx1.5 --preview-features sbom-export \
+              -o "$PWD/dist/sdk/sbom/$pkg-$VERSION.cdx.json"
+          done
+
       - name: Checksums, and what each tarball carries
         env:
           VERSION: ${{ needs.resolve.outputs.version }}
         run: |
           set -euo pipefail
-          { (cd dist/sdk/python && sha256sum -- *); (cd dist/sdk/npm && sha256sum -- *.tgz); } > dist/sdk/SHA256SUMS
+          { (cd dist/sdk/python && sha256sum -- *); (cd dist/sdk/npm && sha256sum -- *.tgz); (cd dist/sdk/sbom && sha256sum -- *); } > dist/sdk/SHA256SUMS
           cat dist/sdk/SHA256SUMS
           {
             echo "### SDK $VERSION"
@@ -358,11 +374,77 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
+      id-token: write      # Sigstore certificate for the attestation
+      attestations: write  # store it on this repository
     steps:
       - uses: actions/download-artifact@v4
         with:
           name: sdk-${{ needs.resolve.outputs.version }}
           path: dist/sdk
+
+      # Build provenance for every file in SHA256SUMS — wheels, sdists, npm
+      # tarballs, SBOMs — in one attestation, bound to this run. Only on a
+      # release: a rehearsal's files are not published, and attesting them
+      # would put provenance on bytes nobody ships. PyPI and npm carry
+      # their own attestations too (trusted publishing, `--provenance`);
+      # this one covers the copies on the GitHub Release, which are what an
+      # air-gapped build takes. docs/VERIFYING_RELEASES.md.
+      - name: Attest build provenance
+        id: attest
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-checksums: dist/sdk/SHA256SUMS
+
+      - name: Keep the attestation bundle
+        env:
+          VERSION: ${{ needs.resolve.outputs.version }}
+          BUNDLE: ${{ steps.attest.outputs.bundle-path }}
+        run: cp "$BUNDLE" "dist/sdk/igni-sdk-$VERSION.provenance.sigstore.json"
+
+      # A cosign signature over SHA256SUMS, as release.yml does for igni
+      # itself — a key pair and `--tlog-upload=false`, igni server's
+      # approach. Skipped, with a notice, until the key ceremony has put
+      # COSIGN_PRIVATE_KEY, COSIGN_PASSWORD and COSIGN_PUBLIC_KEY in place.
+      - name: Is there a signing key?
+        id: key
+        env:
+          COSIGN_PRIVATE_KEY: ${{ secrets.COSIGN_PRIVATE_KEY }}
+          COSIGN_PASSWORD: ${{ secrets.COSIGN_PASSWORD }}
+          COSIGN_PUBLIC_KEY: ${{ vars.COSIGN_PUBLIC_KEY }}
+        run: |
+          set -euo pipefail
+          missing=()
+          [ -n "${COSIGN_PRIVATE_KEY}" ] || missing+=("secret COSIGN_PRIVATE_KEY")
+          [ -n "${COSIGN_PASSWORD}" ] || missing+=("secret COSIGN_PASSWORD")
+          [ -n "${COSIGN_PUBLIC_KEY}" ] || missing+=("variable COSIGN_PUBLIC_KEY")
+          if [ "${#missing[@]}" -eq 3 ]; then
+            echo "::notice title=Unsigned release::No cosign key is configured (the key ceremony has not happened); SHA256SUMS is not signed. Provenance and SBOMs are still attached."
+            echo "present=false" >> "$GITHUB_OUTPUT"
+          elif [ "${#missing[@]}" -gt 0 ]; then
+            echo "::error::cosign is half-configured; missing: ${missing[*]}"
+            exit 1
+          else
+            echo "present=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: sigstore/cosign-installer@dc72c7d5c4d10cd6bcb8cf6e3fd625a9e5e537da # v3.7.0
+        if: steps.key.outputs.present == 'true'
+        with:
+          cosign-release: v2.4.1
+
+      - name: Sign SHA256SUMS
+        if: steps.key.outputs.present == 'true'
+        env:
+          COSIGN_PRIVATE_KEY: ${{ secrets.COSIGN_PRIVATE_KEY }}
+          COSIGN_PASSWORD: ${{ secrets.COSIGN_PASSWORD }}
+          COSIGN_PUBLIC_KEY: ${{ vars.COSIGN_PUBLIC_KEY }}
+        run: |
+          set -euo pipefail
+          cosign sign-blob --yes --key env://COSIGN_PRIVATE_KEY --tlog-upload=false \
+            --output-signature dist/sdk/SHA256SUMS.sig dist/sdk/SHA256SUMS
+          printf '%s\n' "${COSIGN_PUBLIC_KEY}" > "${RUNNER_TEMP}/cosign.pub"
+          cosign verify-blob --key "${RUNNER_TEMP}/cosign.pub" --insecure-ignore-tlog=true \
+            --signature dist/sdk/SHA256SUMS.sig dist/sdk/SHA256SUMS
 
       # Created when missing, its files replaced when re-run. Never marked
       # latest: the desktop app's updater reads `releases/latest`, which
@@ -382,10 +464,12 @@ jobs:
             if [ "$PRERELEASE" = "true" ]; then flags+=(--prerelease); fi
             gh release create "$TAG" --repo "$REPO" --verify-tag "${flags[@]}" \
               --title "SDK $VERSION" \
-              --notes "igni SDK $VERSION: \`igni-service\` and \`igni-extension\` on PyPI; \`@ignite-ember/extension-bridge\`, \`@ignite-ember/ui-react\` and \`@ignite-ember/ui-css\` on npmjs. The files below are the same bytes, for builds that cannot reach either registry; SHA256SUMS lists their digests."
+              --notes "igni SDK $VERSION: \`igni-service\` and \`igni-extension\` on PyPI; \`@ignite-ember/extension-bridge\`, \`@ignite-ember/ui-react\` and \`@ignite-ember/ui-css\` on npmjs. The files below are the same bytes, for builds that cannot reach either registry; SHA256SUMS lists their digests, every file has GitHub build provenance (the bundle is attached for offline checks), the *.cdx.json files are CycloneDX SBOMs, and SHA256SUMS.sig, when present, is a cosign signature. See docs/VERIFYING_RELEASES.md."
           fi
+          shopt -s nullglob
           gh release upload "$TAG" --repo "$REPO" --clobber \
-            dist/sdk/python/* dist/sdk/npm/*.tgz dist/sdk/SHA256SUMS
+            dist/sdk/python/* dist/sdk/npm/*.tgz dist/sdk/sbom/*.cdx.json \
+            dist/sdk/SHA256SUMS dist/sdk/SHA256SUMS.sig dist/sdk/*.provenance.sigstore.json
           {
             echo "### SDK $VERSION released"
             echo
