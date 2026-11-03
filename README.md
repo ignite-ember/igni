@@ -67,10 +67,10 @@ up front what it may do — see
 To point it at your own igni server, set `api_url` in your user config,
 `~/.igni/config.yaml` — not a project's `.igni/config.yaml` or
 `config.local.yaml`, which may not name a server and are ignored for it,
-with a warning — and sign in once from the desktop app or an IDE extension
-(`/login` in its chat). That writes `~/.igni/credentials.json`, which
-`igni -m` uses too. `/login` is not a shell subcommand: `igni /login` answers
-`Error: No such command`, and `igni -m /login` only says where to sign in.
+with a warning — and run `igni login` (or `igni login --token-stdin` with a
+token). That writes `~/.igni/credentials.json`, which `igni -m` and the desktop
+app both use. `/login` is not a shell subcommand: `igni /login` answers
+`Error: No such command`.
 
 ```yaml
 # ~/.igni/config.yaml
@@ -111,8 +111,8 @@ See [Quickstart](QUICKSTART.md) for the full setup guide.
 
 1. **Install** — `brew install ignite-ember/tap/ignite-ember` (or `pip install ignite-ember`)
 2. **Configure a model** — set `OPENAI_API_KEY` (or any provider key) and add the
-   model to `.igni/config.yaml`; or point `api_url` at your igni server and sign
-   in from the desktop app or an IDE extension
+   model to `.igni/config.yaml`; or point `api_url` at your igni server and run
+   `igni login`
 3. **Run** — `igni -m "…"`, or the desktop app
 
 See [Quickstart](QUICKSTART.md) for the full guide.

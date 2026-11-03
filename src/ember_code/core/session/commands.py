@@ -115,10 +115,10 @@ class InteractiveCommandDispatcher:
     #: flag that were both removed in v0.9.7, so the one hint a person got
     #: on the command line named nothing they could run.
     LOGIN_HINT = (
-        "Signing in opens a browser, which `igni -m` cannot wait on. Sign in "
-        "once from the igni desktop app or the VS Code / JetBrains extension "
-        "(set `api_url` in ~/.igni/config.yaml first): `igni -m` uses the same "
-        "credentials, ~/.igni/credentials.json."
+        "Signing in is its own command: run `igni login` (it prints the portal "
+        "address and waits for the browser), or `igni login --token-stdin` with "
+        "a token. Set `api_url` in ~/.igni/config.yaml first. The desktop app and "
+        "the IDE extensions sign in to the same ~/.igni/credentials.json."
     )
 
     async def _render_login(self, result: CommandResult) -> None:

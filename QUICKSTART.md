@@ -50,17 +50,21 @@ api_url: https://igni-api.acme.example
 portal_url: https://igni.acme.example   # only if it can't be derived from api_url
 ```
 
-Then sign in once from the desktop app or an IDE extension (**Sign in to your
-igni server**, or `/login` in its chat). It opens the portal in your browser
-and writes `~/.igni/credentials.json`, which `igni -m` then uses — the models
-your server routes to appear without any `models:` entry.
+Then sign in:
 
-`/login` is not a shell command (`igni /login` answers `Error: No such
-command`), and `igni -m /login` cannot wait for a browser, so it only says
-where to sign in.
+```bash
+igni login                                   # opens the portal's sign-in page ($BROWSER is honoured)
+                                             # and prints its address, for a machine with no browser
+printf %s "$TOKEN" | igni login --token-stdin   # or keep a token you already have (CI)
+```
 
-<!-- TODO: a terminal-only sign-in (`igni login`) — until it exists, a machine
-with no desktop app or IDE needs the credentials file from one that has. -->
+It writes `~/.igni/credentials.json`; `igni -m` then uses the models your
+server routes to, with no `models:` entry, and first syncs the extensions
+your server distributes (`igni ext sync` does that on its own). The desktop
+app and the IDE extensions sign in to the same file (**Sign in to your igni
+server**, or `/login` in their chat). `/login` is not a shell command —
+`igni /login` answers `Error: No such command`, and `igni -m /login` only
+points at `igni login`.
 
 **Option B: Bring your own model**
 
@@ -346,7 +350,7 @@ prints the full list; most also work as `igni -m "/<command>"`):
 | `/rename` | Rename current session |
 | `/memory` | List stored memories |
 | `/plan`, `/accept`, `/bypass` | Switch permission mode |
-| `/login`, `/logout`, `/whoami` | Your igni server session |
+| `/login`, `/logout`, `/whoami` | Your igni server session (in a terminal: `igni login`) |
 | `/commit`, `/pr`, `/explain`, `/test-plan`, `/migration` | The bundled skills |
 
 Project knowledge (documents, decisions) is the Artifacts extension's and

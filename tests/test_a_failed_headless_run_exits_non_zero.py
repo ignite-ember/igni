@@ -138,5 +138,6 @@ async def test_login_says_where_to_sign_in():
         await run_single_message(MagicMock(), "/login")
 
     printed = "\n".join(c.args[0] for c in session.display.print_info.call_args_list)
+    assert "`igni login`" in printed
     assert "~/.igni/credentials.json" in printed
     assert "TUI" not in printed and "--no-tui" not in printed
