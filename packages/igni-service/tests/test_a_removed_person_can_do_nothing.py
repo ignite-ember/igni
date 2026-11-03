@@ -13,6 +13,7 @@ bound.
 from __future__ import annotations
 
 import asyncio
+import logging
 from collections.abc import AsyncIterator
 
 import httpx
@@ -155,6 +156,38 @@ async def test_it_fails_closed_until_read_and_when_stale(
     await feed.settle()
     with pytest.raises(RevocationsStale):
         await igni.verifier.person(ada)
+    feed.stop.set()
+    await task
+
+
+async def test_waiting_for_approval_is_said_once_not_every_poll(
+    fake: FakeIgni, igni: IgniService, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Pending, the feed retries every two seconds; INFO says so when it
+    starts and when it ends, the retries in between are DEBUG."""
+    caplog.set_level(logging.DEBUG, logger="igni_service.revocations")
+    fake.require_approval = True
+    await igni.registration.start()
+    feed = Feed(igni)
+    task = asyncio.create_task(igni.revocation_feed.run(feed.stop))
+    for _ in range(3):
+        await feed.settle()
+
+    def said(level: int) -> list[str]:
+        return [
+            r.getMessage()
+            for r in caplog.records
+            if r.name == "igni_service.revocations" and r.levelno == level
+        ]
+
+    assert len(said(logging.DEBUG)) >= 4
+    assert len(said(logging.INFO)) == 1
+    assert "waiting for a super admin" in said(logging.INFO)[0]
+
+    fake.approve()
+    await feed.settle()
+    assert len(said(logging.INFO)) == 2
+    assert "refreshed" in said(logging.INFO)[1]
     feed.stop.set()
     await task
 

@@ -245,6 +245,10 @@ class RevocationFeed:
         self.revocations.check(claims)
 
     async def _follow(self) -> None:
+        #: Why the last try failed, while it keeps failing for that reason.
+        #: Waiting for approval retries every `POLL_SECONDS`; INFO says so
+        #: once when it starts and once when it ends, the retries are DEBUG.
+        failing: str | None = None
         while self.running:
             wait = self.WAIT_SECONDS if self._first.is_set() else 0.0
             started = time.monotonic()
@@ -253,9 +257,15 @@ class RevocationFeed:
                     self.served = await self.served_organisations()
                 page = await self.pull(wait=wait)
             except IgniUnavailable as exc:
-                logger.info("revocations not refreshed: %s", exc)
+                reason = str(exc)
+                level = logging.DEBUG if reason == failing else logging.INFO
+                logger.log(level, "revocations not refreshed: %s", reason)
+                failing = reason
                 await self._sleep(self.POLL_SECONDS)
                 continue
+            if failing is not None:
+                logger.info("revocations refreshed again")
+                failing = None
             self.revocations.heard(page)
             self._first.set()
             if wait and not page.revocations and time.monotonic() - started < wait / 2:
