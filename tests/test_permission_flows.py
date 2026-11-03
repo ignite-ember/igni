@@ -231,13 +231,19 @@ class TestBackendHITLResolution:
             server._hitl_tracer = HITLTracer(enabled=False)
 
             req = MagicMock()
+            req.tool_execution.tool_name = "run_shell_command"
             server._hitl_store.register("r1", PendingRequirement(req=req, run_id="run-1"))
 
             results = []
             async for proto in server.resolve_hitl("r1", "reject"):
                 results.append(proto)
 
-            req.reject.assert_called_once_with(note="User denied")
+            # The model reads the note as the tool's result. It is the trained
+            # refusal shape, naming the tool — never the bare "User denied",
+            # which the fine-tuning corpus does not contain once.
+            req.reject.assert_called_once_with(
+                note="Blocked: the person declined 'run_shell_command'."
+            )
 
     @pytest.mark.asyncio
     async def test_resolve_unknown_requirement_returns_error(self):

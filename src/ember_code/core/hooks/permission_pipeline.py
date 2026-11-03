@@ -29,6 +29,7 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
 
+from ember_code.core.approvals.declined import declined_note
 from ember_code.core.config.permission_eval import (
     PermissionDecision,
     PermissionEvaluator,
@@ -521,7 +522,7 @@ class PermissionEvaluatorStage(PermissionStage):
             PermissionDeniedPayload.from_call(ctx.name, ctx.args, "permission_evaluator"),
         )
         if answer is False:
-            return Block(f"Blocked: the person declined '{ctx.name}'.")
+            return Block(declined_note(ctx.name))
         return Block(_unasked_message(ctx.name, reason))
 
     def _tool_is_off_entirely(self, tool_name: str) -> bool:
