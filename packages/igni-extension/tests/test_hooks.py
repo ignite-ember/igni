@@ -166,3 +166,19 @@ def test_only_the_deciding_events_can_be_changed() -> None:
         "Stop",
         "PlanSubmit",
     }
+
+
+@pytest.mark.parametrize("value_type", [PreToolUse, PostToolUse])
+def test_a_tool_event_names_the_tool_as_igni_registers_it_and_as_the_manifest_does(
+    value_type: type[PreToolUse] | type[PostToolUse],
+) -> None:
+    """`tool_name` is igni's (`mcp_ext:acme.tickets_lookup_ticket`, or `read_file`);
+    `tool_manifest_name` the manifest's (`acme.tickets.lookup_ticket`), empty for igni's own."""
+    fields = {"tool_name": "mcp_ext:acme.tickets_lookup_ticket", "result": ""}
+
+    told = value_type.model_validate({**fields, "tool_manifest_name": "acme.tickets.lookup_ticket"})
+    built_in = value_type.model_validate({**fields, "tool_name": "read_file"})
+
+    assert "tool_manifest_name" in value_type.model_fields
+    assert told.tool_manifest_name == "acme.tickets.lookup_ticket"
+    assert built_in.tool_manifest_name == ""

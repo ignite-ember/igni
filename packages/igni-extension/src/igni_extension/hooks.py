@@ -61,15 +61,28 @@ class HookValue(BaseModel):
 class PreToolUse(HookValue):
     """A tool the agent is about to run, before igni's own checks."""
 
+    #: igni's name for it: `read_file` for one of igni's own, and
+    #: `mcp_ext:<id>_<tool>` for an extension's — the name permission rules
+    #: and settings-file hooks match (`ToolNames.registered`).
     tool_name: str
+    #: The manifest's name for an extension's tool (`acme.tickets.lookup_ticket`,
+    #: `ToolNames.manifest`); empty for igni's own tools, and from an igni
+    #: that predates it.
+    tool_manifest_name: str = ""
     #: Its arguments. A change is what igni's checks, and the tool, then see.
     tool_args: dict[str, Any] = Field(default_factory=dict)
 
 
 class PostToolUse(HookValue):
-    """A tool that ran, before the model reads what it returned."""
+    """A tool that ran, before the model reads what it returned.
 
+    Only a tool that succeeded: one that failed is `PostToolUseFailure`,
+    which is told and decides nothing.
+    """
+
+    #: As in `PreToolUse`.
     tool_name: str
+    tool_manifest_name: str = ""
     tool_args: dict[str, Any] = Field(default_factory=dict)
     #: What it returned, as text. A change is what the model reads; a
     #: reject withholds it.
