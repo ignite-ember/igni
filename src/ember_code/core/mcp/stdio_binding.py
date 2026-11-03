@@ -40,6 +40,7 @@ from typing import TYPE_CHECKING
 
 from ember_code.core.mcp.naming import tool_name_prefix
 from ember_code.core.mcp.notification_tap import McpNotificationRouter
+from ember_code.core.mcp.tool_errors import raise_on_failure
 
 try:
     from agno.tools.mcp import MCPTools
@@ -193,6 +194,9 @@ class StdioMCPBinding:
         # tool_name_prefix ensures MCP tools don't collide with
         # built-in tools (e.g. read_file → mcp_filesystem_read_file).
         await mcp_tools.initialize()
+        # A tool that fails is a failed call, in its own words
+        # (``tool_errors``); the session above records the failure.
+        raise_on_failure(mcp_tools)
 
         # Load-bearing: Agno's __aexit__ closes this handle.
         # If we drop the assignment the file descriptor leaks.

@@ -19,6 +19,7 @@ from typing import Any
 from mcp import ClientSession, types
 
 from ember_code.core.activity import ActivityRegistry, BusyKind
+from ember_code.core.mcp.tool_errors import error_text, record_failure
 
 #: Asked on every tool call; ``None`` adds nothing.
 RequestMeta = Callable[[], dict[str, Any] | None]
@@ -51,4 +52,11 @@ class RequestMetaSession(ClientSession):
             meta = {**(meta or {}), **added}
         # Busy while the server works on it (``core/activity``).
         with ActivityRegistry.shared().hold(BusyKind.MCP_CALL, self._busy_holder, name):
-            return await super().call_tool(name, arguments, *args, meta=meta, **kwargs)
+            try:
+                result = await super().call_tool(name, arguments, *args, meta=meta, **kwargs)
+            except Exception as exc:
+                record_failure(f"calling {name} failed: {exc}", answered=False)
+                raise
+        if result.isError:
+            record_failure(error_text(result), answered=True)
+        return result

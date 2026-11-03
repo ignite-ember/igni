@@ -207,6 +207,25 @@ async def test_a_tool_that_reports_its_own_error_answered(
     assert not faults.faulty("acme.guard")
 
 
+async def test_a_tool_that_raises_its_own_error_answered(
+    registry: ExtensionRegistry, faults: ExtensionFaults, hooks: ExtensionHooks
+) -> None:
+    """An MCP tool's error now arrives raised (``core/mcp/tool_errors``); it answered."""
+    from ember_code.core.mcp.tool_errors import MCPToolFailed
+
+    ExtensionHookGate.install(hooks)
+    hook = _tools_only(registry)
+
+    def reported(**kw: Any) -> Any:
+        raise MCPToolFailed("no such file", answered=True)
+
+    for _ in range(ExtensionFaults.LIMIT + 1):
+        with pytest.raises(MCPToolFailed):
+            await hook("mcp_ext:acme.guard_scan", reported, {})
+
+    assert not faults.faulty("acme.guard")
+
+
 async def test_another_server_s_tool_is_nobody_s_business(
     registry: ExtensionRegistry, faults: ExtensionFaults, hooks: ExtensionHooks
 ) -> None:

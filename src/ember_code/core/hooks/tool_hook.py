@@ -144,7 +144,10 @@ class ToolEventHook:
         try:
             result = await self._invoker.run(ctx)
         except Exception as exc:
-            ExtensionHookGate.tool_called(name, answered=False, detail=str(exc))
+            # An MCP tool that reported an error of its own answered
+            # (``core/mcp/tool_errors``); only one that did not is a fault.
+            answered = bool(getattr(exc, "answered", False))
+            ExtensionHookGate.tool_called(name, answered=answered, detail=str(exc))
             raise
         unanswered = self._unanswered(result)
         ExtensionHookGate.tool_called(name, answered=unanswered is None, detail=unanswered or "")
