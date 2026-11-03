@@ -181,7 +181,7 @@ There are three providers:
 | `effort` | string | no | `anthropic` only. `output_config.effort`: `low`, `medium`, `high`, `xhigh` or `max` |
 | `prompt_caching` | bool | no | `anthropic` only. `cache_control` on the system prompt and tools. Default `true` |
 
-> **API key resolution order:** `api_key` (direct) → `api_key_env` (env var) → `api_key_cmd` (shell command). The special value `cloud_token` resolves to your your igni server login credentials (from `/login`).
+> **API key resolution order:** `api_key` (direct) → `api_key_env` (env var) → `api_key_cmd` (shell command). The special value `cloud_token` resolves to your igni server login credentials (from `/login`), and is sent only to your igni server: an entry whose requests go to any other origin than `api_url` (scheme, host and port) gets no token, whichever config file it came from.
 
 ### Comparison with Claude Code
 
@@ -584,7 +584,8 @@ it brings that run code — or that would switch safety off — wait for trust.
 | Project plugins | `.igni/plugins/`, `.claude/plugins/` |
 | Markdown commands' `` !`cmd` `` tokens | `.igni/commands/`, `.claude/commands/` (the token becomes a "not run" marker; the command itself still loads) |
 | `permissions.*` (rules, categories, `mode`) and `safety.*` (safety lists, Bypass guard) | `.igni/config.yaml`, `config.local.yaml`, `settings.json`, `settings.local.json` |
-| A model's `api_key_cmd` (a program igni runs for the key) | `models.registry.*` in `.igni/config.yaml`, `config.local.yaml` |
+| A model's `api_key_cmd` (a program igni runs for the key) and `api_key_env` (a variable of your environment, sent to the URL the same file names) | `models.registry.*` in `.igni/config.yaml`, `config.local.yaml` |
+| The key your own config gives a model the project re-points (a different `url` or `provider`): the entry keeps only a key the project itself gives | `models.registry.*` in `.igni/config.yaml`, `config.local.yaml` |
 
 Keys a project may never set, trusted or not, stay as before: `network`,
 `air_gapped`, `api_url`, `portal_url`, `update_endpoint`,

@@ -60,6 +60,15 @@ class ProviderClientBuilder(ABC):
         — the token as it was when the model was built.
         """
 
+    def endpoint_for(self, entry: ModelRegistryEntry) -> str | None:
+        """The URL this builder's client sends ``entry``'s requests to.
+
+        :class:`ModelRegistry` hands igni server's token to a build only
+        when this is igni server's own origin. ``None`` means the SDK's
+        own default host, which never is.
+        """
+        return entry.url
+
 
 class OpenAILikeBuilder(ProviderClientBuilder):
     """Builder for OpenAI-compatible providers.
@@ -184,6 +193,11 @@ class GeminiBuilder(ProviderClientBuilder):
     def available(self) -> bool:
         return self._gemini_cls is not None
 
+    def endpoint_for(self, entry: ModelRegistryEntry) -> str | None:
+        """Google's: the Gemini SDK is not given ``entry.url``."""
+        _ = entry
+        return None
+
     def build(
         self,
         entry: ModelRegistryEntry,
@@ -289,6 +303,9 @@ class AnthropicBuilder(ProviderClientBuilder):
             )
         kwargs = self._build_kwargs(entry, cloud_token=cloud_token, cloud_auth=cloud_auth)
         return self._claude_cls(logger=llm_logger, vision=entry.vision, **kwargs)
+
+    def endpoint_for(self, entry: ModelRegistryEntry) -> str | None:
+        return self.base_url_for(entry)
 
     @classmethod
     def base_url_for(cls, entry: ModelRegistryEntry) -> str:

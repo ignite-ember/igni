@@ -316,7 +316,7 @@ Hooks also run code. Your organisation's group policy can ship hooks, and they r
 
 ### Workspace trust
 
-Opening a folder never runs its code or loosens safety until the person trusts it: an untrusted folder's tools, hooks, workflows, language servers, monitors, plugins and markdown-command shell tokens do not run, and its config cannot set `permissions.*`, `safety.*` or the mode. Decisions live in `~/.igni/workspace-trust.json`, keyed by path and git remote. Organisations set `workspace_trust.mode` (`ask` / `trusted_remotes` / `never`) from managed settings or group policy only, and managed permission values are final against every lower tier. See [Workspace trust](CONFIGURATION.md#workspace-trust).
+Opening a folder never runs its code or loosens safety until the person trusts it: an untrusted folder's tools, hooks, workflows, language servers, monitors, plugins and markdown-command shell tokens do not run, and its config cannot set `permissions.*`, `safety.*` or the mode, nor send a credential to a host it names (no model `api_key_cmd` or `api_key_env`, and a model it re-points keeps no key from your own config). igni server's token goes only to the origin of `api_url`, trusted folder or not. Decisions live in `~/.igni/workspace-trust.json`, keyed by path and git remote. Organisations set `workspace_trust.mode` (`ask` / `trusted_remotes` / `never`) from managed settings or group policy only, and managed permission values are final against every lower tier. See [Workspace trust](CONFIGURATION.md#workspace-trust).
 
 ### 9. Guardrails (AI Safety)
 

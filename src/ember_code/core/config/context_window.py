@@ -89,9 +89,11 @@ class ContextWindowResolver:
     or the environment.
     """
 
-    def __init__(self, cloud_token: str | None = None) -> None:
+    def __init__(self, cloud_token: str | None = None, server_url: str | None = None) -> None:
         self._cache: dict[str, int] = {}
         self._cloud_token = cloud_token
+        #: igni server's ``api_url``: the one origin the token is sent to.
+        self._server_url = server_url
 
     def resolve(
         self,
@@ -121,10 +123,16 @@ class ContextWindowResolver:
             return self._cache[model_id]
 
         if entry is not None and entry.url:
+            # Only igni server is sent igni server's token (B28).
+            token = (
+                self._cloud_token
+                if ModelRegistryEntry.same_origin(entry.url, self._server_url)
+                else None
+            )
             outcome = await self._fetch_from_api(
                 model_id=model_id,
                 base_url=entry.url,
-                api_key=entry.resolve_api_key(cloud_token=self._cloud_token) or "",
+                api_key=entry.resolve_api_key(cloud_token=token) or "",
             )
             if outcome.value is not None:
                 self._cache[model_id] = outcome.value

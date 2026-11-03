@@ -169,8 +169,8 @@ class ModelRegistryEntry(BaseModel):
             # twelve placeholders the .igni rename left behind.
             f"Add `api_key` for it in {DEFAULT_DATA_DIR}/config.yaml — or `api_key_env` / "
             "`api_key_cmd` in the project's config, which name a secret rather "
-            "than containing one and are safe to commit (`api_key_cmd` runs once "
-            "you trust the folder)."
+            "than containing one and are safe to commit (both are used once you "
+            "trust the folder)."
         )
 
     def _api_key_from_env(self) -> str | None:
@@ -232,6 +232,29 @@ class ModelRegistryEntry(BaseModel):
             # TypeError when handed a non-string — anything else is a
             # programming bug and should propagate.
             return False
+
+    @staticmethod
+    def same_origin(url: str | None, server_url: str | None) -> bool:
+        """True when ``url`` and ``server_url`` share scheme, host and port.
+
+        The test for where igni server's token may go (B28): only to the
+        origin of the configured ``api_url``. A path, a query or a
+        substring match (``https://evil.test/ignite-ember.sh``) is not the
+        same server.
+        """
+        if not url or not server_url:
+            return False
+        try:
+            a, b = urlparse(url), urlparse(server_url)
+            ports = (a.port, b.port)
+        except (ValueError, TypeError):
+            return False
+        if not a.hostname or not b.hostname or a.scheme.lower() != b.scheme.lower():
+            return False
+        default = {"https": 443, "http": 80}.get(a.scheme.lower())
+        return a.hostname.lower() == b.hostname.lower() and (ports[0] or default) == (
+            ports[1] or default
+        )
 
     def needs_cloud_token(self) -> bool:
         """True when the entry expects the stored igni server token

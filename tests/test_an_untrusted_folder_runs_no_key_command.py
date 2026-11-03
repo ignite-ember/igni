@@ -41,9 +41,13 @@ def test_an_untrusted_project_loses_its_key_commands(tmp_path):
     registry = _applied(tmp_path, trusted=False)["models"]["registry"]
     assert "api_key_cmd" not in registry["evil"]
     assert registry["evil"]["model_id"] == "m", "the rest of the entry stays"
-    assert registry["plain"]["api_key_env"] == "MY_KEY", "naming a variable runs nothing"
+    # It runs nothing, but it sends the named variable to the entry's url,
+    # which the same file chooses (B28); it waits for trust too.
+    assert "api_key_env" not in registry["plain"]
+    assert registry["plain"]["model_id"] == "p"
 
 
 def test_a_trusted_project_keeps_them(tmp_path):
     registry = _applied(tmp_path, trusted=True)["models"]["registry"]
     assert registry["evil"]["api_key_cmd"].startswith("sh -c")
+    assert registry["plain"]["api_key_env"] == "MY_KEY"
