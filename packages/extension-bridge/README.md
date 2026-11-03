@@ -12,6 +12,11 @@ bridge.onParams((params) => render(params));
 const found = await bridge.rpc("ext.example.teamnotes.search", { query: "" });
 ```
 
+Writing a page for the first time? [Your first extension](../../docs/YOUR_FIRST_EXTENSION.md)
+builds one end to end. A page needs no build step at all to start: it can
+post the wire messages itself (`igni ext init` writes one that does);
+this package is that, with types.
+
 `connect()` resolves once igni has told the page which extension it is,
 its launch params and the theme. Subpaths: `@ignite-ember/extension-bridge/protocol`
 (the wire format) and `@ignite-ember/extension-bridge/tokens` (the design tokens).
@@ -51,11 +56,19 @@ exchange as the process's `ext.service`, audience that service and no
 other — keeps it and renews it before it expires.
 
 ```ts
-bridge.service.url;                                    // null when it has none
+bridge.service.url;                                    // null when it has none (below)
 const res = await bridge.service.fetch("/v1/notes");   // Authorization: Bearer …
 const socket = await bridge.service.websocket("/v1/rooms/a");
 socket.addEventListener("message", (e) => render(JSON.parse(e.data)));
 ```
+
+`url` is `null` when the extension has no service a page may reach, and
+then `fetch` and `websocket` reject with `no_service`. An extension igni
+distributed always has one: the service that shipped it. A development
+install has one only when its manifest declares a `serviceUrl` setting
+(`contributes.settings`) and it is set; a plain-`http` URL counts only for
+this machine (`localhost`, `127.0.0.1`, `::1`) and only with
+`IGNI_DEV_EXTENSIONS=1`, so a service on another host must be `https`.
 
 `websocket` resolves once the socket is open and has sent
 `{"type": "auth", "token": …}` as its first frame (a browser socket
@@ -71,7 +84,20 @@ cross-origin with nothing to configure (`igni.install(app)`).
 
 ## Installing
 
-From npm:
+> **Until it is on npm: install it from a checkout.** The package is not
+> published yet, so `npm install @ignite-ember/extension-bridge` finds
+> nothing. Pack it from an igni checkout and install the tarball:
+>
+> ```bash
+> git clone https://github.com/ignite-ember/igni.git
+> npm pack --pack-destination ./sdk-packages ./igni/packages/extension-bridge
+> npm install ./sdk-packages/ignite-ember-extension-bridge-0.1.0.tgz
+> ```
+>
+> (`mkdir sdk-packages` first.) It ships TypeScript source (*Source, not a
+> build*, below), so the tarball is all there is.
+
+Once published, from npm:
 
 ```bash
 npm install @ignite-ember/extension-bridge
