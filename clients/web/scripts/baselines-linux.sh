@@ -53,12 +53,12 @@ mkdir -p "$SNAPSHOTS"
 echo "$MODE, in $IMAGE"
 
 if [[ "$MODE" == "update" ]]; then
-  INNER='npx playwright test e2e/app-visual.spec.ts --update-snapshots --reporter=line
+  INNER='npx playwright test e2e/app-visual.spec.ts --update-snapshots --reporter=line --workers=1
     cp e2e/app-visual.spec.ts-snapshots/*-linux.png /out/'
   MOUNT_OUT=(-v "$SNAPSHOTS":/out)
 else
   # Read-only: a comparison run must not be able to bless itself.
-  INNER='npx playwright test e2e/app-visual.spec.ts --reporter=line'
+  INNER='npx playwright test e2e/app-visual.spec.ts --reporter=line --workers=1'
   # Left unset rather than empty: macOS ships bash 3.2, where
   # expanding an empty array under `set -u` is an error.
   MOUNT_OUT=()
@@ -77,10 +77,18 @@ fi
 # pixel is compared. node_modules is left behind (it is darwin-built
 # here, and `npm ci` makes the container's own).
 REPO_DIR="$(cd "$CLIENT_DIR/../.." && pwd)"
+#
+# One worker and every timeout x6 (T18). On an arm64 Mac the amd64
+# container runs under emulation, several times slower than CI's
+# native runner, and a worker per core starved each other until tests
+# hit the 20 s test and 5 s screenshot timeouts. Serial is slower in
+# total and finishes; the factor scales the test, expect and web-server
+# timeouts in playwright.config.ts, and CI leaves it at 1.
 docker run --rm --platform linux/amd64 \
   -v "$REPO_DIR":/src:ro \
   ${MOUNT_OUT[@]+"${MOUNT_OUT[@]}"} \
   -e CI= \
+  -e IGNI_E2E_TIMEOUT_FACTOR=6 \
   "$IMAGE" \
   bash -euc "
     mkdir -p /work/clients
