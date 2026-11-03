@@ -256,3 +256,20 @@ def test_the_service_scaffold_tests_pass_as_written(run, tmp_path):
     )
     assert done.returncode == 0, done.stdout + done.stderr
     assert "3 passed" in done.stdout
+
+
+# ── C14: $schema names the schema, at a URL that is published ──────
+
+
+@pytest.mark.parametrize("packaging", [["--dev"], ["--service"]])
+def test_the_scaffolded_schema_url_is_the_schemas_own_id(run, tmp_path, packaging):
+    """igni's site serves docs/extension-manifest.schema.json at its $id."""
+    schema = json.loads(
+        (Path(__file__).parent.parent / "docs" / "extension-manifest.schema.json").read_text()
+    )
+    assert schema["$id"] == "https://ignite-ember.sh/schema/extension-manifest-1.json"
+    target = tmp_path / "mine"
+    run("init", str(target), *packaging)
+    manifest_dir = target / "extension" if "--service" in packaging else target
+    manifest = json.loads((manifest_dir / "manifest.json").read_text())
+    assert manifest["$schema"] == schema["$id"]
