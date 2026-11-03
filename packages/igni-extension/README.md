@@ -5,6 +5,19 @@ call, its own service reached as the signed-in person, and the host it
 runs in — without an address, a token or a protocol message in the
 extension's code.
 
+Building an extension for the first time? Follow
+[Your first extension](../../docs/YOUR_FIRST_EXTENSION.md) from an empty
+directory to a tool the agent calls, a page, a hook and a service; this
+README is the reference.
+
+**How an extension reaches people.** Its service uploads the signed
+bundle to igni server at start-up. Two decisions then put it on a
+person's machine, and both are needed: a **super admin approves the
+service** (portal, *Services*), and an **org admin switches the
+extension on for a group** (portal, *Extensions*). Every signed-in igni
+of a person in that group then installs it the next time it syncs with igni server. Approval
+alone installs it nowhere.
+
 ```python
 from igni_extension import IgniExtension, LocalNotification, NotSignedIn, Target, ToolHints
 
@@ -40,9 +53,18 @@ async def export(slug: str) -> str:
     return export_id
 
 
+async def render_pdf(slug: str) -> str:
+    return f"export-{slug}"   # your own work
+
+
 def main() -> None:   # the console script the manifest's `python.entry` names
     ext.run()
 ```
+
+`ext.run()` serves igni over stdio. Started from a terminal rather than by
+igni, it says so on stderr — how to run it inside igni, and how to try a
+tool without it (*Testing an extension*) — and then waits for MCP as
+before.
 
 ## Tools, and what each says it is
 
@@ -69,9 +91,54 @@ The manifest's are the ones that count — an administrator approved
 them. igni compares them with what the server reports and shows a
 difference in its extensions panel.
 
+**Write them once.** Leave `permissions.tools` out of `manifest.json` and
+`igni-service-bundle` writes it into the bundle from the code; list them
+and it checks them against the code, refusing a difference. A tool the
+code registers and the manifest does not list is never offered to the
+agent — what you want for one only your page calls. To see what the code
+implies: `python -m igni_extension.manifest acme_example` (your module),
+or `ext.manifest_tools()`.
+
+### One tool, five names
+
+| Where | The name | Example (`acme.tickets`, `def lookup_ticket`) |
+|---|---|---|
+| Your code, `HostHarness.call`, `ConcurrentCall` | the function's name, or `name=` | `lookup_ticket` |
+| The manifest's `permissions.tools`, the Services page | the extension's id, a dot, the tool | `acme.tickets.lookup_ticket` |
+| A page's `bridge.rpc(...)`, and the `permissions.rpc` that grants it | `ext.`, then the manifest's name | `ext.acme.tickets.lookup_ticket` |
+| igni: its permission rules, settings-file hooks, transcripts; a hook's `tool_name` | `mcp_ext:` + id + `_` + tool | `mcp_ext:acme.tickets_lookup_ticket` |
+| What the model is sent | igni's name with every character a provider refuses made `_` | `mcp_ext_acme_tickets_lookup_ticket` |
+
+The model's name is made at the provider boundary, because OpenAI's and
+Anthropic's tool names allow only letters, digits, `_` and `-`; igni maps
+the model's call back to its own name, so nothing you write ever sees it.
+A hook is handed both of the names it may want: `tool_name`, igni's
+(`read_file` for one of igni's own), and `tool_manifest_name`, the
+manifest's (empty for igni's own). `ext.tool_names("lookup_ticket")`
+answers the first four, and a decorated tool carries its manifest name
+as `lookup_ticket.manifest_name`.
+
+A tool that raises reaches the model as an error result, with the
+exception's message as its text; igni's `PostToolUse` hooks are not asked
+about it, and `PostToolUseFailure` is told.
+
 ## Installing
 
-From PyPI:
+> **Until the SDKs are on PyPI: build from a checkout.** `igni-extension`
+> is not published yet, so `uv add igni-extension` finds nothing. Build
+> its wheel from an igni checkout and install from it:
+>
+> ```bash
+> git clone https://github.com/ignite-ember/igni.git
+> uv build --wheel --out-dir ./sdk-wheels igni/packages/igni-extension
+> uv add igni-extension --find-links ./sdk-wheels      # or: pip install --find-links ./sdk-wheels igni-extension
+> ```
+>
+> Building the bundle needs the same directory:
+> `igni-service-bundle --extension extension --out extension-bundle.tar.gz --find-links ./sdk-wheels`
+> (igni-service's README).
+
+Once published, from PyPI:
 
 ```bash
 uv add igni-extension        # or: pip install igni-extension
@@ -90,6 +157,14 @@ comes from the igni host, is attached to every request, and is renewed
 before it expires — the extension never sees the person's igni session.
 When nobody is signed in to igni, a request raises `NotSignedIn`.
 
+`ext.service` raises `NotConfigured` when igni started the process with no
+service URL (`IGNI_SERVICE_URL`) — and a page's `bridge.service.url` is
+`null` for the same reason. An extension igni distributed always has
+one: the service that shipped it. A development install has one only
+when it declares a `serviceUrl` setting in `contributes.settings` and it
+is set; a plain-`http` URL is given only for this machine (`localhost`),
+and only with `IGNI_DEV_EXTENSIONS=1`.
+
 - `ext.service.anonymous` — the same service with no token, for what
   anyone may read (a public link, a health check). It never asks the host
   for a token, so it works when nobody is signed in:
@@ -97,10 +172,16 @@ When nobody is signed in to igni, a request raises `NotSignedIn`.
 - `ext.service.websocket(path)` — a WebSocket to the service, opened with
   the person's token in its `Authorization` header:
 
+  <!-- continues -->
   ```python
-  async with ext.service.websocket(f"/v1/rooms/{slug}") as room:
-      await room.send(json.dumps({"hello": "room"}))
-      async for frame in room: ...
+  import json
+
+  @ext.on_start
+  async def follow_room() -> None:
+      async with ext.service.websocket("/v1/rooms/runbook") as room:
+          await room.send(json.dumps({"hello": "room"}))
+          async for frame in room:
+              print(frame)
   ```
 
 - `await ext.tokens.token()` — the token itself, for a client neither of
@@ -120,6 +201,7 @@ it is for: a person (`kind="person"`, their `id`, `org` and the one
 handler that wants it declares a parameter typed `Caller`; the SDK fills
 it from the call, and it is never part of a tool's input:
 
+<!-- continues -->
 ```python
 from igni_extension import Caller
 
@@ -154,21 +236,25 @@ checks both.
 each with properties, signals and methods. An extension can do anything
 igni's own UI can do, and see everything that happens in it.
 
+<!-- continues -->
 ```python
 from igni_extension.host_model import Run, SessionChange
 
 @ext.on(ext.host.sessions.current_changed)
 async def follow(change: SessionChange) -> None:
     busy = await ext.host.chat.processing           # read a property
-    ...
+    print(change, busy)
 
 @ext.on(ext.host.chat.run_completed)                 # handle a signal
 async def review(run: Run) -> None:
     if run.changed_files:
         await ext.host.chat.post("Two issues in the files you just changed.")
 
-await ext.host.sessions.current.set(session_id)      # write a property
-await ext.host.windows.ui(window_id).navigate("plugins")  # any window
+@ext.tool(hints=ToolHints(read_only=False, destructive=False, idempotent=True, open_world=False))
+async def show_session(session_id: str, window_id: str) -> str:
+    await ext.host.sessions.current.set(session_id)           # write a property
+    await ext.host.windows.ui(window_id).navigate("plugins")  # any window
+    return "shown"
 ```
 
 - **Properties** read with `await prop` (or `prop.get()`) and, when
@@ -187,9 +273,10 @@ await ext.host.windows.ui(window_id).navigate("plugins")  # any window
   never answers an approval. It needs `sessions.post` as well as
   `chat.post` (or `chat.append`):
 
+  <!-- continues -->
   ```python
   @ext.on(ext.host.chat.run_completed)
-  async def review(run: Run) -> None:
+  async def review_where_it_ran(run: Run) -> None:
       if run.changed_files:
           # The session the run was in, even if the person has moved on.
           chat = ext.host.sessions.chat(run.session_id)
@@ -207,7 +294,9 @@ granted by `permissions.workspace`. An object not granted raises
 `HostError` with `code == "not_granted"`, and its signals never arrive.
 Other codes: `not_found`, `invalid`, `read_only`, `refused` (the person
 could not have done it either), `stage_2` (defined, not yet built — no
-member today), `failed`.
+member today), `unavailable`, `failed`. `code` is a `HostErrorCode`, a
+`StrEnum`, so `error.code == "not_granted"` and
+`error.code is HostErrorCode.NOT_GRANTED` both hold.
 
 `ext.host.ui` is the window the person last used: its page, panel,
 sidebar, preview, selection, composer, toasts, dialog and scroll — the
@@ -215,12 +304,17 @@ same model igni's own views bind to, so a write shows in the window and
 whatever the person does there is a signal. A dialog waits for the
 person:
 
+<!-- continues -->
 ```python
-answer = await ext.host.ui.show_dialog(
-    {"title": "Ship it?", "buttons": [{"id": "yes", "label": "Ship", "primary": True}]}
-)
-if answer and answer["button"] == "yes":
-    await ext.host.ui.toast("Shipping.", "success")
+@ext.tool(hints=ToolHints(read_only=False, destructive=False, idempotent=False, open_world=False))
+async def ship() -> str:
+    answer = await ext.host.ui.show_dialog(
+        {"title": "Ship it?", "buttons": [{"id": "yes", "label": "Ship", "primary": True}]}
+    )
+    if answer and answer["button"] == "yes":
+        await ext.host.ui.toast("Shipping.", "success")
+        return "shipped"
+    return "not shipped"
 ```
 
 `ext.host` travels on a loopback socket igni gives the process
@@ -239,6 +333,7 @@ igni's hook events (`docs/HOOKS.md` in igni) are where an extension gets
 a say before something happens, in one pipeline with igni's own
 settings-file hooks:
 
+<!-- continues -->
 ```python
 from igni_extension import Hooks, Modify, Reject
 from igni_extension.hooks import PlanSubmit, PreToolUse
@@ -291,6 +386,7 @@ it wants through its host calls, and the agent runs only if it posts.
 To have the agent work on it in a chat of its own, open one and post
 there:
 
+<!-- continues -->
 ```python
 from igni_extension import ServiceEvent
 
@@ -331,13 +427,14 @@ or drop it. It sees it, as any post, on `chat.message_added`, with
 service's client id. A post this extension made itself has
 `from_service` set to `None`:
 
+<!-- continues -->
 ```python
 from igni_extension.host_model import ChatMessage
 
 @ext.on(ext.host.chat.message_added)
 async def seen(message: ChatMessage) -> None:
     if message.from_service is not None:
-        ...  # the service sent it, as a message item
+        print("the service sent it, as a message item:", message)
 ```
 
 What your service may send beyond a plain event, you declare here:
@@ -355,9 +452,15 @@ approves them with the service, and igni server refuses the rest.
 In the cloud igni's VM sleeps when nothing is busy. Work your process
 does on its own — indexing, a sync — says so:
 
+<!-- continues -->
 ```python
-async with ext.busy_while("indexing"):
-    await index_everything()
+async def index_everything() -> None: ...   # your own work
+
+
+@ext.on_start
+async def index() -> None:
+    async with ext.busy_while("indexing"):
+        await index_everything()
 ```
 
 `ext.busy(reason, ttl)` takes a lease (at most 600 s) and renews it when
@@ -379,6 +482,7 @@ process pool you run (`concurrent.futures.ProcessPoolExecutor`). The
 thread pool is anyio's default (40); it is your process, so change it if
 you need to:
 
+<!-- continues -->
 ```python
 import anyio.to_thread
 
@@ -395,8 +499,8 @@ only while a condition holds (`"when": "index-covers-head"`). The rules —
 what stacks, what collides, what an override leaves out — are in igni's
 `docs/EXTENSIBILITY.md`. Only the extension can judge the condition, so it
 says when it changes:
-Only the extension can judge the condition, so it says when it changes:
 
+<!-- continues -->
 ```python
 await ext.prompt.hold("index-covers-head", True)
 await ext.prompt.set({"index-covers-head": False, "signed-in": True})
@@ -413,6 +517,7 @@ the extension starts, and so is a `promptFragments` anchor's. When what it
 says changes — CodeIndex's project map, when HEAD moves to another indexed
 commit — have igni fetch it again:
 
+<!-- continues -->
 ```python
 await ext.prompt.refresh()
 ```
@@ -424,7 +529,17 @@ starts — goes in `@ext.on_start`. It starts with `ext.run()` and is
 cancelled when igni closes the extension, so it cleans up in its own
 `finally`:
 
+<!-- continues -->
 ```python
+import asyncio
+
+class Index:  # your own work
+    async def start(self) -> None: ...
+    async def stop(self) -> None: ...
+
+index = Index()
+
+
 @ext.on_start
 async def follow_head() -> None:
     try:
@@ -444,20 +559,63 @@ ships, as `assets` in its manifest, so it installs with no network. igni
 checks each against the digest the signed manifest pins and lays it out
 read-only, one directory per asset (`IGNI_EXTENSION_ASSETS`):
 
+<!-- continues -->
 ```python
-neo4j_home = ext.assets.path("neo4j")                 # an unpacked archive
-model = ext.assets.file("minilm", "model.onnx")       # one file, as shipped
+@ext.on_start
+def where_things_are() -> None:
+    neo4j_home = ext.assets.path("neo4j")                 # an unpacked archive
+    model = ext.assets.file("minilm", "model.onnx")       # one file, as shipped
+    print(neo4j_home, model)
 ```
 
 Both raise `NotConfigured` for a name igni did not lay out — one the
 manifest does not declare, or a process running outside igni.
 
-**The process is trusted, not confined.** It is the service's own code;
-`permissions.egress` sets what the extension's *pages* may connect to,
-not where this process may. Approving the service is the decision to
-trust it.
+**The process is sandboxed to its grants.** igni starts it in an OS
+sandbox written from its manifest — Seatbelt on macOS, bubblewrap on
+Linux. It reaches its own service and its `permissions.egress` hosts
+through igni's egress proxy and nothing else (only hosts inside the
+network when air-gapped; on macOS, services on this machine stay
+reachable); it reads its bundle, its runtime, its data directory and the
+workspace when granted, and not the rest of the person's home; it writes
+its data directory, its temp directory and the workspace for `write`. On
+Windows it is not sandboxed yet, and where no sandbox is available it runs
+unconfined with a warning — unless managed settings set
+`extensions.require_sandbox`, which refuses it. `extensions.sandbox:
+false` (managed or user settings) turns it off while you develop. The
+sandbox confines; it does not vouch: approving the service is still the
+decision to run its code, and an org admin switching the extension on for
+a group is the decision to run it for those people.
 
 ## Testing an extension
+
+**One tool, as igni calls it:** `HostHarness(ext)` is igni's side of the
+MCP session `ext.run()` serves, and `host.call(tool, args, caller=...)`
+calls one tool for one caller. A `Caller` is whom igni says the call is
+for — build one per person a test plays:
+
+```python
+import json
+
+from igni_extension import Caller, CallerKind, IgniExtension, ToolHints
+from igni_extension.testing import ConcurrencyHarness, ConcurrentCall, HostHarness
+
+ext = IgniExtension("acme.example")
+READS = ToolHints(read_only=True, destructive=False, idempotent=True, open_world=False)
+
+
+@ext.tool(hints=READS)
+async def mine(caller: Caller) -> str:
+    return json.dumps({"for": caller.id})
+
+
+ada = Caller(kind=CallerKind.PERSON, id="u-ada", org="org-1", group="g-engineering")
+grace = Caller(kind=CallerKind.PERSON, id="u-grace", org="org-1", group="g-engineering")
+
+async with HostHarness(ext) as host:
+    result = await host.call("mine", {}, caller=ada)
+assert json.loads(result.content[0].text) == {"for": "u-ada"}
+```
 
 **Many callers at once:** `ConcurrencyHarness(ext).run([...])` makes
 every call concurrently, each as its own caller, and raises
@@ -465,9 +623,8 @@ every call concurrently, each as its own caller, and raises
 `stall_limit` (0.1 s), or if a tool saw a caller other than the one its
 call was sent with:
 
+<!-- continues -->
 ```python
-from igni_extension.testing import ConcurrencyHarness, ConcurrentCall
-
 report = await ConcurrencyHarness(ext).run([
     ConcurrentCall(tool="mine", caller=ada),
     ConcurrentCall(tool="mine", caller=grace),
@@ -475,13 +632,25 @@ report = await ConcurrencyHarness(ext).run([
 assert report.results[0].result != report.results[1].result
 ```
 
-`HostHarness.call(tool, args, caller=...)` calls one tool as igni does,
-for that caller, and `FakeHost.hook(event, value, caller=...)` asks a
-hook the same way.
+`FakeHost.hook(event, value, caller=...)` asks a hook the same way.
 
+**Its service, and what it tells the host:** `FakeHostTokenEndpoint`
+hands out tokens the way the igni host does, and answers as igni does
+when nobody is signed in (`host_tokens.sign_out()`). Give the extension
+your service as an `httpx.MockTransport`:
 
 ```python
-from igni_extension.testing import FakeHost, FakeHostTokenEndpoint, HostHarness
+import httpx
+
+from igni_extension import IgniExtension, LocalNotification, Target, ToolHints
+from igni_extension.testing import FakeHostTokenEndpoint, HostHarness
+
+
+def my_fake_service(request: httpx.Request) -> httpx.Response:
+    """The extension's service, as the test wants it to answer."""
+    assert request.headers["authorization"].startswith("Bearer ")
+    return httpx.Response(200, json={"summary": f"{request.url.path} in one line"})
+
 
 host_tokens = FakeHostTokenEndpoint()
 ext = IgniExtension(
@@ -490,20 +659,51 @@ ext = IgniExtension(
     token_transport=host_tokens.transport,
     service_transport=httpx.MockTransport(my_fake_service),
 )
+READS = ToolHints(read_only=True, destructive=False, idempotent=True, open_world=False)
+
+
+@ext.tool(hints=READS)
+async def summarise(slug: str) -> str:
+    response = await ext.service.get(f"/documents/{slug}/summary")
+    return str(response.json()["summary"])
+
+
+@ext.tool(hints=ToolHints(read_only=False, destructive=False, idempotent=False, open_world=False))
+async def export(slug: str) -> str:
+    await ext.host.notifications.notify(
+        LocalNotification(
+            kind="export_ready",
+            title=f"{slug}.pdf",
+            body="Your export is ready",
+            target=Target(page="acme.example", params={"export": slug}),
+            event_key=f"export:{slug}",
+        )
+    )
+    return slug
+
 
 async with HostHarness(ext) as host:              # igni's side of the MCP session
-    await host.session.call_tool("export", {"slug": "runbook"})
+    summary = await host.call("summarise", {"slug": "runbook"})
+    exported = await host.call("export", {"slug": "runbook"})
     [notification] = await host.received(1)
+
+assert summary.content[0].text == "/documents/runbook/summary in one line"
+assert not exported.isError
+assert notification.title == "runbook.pdf"
 ```
 
-`FakeHostTokenEndpoint` hands out tokens the way the igni host does, and
-answers as igni does when nobody is signed in (`host_tokens.sign_out()`).
 Its tokens are unsigned JWTs of the person's claims; to test against a
-service that checks signatures, pass `minter`, which is given the
-person's `TokenClaims` and returns the token to hand out:
+service that checks signatures — one built on `igni-service`, with its
+`FakeIgni` — pass `minter`, which is given the person's `TokenClaims` and
+returns the token to hand out (this needs `igni-service` installed beside
+`igni-extension`):
 
+<!-- illustrative -->
 ```python
-igni = FakeIgni(...)                               # igni_service.testing
+from igni_extension.testing import FakeHostTokenEndpoint
+from igni_service.testing import FakeIgni
+
+igni = FakeIgni()
 host_tokens = FakeHostTokenEndpoint(
     minter=lambda claims: igni.person_token(claims.sub, org_id=claims.org)
 )
@@ -512,15 +712,38 @@ host_tokens = FakeHostTokenEndpoint(
 `HostHarness` connects to the extension over the same MCP session
 `ext.run()` serves, and records what it tells the host.
 
-`FakeHost` is igni's host object model on a loopback socket, speaking
-the protocol igni speaks:
+**The host:** `FakeHost` is igni's host object model on a loopback
+socket, speaking the protocol igni speaks:
 
 ```python
-async with FakeHost(values={"chat.processing": False}, answers={"chat.append": "v1"}) as host:
+import asyncio
+
+from igni_extension import IgniExtension
+from igni_extension.host_model import Run
+from igni_extension.testing import FakeHost
+
+async with FakeHost(values={"chat.processing": False}, answers={"chat.post": None}) as host:
     ext = IgniExtension("acme.example", environ=host.environment())
+
+    @ext.on(ext.host.chat.run_completed)
+    async def review(run: Run) -> None:
+        if run.changed_files:
+            await ext.host.chat.post(f"I read {', '.join(run.changed_files)}.")
+
     assert await ext.host.chat.processing is False
     await ext.connect()
     await host.wait_subscribed("chat.run_completed")
-    await host.emit("chat.run_completed", {...})   # your handler runs
-    host.calls                                      # everything the extension asked
+    await host.emit(
+        "chat.run_completed",
+        {"session_id": "s-1", "run_id": "r-1", "parent_run_id": "", "input_tokens": 10,
+         "output_tokens": 5, "reasoning_tokens": 0, "duration": 1.5,
+         "changed_files": ["auth.py"]},
+    )                                               # your handler runs
+    for _ in range(100):
+        if any(call.path == "chat.post" for call in host.calls):
+            break
+        await asyncio.sleep(0.01)
+    await ext.aclose()
+
+assert any(call.path == "chat.post" for call in host.calls)  # everything the extension asked
 ```
