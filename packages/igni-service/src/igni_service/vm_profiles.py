@@ -11,10 +11,10 @@ nothing gets into a VM that an org admin has not approved. An app or an
 extension that needs something — a headless browser, a native library,
 more memory — **requests** it:
 
-* an **app**, as itself (`igni_service.app.IgniApp.request_vm_profile`);
+* an **app**, as itself (`app.vm_profile.request` on an `igni_service.app.IgniApp`);
 * an **extension**, in its manifest's `vm` section — and the service that
   ships it reads what became of that in each organisation
-  (`Host.vm_profile`).
+  (`Host.extension_vm_profile`).
 
 igni keeps the request **pending** and shows the org admin exactly what
 would run. Only their approval makes it a profile (an app's is assigned
