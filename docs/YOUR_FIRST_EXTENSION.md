@@ -35,24 +35,26 @@ igni ── installs ──▶ extension  ◀─── bundle, signed ◀──�
 
 ## Before you start
 
-- **igni**, from this checkout: `uv sync`, then `uv run igni --version`
-  (the commands below say `igni`).
-- **igni server**, from its checkout, running natively so it can reach a
-  service on your machine — its README's *Quick start*, with Postgres and
-  Redis. In its `.env`, for this walk-through:
+- **igni**, from this checkout: `uv sync`, then put it on your `PATH` for
+  this shell — every command below says `igni`, and most run in another
+  directory:
 
   ```bash
-  APP_ENV=dev
-  PORTAL_AUTH_BYPASS=1          # the portal signs you in as a super admin who is also Demo Org's admin
-  PUBLIC_BASE_URL=http://localhost:7777
-  SECRET_ENCRYPTION_KEY=...     # see its README, Environment
+  alias igni="$PWD/.venv/bin/igni"
+  igni --version
   ```
 
-  Then `make migrate && make run` (the API, on `http://localhost:7777`)
-  and `make portal-dev` (the portal, on `http://localhost:5173`).
-  <!-- TODO-SERVER: align with the server README's final quick start -->
-- **A model** your igni server serves (its README, *Inference*), so the
-  agent has something to answer with once you sign in.
+- **igni server**, from its checkout, running natively (not in Docker,
+  so it can reach a service on your machine): its README's *Quick start*
+  — `make dev-env`, Postgres and Redis, `make migrate`, `make run` (the
+  API, on `http://localhost:7777`) and `make portal-dev` (the portal, on
+  `http://localhost:3000`) — and then its *The first sign-in*: sign up in
+  the portal (the first account is the super admin; the code is in the
+  API's log), create an organisation with your email's domain, and add a
+  model. You are then the super admin *and* that organisation's admin,
+  which is both people this walk-through needs. Do not set
+  `PORTAL_AUTH_BYPASS`: its demo identity cannot sign igni in, and once
+  it has made its account, yours is no longer the first.
 - **`uv`** and Python 3.12.
 
 ### Until the SDKs are on PyPI: build them from this checkout
@@ -460,7 +462,7 @@ on for a group. A new version that asks for more than the approved one is
 
 ## 4. A super admin approves the service
 
-In the portal (`http://localhost:5173`), **Services** → *Ticket lookup*.
+In the portal (`http://localhost:3000`), **Services** → *Ticket lookup*.
 Check that the thumbprint is the one the service printed, read what the
 extension would put on machines — its tools and their hints, its page,
 its hooks — and **Approve**.
@@ -479,7 +481,7 @@ Point igni at the server, in `~/.igni/config.yaml`:
 
 ```yaml
 api_url: http://localhost:7777
-portal_url: http://localhost:5173
+portal_url: http://localhost:3000
 ```
 
 Sign in, and install what igni server gives you:
@@ -511,6 +513,17 @@ your igni server.
 
 ## 7. Use it
 
+Your service is plain `http` on your machine. An extension's process is
+sandboxed, and outside development its sandbox lets it reach its service
+only over `https`, so for this walk-through run igni in development:
+
+```bash
+export IGNI_DEV_EXTENSIONS=1
+```
+
+(Without it `lookup_ticket` still works — it reads only its own data —
+and igni logs once that the service is plain http and what to do.)
+
 In chat:
 
 ```bash
@@ -527,8 +540,13 @@ igni -m "Look ticket T-1002 up on the ticket service."
 Open igni's app: **Tickets** is in the sidebar, and its page shows
 T-1001, fetched through `ext.acme.tickets.lookup_ticket`.
 
+The service's log shows `GET /v1/tickets/T-1002 … 200`: the extension
+called it as you, with a token igni server issued for the service.
+
 The hook wrote a line per tool call to `tool-audit.log` in the
-extension's data directory (`~/.igni/extensions/.data/acme.tickets/`).
+extension's data directory (`~/.igni/extensions/.data/acme.tickets/`):
+`mcp_ext:acme.tickets_lookup_ticket`, the name igni registered the tool
+under.
 
 ## 8. Its VM profile
 
