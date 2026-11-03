@@ -241,7 +241,7 @@ class RpcMethod(StrEnum):
     GET_CONTEXT_BREAKDOWN = "get_context_breakdown"
 
     # ── Workflows (CC ``/workflows`` parity) ───────────────────────
-    # The BE acts as a runner for ``.claude/workflows/*.mjs``
+    # The BE acts as a runner for ``.igni/workflows/*.mjs``
     # scripts — the same ones ClaudeCode drives. Discovery returns
     # the meta block of every workflow; ``run_workflow`` spawns
     # one, returns the ``workflow_run_id`` immediately, and

@@ -578,7 +578,7 @@ it brings that run code — or that would switch safety off — wait for trust.
 |---|---|
 | Custom tools (imported = run) | `.igni/tools/*.py` |
 | Hooks | `.igni/settings*.json`, `.claude/settings*.json` |
-| Workflows (discovery evaluates each file) | `.claude/workflows/*.mjs`, `.igni/workflows/*.mjs` |
+| Workflows (discovery evaluates each file) | `.igni/workflows/*.mjs`, and the deprecated fallback `.claude/workflows/*.mjs` |
 | Language servers | `.lsp.json` |
 | Monitors | `.monitors.json` |
 | Project plugins | `.igni/plugins/`, `.claude/plugins/` |

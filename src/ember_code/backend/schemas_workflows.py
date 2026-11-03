@@ -3,7 +3,7 @@
 Three concerns:
 
 1. ``WorkflowMeta`` — what a workflow advertises (read from the
-   ``meta`` export of every ``.claude/workflows/*.mjs``). Mirrors
+   ``meta`` export of every ``.igni/workflows/*.mjs``). Mirrors
    the CC convention: ``{name, description, whenToUse, phases}``.
 
 2. ``WorkflowEvent`` — the envelope the Node subprocess emits
@@ -60,7 +60,9 @@ class WorkflowMetaEnvelope(BaseModel):
 
     Wraps :class:`WorkflowMeta` with the on-disk path so the FE
     can deep-link / show the source. ``path`` is relative to
-    the project root (typically ``.claude/workflows/<name>.mjs``).
+    the project root (typically ``.igni/workflows/<name>.mjs``), or
+    absolute for a workflow outside it (``~/.igni/workflows``, the
+    group policy cache).
     """
 
     model_config = ConfigDict(extra="forbid")

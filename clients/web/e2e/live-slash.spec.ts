@@ -157,8 +157,7 @@ const ANSWERS: { cmd: string; shows: RegExp }[] = [
   // registers it and typing it works.
   { cmd: "/eject", shows: /Usage: \/eject/ },
   // A client-side intercept in `App.tsx`, not a backend command at
-  // all. It reads `.claude/workflows/` — the sibling tool's
-  // directory. Recorded, not asserted as correct.
+  // all. It lists `.igni/workflows/` (and `~/.igni/workflows/`).
   { cmd: "/workflows", shows: /workflow/i },
 ];
 

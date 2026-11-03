@@ -258,7 +258,7 @@ Repeatable and deferred work.
 | Function | Edge cases | Status |
 |---|---|---|
 | `list_workflows` | None defined. Sweep: **answers** (default run). | `answers` |
-| `run_workflow` | A workflow whose first step fails; one cancelled mid-step. **Refuses well** for an unknown name, and names the directory it looked in — which is `.claude/workflows`, the sibling tool's, not `.igni/workflows`. Deliberate cross-tool support or a leftover from the rename; worth a decision either way. Sweep: **refuses** — workflow 'no-such-workflow' not found in /private/tmp/igni-live-app/.claude/workflows. | `todo` |
+| `run_workflow` | A workflow whose first step fails; one cancelled mid-step. **Refuses well** for an unknown name, and names the directory it looked in. That was `.claude/workflows`, the sibling tool's; workflows now live in `.igni/workflows` (project) and `~/.igni/workflows` (yours), `.claude/workflows` is read as a fallback with a one-time deprecation note, and the refusal names `.igni/workflows` (`tests/test_workflows_live_in_igni.py`). Sweep: **refuses** — workflow 'no-such-workflow' not found in /private/tmp/igni-live-app/.claude/workflows (before the fix). | `todo` |
 | `cancel_workflow` | Cancelling after the last step started. Sweep: **answers** (`--mutating`). | `answers` |
 | `get_scheduled_tasks` | None scheduled; one overdue. Sweep: **answers** (default run). | `answers` |
 | `execute_scheduled_task` | Executing one whose session is gone. Sweep: **answers** (`--mutating`). | `answers` |
@@ -338,7 +338,7 @@ Each was reproduced, and each is recorded on its own row above.
 | `/fork` on a session with no messages fails: "Fork failed: source session not found: &lt;id&gt;", though the id is in the footer | session persistence | open |
 | A message queued while a run is in progress never runs if that run makes no tool call — the queue is drained by a tool hook, but the label promises "after the current turn" | `TeamWiring.wire_queue_hook` | open |
 | The `explorer` sub-agent has no file-reading tool and writes `<bash>` tags as prose | `bundled_agents`, mid-edit | open, and someone's in-flight work |
-| Workflows are read from `.claude/workflows` — the sibling tool's directory | `workflow_runner` | open question, not obviously wrong |
+| Workflows were read from `.claude/workflows` — the sibling tool's directory — and an unknown name was "not found in …/.claude/workflows" | `workflow_runner` | **fixed** — `.igni/workflows` is the project's directory and `~/.igni/workflows` the person's; `.claude/workflows` is still read below `.igni/workflows`, with a one-time deprecation note; the refusal names `.igni/workflows` (`tests/test_workflows_live_in_igni.py`) |
 
 ## What this pass did not establish
 

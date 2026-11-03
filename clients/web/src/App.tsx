@@ -1523,7 +1523,7 @@ export default function App() {
           });
         } else if (m.channel === "workflow_event") {
           // Live progress from the BE's workflow runner (the
-          // process that executes .claude/workflows/*.mjs). Each
+          // process that executes .igni/workflows/*.mjs). Each
           // event is a single line from the Node subprocess's
           // stdout, already validated + envelope-wrapped by the
           // BE. We fold into the matching workflow chat item by

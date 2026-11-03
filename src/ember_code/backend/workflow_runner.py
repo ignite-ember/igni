@@ -1,8 +1,9 @@
-"""Workflow runner — execute ``.claude/workflows/*.mjs`` in a Node subprocess.
+"""Workflow runner — execute ``.igni/workflows/*.mjs`` in a Node subprocess.
 
 Two surfaces:
 
-- :class:`WorkflowDiscovery` — scans ``.claude/workflows/`` and
+- :class:`WorkflowDiscovery` — scans ``.igni/workflows/`` (and the
+  other layers listed on the class) and
   reads each file's ``meta`` export via the runtime's
   ``--discovery`` short-circuit. Cached by mtime.
 - :class:`WorkflowRunner` — spawns the runtime subprocess, drains
@@ -14,7 +15,7 @@ Two surfaces:
 Architecture (3 layers):
 
 ```
-.claude/workflows/<name>.mjs   (existing, unchanged)
+.igni/workflows/<name>.mjs     (the project's, committed)
         │  imported via
         ▼
 workflow_runtime.mjs           (the Node bridge — emits events on
@@ -44,7 +45,7 @@ import logging
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, ClassVar
 from uuid import uuid4
 
 from pydantic import ValidationError
@@ -66,21 +67,20 @@ logger = logging.getLogger(__name__)
 # Path to the Node bridge runtime (ships next to this module).
 RUNTIME_PATH = Path(__file__).parent / "workflow_runtime.mjs"
 
-# Where we look for workflow files. Two layers:
+# Where we look for workflow files, in the order a later layer shadows an
+# earlier one on a name collision:
 #
-# 1. **Team layer** (committed to the repo): ``<project>/.claude/workflows``
-#    — the CC convention. Workflows that ship with the project and
-#    are version-controlled alongside the code.
-#
-# 2. **Per-user layer** (uncommitted): ``<project>/.igni/workflows`` —
-#    personal overrides or additions that don't belong in the repo.
-#    Same convention as ``.igni/skills/`` / ``.igni/agents/`` /
-#    ``.igni/hooks/`` already in use.
-#
-# On name collisions, the per-user layer wins (typical override
-# semantics: your local copy is the source of truth for you).
-DEFAULT_WORKFLOW_DIR_TEAM = Path(".claude") / "workflows"
-DEFAULT_WORKFLOW_DIR_USER = Path(CONFIG_DIR) / "workflows"
+# 1. **User layer** — ``~/.igni/workflows``: the person's own, in every
+#    project. Same place as ``~/.igni/agents`` and ``~/.igni/skills``.
+# 2. **Org layer** — the group policy cache, when the group ships any.
+# 3. **Fallback** — ``<project>/.claude/workflows``, the sibling tool's
+#    directory. It was the only project directory once, and the error for
+#    an unknown name pointed people at it; it is still read, with a
+#    one-time note saying to move the files.
+# 4. **Project layer** — ``<project>/.igni/workflows``: the project's,
+#    committed with it like ``.igni/agents`` and ``.igni/skills``.
+DEFAULT_WORKFLOW_DIR = Path(CONFIG_DIR) / "workflows"
+FALLBACK_WORKFLOW_DIR = Path(".claude") / "workflows"
 
 # Per-agent timeout. 10 minutes matches ClaudeCode's default for
 # one-shot agent calls. Workflow callers can override per call via
@@ -95,70 +95,87 @@ CANCEL_GRACE_SECONDS = 5.0
 
 
 class WorkflowDiscovery:
-    """Scan two workflow directories and read each file's ``meta`` export.
+    """Scan the workflow directories and read each file's ``meta`` export.
 
-    Workflows live in two layers:
+    Layers, later ones winning a name collision:
 
-    1. **Team layer** — ``<project>/.claude/workflows``. The CC
-       convention; workflows that ship with the project and are
-       version-controlled.
-    2. **Per-user layer** — ``<project>/.igni/workflows``. The
-       Ember override directory; personal additions or
-       replacements that don't belong in the repo.
+    1. ``~/.igni/workflows`` — the person's own.
+    2. The group policy cache, when the person's group ships workflows.
+       Read from there rather than copied into the project.
+    3. ``<project>/.claude/workflows`` — deprecated fallback, noted once.
+    4. ``<project>/.igni/workflows`` — the project's own.
 
-    3. **Org layer** — the group policy cache, when the person's
-       group ships workflows. Read from there rather than copied into
-       the project, and scanned *first* so both project layers shadow
-       it: a repository that declares its own version of a workflow
-       gets that version.
-
-    On name collisions later layers win (you can override a team
-    workflow by placing a file with the same stem in
-    ``.igni/workflows/``, and either project layer overrides the
-    org's). Discovery spawns the
-    runtime once per file with ``--discovery`` (evaluates the
-    file in a fresh :class:`vm.Script` context and emits a
-    single ``workflow_meta`` event). Cached by mtime per file.
+    The two project layers are read only once the folder is trusted:
+    discovery *runs* each file (``--discovery`` evaluates it in a fresh
+    :class:`vm.Script` context to read its ``meta``). Cached by mtime per
+    file.
     """
 
-    def __init__(self, *, project_dir: Path, group_dir: Path | None = None):
+    #: Set once the ``.claude/workflows`` note has been logged, so a session
+    #: that lists workflows on every panel open says it once.
+    _claude_dir_noted: ClassVar[bool] = False
+
+    def __init__(
+        self,
+        *,
+        project_dir: Path,
+        group_dir: Path | None = None,
+        home_dir: Path | None = None,
+    ):
         self._project_dir = Path(project_dir)
-        self._team_dir = self._project_dir / DEFAULT_WORKFLOW_DIR_TEAM
-        self._user_dir = self._project_dir / DEFAULT_WORKFLOW_DIR_USER
+        self._project_layer = self._project_dir / DEFAULT_WORKFLOW_DIR
+        self._fallback_layer = self._project_dir / FALLBACK_WORKFLOW_DIR
+        home = Path(home_dir) if home_dir is not None else Path.home()
+        self._user_layer = home / DEFAULT_WORKFLOW_DIR
         self._group_dir = Path(group_dir) if group_dir is not None else None
         self._cache: dict[Path, tuple[float, WorkflowMetaEnvelope]] = {}
 
     @property
     def workflows_dir(self) -> Path:
-        """The team-layer directory (``.claude/workflows``).
+        """The project's workflow directory, ``<project>/.igni/workflows``."""
+        return self._project_layer
 
-        Exists for backwards compat with any caller that read the
-        single ``workflows_dir`` attribute — most should now
-        use :meth:`list_workflows` which walks both layers.
-        """
-        return self._team_dir
+    def _project_trusted(self) -> bool:
+        from ember_code.core.workspace_trust import WorkspaceTrust
+
+        return WorkspaceTrust.shared().is_trusted(self._project_dir, what="workflows")
+
+    def not_found_message(self, name: str) -> str:
+        """What ``run_workflow`` says about a name no layer defines."""
+        message = f"workflow '{name}' not found in {self._project_layer}"
+        if not self._project_trusted():
+            message += " (this folder is not trusted, so its workflows are not read)"
+        return message + f" or {self._user_layer}"
 
     def _iter_paths(self) -> list[Path]:
         """All ``*.mjs`` files across every layer, ordered so later
-        entries win name collisions in the shadow pass.
-
-        The org's layer is listed FIRST, so both project layers shadow
-        it. The per-user layer stays LAST and still beats everything.
-        """
-        out: list[Path] = []
-        # Discovery *runs* each file (``--discovery`` evaluates it to read its
-        # ``meta``), so a folder's own workflows are neither discovered nor
-        # run until the folder is trusted (``core/workspace_trust``).
-        from ember_code.core.workspace_trust import WorkspaceTrust
-
-        trusted = WorkspaceTrust.shared().is_trusted(self._project_dir, what="workflows")
-        layers = [self._team_dir, self._user_dir] if trusted else []
+        entries win name collisions in the shadow pass."""
+        layers: list[Path] = [self._user_layer]
         if self._group_dir is not None:
-            layers.insert(0, self._group_dir)
+            layers.append(self._group_dir)
+        # A folder's own workflows are neither discovered nor run until the
+        # folder is trusted (``core/workspace_trust``).
+        if self._project_trusted():
+            layers += [self._fallback_layer, self._project_layer]
+        out: list[Path] = []
         for directory in layers:
             if directory.is_dir():
-                out.extend(sorted(directory.glob("*.mjs")))
+                found = sorted(directory.glob("*.mjs"))
+                if found and directory == self._fallback_layer:
+                    self._note_fallback()
+                out.extend(found)
         return out
+
+    def _note_fallback(self) -> None:
+        if WorkflowDiscovery._claude_dir_noted:
+            return
+        WorkflowDiscovery._claude_dir_noted = True
+        logger.warning(
+            "Reading workflows from %s, which is deprecated: move them to %s "
+            "(it wins over .claude/workflows when both define a name).",
+            self._fallback_layer,
+            self._project_layer,
+        )
 
     def _shadow(self, paths: list[Path]) -> dict[str, Path]:
         """Reduce a list of paths to ``{name: path}``; later
@@ -166,7 +183,7 @@ class WorkflowDiscovery:
 
         ``name`` is the file stem (``refactor-to-standards`` for
         ``refactor-to-standards.mjs``). Callers pass paths in
-        team-first / user-last order so the user layer wins.
+        :meth:`_iter_paths` order, so the project layer wins.
         """
         out: dict[str, Path] = {}
         for p in paths:
@@ -174,7 +191,7 @@ class WorkflowDiscovery:
         return out
 
     async def list_workflows(self) -> list[WorkflowMetaEnvelope]:
-        """Return every workflow's meta, user-layer shadows team-layer.
+        """Return every workflow's meta, one per name (see :meth:`_shadow`).
 
         Sorted by workflow name (the user-visible label) for a
         stable ``?demo=workflow`` rendering and a predictable
@@ -191,12 +208,9 @@ class WorkflowDiscovery:
     async def resolve(self, name: str) -> WorkflowMetaEnvelope | None:
         """Return the meta for a single named workflow.
 
-        User-layer wins on conflict — same shadow semantics as
-        :meth:`list_workflows`. The ``_iter_paths`` ordering has
-        team first and user second, so a plain ``for`` over it
-        would return the team version. We reverse-iterate to
-        find the user-layer match first, falling back to team
-        if the user layer doesn't define this name.
+        Same shadow semantics as :meth:`list_workflows`: the last
+        layer in :meth:`_iter_paths` that defines the name wins, so
+        this iterates in reverse.
         """
         for path in reversed(self._iter_paths()):
             if path.stem == name:
@@ -212,6 +226,18 @@ class WorkflowDiscovery:
         if env is not None:
             self._cache[path] = (mtime, env)
         return env
+
+    def _display_path(self, path: Path) -> str:
+        """Relative to the project when inside it, absolute otherwise.
+
+        The user and org layers are outside the project, and
+        ``relative_to`` raised for them. The runner joins this onto the
+        project directory, which leaves an absolute path as it is.
+        """
+        try:
+            return str(path.relative_to(self._project_dir))
+        except ValueError:
+            return str(path)
 
     async def _discover_one(self, path: Path) -> WorkflowMetaEnvelope | None:
         if not RUNTIME_PATH.exists():
@@ -249,7 +275,7 @@ class WorkflowDiscovery:
                 try:
                     return WorkflowMetaEnvelope(
                         meta=WorkflowMeta.model_validate(event.payload["meta"]),
-                        path=str(path.relative_to(self._project_dir)),
+                        path=self._display_path(path),
                     )
                 except ValidationError as exc:
                     logger.debug("meta validation failed for %s: %s", path, exc)
@@ -321,9 +347,7 @@ class WorkflowRunner:
         """
         meta = await self._discovery.resolve(name)
         if meta is None:
-            raise FileNotFoundError(
-                f"workflow '{name}' not found in {self._discovery.workflows_dir}"
-            )
+            raise FileNotFoundError(self._discovery.not_found_message(name))
         if not RUNTIME_PATH.exists():
             raise RuntimeError(
                 f"workflow runtime missing at {RUNTIME_PATH}; "

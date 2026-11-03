@@ -543,7 +543,7 @@ echo '{"continue": true}'
 
 ## Workflows and workspace trust
 
-Workflows are `.mjs` scripts in `.claude/workflows/` (the team's, committed) and `.igni/workflows/` (yours), plus any your organisation's group policy ships. Listing them runs each file once to read its `meta` export, so a project's workflows are neither discovered nor run until the folder is trusted; the organisation's still are. See [Workspace trust](CONFIGURATION.md#workspace-trust).
+Workflows are `.mjs` scripts in `.igni/workflows/` (the project's, committed) and `~/.igni/workflows/` (yours, in every project), plus any your organisation's group policy ships. A project's `.igni/workflows/` wins a name it shares with the other two. `.claude/workflows/` is still read as a fallback (below `.igni/workflows/`), and igni logs once that it is deprecated: move the files to `.igni/workflows/`. Listing them runs each file once to read its `meta` export, so a project's workflows are neither discovered nor run until the folder is trusted; yours and the organisation's still are. See [Workspace trust](CONFIGURATION.md#workspace-trust).
 
 ## Extensions
 

@@ -466,7 +466,7 @@ class BackendApp:
         # the bridge needs to know how many sessions are live.
         self._push_bridge.set_live_session_count(lambda: len(pool.runtimes))
         # Workflow runner (CC ``/workflows`` parity): the BE runs
-        # ``.claude/workflows/*.mjs`` scripts in a Node subprocess
+        # ``.igni/workflows/*.mjs`` scripts in a Node subprocess
         # and streams live progress on the ``workflow_event`` push
         # channel. The runner is attached to the default
         # ``BackendServer`` so per-runtime RPC dispatch can find
