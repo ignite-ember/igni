@@ -25,6 +25,7 @@ import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from ember_code.core.config.tool_names import wire_name
 from ember_code.core.mcp.naming import tool_name_prefix
 from ember_code.extensions.manifest import ExtensionManifest
 
@@ -123,6 +124,7 @@ class NameCheck:
                 + f"\n    {'':<22} page     {page}"
                 + ("" if self._manifest.grants_rpc(page) else " (not granted in permissions.rpc)")
                 + f"\n    {'':<22} registry {registered_prefix}_{tool}"
+                + f"\n    {'':<22} model    {wire_name(f'{registered_prefix}_{tool}')}"
             )
         return rows
 

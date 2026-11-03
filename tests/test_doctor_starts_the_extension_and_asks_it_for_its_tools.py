@@ -81,6 +81,17 @@ def test_doctor_starts_it_and_lists_what_each_tool_is_called(tmp_path):
     assert "ext.acme.tickets.lookup_ticket" in result.output
 
 
+def test_doctor_names_what_the_model_is_sent(tmp_path):
+    """The registered name has ':' and '.', which no hosted provider
+    accepts, so igni renames it at the provider boundary. A hook or a
+    permission rule sees the registered name; the model, and a training
+    corpus, see the other one. Both are printed, so neither is a guess."""
+    result = _doctor(str(_bundle(tmp_path)))
+    assert result.exit_code == 0, result.output
+    assert "registry mcp_ext:acme.tickets_lookup_ticket" in result.output
+    assert "model    mcp_ext_acme_tickets_lookup_ticket" in result.output
+
+
 def test_a_tool_the_manifest_does_not_declare_is_named(tmp_path):
     result = _doctor(str(_bundle(tmp_path)))
     assert "secret_tool" in result.output
