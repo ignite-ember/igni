@@ -24,8 +24,9 @@ TESTS_DIR = Path(__file__).parent
 #: with why it exists and what provides it.
 DECLARED_GATES: dict[str, str] = {
     "IGNI_TEST_LLM_API_KEY": (
-        "Live model calls, which cost money per run. Deliberately not "
-        "in CI; run locally when touching the model layer."
+        "Live model calls, which cost money per run. Not in the per-push "
+        "CI: .github/workflows/live-model.yml runs them weekly and on "
+        "demand, against the endpoint the repository's secrets name."
     ),
     "IGNI_TEST_LLM_BASE_URL": (
         "Which endpoint the live model tests call. Read alongside the "
@@ -163,3 +164,19 @@ def test_every_gate_says_why():
     whether to set it, not merely that they could."""
     for gate, reason in DECLARED_GATES.items():
         assert len(reason) > 40, f"{gate}: say what it needs and why it is not on by default"
+
+
+def test_the_live_model_gate_has_a_workflow_that_opens_it():
+    """A dormant gate nothing ever opens is coverage nobody has.
+
+    The live-model tests and the evals ran only by hand; live-model.yml
+    runs them on a schedule, from the repository's secrets, and says so
+    in a notice when the secret is missing rather than going green.
+    """
+    workflow = (TESTS_DIR.parent / ".github" / "workflows" / "live-model.yml").read_text()
+    for gate in ("IGNI_TEST_LLM_API_KEY", "IGNI_TEST_LLM_BASE_URL", "IGNI_TEST_LLM_MODEL"):
+        assert f"${{{{ secrets.{gate} }}}}" in workflow
+    assert "schedule:" in workflow and "workflow_dispatch:" in workflow
+    assert "scripts/run_evals_smoke.py" in workflow
+    assert "::notice" in workflow
+    assert "IGNI_EGRESS_ALLOW_HOSTS" in workflow
