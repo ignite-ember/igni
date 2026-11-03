@@ -37,15 +37,26 @@ Every tool call goes through permission checks before execution.
 
 ```yaml
 permissions:
-  file_read: "allow"
+  file_read: "allow"             # no effect (see below)
   file_write: "ask"
   shell_execute: "ask"
-  shell_restricted: "allow"       # read-only commands (rg, find, tree)
+  shell_restricted: "allow"       # no effect (see below)
   web_search: "deny"
   web_fetch: "deny"
   git_push: "ask"
   git_destructive: "ask"          # force-push, reset --hard, etc.
 ```
+
+`file_read` and `shell_restricted` are accepted and read by nothing, on
+purpose. igni has no read tool — a file is read with `run_shell_command` — so
+in the default mode `cat`, `ls` and `rg` ask like any other command, and a
+headless `igni -m` cannot read a file unless something allows it. To let reads
+run unasked, add allow rules (`permissions.allow`, or "Allow similar" at the
+prompt), or set `permissions.mode: plan`, where a command runs without asking
+only if it is built entirely from read-only commands (`rg`, `cat`, `ls`, `git
+diff`, …) and anything else is put to you. The default mode does not make that
+exemption: a read nobody sees, next to `web_fetch`, is how a file leaves the
+machine.
 
 **Approval prompts:**
 

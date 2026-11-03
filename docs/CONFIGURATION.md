@@ -271,9 +271,9 @@ models:
 permissions:
   # "ask" = confirm before use, "allow" = auto-allow, "deny" = block
   file_write: "ask"
-  file_read: "allow"
+  file_read: "allow"             # no effect: igni has no read tool (SECURITY.md)
   shell_execute: "ask"
-  shell_restricted: "allow"       # read-only commands (rg, find, tree)
+  shell_restricted: "allow"       # no effect: reads ask in default mode (SECURITY.md)
   web_search: "allow"
   web_fetch: "allow"
   git_push: "ask"
