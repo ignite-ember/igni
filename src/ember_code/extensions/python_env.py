@@ -253,7 +253,9 @@ class PythonEnvironments:
                     "--no-input",
                     "--wheel-dir",
                     str(wheelhouse),
-                    str(bundle),
+                    # Absolute: a bare relative path ("extension") is a
+                    # project name to pip, fetched from the index.
+                    str(bundle.resolve()),
                 ],
                 what=f"building {manifest.id} from {bundle}",
             )

@@ -337,3 +337,22 @@ async def test_without_anywhere_to_install_it_is_failed_not_raised(tmp_path):
     entry = await installer.install(bundle)
     assert entry.state is ExtensionState.FAILED
     assert "nowhere to install" in entry.reason
+
+
+async def test_a_relative_bundle_is_built_as_a_directory_not_a_project_name(tmp_path, monkeypatch):
+    """``igni ext doctor extension`` passed ``extension`` to ``pip wheel``,
+    which reads a bare word as a project on the index — so it built the
+    unrelated PyPI project called ``extension`` and then could not find the
+    package the manifest names. Found on the tutorial's walk-through."""
+    monkeypatch.chdir(tmp_path)
+    bundle = Path("extension")
+    bundle.mkdir()
+    (bundle / "manifest.json").write_text(json.dumps(manifest()))
+    (bundle / "pyproject.toml").write_text("[project]\nname='acme-notes'\n")
+    runner = Pretending()
+
+    await PythonEnvironments(tmp_path / "envs", runner=runner).ensure(
+        load(bundle), bundle, development=True
+    )
+    build, _ = runner.calls[1]
+    assert build[-1] == str((tmp_path / "extension").resolve())
