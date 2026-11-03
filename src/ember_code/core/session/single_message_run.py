@@ -73,6 +73,13 @@ class SingleMessageRun(SessionRun):
             from ember_code.backend.cmd_help import help_overview
 
             self._session.display.print_markdown(help_overview())
+        elif result.action == CommandAction.LOGIN:
+            # ``/login`` is an action the clients carry out (a browser and a
+            # callback); its result has no content, so ``igni -m /login``
+            # printed nothing and exited 0, as if it had signed in.
+            from ember_code.core.session.commands import InteractiveCommandDispatcher
+
+            self._session.display.print_info(InteractiveCommandDispatcher.LOGIN_HINT)
         return None
 
     # ── Public entry point ────────────────────────────────────────

@@ -111,10 +111,18 @@ class InteractiveCommandDispatcher:
 
         self.session.display.print_markdown(help_overview())
 
+    #: What ``igni -m /login`` says. It pointed at a TUI and a ``--no-tui``
+    #: flag that were both removed in v0.9.7, so the one hint a person got
+    #: on the command line named nothing they could run.
+    LOGIN_HINT = (
+        "Signing in opens a browser, which `igni -m` cannot wait on. Sign in "
+        "once from the igni desktop app or the VS Code / JetBrains extension "
+        "(set `api_url` in ~/.igni/config.yaml first): `igni -m` uses the same "
+        "credentials, ~/.igni/credentials.json."
+    )
+
     async def _render_login(self, result: CommandResult) -> None:
-        self.session.display.print_info(
-            "Login is only available in TUI mode. Run without --no-tui to use /login."
-        )
+        self.session.display.print_info(self.LOGIN_HINT)
 
     async def _render_sessions(self, result: CommandResult) -> None:
         """List past sessions as text (no interactive picker)."""

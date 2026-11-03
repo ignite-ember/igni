@@ -38,7 +38,7 @@ export const BUILTIN_COMMANDS: SlashCommand[] = [
   { name: "/sessions", description: "List and switch sessions" },
   { name: "/fork", description: "Fork this session — continue in a new id" },
   { name: "/model", description: "Pick a model" },
-  { name: "/login", description: "Log in to igni Cloud" },
+  { name: "/login", description: "Sign in to your igni server" },
   { name: "/logout", description: "Log out" },
   { name: "/mcp", description: "MCP servers — status and toggles" },
   { name: "/agents", description: "Agent pool" },

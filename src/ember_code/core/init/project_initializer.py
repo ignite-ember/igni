@@ -179,6 +179,17 @@ class ProjectInitializer(BaseModel):
         """
         path = self.project_dir / CONFIG_DIR / "settings.local.json"
 
+        # Not in a folder nobody has trusted. Its permissions are ignored
+        # there (``ProjectJsonFragmentTier``), so the starter igni wrote on
+        # the first run was the cause of a warning on every run after it —
+        # printed twice per ``igni -m``, about a file the person never
+        # wrote. Found on a fresh clone; a new user's first folder is an
+        # untrusted one.
+        from ember_code.core.workspace_trust import WorkspaceTrust
+
+        if not WorkspaceTrust.shared().is_trusted(self.project_dir):
+            return
+
         # Peek at the raw JSON first — we only touch the file if
         # ``permissions`` is absent, matching the pre-refactor
         # semantics that leave user-written files alone. Deliberate

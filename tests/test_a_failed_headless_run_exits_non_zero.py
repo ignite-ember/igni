@@ -127,3 +127,16 @@ async def test_a_bare_help_prints_the_commands():
     printed = "\n".join(c.args[0] for c in session.display.print_markdown.call_args_list)
     assert "`/help`" in printed
     assert "`/help schedule`" in printed
+
+
+async def test_login_says_where_to_sign_in():
+    """``/login`` is carried out by the clients, so its result has no
+    content: ``igni -m /login`` printed nothing and exited 0, and the only
+    other hint named a TUI and a ``--no-tui`` flag removed in v0.9.7."""
+    session = _session(_Team(None))
+    with patch("ember_code.core.session.session_run.Session", return_value=session):
+        await run_single_message(MagicMock(), "/login")
+
+    printed = "\n".join(c.args[0] for c in session.display.print_info.call_args_list)
+    assert "~/.igni/credentials.json" in printed
+    assert "TUI" not in printed and "--no-tui" not in printed
