@@ -232,7 +232,11 @@ class EmberShellTools(Toolkit):
         if mp is None:
             return f"No tracked process with PID {pid}."
 
-        output = mp.read(tail=tail)
+        output = (
+            mp.read_tail(tail).render(f"read_process_output({pid}, tail=N) reads further back.")
+            if isinstance(mp, ManagedProcess)
+            else mp.read(tail=tail)
+        )
         if mp.is_running():
             elapsed = mp.elapsed()
             return self._result_buffer.truncate(
@@ -293,7 +297,7 @@ class EmberShellTools(Toolkit):
 
         rc = mp.returncode()
         elapsed = mp.elapsed()
-        output = mp.read(tail=100)
+        output = mp.read_tail(100).render(f"read_process_output({pid}, tail=N) reads further back.")
         # Arm the TTL rather than ``registry.remove(pid)``: remove pops
         # the entry outright, so the very next ``read_process_output(pid)``
         # answered "No tracked process with PID …" — which contradicts
