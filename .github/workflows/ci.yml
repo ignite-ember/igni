@@ -261,6 +261,22 @@ jobs:
       - name: Lint, type-check and test the SDKs
         run: make packages-check
 
+      # examples/ticket-lookup is what docs/YOUR_FIRST_EXTENSION.md builds,
+      # file for file. Its tests, and the extension docs' code blocks that
+      # need the SDKs (tests/test_the_extension_docs_run.py, which skips
+      # them in the test job), run here against both SDKs from this
+      # checkout — what a developer has before the SDKs are on PyPI.
+      - name: The tutorial's example and the extension docs' code blocks
+        env:
+          IGNI_DOCS_REQUIRE_SDKS: "1"
+        run: |
+          (cd examples/ticket-lookup && uv run --no-project \
+            --with ../../packages/igni-extension --with ../../packages/igni-service \
+            --with pytest --with anyio --with httpx pytest -q -rs)
+          uv run --no-project --with ./packages/igni-extension --with ./packages/igni-service \
+            --with pytest --with jsonschema \
+            pytest --noconftest -q -rs tests/test_the_extension_docs_run.py
+
   # The shared web UI lives under ``clients/web`` and is consumed by
   # the Tauri / VSCode / JetBrains shells. Typecheck + tests run on
   # every push so a regression doesn't ride through to a release

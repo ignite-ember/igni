@@ -1,0 +1,64 @@
+{
+  "$schema": "https://ignite-ember.sh/schema/extension-manifest-1.json",
+  "id": "acme.tickets",
+  "version": "0.2.0",
+  "contract": ">=1.0 <2",
+  "name": "Ticket lookup",
+  "description": "Look up a support ticket by its id.",
+  "vendor": "Acme Corp",
+  "trust": "partner",
+  "python": {
+    "package": "acme-tickets-extension",
+    "entry": "acme-tickets-extension",
+    "wheels": "wheels",
+    "mcp": {
+      "transport": "stdio"
+    }
+  },
+  "permissions": {
+    "workspace": "none",
+    "tools": [
+      {
+        "name": "acme.tickets.lookup_ticket",
+        "annotations": {
+          "readOnlyHint": true,
+          "destructiveHint": false,
+          "idempotentHint": true,
+          "openWorldHint": false
+        }
+      },
+      {
+        "name": "acme.tickets.ticket_from_service",
+        "annotations": {
+          "readOnlyHint": true,
+          "destructiveHint": false,
+          "idempotentHint": true,
+          "openWorldHint": true
+        }
+      }
+    ],
+    "rpc": [
+      "ext.acme.tickets.lookup_ticket"
+    ],
+    "hooks": [
+      "PostToolUse"
+    ]
+  },
+  "vm": {
+    "memoryMib": 2048,
+    "packages": {
+      "apt": [
+        "jq"
+      ]
+    }
+  },
+  "contributes": {
+    "pages": [
+      {
+        "kind": "acme.tickets",
+        "label": "Tickets",
+        "sidebar": true
+      }
+    ]
+  }
+}

@@ -23,7 +23,8 @@ A ``json`` block that is a whole manifest (it has an ``id`` and a
 Blocks that need the SDKs (``igni-extension``, ``igni-service``) skip
 where they are not installed — igni's own environment does not carry
 them — and run in CI's ``packages`` job, which installs both from the
-checkout. The SDK READMEs follow the same convention and are checked by
+checkout and sets ``IGNI_DOCS_REQUIRE_SDKS=1``, turning that skip into a
+failure. The SDK READMEs follow the same convention and are checked by
 their packages' own tests.
 
 This module imports nothing from igni or its ``tests`` package, so it
@@ -36,6 +37,7 @@ import ast
 import asyncio
 import inspect
 import json
+import os
 import re
 from dataclasses import dataclass
 from pathlib import Path
@@ -149,7 +151,8 @@ def test_a_python_block_runs_as_printed(chain: list[Block]) -> None:
         try:
             _run(block.code, namespace)
         except ModuleNotFoundError as exc:
-            if (exc.name or "").split(".")[0] in SDK_MODULES:
+            needs_sdk = (exc.name or "").split(".")[0] in SDK_MODULES
+            if needs_sdk and not os.environ.get("IGNI_DOCS_REQUIRE_SDKS"):
                 pytest.skip(f"{block.id} needs {exc.name}, which this environment lacks")
             raise AssertionError(f"{block.id}: {exc}") from exc
         except Exception as exc:
