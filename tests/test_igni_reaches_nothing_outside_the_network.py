@@ -54,6 +54,7 @@ import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from typing import Any
 
 import pytest
 from openai.types import CompletionUsage
@@ -98,9 +99,13 @@ class StubModel:
     Streams when asked to, the way a vLLM or llama.cpp server does.
     """
 
-    def __init__(self, reply: str) -> None:
+    def __init__(self, reply: str, *, status: int = 200) -> None:
         self.reply = reply
+        #: What every request answers with; not 200 → an error, no reply.
+        self.status = status
         self.paths: list[str] = []
+        #: Every request body, as sent.
+        self.bodies: list[dict[str, Any]] = []
         self._server = ThreadingHTTPServer(("127.0.0.1", 0), _StubHandler)
         self._server.stub = self  # type: ignore[attr-defined]
         self._thread = threading.Thread(target=self._server.serve_forever, daemon=True)
@@ -158,9 +163,14 @@ class _StubHandler(BaseHTTPRequestHandler):
         stub: StubModel = self.server.stub  # type: ignore[attr-defined]
         stub.paths.append(self.path)
         length = int(self.headers.get("Content-Length") or 0)
-        request = ChatRequest.model_validate(json.loads(self.rfile.read(length) or b"{}"))
+        body = json.loads(self.rfile.read(length) or b"{}")
+        stub.bodies.append(body)
+        request = ChatRequest.model_validate(body)
         if not self.path.endswith("/chat/completions"):
             self.send_error(404)
+            return
+        if stub.status != 200:
+            self.send_error(stub.status)
             return
         if request.stream:
             self._send_stream(stub.chunks(request.model))

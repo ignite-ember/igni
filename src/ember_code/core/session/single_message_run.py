@@ -7,15 +7,13 @@ Both coordinators subclass :class:`SessionRun`, so the SessionStart
 (``session_run.py``). This module adds only what's unique to the
 single-shot case:
 
-* :meth:`SingleMessageRun._dispatch_slash` — the slash-command
-  early-return branch. Wraps :class:`CommandHandler` and prints any
-  non-empty result. It stays a method (rather than a full
-  :class:`PromptHandler` chain) because the non-interactive path
-  has exactly two branches — slash vs message — so a chain would
-  be over-engineered here.
+* :meth:`SingleMessageRun._dispatch_slash` — what the turn is. Wraps
+  :class:`CommandHandler`: a built-in command prints its result and is
+  the whole run; a skill, a markdown command or ``/loop <prompt>`` hands
+  back its prompt, which runs as the turn, as at the interactive prompt.
 * :meth:`SingleMessageRun.run` — the top-level orchestration:
-  SessionStart hook, slash-dispatch (early return), else
-  :meth:`SessionRun._run_turn`, SessionEnd hook.
+  SessionStart hook, slash-dispatch, :meth:`SessionRun._run_turn`,
+  SessionEnd hook, and the exit code the turn earned.
 
 .. note::
 
@@ -51,28 +49,22 @@ class SingleMessageRun(SessionRun):
     FAILED_EXIT_CODE = 1
 
     # ── Slash-command dispatch ────────────────────────────────────
-    #
-    # TODO: the three :class:`PromptHandler` subclasses in
-    # ``interactive_loop.py`` are REPL-coupled (``_QuitHandler``
-    # raises a private ``_LoopExit`` sentinel, ``_MessageHandler``
-    # calls the loop's ``_run_turn``). A future refactor could extract a headless
-    # ``SlashCommandRouter`` collaborator both coordinators share,
-    # but that's out of scope for this diff — the non-interactive
-    # path only has two branches, so a full chain here would be
-    # over-engineered.
 
-    async def _dispatch_slash(self, message: str) -> bool:
-        """Try to consume ``message`` as a slash command.
+    async def _dispatch_slash(self, message: str) -> str | None:
+        """What the model is sent for ``message``, or ``None`` if nothing.
 
-        Returns ``True`` when the message started with ``/`` and
-        was handled by :class:`CommandHandler` (caller should
-        early-return to the SessionEnd hook without calling the
-        model); ``False`` otherwise.
+        A plain message is sent as it is. A slash command runs through
+        :class:`CommandHandler`: a skill, a markdown command and ``/loop
+        <prompt>`` answer with the prompt to run (``RUN_PROMPT``), and that
+        prompt is the turn, as at the interactive prompt. Any other command
+        prints its result, and no turn runs.
         """
         if not message.startswith("/"):
-            return False
+            return message
         handler = CommandHandler(self._session)
         result = await handler.handle(message)
+        if result.action == CommandAction.RUN_PROMPT:
+            return result.content
         if result.content:
             self._session.display.print_info(result.content)
         elif result.action == CommandAction.HELP:
@@ -81,18 +73,18 @@ class SingleMessageRun(SessionRun):
             from ember_code.backend.cmd_help import help_overview
 
             self._session.display.print_markdown(help_overview())
-        return True
+        return None
 
     # ── Public entry point ────────────────────────────────────────
 
     async def run(self, message: str) -> None:  # type: ignore[override]
         """Run one message: extensions up → SessionStart → dispatch → SessionEnd → extensions down.
 
-        Slash-prefixed messages take the ``_dispatch_slash`` branch
-        and intentionally skip ``_run_turn`` — they never reach the
-        model. Non-slash messages flow through the shared
-        :meth:`SessionRun._run_turn` pipeline. SessionEnd always
-        fires exactly once.
+        A built-in slash command runs without a model turn. A skill, a
+        markdown command and ``/loop <prompt>`` run their prompt as the
+        turn, and everything else is the turn itself, through the shared
+        :meth:`SessionRun._run_turn` pipeline; the exit code follows that
+        turn. SessionEnd always fires exactly once.
         """
         # The extensions installed here apply to a headless run as they
         # do in the app: their tools, hooks and prompt contributions.
@@ -106,12 +98,13 @@ class SingleMessageRun(SessionRun):
         try:
             await self._fire_session_start()
 
-            if await self._dispatch_slash(message):
-                # Slash branch: no model call. Jump straight to SessionEnd.
+            turn = await self._dispatch_slash(message)
+            if turn is None:
+                # A command that was the whole run: no model call.
                 await self._fire_session_end()
                 return
 
-            succeeded = await self._run_turn(message)
+            succeeded = await self._run_turn(turn)
             self._emit_pending_plan()
             await self._fire_session_end()
         finally:
