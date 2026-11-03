@@ -58,7 +58,7 @@ logger = logging.getLogger(__name__)
 SANDBOX_ENV = "IGNI_SANDBOX"
 
 #: Where the proxy is not used: this machine.
-NO_PROXY = "localhost,127.0.0.1,::1"
+NO_PROXY = "localhost,.localhost,127.0.0.1,::1"
 
 
 class SandboxRefused(PermissionDenied):

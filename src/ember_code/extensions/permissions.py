@@ -79,6 +79,7 @@ end.
 from __future__ import annotations
 
 import fnmatch
+import ipaddress
 import logging
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass
@@ -95,10 +96,28 @@ class PermissionDenied(Exception):
     """Something the manifest did not ask for, refused."""
 
 
-#: Hosts that are this machine. Plain ``http``/``ws`` to one of them is
+#: Hosts that are this machine (see also :func:`is_loopback_host`). Plain ``http``/``ws`` to one of them is
 #: allowed in development — a service on a laptop has no certificate —
 #: and nowhere else.
 LOCAL_HOSTS = frozenset({"localhost", "127.0.0.1", "::1"})
+
+
+def is_loopback_host(host: str) -> bool:
+    """Whether ``host`` (no port) names this machine.
+
+    :data:`LOCAL_HOSTS`, any name under ``.localhost`` (RFC 6761 §6.3
+    reserves it for loopback, and browsers resolve it there without
+    asking DNS — a developer running two services as
+    ``tickets.localhost`` and ``notes.localhost`` was refused), and any
+    loopback address (all of ``127.0.0.0/8``).
+    """
+    name = host.strip("[]").lower().rstrip(".")
+    if name in LOCAL_HOSTS or name.endswith(".localhost"):
+        return True
+    try:
+        return ipaddress.ip_address(name).is_loopback
+    except ValueError:
+        return False
 
 
 class ServiceOrigin:
@@ -135,7 +154,7 @@ class ServiceOrigin:
         host = (parsed.hostname or "").lower()
         if not host or parsed.scheme not in ("https", "http"):
             return None
-        if parsed.scheme == "http" and not (development and host in LOCAL_HOSTS):
+        if parsed.scheme == "http" and not (development and is_loopback_host(host)):
             logger.warning(
                 "service %s is plain http and not this machine in development; "
                 "a page is not given a connection to it",
@@ -217,7 +236,7 @@ class Egress:
 
     @staticmethod
     def _is_local(host: str) -> bool:
-        return host.rsplit(":", 1)[0] in LOCAL_HOSTS
+        return is_loopback_host(urlparse(f"//{host}").hostname or host)
 
     def check_endpoint(self, url: str) -> None:
         """Refuse an endpoint whose host was not declared, or is not https.
@@ -240,7 +259,7 @@ class Egress:
                 "and reinstall — an undeclared destination is the one failure "
                 "that costs a customer their accreditation."
             )
-        if parsed.scheme != "https" and not (self._development and host in LOCAL_HOSTS):
+        if parsed.scheme != "https" and not (self._development and is_loopback_host(host)):
             raise PermissionDenied(
                 f"{self._id}: its endpoint {url!r} is not https. Plain http is "
                 "allowed only to this machine, in development."

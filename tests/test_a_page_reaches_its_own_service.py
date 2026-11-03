@@ -113,6 +113,35 @@ def test_plain_http_to_this_machine_only_in_development():
     assert ServiceOrigin.parse("http://notes.example.com", development=True) is None
 
 
+@pytest.mark.parametrize(
+    "url", ["http://tickets.localhost:18201", "http://127.0.0.2:18201", "http://LOCALHOST:1"]
+)
+def test_any_loopback_name_is_this_machine(url):
+    """RFC 6761: ``*.localhost`` is loopback, as is all of 127.0.0.0/8."""
+    assert ServiceOrigin.parse(url) is None
+    local = ServiceOrigin.parse(url, development=True)
+    assert local is not None and local.scheme == "http"
+
+
+def test_a_name_that_only_ends_like_localhost_is_not_this_machine():
+    assert ServiceOrigin.parse("http://evil-localhost:1", development=True) is None
+    assert ServiceOrigin.parse("http://localhost.evil.test:1", development=True) is None
+
+
+def test_a_dot_localhost_egress_host_and_endpoint_are_this_machine():
+    manifest = manifest_of(permissions={"egress": ["tickets.localhost:9000"]})
+    assert "http://tickets.localhost:9000" in Egress(manifest, development=True).csp_connect_src()
+    Permissions(manifest, development=True).egress.check_endpoint(
+        "http://tickets.localhost:9000/mcp"
+    )
+
+
+def test_a_sandboxed_process_reaches_dot_localhost_without_the_proxy():
+    from ember_code.extensions.sandbox import NO_PROXY
+
+    assert ".localhost" in NO_PROXY.split(",")
+
+
 def test_a_localhost_egress_host_gets_plain_http_only_in_development():
     manifest = manifest_of(permissions={"egress": ["localhost:9000"]})
     assert "http://localhost:9000" not in Egress(manifest).csp_connect_src()
