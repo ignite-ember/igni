@@ -250,4 +250,49 @@ def is_read_only(command: str) -> bool:
     return all(_segment_reads(segment) for segment in segments)
 
 
-__all__ = ["READ_ONLY_COMMANDS", "is_read_only"]
+#: Operators that join commands without doing anything themselves. Each
+#: side is a command of its own, and a rule has to cover each one.
+_JOINERS = frozenset({"|", "&&", "||", ";"})
+
+
+def command_parts(command: str) -> list[str] | None:
+    """The commands a shell line runs, one string each, or ``None``.
+
+    For matching permission rules against: ``Bash(ls *)`` is a rule about
+    ``ls``, and ``ls x && rm -rf y`` runs ``rm`` too. It used to match,
+    because a rule is an ``fnmatch`` over the whole line and ``*`` matches
+    ``&& rm -rf y`` as readily as it matches ``-la``.
+
+    * A line with no operator comes back as itself, unchanged, so an exact
+      rule ("Always allow" writes one) still matches it character for
+      character.
+    * A line of commands joined by ``|``, ``&&``, ``||`` or ``;`` comes back
+      as those commands.
+    * ``None`` — nothing a rule can vouch for — for command or process
+      substitution, a newline, a redirect to or from a file (``2>&1`` and
+      ``>/dev/null`` excepted), ``&``, a subshell, or a line that does not
+      tokenise.
+    """
+    if not command or not command.strip():
+        return None
+    if any(marker in command for marker in _SUBSTITUTION_MARKERS):
+        return None
+    tokens = _tokens(_HARMLESS_REDIRECT_RE.sub(" ", command))
+    if not tokens:
+        return None
+    if not any(token and set(token) <= _OPERATOR_CHARS for token in tokens):
+        return [command]
+    segments: list[list[str]] = [[]]
+    for token in tokens:
+        if token and set(token) <= _OPERATOR_CHARS:
+            if token not in _JOINERS:
+                return None
+            segments.append([])
+            continue
+        segments[-1].append(token)
+    if any(not segment for segment in segments):
+        return None
+    return [shlex.join(segment) for segment in segments]
+
+
+__all__ = ["READ_ONLY_COMMANDS", "command_parts", "is_read_only"]

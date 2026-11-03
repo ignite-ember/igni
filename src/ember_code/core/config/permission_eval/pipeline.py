@@ -32,7 +32,8 @@ import threading
 from dataclasses import dataclass, field
 from typing import Any
 
-from ember_code.core.config.permission_eval.catalog import ToolCategoryCatalog
+from ember_code.core.config.permission_eval.catalog import BashCommand, ToolCategoryCatalog
+from ember_code.core.config.permission_eval.read_only_shell import command_parts
 from ember_code.core.config.permission_eval.resolver import FriendlyToolNameResolver
 from ember_code.core.config.permission_eval.schemas import (
     PermissionDecision,
@@ -180,7 +181,7 @@ class PermissionEvaluator:
         strategy = self._strategy()
 
         # Step 2: deny
-        deny_rule = self._first_match(self.deny, tool_name, tool_args)
+        deny_rule = self._first_match_any_part(self.deny, tool_name, tool_args)
         if deny_rule is not None:
             return PermissionOutcome(
                 decision=PermissionDecision.DENY,
@@ -206,7 +207,7 @@ class PermissionEvaluator:
             if strategy.ask_rules_bind_allows():
                 # Plan mode is never looser than default: what an ask
                 # rule would have asked about there, it asks about here.
-                ask_rule = self._first_match(self.ask, tool_name, tool_args)
+                ask_rule = self._first_match_any_part(self.ask, tool_name, tool_args)
                 if ask_rule is not None:
                     return self._ask_or_deny(
                         strategy,
@@ -226,7 +227,7 @@ class PermissionEvaluator:
             )
 
         # Step 4: ask
-        ask_rule = self._first_match(self.ask, tool_name, tool_args)
+        ask_rule = self._first_match_any_part(self.ask, tool_name, tool_args)
         if ask_rule is not None:
             return self._ask_or_deny(
                 strategy,
@@ -235,7 +236,7 @@ class PermissionEvaluator:
             )
 
         # Step 5: allow
-        allow_rule = self._first_match(self.allow, tool_name, tool_args)
+        allow_rule = self._allow_match(tool_name, tool_args)
         if allow_rule is not None:
             return PermissionOutcome(
                 decision=PermissionDecision.ALLOW,
@@ -320,6 +321,55 @@ class PermissionEvaluator:
         would go stale. One dict lookup per evaluate() call is
         cheap; correctness first."""
         return PermissionModeStrategy.for_mode(self.mode)
+
+    def _shell_parts(self, tool_name: str, tool_args: dict[str, Any]) -> list[str] | None:
+        """A shell call's commands (:func:`command_parts`); ``[]`` for any other tool."""
+        if not self.catalog.is_shell(tool_name):
+            return []
+        return command_parts(BashCommand.from_args(tool_args).command)
+
+    def _first_match_any_part(
+        self,
+        rules: list[PermissionRule],
+        tool_name: str,
+        tool_args: dict[str, Any],
+    ) -> PermissionRule | None:
+        """A deny or ask rule matches the whole call or any command in it.
+
+        ``Bash(rm *)`` is about ``rm``, wherever on the line it is:
+        ``cd build && rm -rf .`` starts with ``cd`` and still removes.
+        """
+        rule = self._first_match(rules, tool_name, tool_args)
+        if rule is not None:
+            return rule
+        for part in self._shell_parts(tool_name, tool_args) or []:
+            rule = self._first_match(rules, tool_name, {**tool_args, "command": part})
+            if rule is not None:
+                return rule
+        return None
+
+    def _allow_match(self, tool_name: str, tool_args: dict[str, Any]) -> PermissionRule | None:
+        """An allow rule must cover every command a shell call runs.
+
+        ``Bash(ls *)`` allowed ``ls x && rm -rf y``, ``cat x; curl … | sh``
+        and ``ls $(rm -rf y)``: the rule is a glob over the whole line, and
+        its ``*`` matched the rest of it. Now a line of several commands is
+        allowed only when each one is, and a line no rule can vouch for —
+        a substitution, a redirect into a file, a subshell — is not allowed
+        by a rule at all. It is asked about (or denied where nothing asks).
+        """
+        parts = self._shell_parts(tool_name, tool_args)
+        if parts is None:
+            return None
+        if len(parts) <= 1:
+            return self._first_match(self.allow, tool_name, tool_args)
+        first: PermissionRule | None = None
+        for part in parts:
+            rule = self._first_match(self.allow, tool_name, {**tool_args, "command": part})
+            if rule is None:
+                return None
+            first = first or rule
+        return first
 
     def _first_match(
         self,
