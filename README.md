@@ -1,5 +1,7 @@
 # igni
 
+[![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/ignite-ember/igni/badge)](https://scorecard.dev/viewer/?uri=github.com/ignite-ember/igni)
+
 **One spark ignites a team.** An AI coding assistant built with [Agno](https://github.com/agno-agi/agno) orchestration.
 
 [ignite-ember.sh](https://ignite-ember.sh)

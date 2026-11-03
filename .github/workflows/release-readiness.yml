@@ -37,6 +37,10 @@ on:
         type: boolean
         default: false
 
+# Read-only: it installs, runs and uploads logs, and writes nothing back.
+permissions:
+  contents: read
+
 jobs:
   # Proxy-propagation integration test. Stands up a tiny logging
   # HTTP/HTTPS proxy, sets HTTPS_PROXY, runs the same uv-download
