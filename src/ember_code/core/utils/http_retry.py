@@ -6,6 +6,7 @@ may fail transiently (429, 5xx errors) and should be retried.
 
 import asyncio
 import logging
+import socket
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any, TypeVar
@@ -18,6 +19,16 @@ T = TypeVar("T")
 
 RetryCallback = Callable[[int, float], None]
 """Callback signature for retry events: (attempt_number, delay_seconds)"""
+
+
+def _no_such_host(exc: BaseException) -> bool:
+    """Whether ``exc`` comes from a name that does not resolve (not a temporary DNS failure)."""
+    seen: BaseException | None = exc
+    while seen is not None:
+        if isinstance(seen, socket.gaierror):
+            return seen.errno == socket.EAI_NONAME
+        seen = seen.__cause__ or seen.__context__
+    return False
 
 
 @dataclass(frozen=True)
@@ -54,7 +65,8 @@ async def retry_with_backoff(
 
     Retries on:
     * httpx.TimeoutException
-    * httpx.ConnectError
+    * httpx.ConnectError, except for a host name that does not exist
+      (``EAI_NONAME``): it will not exist on the tenth try either
     * httpx.HTTPStatusError with status 429, 500, 502, 503, 504
 
     Other exceptions (programming errors, auth failures, 4xx) propagate
@@ -90,7 +102,10 @@ async def retry_with_backoff(
                 final_delay_seconds=total_delay,
             )
             return result, metadata
-        except (httpx.TimeoutException, httpx.ConnectError) as e:
+        except httpx.ConnectError as e:
+            last_exc = e
+            is_retryable = not _no_such_host(e)
+        except httpx.TimeoutException as e:
             last_exc = e
             is_retryable = True
         except httpx.HTTPStatusError as e:
