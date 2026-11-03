@@ -31,6 +31,7 @@ from ember_code.core.hooks.extension_gate import ExtensionHookGate
 from ember_code.core.plugins.installer import PluginInstaller
 from ember_code.core.session.schemas import PersistResult
 from ember_code.extensions.contributions import ExtensionContributions
+from ember_code.extensions.distribution import OneShotSync
 from ember_code.extensions.host.channel import HostChannel
 from ember_code.extensions.host.errors import HostModelError
 from ember_code.extensions.host.hooks import ExtensionHooks
@@ -151,6 +152,8 @@ class HeadlessExtensions:
 
     #: How long the run waits for its extensions to come up.
     START_TIMEOUT_S = 60.0
+    #: How long it waits for igni server's listing and downloads first.
+    SYNC_TIMEOUT_S = 30.0
 
     def __init__(self, session: Any) -> None:
         self._session = session
@@ -166,6 +169,7 @@ class HeadlessExtensions:
         session = self._session
         settings = session.settings
         store = ExtensionStore()
+        await self._sync(store, settings)
         if not store.installed():
             return
         rpc = ExtensionRpc(self._registry)
@@ -228,6 +232,26 @@ class HeadlessExtensions:
             if entry is not None and entry.state is not ExtensionState.READY:
                 logger.warning("extension %s is %s: %s", extension_id, entry.state, entry.reason)
         session.reload_group_agents()
+
+    async def _sync(self, store: ExtensionStore, settings: Any) -> None:
+        """Bring the store in step with igni server first, bounded.
+
+        The app's backend syncs once a window attaches; a headless run
+        has none, so without this it never received an extension its
+        organisation switched on. Skipped — with the reason in the log —
+        when there is no server, nobody is signed in or the air gap
+        excludes it; a failure costs the update, never the run.
+        """
+        report = await OneShotSync(store, settings).run(timeout=self.SYNC_TIMEOUT_S)
+        if report.skipped:
+            logger.info("extension sync skipped: %s", report.skipped)
+        elif report.installed or report.removed or report.failed:
+            logger.info(
+                "extension sync: installed %s, removed %s, failed %s",
+                report.installed,
+                report.removed,
+                report.failed,
+            )
 
     @staticmethod
     def _sandbox(settings: Any) -> Any:

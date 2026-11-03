@@ -29,6 +29,7 @@ import tempfile
 from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
+from typing import Any
 
 import click
 
@@ -38,6 +39,7 @@ from ember_code.core.config.group_policy import CachedSettingsFetcher, GroupPoli
 from ember_code.core.config.settings import load_settings
 from ember_code.core.network_policy import NetworkPolicy
 from ember_code.core.plugins.git import GitClient, GitError
+from ember_code.extensions.distribution import OneShotSync
 from ember_code.extensions.manifest import EXTENSION_ID, ExtensionManifest, Workspace
 from ember_code.extensions.profile import DEV_FLAG, DevelopmentFlag
 from ember_code.extensions.store import ExtensionStore, StoreError
@@ -261,8 +263,8 @@ def _looks_like_sha(ref: str) -> bool:
     return all(c in "0123456789abcdefABCDEF" for c in ref)
 
 
-def _network_policy() -> NetworkPolicy:
-    """The deployment's network policy, from its settings.
+def _settings() -> Any:
+    """The deployment's settings.
 
     Loaded the way ``igni -m`` loads them — local configuration first
     to find the data directory, then again with the group policy cached
@@ -271,12 +273,14 @@ def _network_policy() -> NetworkPolicy:
     """
     local_only = load_settings()
     try:
-        settings = load_settings(
-            group_policy_fetcher=CachedSettingsFetcher.for_settings(local_only)
-        )
+        return load_settings(group_policy_fetcher=CachedSettingsFetcher.for_settings(local_only))
     except GroupPolicyUnavailable as exc:
         raise click.ClickException(str(exc)) from exc
-    return NetworkPolicy.from_settings(settings)
+
+
+def _network_policy() -> NetworkPolicy:
+    """The deployment's network policy, from its settings."""
+    return NetworkPolicy.from_settings(_settings())
 
 
 @contextmanager
@@ -462,6 +466,72 @@ def _echo_grants(manifest: ExtensionManifest) -> None:
     click.echo("  it may use:")
     for label, value in granted:
         click.echo(f"    {label:<16} {value}")
+
+
+@ext.command("sync")
+@click.option("--root", default=None, help="Sync somewhere other than the default.")
+@click.option(
+    "--timeout",
+    type=float,
+    default=120.0,
+    show_default=True,
+    help="Seconds igni server has to list and send everything.",
+)
+def sync(root: str | None, timeout: float) -> None:
+    """Install, update and remove extensions to match igni server, now.
+
+    What the igni app does at start-up and at sign-in, for a terminal:
+    igni server lists the extensions switched on for the signed-in
+    person's group, and this brings the store in step — downloading,
+    verifying and storing what is new or changed, removing what is no
+    longer listed, and leaving a development install of the same id
+    alone. It starts and stops nothing: igni's backend starts what is
+    stored when it boots, and an ``igni -m`` run syncs by itself first.
+    """
+    store = _store(root)
+    settings = _settings()
+    syncer = OneShotSync(store, settings)
+    report = asyncio.run(syncer.run(timeout=timeout))
+    if report.skipped is not None:
+        raise click.ClickException(f"nothing was synced: {report.skipped}")
+
+    group = store.group()
+    who = f" (group {group.group})" if group is not None and group.group else ""
+    click.echo(f"synced with {syncer.api_url}{who}")
+    rows: list[tuple[str, str]] = []
+    for extension_id in report.installed:
+        record = store.distribution_of(extension_id)
+        source = f" {record.version} from {record.service_url}" if record else ""
+        rows.append(("installed", f"{extension_id}{source}"))
+    rows += [("unchanged", extension_id) for extension_id in report.unchanged]
+    rows += [("removed", f"{extension_id} (no longer listed)") for extension_id in report.removed]
+    rows += [
+        (
+            "kept",
+            f"{extension_id}: your development install stays, and the version igni "
+            f"distributes is not installed while it is there "
+            f"('igni ext remove {extension_id}' to take it)",
+        )
+        for extension_id in report.development
+    ]
+    rows += [("failed", f"{extension_id}: {why}") for extension_id, why in report.failed.items()]
+    for label, text in rows:
+        click.echo(f"  {label:<10} {text}")
+    if not rows:
+        click.echo(
+            "  nothing is switched on for you. An extension arrives once a super admin "
+            "has approved its service (portal, Services) and an organisation admin has "
+            "switched it on for your group (portal, Extensions)."
+        )
+    if report.installed or report.removed:
+        click.echo()
+        click.echo(
+            "What changed applies the next time igni's backend starts: quit the igni app "
+            "(and any 'igni' backend process it left running) and open it again. An "
+            "'igni -m ...' run starts what is installed by itself."
+        )
+    if report.failed:
+        raise click.ClickException(f"{len(report.failed)} extension(s) could not be installed")
 
 
 @ext.command("list")
