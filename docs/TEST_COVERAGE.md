@@ -65,7 +65,6 @@ Verified against the tree, not carried over from the old table:
 |---|---|
 | `src/ember_code/core/session/interactive.py` | The interactive REPL loop and its input handling — driven by a live terminal, hard to unit test |
 | `src/ember_code/core/session/core.py` | The full message → team → response flow: system-prompt assembly and tool injection are covered only through their pieces |
-| `src/ember_code/core/mcp/tools.py` | MCP tool registration and dispatch |
 
 `tests/test_docs_describe_the_suite_that_exists.py` holds the rules that
 keep this page, `TESTING.md` and `DEVELOPMENT.md` from rotting the same way
