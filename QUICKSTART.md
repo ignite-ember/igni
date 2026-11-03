@@ -16,23 +16,33 @@ brew install ignite-ember/tap/ignite-ember
 pip install ignite-ember
 ```
 
-**From source:**
+**From source** (Python 3.12 — `pyproject.toml` pins `>=3.12,<3.13`; `uv`
+fetches it if you do not have it):
 
 ```bash
 git clone https://github.com/ignite-ember/igni.git
 cd igni
-uv pip install -e ".[dev]"
+uv venv                         # .venv on Python 3.12
+uv pip install -e ".[dev]"      # `uv pip` needs the venv: without it, "No virtual environment found"
+source .venv/bin/activate       # puts `igni` on your PATH
 ```
+
+## What `igni` is on the command line
+
+`igni` in a terminal runs **one task and exits** (`igni -m "…"`, or a pipe).
+There is no terminal chat UI any more: run with no arguments and it says so.
+The interactive chat — confirmations, the session list, `/login` — is the
+desktop app and the VS Code and JetBrains extensions, which all run the same
+backend and share `~/.igni`.
 
 ## Authenticate
 
 **Option A: your igni server**
 
 Point `api_url` at the server your team runs — in `~/.igni/config.yaml`; a
-project's config may not name a server — start a session, and type the slash
-command inside it. Set `portal_url` too when the portal (the sign-in page) is
-not on the API's origin, for example the API on port 7777 and the portal on
-3000:
+project's config may not name a server. Set `portal_url` too when the portal
+(the sign-in page) is not on the API's origin, for example the API on port
+7777 and the portal on 3000:
 
 ```yaml
 # ~/.igni/config.yaml
@@ -40,14 +50,17 @@ api_url: https://igni-api.acme.example
 portal_url: https://igni.acme.example   # only if it can't be derived from api_url
 ```
 
-```bash
-igni                    # then, at the prompt:
-/login
-```
+Then sign in once from the desktop app or an IDE extension (**Sign in to your
+igni server**, or `/login` in its chat). It opens the portal in your browser
+and writes `~/.igni/credentials.json`, which `igni -m` then uses — the models
+your server routes to appear without any `models:` entry.
 
-`/login` is a slash command handled inside the session, not a shell
-subcommand — `igni /login` at a shell prompt answers `Error: No such
-command`. This guide used to say to run it that way.
+`/login` is not a shell command (`igni /login` answers `Error: No such
+command`), and `igni -m /login` cannot wait for a browser, so it only says
+where to sign in.
+
+<!-- TODO: a terminal-only sign-in (`igni login`) — until it exists, a machine
+with no desktop app or IDE needs the credentials file from one that has. -->
 
 **Option B: Bring your own model**
 
@@ -59,7 +72,7 @@ Use OpenAI, Anthropic (Claude, natively), or any OpenAI- or Anthropic-compatible
 export OPENAI_API_KEY=sk-...
 ```
 
-2. Add the model to `.igni/config.yaml`:
+2. Add the model to `~/.igni/config.yaml` (or a project's `.igni/config.yaml`):
 
 ```yaml
 models:
@@ -87,73 +100,75 @@ That's it — agents will now use GPT-4o. See [Configuration](docs/CONFIGURATION
 ## First Run
 
 ```bash
-ignite-ember
+cd your-project
+igni -m "In one sentence, what does this project do?"
 ```
 
-On first launch, igni:
-1. Copies 13 built-in agents to `.igni/agents/`
-2. Copies skills to `.igni/skills/`
-3. Creates `igni.md` template and `.igni/config.yaml`
-4. You're ready to work
+The first run in a folder:
+
+1. Asks whether to **trust the folder** (on a terminal; headless it stays
+   untrusted and says so). Until you trust it, the folder's own tools, hooks
+   and permission settings are off — see
+   [Workspace trust](docs/CONFIGURATION.md). `igni trust` records the answer
+   outside a session; `--trust` trusts it for one run.
+2. Writes `igni.md` (project instructions) and `.igni/` — `config.yaml`, the
+   built-in agents in `.igni/agents/` and skills in `.igni/skills/`. Neither
+   is gitignored for you; commit `igni.md`, and decide about `.igni/`.
+
+### A headless run cannot ask you anything
+
+`igni -m` has nobody to show a confirmation to, and igni reads files with
+the shell, which asks by default. So out of the box the question above stops
+at its first `cat` with *"Run paused for confirmation … the tool did not
+run"* and exits 1. Decide up front what it may do:
+
+```yaml
+# ~/.igni/config.yaml — reads only: commands built entirely from read-only
+# ones (cat, rg, ls, git diff, …) run; edits are refused; anything else stops
+permissions:
+  mode: plan
+```
+
+```yaml
+# or name what may run, e.g. for "fix the failing test":
+permissions:
+  allow:
+    - "Bash(python3 -m pytest *)"
+    - "Bash(cat *)"
+    - "Bash(rg *)"
+```
+
+and pass `--accept-edits` to let it edit files. A rule covers one command: `Bash(cat *)`
+does not allow `cat x && rm -rf y` — every command on the line must be
+allowed. `--auto-approve` allows everything; do not use it in a repository you
+care about.
 
 ---
 
 ## Basic Usage
 
-### Interactive Mode
-
-```bash
-ignite-ember
-```
-
-Type naturally. The Orchestrator automatically picks the right agents and team mode for each task.
-
-```
-◆ Add a /health endpoint to the API with a test
-
-  → Orchestrator assembles: [planner, editor] in coordinate mode
-  → Planner reads existing routes, designs approach
-  → Editor implements endpoint + test
-  → Editor runs pytest to verify
-```
-
 ### Single Message
 
 ```bash
-ignite-ember -m "What does the auth middleware do?"
+igni -m "What does the auth middleware do?"
 ```
 
-Runs one task and exits. Good for scripts and quick questions.
+Runs one task and exits — non-zero if the turn did not happen (no model, or a
+step that needed a yes nobody could give). Good for scripts and CI.
 
 ### Pipe Mode
 
 ```bash
-cat error.log | ignite-ember -p -m "What caused this crash?"
+cat error.log | igni -p -m "What caused this crash?"
 ```
 
-Reads stdin, processes it with your message, writes to stdout. No interactive UI.
+Reads stdin, processes it with your message, writes to stdout.
 
-### TUI Mode
+### The desktop app and IDE extensions
 
-```bash
-ignite-ember
-```
-
-The TUI launches by default — full terminal UI with streaming responses, session management, token tracking, agent tree visualization, and keyboard shortcuts.
-
-### Keyboard Shortcuts
-
-| Action | macOS | Linux/Windows |
-|---|---|---|
-| Send message | `Enter` | `Enter` |
-| New line | `⇧Enter` | `Shift+Enter` |
-| Quit | `⌃D` | `Ctrl+D` |
-| Clear screen | `⌃L` | `Ctrl+L` |
-| Expand/collapse all | `⌃O` | `Ctrl+O` |
-| Toggle verbose mode | `⌃V` | `Ctrl+V` |
-| Toggle queue panel | `⌃Q` | `Ctrl+Q` |
-| Input history | `↑/↓` | `Up/Down` |
-| Cancel current operation | `Esc` | `Escape` |
+The interactive chat: streaming replies, the agent tree, the session list,
+approval dialogs and slash commands. `/help` lists the commands and
+`/help shortcuts` the keys.
 
 ### Shell Mode
 
@@ -202,16 +217,18 @@ Agents are `.md` files with YAML frontmatter. Each agent has a role, tools, and 
 
 ```
 .igni/agents/
-├── architect.md      # plans + designs (always first)
-├── editor.md         # creates and modifies files; owns git safety
-├── explorer.md       # reads and searches the codebase
-├── reviewer.md       # reviews code for quality
-├── simplifier.md     # post-edit code polish
-├── security.md       # vulnerability analysis
-├── qa.md             # test generation and review
-├── debugger.md       # bug diagnosis and root cause analysis
-└── docs.md           # documentation maintenance
-# plus .codeindex.md variants for CodeIndex-first workflows
+├── architect.md        # plans + designs (always first)
+├── editor.md           # creates and modifies files; owns git safety
+├── explorer.md         # reads and searches the codebase
+├── plan_researcher.md  # researches for a plan
+├── reviewer.md         # reviews code for quality
+├── simplifier.md       # post-edit code polish
+├── security.md         # vulnerability analysis
+├── qa.md               # test generation and review
+├── debugger.md         # bug diagnosis and root cause analysis
+├── docs.md             # documentation maintenance
+└── visualizer.md       # diagrams
+# the CodeIndex extension adds its own CodeIndex-first variants
 ```
 
 Open them, read them, change them. Drop new `.md` files in to add your own agents.
@@ -260,7 +277,9 @@ igni loads config from multiple layers (highest priority first):
 
 ### Minimal Config
 
-If you're using an igni account, no config is needed — defaults work out of the box.
+With an igni server, `api_url` (and `portal_url` if it differs) in
+`~/.igni/config.yaml` and a sign-in are all it needs — the models come from
+the server.
 
 For BYOM, the minimum is a model registry entry (see [Authenticate](#authenticate) above). You can also tune permissions:
 
@@ -296,13 +315,13 @@ Control how much the agent can do without asking:
 
 | Command | Behavior |
 |---|---|
-| `ignite-ember` | Asks for file writes and shell commands |
-| `ignite-ember --accept-edits` | Auto-approves file edits, asks for shell |
-| `ignite-ember --read-only` | No file modifications allowed |
-| `ignite-ember --strict` | Denies the agent anything without an allow rule; asks before an organisation group hook runs |
-| `ignite-ember --auto-approve` | Auto-approves everything (use with caution) |
+| `igni -m …` | Asks for file writes and shell commands — headless, that means it stops (see [A headless run cannot ask you anything](#a-headless-run-cannot-ask-you-anything)) |
+| `igni --accept-edits -m …` | Auto-approves file edits, asks for shell |
+| `igni --read-only -m …` | No file modifications — and no shell, so no reading the working tree either; `permissions.mode: plan` is the read-only mode that can read |
+| `igni --strict -m …` | Denies the agent anything without an allow rule; asks before an organisation group hook runs |
+| `igni --auto-approve -m …` | Auto-approves everything (use with caution) |
 
-When prompted for approval, you can:
+When the desktop app or an IDE extension asks for approval, you can:
 - **[y] Allow once** — approve this specific call
 - **[a] Always allow** — permanently allow this exact command
 - **[s] Allow similar** — permanently allow the pattern (e.g., `pytest *`)
@@ -312,7 +331,8 @@ When prompted for approval, you can:
 
 ## Slash Commands
 
-In interactive mode, use `/` commands:
+In the desktop app and IDE extensions, use `/` commands (`igni -m "/help"`
+prints the full list; most also work as `igni -m "/<command>"`):
 
 | Command | What It Does |
 |---|---|
@@ -320,15 +340,16 @@ In interactive mode, use `/` commands:
 | `/clear` | Clear conversation and reset session |
 | `/config` | Show current settings |
 | `/agents` | List loaded agents with their tools |
-| `/sessions` | Browse and resume past sessions (TUI only) |
-| `/rename` | Rename current session (TUI only) |
-| `/memory` | List stored memories (TUI only) |
-| `/knowledge` | Show knowledge base status (TUI only) |
-| `/knowledge add <url\|path>` | Add content to knowledge base |
-| `/knowledge search <query>` | Search the knowledge base |
-| `/sync-knowledge` | Manually sync knowledge between git and vector DB |
-| `/commit` | Generate a commit (skill) |
-| `/resolve-issues [base]` | Fix issues CodeIndex flagged in your branch (skill) |
+| `/sessions` | Browse and resume past sessions |
+| `/rename` | Rename current session |
+| `/memory` | List stored memories |
+| `/plan`, `/accept`, `/bypass` | Switch permission mode |
+| `/login`, `/logout`, `/whoami` | Your igni server session |
+| `/commit`, `/pr`, `/explain`, `/test-plan`, `/migration` | The bundled skills |
+
+Project knowledge (documents, decisions) is the Artifacts extension's and
+CodeIndex's `/resolve-issues` is CodeIndex's — both arrive as extensions from
+your igni server, not with igni.
 
 ---
 
@@ -337,11 +358,11 @@ In interactive mode, use `/` commands:
 igni persists sessions to SQLite. Pick up where you left off:
 
 ```bash
-ignite-ember --continue           # resume last session
-ignite-ember --session-id abc123  # resume specific session
+igni -c -m "and now the tests"            # continue the last session
+igni --session-id abc123 -m "carry on"    # continue a specific one
 ```
 
-Or use `/sessions` in interactive mode to browse past sessions.
+Or use `/sessions` in the desktop app to browse past sessions.
 
 ---
 
@@ -355,21 +376,12 @@ from your organisation's Artifacts service through igni server once you are
 signed in and a super admin has approved that service; nothing in
 `.igni/config.yaml` turns it on.
 
-### MCP (IDE Integration)
+### MCP
 
-Use igni as a tool server in VS Code, Cursor, or JetBrains:
-
-```json
-{
-  "mcpServers": {
-    "ignite-ember": {
-      "type": "stdio",
-      "command": "ignite-ember",
-      "args": ["mcp", "serve"]
-    }
-  }
-}
-```
+igni is an MCP *client*: servers in `.mcp.json` (or added with `/mcp` in the
+app) give the agent their tools. igni as an MCP *server* (`igni mcp serve`) is
+not shipped — this section used to show its config, and the command does not
+exist. For an IDE, use the VS Code or JetBrains extension.
 
 ### Web Tools
 
@@ -445,6 +457,7 @@ All flags at a glance:
 | `--no-color` | Disable color output |
 | `--worktree` | Run in an isolated git worktree |
 | `--add-dir <path>` | Include additional directory (repeatable) |
+| `--trust` | Trust this folder for this run (its tools, hooks and settings load) |
 | `--debug` | Enable debug logging to ~/.igni/debug.log |
 
 ---

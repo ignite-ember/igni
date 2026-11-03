@@ -35,34 +35,42 @@ The architectural choices that drive the gap: (1) **CodeIndex queried first, not
 |---|---|---|
 | Architecture | Single agent loop | Multi-agent teams (Agno) |
 | Task routing | Manual sub-agent spawning | Automatic via Coordinate/Route modes |
-| Code intelligence | Grep + file reads | CodeIndex semantic search (included free) |
-| Knowledge base | None | ChromaDB vector store with custom embeddings |
+| Code intelligence | Grep + file reads | Shell-first reads; CodeIndex semantic search as a licensed extension |
+| Project knowledge | None | The Artifacts extension (licensed; its own Neo4j store), served through your igni server |
 | Planning | Plan mode (read-only) | Agno reasoning + Tasks mode |
-| IDE integration | MCP server (stdio) | MCP server + client (Agno MCPTools) |
+| IDE integration | MCP server (stdio) | VS Code and JetBrains extensions; MCP client (Agno MCPTools) |
 | Extensibility | Plugins, hooks, MCP | Agents + hooks + toolkits + MCP |
 | Agent evals | Not built-in | Built-in regression testing framework |
 | Memory | File-based MEMORY.md | Agno Memory + DB-backed storage |
 | Learning | None | Agno LearningMachine (user profiles, entity memory) |
 | Guardrails | None | PII detection, prompt injection, moderation |
 | HITL | Implicit | Explicit confirmation/input requirements |
-| Default model | Anthropic Claude | MiniMax M2.7 (model-agnostic, swappable) |
+| Default model | Anthropic Claude | Whatever your igni server routes to, or your own (model-agnostic) |
 
 ## Quick Start
 
 ```bash
 brew install ignite-ember/tap/ignite-ember  # or: pip install ignite-ember
-igni                             # start coding
+cd your-project
+igni -m "In one sentence, what does this project do?"
 ```
 
 `igni` is the command; `ignite-ember` is kept as an alias so existing
 shell aliases and scripts keep working. Both are the same entry point.
+On the command line it runs **one task and exits** (`-m`, or `-p` for a
+pipe); there is no terminal chat UI any more — run it bare and it says so.
+The interactive chat is the desktop app and the VS Code and JetBrains
+extensions. A headless run cannot ask before it runs a command, so decide
+up front what it may do — see
+[A headless run cannot ask you anything](QUICKSTART.md#a-headless-run-cannot-ask-you-anything).
 
 To point it at your own igni server, set `api_url` in your user config,
 `~/.igni/config.yaml` — not a project's `.igni/config.yaml` or
 `config.local.yaml`, which may not name a server and are ignored for it,
-with a warning — and type `/login` **inside** a session. It is a slash
-command, not a shell subcommand: `igni /login` at a shell prompt answers
-`Error: No such command`.
+with a warning — and sign in once from the desktop app or an IDE extension
+(`/login` in its chat). That writes `~/.igni/credentials.json`, which
+`igni -m` uses too. `/login` is not a shell subcommand: `igni /login` answers
+`Error: No such command`, and `igni -m /login` only says where to sign in.
 
 ```yaml
 # ~/.igni/config.yaml
@@ -103,9 +111,9 @@ See [Quickstart](QUICKSTART.md) for the full setup guide.
 
 1. **Install** — `brew install ignite-ember/tap/ignite-ember` (or `pip install ignite-ember`)
 2. **Configure a model** — set `OPENAI_API_KEY` (or any provider key) and add the
-   model to `.igni/config.yaml`; or point `api_url` at your igni server and run
-   `/login` inside a session
-3. **Run** — `igni`
+   model to `.igni/config.yaml`; or point `api_url` at your igni server and sign
+   in from the desktop app or an IDE extension
+3. **Run** — `igni -m "…"`, or the desktop app
 
 See [Quickstart](QUICKSTART.md) for the full guide.
 
@@ -205,11 +213,15 @@ If `brew upgrade` doesn't work or you encounter issues, manually reinstall:
 brew uninstall ignite-ember && brew untap ignite-ember/tap && brew tap ignite-ember/tap && brew install ignite-ember
 ```
 
-## TUI Mode
+## Clients
 
-`ignite-ember` launches the Textual-based terminal UI by default. The backend runs as a separate process, connected via Unix socket.
-
-Features: streaming responses, agent tree visualization, token tracking, session picker, keyboard shortcuts, HITL confirmation dialogs.
+The Textual terminal UI was removed in v0.9.7. The interactive chat is the
+desktop app (Tauri) and the VS Code and JetBrains extensions, which share one
+web UI (`clients/web`) and talk to the backend over a Unix socket
+(`python -m ember_code.backend --socket <path>`). Features: streaming
+responses, agent tree visualization, token tracking, session picker, keyboard
+shortcuts, HITL confirmation dialogs. In a terminal, `igni -m` and `igni -p`
+run one task.
 
 ## IDE Integration
 
@@ -221,20 +233,13 @@ In the other direction, igni acts as an MCP *client*: configure external MCP ser
 
 ## Key Features
 
-### Knowledge Base
+### Project knowledge
 
-Built-in vector knowledge base powered by ChromaDB and a local embedding model (all-MiniLM-L6-v2 — no API call, nothing leaves the machine):
-
-```yaml
-knowledge:
-  enabled: true
-  collection_name: "my_project"
-  # Embeddings are local (all-MiniLM-L6-v2) and not configurable — this
-  # line offered a choice between a local model and a cloud one, and
-  # `KnowledgeConfig` has no `embedder` field at all.
-```
-
-Add content via slash commands: `/knowledge add <url|path|text>`, search with `/knowledge search <query>`. Agents can search the knowledge base automatically during execution.
+There is no knowledge base in igni itself any more: the `knowledge:` settings
+and `/knowledge` commands left with the Artifacts module, a separate licensed
+service that keeps project documents and decisions in its own Neo4j store and
+ships its extension through your igni server. A super admin approves the
+service once; signed-in people get its tools.
 
 ### Learning & Reasoning
 
@@ -254,7 +259,7 @@ guardrails:
 
 ### Human-in-the-Loop (HITL)
 
-Agents can pause execution to request confirmation or user input before proceeding with sensitive operations. The TUI shows interactive approval dialogs.
+Agents can pause execution to request confirmation or user input before proceeding with sensitive operations. The desktop app and IDE extensions show interactive approval dialogs; a headless `igni -m` cannot, so it follows the permission policy and stops at anything only a person could approve.
 
 ## Documentation
 
