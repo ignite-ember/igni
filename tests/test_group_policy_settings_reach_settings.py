@@ -332,9 +332,15 @@ class TestTheEntryPointsBuildOne:
         hand-built plan — this is the combination an operator relies on."""
         from ember_code.cli.invocation import load_settings_from_options
         from ember_code.cli.options import CliOptions
+        from ember_code.core.config.permission_eval import PermissionDecision
+        from ember_code.core.config.permission_eval.pipeline import PermissionEvaluator
 
-        _publish({"permissions": {"shell_execute": "allow"}})
+        _publish({"permissions": {"shell_execute": "allow", "read_only": False}})
 
         settings = load_settings_from_options(CliOptions(read_only=True))
+        evaluator = PermissionEvaluator.from_permissions(settings.permissions)
 
-        assert settings.permissions.shell_execute == "deny"
+        assert settings.permissions.read_only is True
+        assert evaluator.evaluate("run_shell_command", {"command": "rm -rf x"}) is (
+            PermissionDecision.DENY
+        )

@@ -355,6 +355,13 @@ class TelemetryTier(OrganisationOnlyTier):
         return TelemetryConfig.model_construct(otlp=OtlpConfig.model_construct()).model_dump()
 
 
+#: A permission field's tightest value, where it is not ``"deny"``: what the
+#: command line set that a group may not loosen. ``--read-only`` sets
+#: ``read_only: true``, and a group's ``read_only: false`` would otherwise
+#: have switched it off.
+_TIGHTEST: dict[str, object] = {"read_only": True}
+
+
 class CliTier(Tier):
     """In-memory CLI overrides merged into the accumulator.
 
@@ -394,7 +401,7 @@ class CliTier(Tier):
 
         permissions = payload.get("permissions") or {}
         self.denied_by_cli = frozenset(
-            field for field, value in permissions.items() if value == "deny"
+            field for field, value in permissions.items() if value == _TIGHTEST.get(field, "deny")
         )
         hooks = payload.get("hooks")
         self.hooks_group = hooks.get("group") if isinstance(hooks, dict) else None
@@ -676,7 +683,7 @@ class GroupPolicyTier(Tier):
             permissions = dict(payload.get("permissions") or {})
             for field in sorted(denied):
                 attempted = permissions.get(field)
-                if attempted is not None and attempted != "deny":
+                if attempted is not None and attempted != _TIGHTEST.get(field, "deny"):
                     self.refused_loosening[field] = str(attempted)
                     # Drop the key rather than writing 'deny' back: the
                     # accumulator already holds the CLI's deny, and

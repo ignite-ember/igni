@@ -84,13 +84,22 @@ class TestTheRatchetHolds:
     def test_a_group_cannot_undo_read_only_either(self):
         """``--read-only`` is the same shape, and a fix for one flag that
         misses the other is not a fix."""
-        permissions, _ = _resolve(
+        permissions, group_tier = _resolve(
             CliOptions(read_only=True),
-            {"permissions": {"file_write": "allow", "shell_execute": "allow"}},
+            {"permissions": {"file_write": "allow", "read_only": False}},
         )
 
         assert permissions["file_write"] == "deny"
-        assert permissions["shell_execute"] == "deny"
+        # ``--read-only`` keeps the shell for reads; ``read_only`` is the
+        # guarantee, and a group cannot switch it off either.
+        assert permissions["read_only"] is True
+        assert group_tier.refused_loosening == {"file_write": "allow", "read_only": "False"}
+
+    def test_a_group_may_still_turn_read_only_on(self):
+        permissions, group_tier = _resolve(CliOptions(), {"permissions": {"read_only": True}})
+
+        assert permissions["read_only"] is True
+        assert group_tier.refused_loosening == {}
 
     def test_the_refusal_is_recorded(self):
         _, group_tier = _resolve(
