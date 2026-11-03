@@ -551,9 +551,9 @@ class PermissionEvaluatorStage(PermissionStage):
 
 #: What to suggest when a denial would otherwise leave the model with no move.
 #:
-#: ``--read-only`` denies the shell, and igni reads files through the shell — so
-#: the first thing an agent tries in a read-only session is the thing it cannot
-#: do. A bare "permission policy denied 'run_shell_command'" tells it nothing
+#: ``--strict`` (or ``shell_execute: deny``) denies the shell, and igni reads
+#: files through the shell — so the first thing an agent tries in such a session
+#: is the thing it cannot do. A bare "permission policy denied 'run_shell_command'" tells it nothing
 #: about whether to stop, rephrase, or try a different tool, and a model with no
 #: stated alternative tends to retry the same call in a new costume.
 #:

@@ -67,7 +67,10 @@ class TestCLIFlags:
             runner.invoke(cli, ["--read-only", "-m", "hi"], catch_exceptions=False)
             overrides = mock_load.call_args[1].get("cli_overrides", {})
             assert overrides["permissions"]["file_write"] == "deny"
-            assert overrides["permissions"]["shell_execute"] == "deny"
+            # The shell stays for reads; ``read_only`` refuses the rest.
+            assert "shell_execute" not in overrides["permissions"]
+            assert overrides["permissions"]["read_only"] is True
+            assert overrides["permissions"]["mode"] == "plan"
 
     def test_auto_approve_flag(self):
         runner = CliRunner()

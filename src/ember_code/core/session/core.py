@@ -1111,17 +1111,13 @@ class Session:
         if settings is not None:
             self.settings = settings
         perms = self.settings.permissions
-        cat_deny, cat_ask, cat_allow = perms.category_rules()
-        fresh = PermissionEvaluator.from_strings(
-            mode=perms.mode,
-            deny=[*perms.deny, *cat_deny],
-            ask=[*perms.ask, *cat_ask],
-            allow=[*perms.allow, *cat_allow],
-        )
+        fresh = PermissionEvaluator.from_permissions(perms)
         evaluator = self._tool_hook_factory.permission_evaluator
         evaluator.deny[:] = fresh.deny
         evaluator.ask[:] = fresh.ask
         evaluator.allow[:] = fresh.allow
+        # Only ever tightened here: ``--read-only`` held for the session.
+        evaluator.read_only = evaluator.read_only or fresh.read_only
         if evaluator.mode.value == old_mode and perms.mode != old_mode:
             with contextlib.suppress(ValueError):
                 evaluator.set_mode(PermissionMode(perms.mode))

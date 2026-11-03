@@ -83,7 +83,15 @@ logger = stdlib_logging.getLogger(__name__)
     "--continue", "-c", "continue_session", is_flag=True, help="Resume the most recent session"
 )
 @click.option("--session-id", default=None, help="Resume a specific session by ID")
-@click.option("--read-only", is_flag=True, help="No file modifications")
+@click.option(
+    "--read-only",
+    is_flag=True,
+    help=(
+        "Read, never change: read-only shell commands (cat, ls, rg, git log, …) "
+        "run without asking; edits, any other shell command, the web, and "
+        "extension tools that change something are refused, not asked"
+    ),
+)
 @click.option("--accept-edits", is_flag=True, help="Auto-approve file edits")
 @click.option("--auto-approve", is_flag=True, help="Auto-approve everything")
 @click.option(

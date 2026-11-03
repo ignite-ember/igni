@@ -30,15 +30,8 @@ from ember_code.core.config.schemas.permissions import PermissionsConfig
 
 
 def _decide(perms: PermissionsConfig, tool: str, args: dict) -> str:
-    """Mirror what ``ToolHookFactory.permission_evaluator`` builds."""
-    cat_deny, cat_ask, cat_allow = perms.category_rules()
-    evaluator = PermissionEvaluator.from_strings(
-        mode=perms.mode,
-        deny=[*perms.deny, *cat_deny],
-        ask=[*perms.ask, *cat_ask],
-        allow=[*perms.allow, *cat_allow],
-    )
-    return evaluator.evaluate(tool, args).name
+    """What ``ToolHookFactory.permission_evaluator`` builds decides."""
+    return PermissionEvaluator.from_permissions(perms).evaluate(tool, args).name
 
 
 class TestALevelThatDiffersFromTheDefaultTakesEffect:
@@ -109,20 +102,16 @@ def test_every_mapped_category_is_a_real_field(category: str):
 
 
 class TestReadOnlyIsAWall:
-    """``--read-only`` denies the shell, and the denial explains itself.
+    """``--read-only`` reads, and refuses what writes, and the refusal explains itself.
 
-    The wall is the chosen trade: igni reads files through
-    ``run_shell_command``, so denying it costs the agent its view of the working
-    tree. Leaving the shell open would leave ``>``, ``sed -i`` and
-    ``git checkout`` able to write, making the flag an honour system rather than
-    the guarantee people reach for it to get.
-
-    The assertions below would both have passed vacuously before the categories
-    were wired — the setting existed and nothing read it — which is why the
-    behavioural check matters more than the config one.
+    It used to deny the shell outright, which cost the agent its view of the
+    working tree (igni reads files through ``run_shell_command``). Now a
+    command built only from the read-only allow-list runs and any other is
+    refused rather than asked — ``>``, ``sed -i`` and ``git checkout`` stay
+    shut. The rest is in tests/test_read_only_reads_and_refuses_the_rest.py.
     """
 
-    def test_the_shell_is_actually_denied(self):
+    def test_reads_run_and_writes_are_denied(self):
         from ember_code.cli.options import CliOptions
         from ember_code.core.config.models import CliOverrides
         from ember_code.core.config.settings import load_settings
@@ -130,15 +119,16 @@ class TestReadOnlyIsAWall:
         payload = CliOverrides.from_options(CliOptions(read_only=True)).to_settings_payload()
         perms = load_settings(cli_overrides=payload).permissions
 
-        assert _decide(perms, "run_shell_command", {"command": "cat setup.py"}) == "DENY"
+        assert _decide(perms, "run_shell_command", {"command": "cat setup.py"}) == "ALLOW"
+        assert _decide(perms, "run_shell_command", {"command": "git checkout -- ."}) == "DENY"
+        assert _decide(perms, "run_shell_command", {"command": "echo x > a.py"}) == "DENY"
         assert _decide(perms, "edit_file", {"file_path": "a.py"}) == "DENY"
 
     def test_an_extension_s_read_only_tool_stays_reachable(self):
         """The mode is only useful if something can still read.
 
-        An extension tool whose manifest says it changes nothing is not
-        swept up by the shell deny: ``--read-only`` is plan mode, and
-        plan mode runs read-only tools. igni does not know which
+        An extension tool whose manifest says it changes nothing runs:
+        ``--read-only`` runs reads. igni does not know which
         extension it is, only what the tool says it is.
         """
         from ember_code.cli.options import CliOptions

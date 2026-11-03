@@ -79,17 +79,11 @@ class PermissionOverrides(BaseModel):
     ``/config`` summary.
 
     So they carry the half of each flag that ``mode`` alone cannot
-    express. ``--read-only`` is the clearest case. Its
-    ``PermissionMode.PLAN`` stops the file-edit tools and the shell
-    commands ``BashCommand``'s mutation heuristic recognises — but
-    the heuristic is a heuristic: measured on this tree, plan mode
-    alone returns ALLOW for ``git checkout -- .``, which discards the
-    working tree. The ``shell_execute = "deny"`` set below is what
-    closes the shell outright, heuristic or no heuristic. Drop these
-    fields and ``--read-only`` degrades from a guarantee to a list of
-    command shapes somebody remembered. ``--no-web`` is starker
-    still: it sets no mode at all, so those two web fields are the
-    entire flag.
+    express. ``--no-web`` is the starkest case: it sets no mode at all,
+    so those two web fields are the entire flag. ``--read-only`` is the
+    other way round: its ``PermissionMode.PLAN`` is what the person sees
+    and what ``exit_plan_mode`` talks about, and ``read_only`` is the
+    guarantee — held by the evaluator, so it survives a mode switch.
     """
 
     mode: PermissionMode | None = None
@@ -99,6 +93,7 @@ class PermissionOverrides(BaseModel):
     git_destructive: str | None = None
     web_search: str | None = None
     web_fetch: str | None = None
+    read_only: bool | None = None
 
     def to_payload(self) -> dict[str, Any]:
         """Dict shape :meth:`SettingsLoader.merge_cli` still expects.
@@ -119,6 +114,8 @@ class PermissionOverrides(BaseModel):
             value = getattr(self, name)
             if value is not None:
                 payload[name] = value
+        if self.read_only:
+            payload["read_only"] = True
         return payload
 
 
@@ -174,25 +171,16 @@ class CliOverrides(BaseModel):
         if opts.read_only:
             perms.mode = PermissionMode.PLAN
             perms.file_write = "deny"
-            # The shell is denied too, and this is a deliberate trade rather
-            # than an oversight. Until the per-category levels were honoured
-            # this line did nothing; now it bites, and it bites hard: igni reads
-            # a file through ``run_shell_command``, so denying the shell denies
-            # reading the working tree.
-            #
-            # Kept anyway, because the alternative is a flag that cannot keep
-            # its promise. Leaving the shell open means ``>``, ``sed -i`` and
-            # ``git checkout`` all still write, so ``--read-only`` would be an
-            # honour system rather than a guarantee — and the point of the flag
-            # is to be the thing you reach for when you want the guarantee.
-            #
-            # What survives is analysis that does not go through the shell:
-            # the tools an extension declares read-only (plan mode runs
-            # them), the notebook readers, and web search/fetch. How much
-            # that is depends on what is installed, which is why the denial
-            # message points at the other tools instead of leaving the model
-            # to discover them by failing.
-            perms.shell_execute = "deny"
+            # Plan-mode reads, with no questions. The shell stays open for the
+            # commands on the read-only allow-list (``cat``, ``ls``, ``rg``,
+            # ``git log``, …) — igni reads files through the shell, so denying
+            # it outright, as this flag used to, left a read-only agent unable
+            # to read. Every other shell command is refused, not asked, and so
+            # are the web tools and an extension's tools that change or reach
+            # outside: ``read_only`` is checked by the evaluator before the
+            # mode, and survives a mode switch. See
+            # tests/test_read_only_reads_and_refuses_the_rest.py.
+            perms.read_only = True
         if opts.strict:
             perms.mode = PermissionMode.DONT_ASK
             perms.file_write = "deny"

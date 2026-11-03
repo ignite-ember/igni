@@ -52,8 +52,8 @@ purpose. igni has no read tool — a file is read with `run_shell_command` — s
 in the default mode `cat`, `ls` and `rg` ask like any other command, and a
 headless `igni -m` cannot read a file unless something allows it. To let reads
 run unasked, add allow rules (`permissions.allow`, or "Allow similar" at the
-prompt), or set `permissions.mode: plan`, where a command runs without asking
-only if it is built entirely from read-only commands (`rg`, `cat`, `ls`, `git
+prompt), pass `--read-only` (below), or set `permissions.mode: plan`, where a
+command runs without asking only if it is built entirely from read-only commands (`rg`, `cat`, `ls`, `git
 diff`, …) and anything else is put to you. The default mode does not make that
 exemption: a read nobody sees, next to `web_fetch`, is how a file leaves the
 machine.
@@ -118,7 +118,7 @@ needs its rule, and a deny or ask rule naming a filter still applies to it.
 | `ignite-ember` (default) | Asks for writes and shell commands |
 | `ignite-ember --accept-edits` | Auto-approves file edits, asks for shell |
 | `ignite-ember --strict` | Denies anything without an explicit allow rule, including reads — it never asks about the agent's tools. Hooks your organisation's group policy ships run only once you approve them (`hooks.group: ask`), and not at all headless |
-| `ignite-ember --read-only` | Denies the write tools **and the shell** — a hard wall (see below) |
+| `ignite-ember --read-only` | Reads, never changes: read-only shell commands run without asking; edits, every other shell command and the web are refused, not asked (see below) |
 | `ignite-ember --auto-approve` | Auto-approves everything (use with caution) |
 
 #### The last check before `--auto-approve` runs a call
@@ -148,32 +148,34 @@ check cannot run, and a call that would have been checked is *asked about*,
 never let through. A headless run with nobody to ask refuses it with the
 reason.
 
-#### What `--read-only` costs
+#### What `--read-only` does
 
-It denies the write tools — `save_file`, `create_file`, `edit_file`,
-`edit_file_replace_all` and the notebook mutations — **and `run_shell_command`**.
+It is plan mode's reads with no questions, for the whole session:
 
-Denying the shell is the deliberate half. igni has no read tool: a file is read
-with `run_shell_command "cat <path>"`. So `--read-only` cannot read your working
-tree, and that is the price of the guarantee. Leaving the shell open would mean
-`>`, `sed -i` and `git checkout` still write, which makes the flag an honour
-system rather than a wall — and a wall is the thing you reach for this flag to
-get.
+- **Runs without asking:** a shell command built entirely from the read-only
+  allow-list — `cat`, `ls`, `head`, `tail`, `wc`, `rg`, `grep`, `find`
+  (without `-exec`/`-delete`), `diff`, `stat`, `jq`, `git status`/`log`/
+  `diff`/`show`/`blame`/`ls-files`/`grep`/`branch` (listing), and pipes
+  between them. igni has no read tool, so this is how the agent reads your
+  working tree. Also an extension's tools that only read their own data
+  (CodeIndex's `codeindex_cypher`, for one), and the notebook readers.
+- **Refused, not asked:** every other shell command — anything that writes
+  (`>`, `sed -i`, `git checkout`), deletes (`rm`, `find -delete`), runs
+  another program (`xargs`, `| sh`, `python3`) or reaches the network (`curl`,
+  `git push`, `pip install`) — the edit tools, `web_search` and `fetch_url`,
+  and an extension's tools that change something or reach outside.
 
-What still works is analysis that does not route through the shell:
+The allow-list, not a list of dangerous commands, is the boundary: a command
+nobody anticipated is refused. Deny rules still win over a read, and an ask
+rule that names a read still asks.
 
-- an extension's read-only tools — CodeIndex's `codeindex_cypher` queries the
-  code graph, and is the intended way to explore a codebase in this mode;
-- the notebook readers;
-- `web_search` and `fetch_url`.
+Switching mode does not reopen it: `/plan off` or `/bypass` in a `--read-only`
+session leaves the refusals in place, because the evaluator checks the flag
+before the mode. `permissions.mode: plan` on its own is the softer version —
+the same reads run, but other commands are put to you instead of refused.
 
-The practical consequence: `--read-only` is a strong mode **when CodeIndex is
-populated** and a thin one when it is not. If you want an agent that can read
-files but not edit them, do not use this flag — run without it and answer the
-write prompts, or use `--accept-edits` against a scratch copy.
-
-When a shell call is denied the model is told so explicitly, along with the
-alternatives, rather than receiving a bare refusal it will try to work around.
+When a call is refused the model is told why and what still works, rather
+than receiving a bare refusal it will try to work around.
 
 In a headless run (`-m` / `--pipe`) the agent submits its plan and the CLI
 prints it before exiting, since there is no plan card to approve and no second

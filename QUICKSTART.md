@@ -129,12 +129,14 @@ the shell, which asks by default. So out of the box the question above stops
 at its first `cat` with *"Run paused for confirmation … the tool did not
 run"* and exits 1. Decide up front what it may do:
 
-```yaml
-# ~/.igni/config.yaml — reads only: commands built entirely from read-only
-# ones (cat, rg, ls, git diff, …) run; edits are refused; anything else stops
-permissions:
-  mode: plan
+```bash
+# reads only: commands built entirely from read-only ones (cat, rg, ls,
+# git diff, …) run; edits and anything else are refused
+igni --read-only -m "…"
 ```
+
+(`permissions.mode: plan` in `~/.igni/config.yaml` is the same for reads, but
+puts any other command to you — headless, that stops the run.)
 
 ```yaml
 # or name what may run, e.g. for "fix the failing test":
@@ -329,7 +331,7 @@ Control how much the agent can do without asking:
 |---|---|
 | `igni -m …` | Asks for file writes and shell commands — headless, that means it stops (see [A headless run cannot ask you anything](#a-headless-run-cannot-ask-you-anything)) |
 | `igni --accept-edits -m …` | Auto-approves file edits, asks for shell |
-| `igni --read-only -m …` | No file modifications — and no shell, so no reading the working tree either; `permissions.mode: plan` is the read-only mode that can read |
+| `igni --read-only -m …` | Reads, never changes: read-only shell commands (`cat`, `ls`, `rg`, `git log`, …) run without asking; edits, any other shell command and the web are refused, not asked |
 | `igni --strict -m …` | Denies the agent anything without an allow rule; asks before an organisation group hook runs |
 | `igni --auto-approve -m …` | Auto-approves everything (use with caution) |
 
@@ -461,7 +463,7 @@ All flags at a glance:
 | `-p, --pipe` | Pipe mode: read stdin, write stdout |
 | `-c, --continue` | Resume last session |
 | `--session-id <id>` | Resume specific session |
-| `--read-only` | No file modifications allowed |
+| `--read-only` | Read-only shell commands run unasked; edits, other shell commands and the web are refused |
 | `--accept-edits` | Auto-approve file edits, ask for shell |
 | `--auto-approve` | Auto-approve everything (use with caution) |
 | `--strict` | Deny the agent anything without an explicit allow rule (reads included); run your organisation's group hooks only once you approve them (`hooks.group: ask`) |

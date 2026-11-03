@@ -82,23 +82,13 @@ class ToolEventHookFactory:
         needing to know when the evaluator was constructed.
         """
         if self._permission_evaluator is None:
-            perms = self._settings.permissions
-            # The per-category levels (``file_write``, ``shell_execute``, …) are
-            # appended behind the explicit lists. They are documented in
-            # SECURITY.md as igni's permission model and were read by nothing:
-            # their only consumer, ``PermissionGuard``, was never constructed.
-            # Appended rather than merged, so an explicit rule is never
-            # dropped. Note that ordering does NOT create an exception: the
-            # evaluator runs deny before allow and treats deny as its safety
-            # floor, so a category set to ``deny`` cannot be reopened by a
-            # specific allow. Verified, not assumed — see
-            # tests/test_permission_categories_are_live.py.
-            cat_deny, cat_ask, cat_allow = perms.category_rules()
-            self._permission_evaluator = PermissionEvaluator.from_strings(
-                mode=perms.mode,
-                deny=[*perms.deny, *cat_deny],
-                ask=[*perms.ask, *cat_ask],
-                allow=[*perms.allow, *cat_allow],
+            # Built from the ``permissions`` block: the explicit lists, the
+            # per-category levels behind them (documented in SECURITY.md as
+            # igni's permission model, and read by nothing until they were
+            # wired here — see tests/test_permission_categories_are_live.py),
+            # and ``--read-only``.
+            self._permission_evaluator = PermissionEvaluator.from_permissions(
+                self._settings.permissions
             )
         return self._permission_evaluator
 
