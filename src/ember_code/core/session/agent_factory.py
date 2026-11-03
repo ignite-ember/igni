@@ -1,6 +1,6 @@
 """Agno-agent construction helpers.
 
-Small factory functions that turn ember-code ``Settings`` into
+Small factory functions that turn igni ``Settings`` into
 Agno constructor arguments. Extracted from
 :mod:`ember_code.core.session.core` so the god-file has fewer
 top-level defs and these building blocks can be tested and

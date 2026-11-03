@@ -604,7 +604,7 @@ class Session:
         """Whether the cached pack carries anything of this kind.
 
         Asked before the bundled equivalents are scaffolded: when the
-        group ships agents, ember-code's own must not be written beside
+        group ships agents, igni's own must not be written beside
         them, and when it ships hooks, the built-in ones must not be
         registered twice.
         """

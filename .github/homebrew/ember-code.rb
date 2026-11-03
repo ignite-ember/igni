@@ -2,7 +2,7 @@ class EmberCode < Formula
   include Language::Python::Virtualenv
 
   desc "Terminal-based AI coding assistant"
-  homepage "https://github.com/ignite-ember/ember-code"
+  homepage "https://github.com/ignite-ember/igni"
   url "https://files.pythonhosted.org/packages/source/e/ember-code/ember_code-0.1.0.tar.gz"
   sha256 "PLACEHOLDER"
   license "MIT"

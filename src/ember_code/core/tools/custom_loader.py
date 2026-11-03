@@ -7,7 +7,7 @@ This module executes arbitrary Python code found in the user's
 via ``importlib.util.spec_from_file_location`` + ``exec_module``.
 There is intentionally NO sandboxing: the tool files come from
 directories the user themselves put code in, on the machine they
-run ember-code on. Treating them as untrusted would require full
+run igni on. Treating them as untrusted would require full
 process isolation (subprocess + seccomp / gVisor / etc.), which is
 out of scope for a CLI developer tool.
 

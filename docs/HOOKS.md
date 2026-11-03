@@ -508,7 +508,7 @@ echo '{"continue": true}'
     "PostToolUse": [
       {
         "type": "http",
-        "url": "https://monitoring.internal.corp.com/ember-code/tool-usage",
+        "url": "https://monitoring.internal.corp.com/igni/tool-usage",
         "headers": {
           "Authorization": "Bearer ${MONITORING_API_KEY}"
         },

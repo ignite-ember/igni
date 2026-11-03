@@ -11,7 +11,7 @@ survived the refactors, with one line on what each is *for*. For the
 current file list inside any of them, `ls` it.
 
 ```
-ember-code/
+igni/
 ├── src/ember_code/         # the Python package (import name stays `ember_code`)
 │   ├── __main__.py         # entry point behind `igni`, `ignite-ember`, `python -m ember_code`
 │   ├── cli/                # non-interactive command surface: flags, `-m`, pipe mode, resume
@@ -328,7 +328,7 @@ isolation and none of them becomes the god-class.
 
 ## Roadmap
 
-See [GitHub Issues](https://github.com/ignite-ember/ember-code/issues) for the current roadmap.
+See [GitHub Issues](https://github.com/ignite-ember/igni/issues) for the current roadmap.
 
 **Planned features:**
 - [x] Tracing (OpenTelemetry → the customer's own collector; see CONFIGURATION.md, "OpenTelemetry")

@@ -1,4 +1,4 @@
-"""Alembic environment for ember-code.
+"""Alembic environment for igni.
 
 Imports every ORM model module so ``Base.metadata`` is fully populated
 before ``--autogenerate`` diffs against the live schema.

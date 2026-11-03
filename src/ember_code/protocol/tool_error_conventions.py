@@ -8,7 +8,7 @@ Failure conventions we recognise
 --------------------------------
 
 Agno raises ``TOOL_ERROR_EVENTS`` for exceptions, but most
-ember-code tools catch their failures and return an error message
+igni tools catch their failures and return an error message
 as a string instead. Without flagging those, the TUI shows a green
 ``✓`` for a call the agent treats as a denial — the feedback loop
 the user saw lying in v0.5.11.
@@ -110,7 +110,7 @@ class ToolResultErrorDetector:
 
     @classmethod
     def default(cls) -> ToolResultErrorDetector:
-        """Return the production detector — ember-code's shell +
+        """Return the production detector — igni's shell +
         ``Error:`` prefix bundle.
 
         Mirrors :meth:`AgnoToolEventFormatter.__init__`'s default

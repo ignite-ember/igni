@@ -2,7 +2,7 @@
 
 Drives the real :class:`PortalClient` (no in-process mocking of
 ``httpx.AsyncClient``) against an in-memory HTTP server stub via
-``httpx.MockTransport``. The stub mimics the ember-server
+``httpx.MockTransport``. The stub mimics the igni server
 ``/v1/portal/me/group`` and ``/v1/portal/me/group/pack`` endpoints.
 
 Why MockTransport and not an in-process test server:
@@ -10,8 +10,8 @@ Why MockTransport and not an in-process test server:
   * no asyncio-loop juggling for ASGI startup
   * exercises the actual JSON parsing + Pydantic validation paths
 
-These tests intentionally lock the wire shape on the ember-code side:
-if ember-server changes the response keys, these fail rather than let
+These tests intentionally lock the wire shape on the igni side:
+if igni server changes the response keys, these fail rather than let
 the drift slip through silently.
 """
 
@@ -119,7 +119,7 @@ async def test_fetch_group_pack_happy_path(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_fetch_group_pack_returns_none_on_404(monkeypatch):
-    """User has no group → 404 from ember-server → client returns None."""
+    """User has no group → 404 from igni server → client returns None."""
 
     def handler(req: httpx.Request) -> httpx.Response:
         return httpx.Response(404)
@@ -271,7 +271,7 @@ async def test_fetch_group_pack_sends_plugin_source_through_end_to_end(monkeypat
 
 @pytest.mark.asyncio
 async def test_fetch_group_pack_handles_mixed_kinds_realistic_shape(monkeypatch):
-    """Multi-entry pack from ember-server covering every kind × every
+    """Multi-entry pack from igni server covering every kind × every
     source-field shape — the contract the FE must accept.
 
     Stronger than the per-shape tests above: one realistic BE response
@@ -508,7 +508,7 @@ async def test_fetch_urls_strip_trailing_slash(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_full_e2e_pack_to_cache(tmp_path, monkeypatch):
-    """Round-trip: stub ember-server → PortalClient → GroupPolicyCache.materialize →
+    """Round-trip: stub igni server → PortalClient → GroupPolicyCache.materialize →
     the on-disk cache contains the materialized agents + MCP envelopes + meta.
     """
     from ember_code.core.config.group_policy import GroupPolicyCache, refresh

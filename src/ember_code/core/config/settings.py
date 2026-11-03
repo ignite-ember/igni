@@ -123,7 +123,7 @@ class Settings(BaseModel):
     portal_url: str = ""
     # Seconds between update checks. ``0`` disables them entirely, and
     # is what an air-gapped deployment should set. See DP-5 in
-    # ember-server's docs/COMPLIANCE_TRACKER.md.
+    # igni__server's docs/COMPLIANCE_TRACKER.md.
     #
     # This said "the only unconfigured outbound request an ordinary run
     # makes", and in the desktop app that was untrue: the Tauri

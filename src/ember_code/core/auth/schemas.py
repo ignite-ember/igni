@@ -29,7 +29,7 @@ class UserInfo(BaseModel):
     replaces the previous raw ``dict`` return from
     :meth:`ember_code.core.auth.portal_client.PortalClient.validate_token`.
 
-    A ``tier`` field was here. It had no source — ember-server's
+    A ``tier`` field was here. It had no source — igni server's
     ``UserMeResponse`` carries no tier, because billing tiers are
     retired — and its only reader was the ``get_cloud_plan`` RPC, which
     was never registered and is now gone. ``extra: ignore`` means the

@@ -585,7 +585,7 @@ class CloudMigrationTier(Tier):
 
 
 class GroupPolicyTier(Tier):
-    """Org-group policy overrides — fetched from ember-server, cached locally.
+    """Org-group policy overrides — fetched from igni server, cached locally.
 
     Sits ABOVE CliTier (group-defined settings beat user CLI flags) and
     BELOW ManagedTier (sysadmin file still wins over any org policy).

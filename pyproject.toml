@@ -38,7 +38,7 @@ classifiers = [
 
 # Tight ``~=X.Y.Z`` pins (PEP 440 "compatible release", which expands
 # to ``>= X.Y.Z, < X.(Y+1).0``). Any minor-version bump from an
-# upstream package goes through an explicit ember-code release, not
+# upstream package goes through an explicit igni release, not
 # through pip's resolver. Stops repeats of the v0.5.2 incident where
 # ``textual~=8.1`` quietly let 8.2.7 install and the renamed theme
 # ``textual-ansi`` → ``ansi-dark`` silently bricked the TUI.

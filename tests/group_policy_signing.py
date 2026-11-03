@@ -1,7 +1,7 @@
 """Signing group packs the way igni server does, for tests.
 
 igni server signs each person's pack as a compact JWS with its token
-signing key (ember-server ``app/services/portal/group_pack_signature.py``)
+signing key (igni__server ``app/services/portal/group_pack_signature.py``)
 and igni applies only a pack whose signature verifies. Tests that want a
 policy applied therefore need a pack signed by a key igni trusts, for the
 person signed in, by the server igni is configured for. This is that

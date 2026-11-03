@@ -3,8 +3,8 @@
 Each case's ``input`` is sent as a one-shot prompt to ``claude -p`` with
 ``cwd=<target_project_dir>``. Each invocation is a fresh Claude Code session
 — no memory carry-over, no access to the eval YAML or expected outputs
-(those live in the ember-code repo, outside the working dir). Responses
-are captured and graded by the same Agno ``AccuracyEval`` ember-code's
+(those live in the igni repo, outside the working dir). Responses
+are captured and graded by the same Agno ``AccuracyEval`` igni's
 runner uses, with a configurable judge model (default: the
 ``IGNI_TEST_LLM_*`` triple, which currently points at MiniMax-M2.7 — keep
 the judge separate from the agent's model to avoid self-grading bias).
@@ -16,7 +16,7 @@ Usage:
 
     python scripts/run_claude_code_eval.py \\
         --suite ember_server_v6 \\
-        --target-project-dir /path/to/ember-server \\
+        --target-project-dir /path/to/igni__server \\
         --out /tmp/eval-comparison/claude-code-with.json
 """
 
@@ -109,7 +109,7 @@ async def _grade_response(
     case: Any, response_text: str, judge_model: Any
 ) -> tuple[bool | None, float | None, str]:
     """Grade ``response_text`` against ``case.expected_output`` using
-    Agno's ``AccuracyEval`` — same machinery ember-code's eval runner
+    Agno's ``AccuracyEval`` — same machinery igni's eval runner
     uses for ``accuracy_passed`` / ``accuracy_score`` / ``accuracy_reason``.
 
     Skips grading (returns Nones) if the case has no expected output or
@@ -215,7 +215,7 @@ async def main() -> int:
                 os.environ.setdefault(k, v)
 
     # Build a judge model from the same IGNI_TEST_LLM_* triple the
-    # ember-code eval runner uses. Keeps the judge model independent of
+    # igni eval runner uses. Keeps the judge model independent of
     # the agent (Claude Code) — avoids "Claude grades Claude" bias.
     judge_model = None
     if not args.no_judge:
@@ -280,7 +280,7 @@ async def main() -> int:
                 logger.exception("judge failed for %s", case.name)
                 reason = f"judge exception: {exc}"
 
-        # ``passed`` mirrors ember-code's CaseResult — true when the
+        # ``passed`` mirrors igni's CaseResult — true when the
         # judge passed (or no judge was set and the run completed).
         if meta.get("error"):
             passed_overall = False

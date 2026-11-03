@@ -62,7 +62,7 @@ class ToolCompleted(RunScopedMessage):
     diff_rows: list[tuple[str, str]] | None = None  # (text, style) pairs for diff table
     # True when the tool returned an error payload (raised exception,
     # or returned a string starting with ``"Error:"`` — the convention
-    # used by ember-code's own tools). The TUI renders ``✗`` with red
+    # used by igni's own tools). The TUI renders ``✗`` with red
     # styling instead of ``✓`` so the user can see at a glance which
     # calls in a batch actually failed. Without this, an ``Edit`` that
     # returned ``"Error: old_string not found"`` was displayed with

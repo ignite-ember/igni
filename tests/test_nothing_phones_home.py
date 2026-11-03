@@ -1,6 +1,6 @@
 """The air-gap claim, defended on the half that runs on developer machines.
 
-DP-5 in ember-server's `docs/COMPLIANCE_TRACKER.md`. The server has its
+DP-5 in igni__server's `docs/COMPLIANCE_TRACKER.md`. The server has its
 own copy of this rule; this one matters more, because the CLI runs on a
 developer's workstation with their source code open in front of it.
 

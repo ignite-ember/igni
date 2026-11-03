@@ -1,6 +1,6 @@
 #!/bin/sh
 # igni's before-suspend hook (igni__cloudvm's guest protocol, `before_suspend`;
-# ember-code packages/igni-cloud/src/igni_cloud/guest/suspend.py).
+# igni packages/igni-cloud/src/igni_cloud/guest/suspend.py).
 #
 # Asks igni to hand its free heap memory back before the snapshot, and waits
 # for its answer — half a second at most: a suspend never waits on igni.

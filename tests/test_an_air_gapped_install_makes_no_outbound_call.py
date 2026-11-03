@@ -1,6 +1,6 @@
 """``air_gapped: true`` switches off every outbound flow the client has.
 
-ember-server's ``docs/NETWORK_DIAGRAM.md`` §3 lists the flows an
+igni__server's ``docs/NETWORK_DIAGRAM.md`` §3 lists the flows an
 unconfigured install makes out of the customer's network: the PyPI
 update check, the desktop updater's call to github.com, the session-start
 clone of Anthropic's plugin marketplace, and the agent's web tools. One

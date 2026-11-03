@@ -218,7 +218,7 @@ and cold, before and after.
       29 ms to notice the restore, 62 ms more to answer; its timeline:
       reseed 4–8 ms and the pool swap 7–13 ms on the loop before the
       window attached 27–30 ms later, the answer 16–19 ms after that).
-      Cut on igni's side (ember-code after `fa3e6371`), diagnostic in a
+      Cut on igni's side (igni after `fa3e6371`), diagnostic in a
       Linux container until the image measures it:
       - nothing runs before the first answer but marking the pools'
         connections stale (0.3 ms; no swap, no closing, no connection
@@ -281,7 +281,7 @@ and cold, before and after.
       - **The log writer thread** was woken by the window attaching's line,
         taking the interpreter's lock from the loop during the handshake.
 
-      Cut (ember-code, this commit): one inotify watch per directory, each
+      Cut (igni, this commit): one inotify watch per directory, each
       file's waiter woken by its own name only; the collector off from
       noticing the restore until the burst is through (the later steps
       begin: answer + 0.5 s, or 1 s with no answer); the log writer held

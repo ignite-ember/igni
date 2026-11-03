@@ -96,7 +96,7 @@
         "igni.pythonPath": {
           "type": "string",
           "default": "",
-          "description": "Optional: path to a Python interpreter with an editable ignite-ember install. Bypasses the managed venv. Intended for ember-code contributors; end users should leave empty so the extension manages everything via uv."
+          "description": "Optional: path to a Python interpreter with an editable ignite-ember install. Bypasses the managed venv. Intended for igni contributors; end users should leave empty so the extension manages everything via uv."
         }
       }
     }

@@ -179,7 +179,7 @@ def load_all_suites(
 
     Looks in two locations:
       - ``<project_dir>/evals/`` — committed, for built-in agent
-        datasets shipped with the repo (e.g. ember-code's own evals).
+        datasets shipped with the repo (e.g. igni's own evals).
       - ``<project_dir>/.igni/evals/`` — local user-authored evals
         (gitignored), for custom agents in the user's project.
 

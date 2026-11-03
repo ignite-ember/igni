@@ -11,7 +11,7 @@ holds.
 
 **What.** Wire `scripts/check_group_config.py` and
 `scripts/check_group_session.py` into the release-readiness workflow,
-against a throwaway ember-server stood up in the job: start Postgres and
+against a throwaway igni__server stood up in the job: start Postgres and
 the API, seed a Default group holding one entry of every kind, run both
 scripts, tear it down. Both already exit non-zero on failure, so they
 can gate a release as-is.
@@ -41,9 +41,9 @@ infrastructure, takes minutes not seconds, and the thing it catches
 drifts on its own schedule rather than per-PR. Nightly plus on-tag is
 the right cadence.
 
-**The awkward part.** The job needs both repos — ember-code for the
-scripts, ember-server for the thing to point them at. Either check out
-ember-server as a second path in the same job, or publish a server
+**The awkward part.** The job needs both repos — igni for the
+scripts, igni__server for the thing to point them at. Either check out
+igni__server as a second path in the same job, or publish a server
 container image the job can `docker run`. The image is cleaner and
 matches how a customer actually gets the server; the two-checkout
 version is faster to write. Start with the checkout, move to the image

@@ -95,7 +95,7 @@ EXACTLY (no markdown fences, no commentary, no extra fields):
 Score scale: 0=missed entirely, 1=partial/weak, 2=mostly, 3=fully.
 "hallucinations" must list specific tokens (class names, file
 paths, API names) the agent referenced that aren't in the
-ember-server codebase, or be ``[]`` if none. Don't speculate —
+igni__server codebase, or be ``[]`` if none. Don't speculate —
 only list things you can name.
 """
 

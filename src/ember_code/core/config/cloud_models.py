@@ -4,7 +4,7 @@ The operator adds AI keys on the portal (per-org overrides or the
 global pool); the server exposes the catalogue at
 ``GET /v1/chat/models`` as ``{"models": [{"id": "..."}, ...]}`` —
 just the model identifiers. The server intentionally does **not**
-return upstream provider URLs: the CLI talks to ember-server's
+return upstream provider URLs: the CLI talks to igni server's
 ``/chat/completions`` proxy, which routes to whichever
 ``(key, base_url)`` pair the pool picks. Leaking the upstream URL
 to the client would just expose routing internals.
@@ -51,7 +51,7 @@ class CloudModelEntry(BaseModel):
     Only ``id`` is required. ``extra='allow'`` tolerates older
     server deploys that still emit a legacy ``base_url`` field —
     the client deliberately ignores it (routing always goes through
-    ember-server's chat proxy, never upstream directly).
+    igni server's chat proxy, never upstream directly).
     """
 
     model_config = ConfigDict(extra="allow", populate_by_name=True)
@@ -252,7 +252,7 @@ class CloudModelCatalogClient:
 
     @property
     def _proxy_url(self) -> str:
-        """The ember-server chat proxy URL. Every cloud-discovered
+        """The igni server chat proxy URL. Every cloud-discovered
         entry is wired here — never at an upstream provider URL."""
         return f"{self._api_url.rstrip('/')}/v1"
 

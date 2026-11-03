@@ -14,7 +14,7 @@
 //!
 //! **Dev override.** When ``IGNI_DEV_BACKEND`` is set we use that
 //! Python path verbatim and skip every download. This is the
-//! escape hatch for ember-code contributors who want to point the
+//! escape hatch for igni contributors who want to point the
 //! shell at an editable ``pip install -e .`` install — same
 //! semantics as the JetBrains/VSCode versions.
 

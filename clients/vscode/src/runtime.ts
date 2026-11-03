@@ -18,7 +18,7 @@
  * **Dev override.** Setting ``IGNI_DEV_BACKEND=/abs/path/to/python``
  * bypasses the bootstrap and returns that path verbatim. The
  * ``igni.pythonPath`` user setting is honored the same way —
- * for users who want to point at their own venv (e.g. ember-code
+ * for users who want to point at their own venv (e.g. igni
  * contributors running an editable install). Both paths skip every
  * download + install step.
  */

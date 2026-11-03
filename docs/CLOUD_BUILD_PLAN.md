@@ -122,7 +122,7 @@ A Rust service, one per host:
   is reported `not_handled`); a service's message into its thread's chat,
   as sent, starting the producer's run or queued for the run going. On
   the desktop igni pulls the person's own (`/v1/me/events/pull` and `/ack`).
-- One group per person (built: ember-server `c70d3fd`, igni `918e22d`).
+- One group per person (built: igni__server `c70d3fd`, igni `918e22d`).
 - Profile packages on the portal; commands in VMs: the producer in its
   own VM, org admins in their org, the super admin anywhere; jobs for
   many VMs applied at each VM's next wake; the audit log.

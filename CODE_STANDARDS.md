@@ -97,7 +97,7 @@ def visualize(spec):
 ### Rule 3: no emojis in UI or code
 
 Never use emoji as UI icons in React clients — use inline SVGs (see
-the flame brand SVG in ember-server portal). Never add emoji to files
+the flame brand SVG in igni server portal). Never add emoji to files
 unless the user explicitly asks. Applies to comments too.
 
 ### Rule 4: never invent data

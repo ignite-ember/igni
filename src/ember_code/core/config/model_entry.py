@@ -277,7 +277,7 @@ class ModelRegistryEntry(BaseModel):
     ) -> ModelRegistryEntry:
         """Build the canonical entry shape for a cloud-discovered model.
 
-        All cloud entries route through ember-server's chat proxy
+        All cloud entries route through igni server's chat proxy
         (``{api_url}/v1``) — never at the upstream provider — and
         rely on the :data:`CLOUD_TOKEN_SENTINEL` on ``api_key`` so
         :meth:`resolve_api_key` swaps in the stored igni server

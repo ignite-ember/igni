@@ -1,4 +1,4 @@
-"""Group policy pack — fetched from ember-server, cached on disk, applied as a settings tier."""
+"""Group policy pack — fetched from igni server, cached on disk, applied as a settings tier."""
 
 from __future__ import annotations
 
@@ -213,7 +213,7 @@ class SignedAbsence:
 
 
 class GroupPolicyPack(BaseModel):
-    """Everything a group gives its people — fetched from ember-server."""
+    """Everything a group gives its people — fetched from igni server."""
 
     group_id: str
     group_name: str
@@ -850,7 +850,7 @@ class GroupPolicyCache:
         """Fold one hook entry into the shared ``hooks.json`` shape.
 
         Hooks are the one kind that is not a file per entry: they are
-        declarations keyed by event, and ember-code reads them from a
+        declarations keyed by event, and igni reads them from a
         settings-shaped file. An entry carries either a bare declaration
         or a whole ``{"hooks": {...}}`` block; both end up merged into
         one file the loader is pointed at.

@@ -1,6 +1,6 @@
 """Where the server is, and the refusal when nobody has said.
 
-DEC-14, and DP-5a in ember-server's ``docs/COMPLIANCE_TRACKER.md``.
+DEC-14, and DP-5a in igni__server's ``docs/COMPLIANCE_TRACKER.md``.
 
 ``settings.api_url`` defaulted to the vendor's own API host. For a
 product whose whole claim is that nothing leaves the customer's cloud,

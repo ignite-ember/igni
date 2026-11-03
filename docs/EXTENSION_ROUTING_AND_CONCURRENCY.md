@@ -216,7 +216,7 @@ documented in `igni__code-index/docs/tenancy.md`); nothing changes there.
 
 | Repo | Change |
 |---|---|
-| ember-server | `App` producer + portal page with its enabled extensions; `extensions` group entry kind + per-group enablement UI (off by default); the person's one group in igni tokens; token for a principal on a service's audience; extension list carries groups and apps |
+| igni__server | `App` producer + portal page with its enabled extensions; `extensions` group entry kind + per-group enablement UI (off by default); the person's one group in igni tokens; token for a principal on a service's audience; extension list carries groups and apps |
 | igni (floor) | principal resolution per request; per-principal tool/hook/prompt filtering; principal in MCP `_meta`; per-principal service tokens; concurrent dispatch with timeouts; shared profile allows sidecars |
 | igni-extension SDK | `Caller`; `ext.service.for_(caller)`; concurrency test harness; docs on not blocking the loop |
 | igni-service SDK | nothing new — services already see the person/app through the token |
