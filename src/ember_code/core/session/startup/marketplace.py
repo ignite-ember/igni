@@ -107,6 +107,7 @@ class MarketplaceWarmupPhase(SessionStartupPhase):
                         _marketplaces.add_marketplace,
                         url,
                         data_dir=data_dir,
+                        added_by="user" if url in policy.customer_marketplaces else "default",
                     ),
                     timeout=self._TIMEOUT_ADD,
                 )
@@ -124,6 +125,14 @@ class MarketplaceWarmupPhase(SessionStartupPhase):
         policy = self._policy()
         for entry in registry.marketplaces:
             if entry.fetched_within(self.REFRESH_EVERY_SECONDS):
+                continue
+            if not policy.refreshes_at_start(entry):
+                logger.info(
+                    "Not refreshing marketplace '%s': the old default registered it and "
+                    "plugins.default_marketplace is off (/plugin marketplace refresh "
+                    "fetches it on request).",
+                    entry.name,
+                )
                 continue
             if not policy.allows(entry.url):
                 logger.info(

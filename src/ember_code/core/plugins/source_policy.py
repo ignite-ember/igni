@@ -27,6 +27,7 @@ from pydantic import BaseModel, Field
 
 from ember_code.core.network_policy import NetworkPolicy
 from ember_code.core.plugins.marketplace_store import DEFAULT_MARKETPLACES
+from ember_code.core.plugins.models import MarketplaceEntry
 
 
 class PluginSourcePolicy(BaseModel):
@@ -68,6 +69,24 @@ class PluginSourcePolicy(BaseModel):
             else []
         )
         return [*defaults, *self.customer_marketplaces]
+
+    def refreshes_at_start(self, entry: MarketplaceEntry) -> bool:
+        """Whether session start may fetch ``entry``'s catalog on its own.
+
+        Every marketplace but one: the official one, when the old default
+        registered it (B29). Installs from before B22 registered it at
+        every session start and still list it, so they kept cloning from
+        github.com after the default went off. Unless the person added it
+        themselves or turned ``plugins.default_marketplace`` on, it stays
+        listed with its cached catalog and is fetched only on request
+        (``/plugin marketplace refresh``, or ``add`` again to keep it).
+        """
+        if entry.added_by == "user" or (self.default_marketplace and not self.air_gapped):
+            return True
+        names = {name for name, _url in DEFAULT_MARKETPLACES}
+        urls = {_normalise(url) for _name, url in DEFAULT_MARKETPLACES}
+        is_official = entry.name in names or _normalise(str(entry.url)) in urls
+        return not is_official
 
     def allows(self, url: str) -> bool:
         """Whether fetching ``url`` keeps igni inside the customer's network."""

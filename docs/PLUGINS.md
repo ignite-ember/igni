@@ -167,7 +167,10 @@ marketplace (`github.com/anthropics/claude-plugins-official`) is not registered
 unless you ask: `/plugin marketplace add
 https://github.com/anthropics/claude-plugins-official` once, or
 `plugins.default_marketplace: true` to have every session start register it —
-a clone from github.com. With `air_gapped: true` that switch is ignored, and igni fetches only
+a clone from github.com. An install from before it went opt-in still lists it
+(the old default registered it): session start no longer refreshes that entry
+unless you added it yourself or turned the switch on, and `/plugin marketplace
+refresh` still fetches it when you ask. With `air_gapped: true` that switch is ignored, and igni fetches only
 local marketplaces and those on hosts named in `plugins.marketplaces` — see
 "Air-gapped mode" in `CONFIGURATION.md`. Each installed plugin's source URL is
 recorded in `~/.igni/plugins.json` (`sources`), and `/plugin update` checks it

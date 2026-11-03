@@ -29,6 +29,7 @@ import logging
 import shutil
 import tempfile
 from pathlib import Path
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict
 
@@ -227,7 +228,7 @@ class MarketplaceRegistryStore:
 
     # ── High-level operations ──────────────────────────────────────
 
-    def add(self, url: str) -> MarketplaceEntry:
+    def add(self, url: str, *, added_by: Literal["user", "default"] = "user") -> MarketplaceEntry:
         """Register a marketplace by URL: probe, fetch catalog, persist.
 
         The marketplace's display name comes from its catalog (the
@@ -244,7 +245,7 @@ class MarketplaceRegistryStore:
         catalog = self._fetcher.fetch(url).unwrap()
 
         registry = self.load()
-        new_entry = MarketplaceEntry(name=catalog.name, url=url)
+        new_entry = MarketplaceEntry(name=catalog.name, url=url, added_by=added_by)
         new_entry.mark_fetched(catalog)
         effective = registry.add(new_entry)
         self.save(registry)
