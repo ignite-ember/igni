@@ -38,6 +38,7 @@ class InteractiveCommandDispatcher:
         CommandAction.COMPACT: "_render_compact",
         CommandAction.LOGIN: "_render_login",
         CommandAction.RUN_PROMPT: "_render_run_prompt",
+        CommandAction.HELP: "_render_help",
     }
 
     def __init__(
@@ -103,6 +104,12 @@ class InteractiveCommandDispatcher:
             self._render_by_kind(result)
             return
         await self._run_prompt(result.content)
+
+    async def _render_help(self, result: CommandResult) -> None:
+        """A bare ``/help`` opens a panel elsewhere; here it is text."""
+        from ember_code.backend.cmd_help import help_overview
+
+        self.session.display.print_markdown(help_overview())
 
     async def _render_login(self, result: CommandResult) -> None:
         self.session.display.print_info(

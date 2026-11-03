@@ -190,6 +190,20 @@ async def test_a_built_in_slash_command_is_not_a_model_turn(make_loop):
     run.session.display.print_markdown.assert_called()
 
 
+async def test_a_bare_help_prints_the_commands_and_the_topics(make_loop):
+    """B35: ``/help`` opens a panel in the clients; at this prompt its result
+    carried no content and nothing was printed."""
+    run = make_loop(["/help", "exit"])
+
+    await run.loop.run()
+
+    assert run.session.messages == []
+    printed = "\n".join(c.args[0] for c in run.session.display.print_markdown.call_args_list)
+    assert "`/help`" in printed
+    assert "`/quit`" in printed
+    assert "`/help schedule`" in printed
+
+
 async def test_a_skill_command_runs_its_prompt_as_a_turn(make_loop, tmp_path):
     """Found writing this file: the dispatcher answered ``/<skill>`` with
     the skill's rendered prompt and the REPL *printed* it, as information,

@@ -115,3 +115,15 @@ async def test_a_run_that_answered_exits_zero():
     assert code == 0
     display.print_response.assert_called_once_with("config.toml now has debug = true.")
     display.print_error.assert_not_called()
+
+
+async def test_a_bare_help_prints_the_commands():
+    """B35: a bare ``/help`` opens a panel in the clients, so its result has
+    no content, and ``igni -m /help`` printed nothing."""
+    session = _session(_Team(None))
+    with patch("ember_code.core.session.session_run.Session", return_value=session):
+        await run_single_message(MagicMock(), "/help")
+
+    printed = "\n".join(c.args[0] for c in session.display.print_markdown.call_args_list)
+    assert "`/help`" in printed
+    assert "`/help schedule`" in printed

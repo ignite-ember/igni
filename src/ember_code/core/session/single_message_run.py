@@ -32,6 +32,7 @@ import logging
 
 from ember_code.backend.command_handler import CommandHandler
 from ember_code.core.session.session_run import SessionRun
+from ember_code.protocol.messages import CommandAction
 
 logger = logging.getLogger(__name__)
 
@@ -74,6 +75,12 @@ class SingleMessageRun(SessionRun):
         result = await handler.handle(message)
         if result.content:
             self._session.display.print_info(result.content)
+        elif result.action == CommandAction.HELP:
+            # A bare ``/help`` opens a panel in the clients; headless,
+            # its content is empty, so print what the panel would show.
+            from ember_code.backend.cmd_help import help_overview
+
+            self._session.display.print_markdown(help_overview())
         return True
 
     # ── Public entry point ────────────────────────────────────────
