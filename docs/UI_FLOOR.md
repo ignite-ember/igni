@@ -226,7 +226,11 @@ than by use:
 ### 4.1 One file, not a portal
 
 A theme is `theme.json`, validated against a published JSON Schema
-exactly as the manifest is, with an editor-facing `$schema` line.
+exactly as the manifest is, with an editor-facing `$schema` line. The
+schema is [`theme.schema.json`](theme.schema.json), served at
+https://ignite-ember.sh/schema/theme-1.json. igni does not load a theme
+file yet: this section is the design, and the schema fixes the format
+ahead of the loader.
 
 It is a **file** because delivery is customer-run, air-gapped and
 SI-led: a theme has to live in version control, be diffed in review,
@@ -235,7 +239,7 @@ that is the only place it exists can do none of that.
 
 ```jsonc
 {
-  "$schema": "https://igni.sh/schema/theme-1.json",
+  "$schema": "https://ignite-ember.sh/schema/theme-1.json",
   "name": "Northwind",
   "extends": "igni-dark",            // start from a shipped base
 
