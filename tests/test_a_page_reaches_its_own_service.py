@@ -113,6 +113,20 @@ def test_plain_http_to_this_machine_only_in_development():
     assert ServiceOrigin.parse("http://notes.example.com", development=True) is None
 
 
+def test_a_local_http_service_outside_development_says_how_to_reach_it(caplog):
+    """The tutorial's service is http://tickets.localhost:8201, and every
+    ``igni -m`` printed that it was "not this machine in development" —
+    it is this machine; what was missing was IGNI_DEV_EXTENSIONS=1, and
+    the line did not say so, or that the page's ext.<id>.* calls still work."""
+    with caplog.at_level("INFO", logger="ember_code.extensions.permissions"):
+        assert ServiceOrigin.parse("http://tickets.localhost:8201") is None
+    text = caplog.text
+    assert "IGNI_DEV_EXTENSIONS=1" in text
+    assert "https" in text
+    assert "not this machine" not in text
+    assert all(r.levelname == "INFO" for r in caplog.records)
+
+
 @pytest.mark.parametrize(
     "url", ["http://tickets.localhost:18201", "http://127.0.0.2:18201", "http://LOCALHOST:1"]
 )

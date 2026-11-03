@@ -155,11 +155,22 @@ class ServiceOrigin:
         if not host or parsed.scheme not in ("https", "http"):
             return None
         if parsed.scheme == "http" and not (development and is_loopback_host(host)):
-            logger.warning(
-                "service %s is plain http and not this machine in development; "
-                "a page is not given a connection to it",
-                text,
-            )
+            if is_loopback_host(host):
+                # This machine, outside development: expected while
+                # following the tutorial, so said once at INFO with the
+                # two ways out rather than as a warning on every run.
+                logger.info(
+                    "service %s is plain http, so its page is not given a connection to it "
+                    "(its ext.<id>.* calls still work). Serve it over https, or set "
+                    "IGNI_DEV_EXTENSIONS=1 while developing on this machine.",
+                    text,
+                )
+            else:
+                logger.warning(
+                    "service %s is plain http and not on this machine; a page is not given "
+                    "a connection to it. Serve it over https.",
+                    text,
+                )
             return None
         return cls(parsed.scheme, host, port)
 
