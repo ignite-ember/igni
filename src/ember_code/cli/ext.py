@@ -499,7 +499,7 @@ def sync(root: str | None, timeout: float) -> None:
         raise click.ClickException(f"nothing was synced: {report.skipped}")
 
     group = store.group()
-    who = f" (group {group.group})" if group is not None and group.group else ""
+    who = f" (group {group.label})" if group is not None and group.label else ""
     click.echo(f"synced with {syncer.api_url}{who}")
     rows: list[tuple[str, str]] = []
     for extension_id in report.installed:

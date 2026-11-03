@@ -113,6 +113,14 @@ class StoredGroup(BaseModel):
     #: organisation, read by igni server when it listed what they get
     #: (its §8.3); ``None`` when they are in none.
     group: str | None = None
+    #: Its name, to show a person; ``None`` from an igni server that did
+    #: not send one.
+    name: str | None = None
+
+    @property
+    def label(self) -> str | None:
+        """What to call the group to a person: its name, else its id."""
+        return self.name or self.group
 
 
 class ExtensionStore:
@@ -354,13 +362,13 @@ class ExtensionStore:
     def group_path(self) -> Path:
         return self._root / GROUP_FILE
 
-    def record_group(self, group: str | None) -> None:
+    def record_group(self, group: str | None, *, name: str | None = None) -> None:
         """Keep the person's group the listing carried, for the next start before igni answers."""
+        stored = StoredGroup(group=group, name=name if group is not None else None)
         if not Layers.current().keeps_listing_in_files():
-            self._received_group[str(self._root)] = StoredGroup(group=group)
+            self._received_group[str(self._root)] = stored
             return
         self._root.mkdir(parents=True, exist_ok=True)
-        stored = StoredGroup(group=group)
         self.group_path.write_text(stored.model_dump_json(indent=2) + "\n", encoding="utf-8")
 
     def group(self) -> StoredGroup | None:

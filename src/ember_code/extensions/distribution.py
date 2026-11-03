@@ -122,6 +122,8 @@ class DistributionListing(BaseModel):
     #: The one group the signed-in person belongs to, read by igni
     #: server as it listed; ``None`` when they are in none.
     group: str | None = None
+    #: That group's name, to show a person; absent from an older igni server.
+    group_name: str | None = None
     extensions: list[DistributedExtension] = Field(default_factory=list)
     #: The super admin's priority order of extensions, highest first:
     #: it settles every collision (:mod:`ember_code.extensions.impact`)
@@ -419,7 +421,7 @@ class ExtensionDistribution:
 
             report = SyncReport()
             entitled = listing.entitled()
-            self._store.record_group(listing.group)
+            self._store.record_group(listing.group, name=listing.group_name)
             # The priority first: an extension installed below starts
             # with its collisions already settled.
             if self._store.record_priority(listing.priority):

@@ -85,6 +85,22 @@ def test_sync_installs_what_igni_lists_for_the_persons_group(world):
     assert "quit the igni app" in result.output
 
 
+def test_sync_names_the_group_not_its_id(world):
+    world.sign_in()
+    result = world.sync()
+    assert result.exit_code == 0, result.output
+    assert "(group Legal)" in result.output
+    assert "g-legal" not in result.output
+
+
+def test_an_older_igni_server_without_the_name_still_says_which_group(world):
+    world.igni.group_name = None
+    world.sign_in()
+    result = world.sync()
+    assert result.exit_code == 0, result.output
+    assert "(group g-legal)" in result.output
+
+
 def test_sync_again_says_nothing_changed(world):
     world.sign_in()
     world.publish()

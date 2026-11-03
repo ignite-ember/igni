@@ -35,6 +35,7 @@ API_URL = "https://igni.test"
 SESSION = "session-token-of-the-person"
 #: The group the signed-in person is in; listed extensions are on for it unless a test says not.
 PERSON_GROUP = "g-legal"
+PERSON_GROUP_NAME = "Legal"
 
 
 def b64url(data: bytes) -> str:
@@ -265,6 +266,8 @@ class FakeIgni:
         self.priority: list[str] = []
         #: The one group the signed-in person belongs to, as igni server reads it when it lists.
         self.group: str | None = PERSON_GROUP
+        #: Its name; ``None`` is an igni server from before the listing carried it.
+        self.group_name: str | None = PERSON_GROUP_NAME
         self.requests: list[httpx.Request] = []
         self.listing_status = 200
         self.token_status = 200
@@ -302,6 +305,7 @@ class FakeIgni:
                 200,
                 json={
                     "group": self.group,
+                    "group_name": self.group_name,
                     "extensions": [entry.row() for entry in self.listed.values()],
                     "priority": self.priority,
                 },
