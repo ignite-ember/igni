@@ -29,11 +29,12 @@ from enum import StrEnum
 from pathlib import Path
 from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
 from ember_code.core.hooks.events import HookEvent
 from ember_code.core.mcp.hints import ToolHints
 from ember_code.extensions.assets import ExtensionAsset, ExtensionAssets
+from ember_code.extensions.manifest_errors import ManifestError, ManifestErrors
 
 #: Reverse-DNS, and the namespace for everything the extension
 #: contributes. Changing it is a new extension, not a new version.
@@ -691,10 +692,15 @@ class ExtensionManifest(Strict):
         try:
             raw = json.loads(path.read_text(encoding="utf-8"))
         except json.JSONDecodeError as exc:
-            raise ValueError(f"{path}: not valid JSON — {exc}") from exc
+            raise ManifestError(f"{path}: not valid JSON — {exc}") from exc
         if not isinstance(raw, dict):
-            raise ValueError(f"{path}: a manifest is a JSON object, got {type(raw).__name__}")
-        return cls.model_validate(raw)
+            raise ManifestError(f"{path}: a manifest is a JSON object, got {type(raw).__name__}")
+        try:
+            return cls.model_validate(raw)
+        except ValidationError as exc:
+            # pydantic's report is about the validator; this is about
+            # the file — the field, in its JSON spelling, and the fix.
+            raise ManifestError(ManifestErrors(cls).describe(exc)) from exc
 
     @property
     def packaging(self) -> str:
