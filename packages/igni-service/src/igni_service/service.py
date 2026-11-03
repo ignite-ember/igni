@@ -38,6 +38,7 @@ from igni_service.events import EventSender
 from igni_service.host import Host
 from igni_service.jwks import IgniKeys
 from igni_service.keystore import KeyCipher, KeyStore
+from igni_service.logs import ServiceLogs
 from igni_service.notifications import Notifier
 from igni_service.organisations import (
     OrganisationDeletedHandler,
@@ -214,6 +215,7 @@ class IgniService:
         From the start every token is checked against the revocation list,
         which fails closed if it cannot be kept fresh.
         """
+        ServiceLogs.make_visible()
         stop = asyncio.Event()
         background = [
             asyncio.create_task(self.registration.keep_trying(stop)),

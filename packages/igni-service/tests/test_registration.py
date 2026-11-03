@@ -5,12 +5,17 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
+import subprocess
+import sys
+import textwrap
 from pathlib import Path
 
 import httpx
 import pytest
 from fastapi import FastAPI
 
+import igni_service
 from igni_service import IgniService, MemoryKeyStore
 from igni_service.bundle import BundleArchive
 from igni_service.registration import SIGNATURE_HEADER
@@ -194,3 +199,99 @@ async def test_callers_during_start_up_share_the_one_registration(fake: FakeIgni
 
     assert len(fake.requests_to(IgniPaths.CLIENTS)) == 1
     assert ids[1] == ids[2] == ids[0].client_id
+
+
+class TestTheStartUpSaysWhatComesNext:
+    """The banner's last lines are the next step for the state igni answered."""
+
+    async def test_an_approved_service_is_not_told_to_get_approved(
+        self, fake: FakeIgni, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        store = MemoryKeyStore()
+        await run_lifespan(fake.service(key_store=store))
+        fake.approve()
+
+        caplog.clear()
+        with caplog.at_level(logging.INFO, logger="igni_service"):
+            await run_lifespan(fake.service(key_store=store))
+
+        assert "approves this service" not in caplog.text
+        assert "approved" in caplog.text
+        assert "org admin" in caplog.text  # who switches the extension on for a group
+
+    async def test_a_revoked_service_is_told_it_was_revoked(
+        self, fake: FakeIgni, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        store = MemoryKeyStore()
+        await run_lifespan(fake.service(key_store=store))
+        fake.revoke()
+
+        caplog.clear()
+        with caplog.at_level(logging.INFO, logger="igni_service"):
+            await run_lifespan(fake.service(key_store=store))
+
+        assert "revoked" in caplog.text
+        assert "approves this service" not in caplog.text
+
+    async def test_a_held_update_is_said_with_igni_s_reason(
+        self, fake: FakeIgni, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        store = MemoryKeyStore()
+        first = write_bundle(tmp_path)
+        await run_lifespan(
+            fake.service(fake.settings(extension_bundle_path=str(first)), key_store=store)
+        )
+        fake.approve()
+        fake.hold_uploads = "it asks for more than the approved version"
+        first.unlink()
+        wider = write_bundle(tmp_path, version="1.1.0")
+
+        with caplog.at_level(logging.INFO, logger="igni_service"):
+            await run_lifespan(
+                fake.service(fake.settings(extension_bundle_path=str(wider)), key_store=store)
+            )
+
+        assert "held" in caplog.text
+        assert "asks for more than the approved version" in caplog.text
+        assert "1.0.0" in caplog.text or "approved version" in caplog.text
+
+
+def test_its_lines_show_under_uvicorn_which_configures_only_its_own_loggers(
+    tmp_path: Path,
+) -> None:
+    """uvicorn gives the root logger no handler, so an INFO line from the SDK went nowhere."""
+    bundle = write_bundle(tmp_path)
+    script = tmp_path / "serve.py"
+    script.write_text(
+        textwrap.dedent(
+            f"""
+            import asyncio, logging
+            from fastapi import FastAPI
+            from igni_service.testing import FakeIgni
+
+            # What uvicorn's LOGGING_CONFIG does: its own loggers, not the root.
+            logging.getLogger("uvicorn").addHandler(logging.StreamHandler())
+
+            async def main():
+                fake = FakeIgni()
+                igni = fake.service(fake.settings(extension_bundle_path={str(bundle)!r}))
+                app = FastAPI(lifespan=igni.lifespan)
+                async with app.router.lifespan_context(app):
+                    await asyncio.wait_for(igni.registration.registered.wait(), 5)
+                    await asyncio.sleep(0.2)
+
+            asyncio.run(main())
+            """
+        )
+    )
+    ran = subprocess.run(
+        [sys.executable, str(script)],
+        capture_output=True,
+        text=True,
+        check=False,
+        env={**os.environ, "PYTHONPATH": str(Path(igni_service.__file__).parent.parent)},
+    )
+
+    assert ran.returncode == 0, ran.stderr
+    assert "uploaded extension acme.example 1.0.0" in ran.stderr
+    assert "INFO" in ran.stderr

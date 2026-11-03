@@ -245,6 +245,12 @@ class FakeIgni:
         self.revoked: list[str] = []
         #: igni's revocations, in order (`publish_revocation`).
         self.revocations: list[Revocation] = []
+        #: When set, an upload replacing an approved service's extension is
+        #: **held** with this reason, as igni holds a version that asks for
+        #: more than the approved one (service-identity §8.1): machines keep
+        #: the approved one, and `held_extensions` has the new one.
+        self.hold_uploads: str | None = None
+        self.held_extensions: dict[str, HeldExtension] = {}
         #: Why the last client assertion was refused, in igni's words.
         self._refusal: str | None = None
 
@@ -789,6 +795,9 @@ class FakeIgni:
         client = self._client(client_id)
         held = self.extensions.get(client_id)
         if seen.method == "GET":
+            waiting = self.held_extensions.get(client_id)
+            if waiting is not None:
+                return httpx.Response(200, json=self._published(waiting, held=True).model_dump())
             if held is None:
                 return httpx.Response(404, json={"detail": "Nothing uploaded for this client"})
             return httpx.Response(200, json=self._published(held).model_dump())
@@ -835,7 +844,7 @@ class FakeIgni:
             for page in manifest.get("contributes", {}).get("pages", [])
             if isinstance(page, dict)
         ]
-        self.extensions[client_id] = HeldExtension(
+        uploaded = HeldExtension(
             client_id=client_id,
             extension_id=claim.extension,
             version=claim.version,
@@ -844,7 +853,11 @@ class FakeIgni:
             pages=pages,
             manifest=manifest,
         )
-        return httpx.Response(200, json=self._published(self.extensions[client_id]).model_dump())
+        if self.hold_uploads and client.state == "approved" and client_id in self.extensions:
+            self.held_extensions[client_id] = uploaded
+            return httpx.Response(200, json=self._published(uploaded, held=True).model_dump())
+        self.extensions[client_id] = uploaded
+        return httpx.Response(200, json=self._published(uploaded).model_dump())
 
     def _asset(self, seen: SeenRequest) -> httpx.Response:
         parts = seen.path.split("/")
@@ -872,10 +885,13 @@ class FakeIgni:
         self.assets[(client_id, sha256)] = seen.body
         return httpx.Response(200, json={"sha256": sha256, "size": len(seen.body)})
 
-    @staticmethod
-    def _published(held: HeldExtension) -> PublishedExtension:
+    def _published(self, stored: HeldExtension, *, held: bool = False) -> PublishedExtension:
         return PublishedExtension(
-            extension_id=held.extension_id, version=held.version, sha256=held.sha256
+            extension_id=stored.extension_id,
+            version=stored.version,
+            sha256=stored.sha256,
+            held=held,
+            reason=f"held for a super admin: {self.hold_uploads}" if held else None,
         )
 
     @staticmethod

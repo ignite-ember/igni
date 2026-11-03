@@ -76,6 +76,13 @@ class PublishedExtension(BaseModel):
     extension_id: str
     version: str
     sha256: str
+    #: An approved service's version that asks for more than the approved
+    #: one is taken and **held** for a super admin; machines keep receiving
+    #: the approved version until one approves it (service-identity §8.1).
+    held: bool = False
+    #: igni's reason for holding it, and the grants it adds.
+    reason: str | None = None
+    added: list[str] = Field(default_factory=list)
 
 
 class ExtensionRefused(IgniError):
@@ -337,12 +344,15 @@ class ServiceRegistration:
         """
         held = await self.published()
         if held is not None and held.sha256 == bundle.sha256:
-            logger.info(
-                "igni: already holds extension %s %s (%s)",
-                bundle.extension_id,
-                bundle.version,
-                bundle.sha256,
-            )
+            if held.held:
+                self._say_held(held)
+            else:
+                logger.info(
+                    "igni: already holds extension %s %s (%s)",
+                    bundle.extension_id,
+                    bundle.version,
+                    bundle.sha256,
+                )
             return False
         for asset in bundle.assets:
             await self.ship_asset(bundle, asset)
@@ -372,7 +382,28 @@ class ServiceRegistration:
             bundle.version,
             bundle.sha256,
         )
+        try:
+            published = PublishedExtension.model_validate(response.json())
+        except (ValidationError, ValueError):
+            published = None
+        if published is not None and published.held:
+            self._say_held(published)
         return True
+
+    @staticmethod
+    def _say_held(published: PublishedExtension) -> None:
+        adds = f"; it adds {', '.join(published.added)}" if published.added else ""
+        logger.warning(
+            "igni: extension %s %s is held for a super admin (%s%s). Machines keep the "
+            "approved version until a super admin approves this one in igni's portal under "
+            "Services.",
+            published.extension_id,
+            published.version,
+            (published.reason or "it asks for more than the approved version").removeprefix(
+                "held for a super admin: "
+            ),
+            adds,
+        )
 
     async def start(self) -> Registration:
         """Register, say the thumbprint, ship the extension. Raises `IgniUnavailable`."""
@@ -385,13 +416,13 @@ class ServiceRegistration:
             "    state:       %s\n"
             "    URL:         %s\n"
             "    thumbprint:  %s\n"
-            "  A super admin approves this service in igni's portal under\n"
-            "  Services, after checking the thumbprint there is this one.\n"
+            "%s\n"
             "  ============================================================",
             registration.client_id,
             registration.state,
             registration.client_uri or self._igni.own_url,
             await self._key.thumbprint(),
+            self.next_step(registration.state),
         )
         try:
             bundle = ExtensionBundle.at(self._bundle_path)
@@ -416,6 +447,29 @@ class ServiceRegistration:
             # is broken, and retrying will not mend it.
             logger.error("igni: %s; nothing more uploaded", exc)
         return registration
+
+    #: What comes next, by the state igni answered the registration with.
+    NEXT_STEPS: dict[str, tuple[str, ...]] = {
+        "pending": (
+            "A super admin approves this service in igni's portal under",
+            "Services, after checking the thumbprint there is this one.",
+        ),
+        "approved": (
+            "Approved. Its extension reaches a person's igni once",
+            "an org admin switches it on for their group (portal: Extensions).",
+        ),
+        "revoked": (
+            "Revoked by a super admin: igni refuses this service's tokens",
+            "and stops distributing its extension. Ask a super admin.",
+        ),
+    }
+
+    @classmethod
+    def next_step(cls, state: str) -> str:
+        lines = cls.NEXT_STEPS.get(
+            state, (f"igni answered state {state!r}; see igni's portal under Services.",)
+        )
+        return "\n".join(f"  {line}" for line in lines)
 
     async def keep_trying(self, stop: asyncio.Event | None = None) -> Registration | None:
         """`start`, retried with backoff until it succeeds or `stop` is set."""
