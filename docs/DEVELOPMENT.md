@@ -79,8 +79,8 @@ backend started by `python -m ember_code.backend`.
 
 ```bash
 # Clone
-git clone https://github.com/ignite-ember/ember-code.git
-cd ember-code
+git clone https://github.com/ignite-ember/igni.git
+cd igni
 
 # Create virtual environment
 python -m venv .venv
@@ -149,10 +149,10 @@ The `make check` target is the single command to verify everything is clean befo
 
 **Optional** — one bullet per extra in `[project.optional-dependencies]`, and no others. There is no `knowledge` extra, and no graph database or embedder in igni at all: CodeIndex's local index (Neo4j per commit, a sentence-transformer) is its extension's, installed from its bundle.
 
-- `mcp` — Model Context Protocol (`pip install ember-code[mcp]`)
-- `google-genai` — Gemini models (`pip install ember-code[gemini]`)
-- `anthropic` — Claude over the native Messages API (`pip install ember-code[anthropic]`)
-- `duckduckgo-search` — Web search (`pip install ember-code[web]`)
+- `mcp` — Model Context Protocol (`pip install "ignite-ember[mcp]"`)
+- `google-genai` — Gemini models (`pip install "ignite-ember[gemini]"`)
+- `anthropic` — Claude over the native Messages API (`pip install "ignite-ember[anthropic]"`)
+- `duckduckgo-search` — Web search (`pip install "ignite-ember[web]"`)
 
 **Dev:**
 - `pytest` + `pytest-asyncio` — Testing
