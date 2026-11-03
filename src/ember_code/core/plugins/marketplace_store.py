@@ -49,15 +49,14 @@ logger = logging.getLogger(__name__)
 # ── Default marketplaces ───────────────────────────────────────────
 
 
-# Marketplaces auto-registered on session start so users see plugins
-# the moment they open the panel — no ``/plugin marketplace add``
-# step required.
+# Marketplaces registered on session start when the install opts in
+# (``plugins.default_marketplace: true``), so a user who wants it sees
+# plugins the moment they open the panel without a ``/plugin
+# marketplace add`` step. Off by default: registering clones from
+# github.com, and igni makes no outbound call nobody asked for.
 #
 # Currently a single canonical entry: Anthropic's official directory
-# of ~200 Claude-Code plugins. Adding it on first run mirrors the
-# Claude Code CLI's own out-of-box behavior and gives our
-# Claude-Code-compatibility claim immediate concrete proof
-# (browse the panel, install something, watch it work).
+# of Claude-Code plugins.
 #
 # Each entry is ``(catalog_name, git_url)``. The ``catalog_name``
 # is what the user types after ``@`` (``@claude-plugins-official/foo``);

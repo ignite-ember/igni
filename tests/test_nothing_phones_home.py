@@ -294,3 +294,51 @@ def test_the_update_check_can_be_turned_off():
     # that mistake.
     assert calls == [], calls
     assert result.available is False
+
+
+def test_an_unconfigured_session_start_clones_no_marketplace(tmp_path):
+    """No outbound call by default, air-gapped or not.
+
+    Every session start of an install nobody configured used to register
+    Anthropic's plugin marketplace: a `git clone` from github.com. It is
+    opt-in now (`plugins.default_marketplace: true`), and this runs the
+    real session-start phase on default settings with git refusing to
+    start, so a clone anywhere in it fails the test.
+    """
+    import asyncio
+    import subprocess
+    from unittest.mock import patch
+
+    from ember_code.core.config.schemas import StorageConfig
+    from ember_code.core.config.settings import Settings
+    from ember_code.core.session.core import Session
+    from ember_code.core.session.startup.marketplace import MarketplaceWarmupPhase
+
+    started: list[list[str]] = []
+
+    def no_git(args, **kwargs) -> subprocess.CompletedProcess:
+        started.append(list(args))
+        raise AssertionError(f"git was started at session start: {args}")
+
+    settings = Settings(storage=StorageConfig(data_dir=str(tmp_path / "data")))
+    assert settings.air_gapped is False
+    session = Session.__new__(Session)
+    session.settings = settings
+    with patch("ember_code.core.plugins.git.subprocess.run", no_git):
+        asyncio.run(MarketplaceWarmupPhase(session)._refresh_all())
+
+    assert started == []
+
+
+def test_the_default_marketplace_is_registered_only_on_request(tmp_path):
+    from ember_code.core.config.schemas import PluginsConfig
+    from ember_code.core.config.settings import Settings
+    from ember_code.core.plugins.marketplace_store import DEFAULT_MARKETPLACES
+    from ember_code.core.plugins.source_policy import PluginSourcePolicy
+
+    [(_name, official)] = DEFAULT_MARKETPLACES
+    assert PluginSourcePolicy.from_settings(Settings()).marketplaces_to_register() == []
+    opted_in = Settings(plugins=PluginsConfig(default_marketplace=True))
+    assert PluginSourcePolicy.from_settings(opted_in).marketplaces_to_register() == [official]
+    opted_in.air_gapped = True
+    assert PluginSourcePolicy.from_settings(opted_in).marketplaces_to_register() == []

@@ -701,7 +701,7 @@ What it turns off:
 | Desktop updater | `github.com/ignite-ember/igni/releases`, or `update_endpoint` | `update_endpoint` only; no request if none is set |
 | Desktop first launch | Downloads uv, CPython, `ignite-ember` and the decision model | No download; the app runs on `runtime_python` (below), or refuses with a message naming it |
 | Decision model (Laya, Hugging Face) | Downloaded on first use if not cached | Loaded only from the local cache, with the hub offline; refused with a message saying how to pre-seed it |
-| Plugin marketplace at session start | Clones `github.com/anthropics/claude-plugins-official` | Not registered or refreshed; only local paths and `plugins.marketplaces` |
+| Plugin marketplace at session start | Only `plugins.marketplaces`; `github.com/anthropics/claude-plugins-official` too if `plugins.default_marketplace: true` (off by default) | Not registered or refreshed; only local paths and `plugins.marketplaces` |
 | `/plugin marketplace add`, `/plugin install`, `/plugin update`, the plugins panel, group-policy plugins | Any git URL | Local paths and hosts inside the network (below); others are refused before git runs |
 | `igni ext install <url>` | Clones any git URL | Hosts inside the network only; others are refused before git runs |
 | MCP servers reached by URL | Connected | Hosts inside the network only; others are refused as a failed connection |
@@ -726,9 +726,10 @@ A project's `.igni/config.yaml` and `config.local.yaml` may not set
 switch the mode off nor name a host as inside. Those keys are ignored there,
 with a warning.
 
-The plugin clone also has its own switch, independent of air-gapped mode:
-`plugins.default_marketplace: false` stops igni registering Anthropic's
-marketplace and leaves everything else as it was.
+The plugin clone also has its own switch, independent of air-gapped mode and
+off by default: `plugins.default_marketplace: true` has igni register
+Anthropic's marketplace at session start, a clone from github.com. Air-gapped
+mode ignores it.
 
 `/plugin update` checks the URL a plugin was installed from (recorded in
 `plugins.json` since this release; for older installs, the plugin's git

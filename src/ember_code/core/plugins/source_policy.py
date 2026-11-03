@@ -33,7 +33,7 @@ class PluginSourcePolicy(BaseModel):
     """Decides whether a marketplace URL may be fetched."""
 
     air_gapped: bool = False
-    default_marketplace: bool = True
+    default_marketplace: bool = False
     #: The customer's own marketplaces (``plugins.marketplaces``).
     customer_marketplaces: list[str] = Field(default_factory=list)
     #: Hosts the customer marked as inside (``network.internal_hosts``),
@@ -54,7 +54,7 @@ class PluginSourcePolicy(BaseModel):
         marketplaces = getattr(plugins, "marketplaces", None)
         return cls(
             air_gapped=getattr(settings, "air_gapped", False) is True,
-            default_marketplace=getattr(plugins, "default_marketplace", True) is not False,
+            default_marketplace=getattr(plugins, "default_marketplace", False) is True,
             customer_marketplaces=list(marketplaces) if isinstance(marketplaces, list) else [],
             internal_hosts=NetworkPolicy.from_settings(settings).internal_hosts,
         )

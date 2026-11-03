@@ -1129,8 +1129,9 @@ subnet; 8 GB sparse image, loop device, dm-crypt `aes-xts-plain64`, p50 ms):
    present, or only for apps (people get posts and notifications)?
 5. ~~**Startup network call:** the backend clones the default plugin
    marketplace at every start, which breaks air-gapped installs.~~ —
-   decided and built: the default stays for ordinary installs and has its
-   own off switch, `plugins.default_marketplace: false`. `air_gapped: true`
+   decided and built: the default marketplace is opt-in
+   (`plugins.default_marketplace: true`; off by default since the base
+   hardening pass, no outbound defaults). `air_gapped: true`
    (or `IGNI_AIR_GAPPED=1`, or the same key in managed settings or a
    group policy) turns it off along with every other outbound flow, and
    the session-start refresh then touches only local marketplaces and
