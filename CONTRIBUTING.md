@@ -10,6 +10,36 @@ and not in a public issue or pull request. Every copy of igni is installed
 and upgraded by its owner, so a public report is exploitable against every
 installation that has not upgraded yet.
 
+## Security advisories
+
+A fixed vulnerability is published as a **GitHub Security Advisory on
+`ignite-ember/igni`** (the Security tab, then Advisories), with a CVE
+identifier assigned through GitHub, which is a CVE Numbering Authority for
+what it hosts, so the identifier is requested from the advisory itself.
+
+1. A report arrives through [SECURITY.md](SECURITY.md): by email, or by
+   private vulnerability reporting, which opens a draft advisory directly. An
+   emailed report is copied into a draft advisory by us, and the draft is the
+   working record from then on, private to the reporter and the maintainers.
+2. The assessment fills in the draft: the affected versions (as
+   `igni --version` prints them, as a range, and which clients), severity as
+   a CVSS vector, the CWE, and the credit the reporter wants.
+3. The fix is made in the advisory's temporary private fork, so it is not
+   public before it ships, and released as a new version of every client.
+4. A CVE is requested from the draft once the facts are settled.
+5. The advisory is published after the fixed release is available, never
+   before, and within the disclosure bound SECURITY.md states. It names the
+   fixed version, and the release notes name the advisory.
+
+Watching the repository for security alerts is how to hear of one. Because
+only the macOS desktop app updates itself, the advisory is what tells
+everyone else to upgrade. The SDKs published from this repository
+(`igni-service`, `igni-extension` and the `@ignite-ember` npm packages) are
+covered by the same advisories. The paid modules are not public
+repositories, so their customers are told directly instead. The policy is
+igni server's, and so is the way it meets the Cyber Resilience Act's
+reporting duties (Art. 14, Annex I Part II(4)), described in igni server's vulnerability management document.
+
 ## Before you start
 
 For anything larger than a small fix, open an issue first and say what you

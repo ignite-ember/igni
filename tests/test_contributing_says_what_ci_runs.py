@@ -45,3 +45,13 @@ def test_it_asks_for_tests_and_a_sign_off():
     assert "fails without the fix" in text
     assert "Signed-off-by" in text
     assert "[CODE_STANDARDS.md](CODE_STANDARDS.md)" in text
+
+
+def test_the_advisory_channel_is_named():
+    """Annex I Part II(4) of the Cyber Resilience Act asks for a fixed
+    vulnerability to be disclosed publicly; without a named channel there
+    was nowhere to look."""
+    text = _CONTRIBUTING.read_text()
+    assert "GitHub Security Advisory on\n`ignite-ember/igni`" in text
+    assert "CVE" in text
+    assert "never\n   before" in text
