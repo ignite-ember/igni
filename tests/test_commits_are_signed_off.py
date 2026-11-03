@@ -129,14 +129,36 @@ def test_history_before_the_check_existed_is_not_rechecked(repo: Path):
     assert after in result.stdout
 
 
-def test_the_cutoff_is_a_real_commit_of_this_repository():
-    cutoff = _check_step()["env"]["SIGNED_OFF_FROM"]
-    assert re.fullmatch(r"[0-9a-f]{40}", cutoff)
-    probe = subprocess.run(
-        ["git", "cat-file", "-e", f"{cutoff}^{{commit}}"], cwd=_ROOT, capture_output=True
-    )
-    if probe.returncode != 0 and not (_ROOT / ".git").exists():
-        pytest.skip("not a git checkout")
-    if probe.returncode != 0 and _git(_ROOT, "rev-parse", "--is-shallow-repository") == "true":
-        pytest.skip("shallow clone does not reach the cutoff")
-    assert probe.returncode == 0, f"{cutoff} is not in this repository's history"
+def test_a_merged_branch_s_old_history_is_exempt_by_its_tip(repo: Path):
+    """A branch made before the check, merged rather than rewritten: its tip
+    is a second cutoff, and only what it reaches is exempt."""
+    base = _commit(repo, "base")
+    cutoff = _commit(repo, "last commit before the check, unsigned")
+    _git(repo, "checkout", "-q", "-b", "side", base)
+    side = _commit(repo, "side branch, unsigned")
+    _git(repo, "checkout", "-q", "main")
+    _git(repo, "merge", "-q", "--no-ff", "-m", "merge", side)
+    head = _commit(repo, "new\n\nSigned-off-by: A <a@example.test>")
+
+    assert _run_check(repo, base, head, cutoff).returncode != 0
+    assert _run_check(repo, base, head, f"{cutoff}\n{side}").returncode == 0
+
+    after = _commit(repo, "new, unsigned")
+    result = _run_check(repo, base, after, f"{cutoff} {side}")
+    assert result.returncode != 0
+    assert after in result.stdout
+
+
+def test_every_cutoff_is_a_real_commit_of_this_repository():
+    cutoffs = _check_step()["env"]["SIGNED_OFF_FROM"].split()
+    assert cutoffs
+    for cutoff in cutoffs:
+        assert re.fullmatch(r"[0-9a-f]{40}", cutoff)
+        probe = subprocess.run(
+            ["git", "cat-file", "-e", f"{cutoff}^{{commit}}"], cwd=_ROOT, capture_output=True
+        )
+        if probe.returncode != 0 and not (_ROOT / ".git").exists():
+            pytest.skip("not a git checkout")
+        if probe.returncode != 0 and _git(_ROOT, "rev-parse", "--is-shallow-repository") == "true":
+            pytest.skip("shallow clone does not reach the cutoff")
+        assert probe.returncode == 0, f"{cutoff} is not in this repository's history"

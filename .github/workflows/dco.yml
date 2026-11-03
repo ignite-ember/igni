@@ -28,15 +28,25 @@ jobs:
         env:
           BASE: ${{ github.event.pull_request.base.sha }}
           HEAD: ${{ github.event.pull_request.head.sha }}
-          # The last commit made before the check existed. It and its
-          # ancestors (feat/extensions' history, one author, unsigned) are
-          # not re-checked; every commit after it is.
-          SIGNED_OFF_FROM: ae5950868eae46e406b88e4221e24fd1c785c9ac
+          # Commits that, with their ancestors, are not re-checked: history
+          # made before the check existed, one author's, unsigned. Every
+          # commit not reachable from one of them is checked.
+          #   ae595086 — feat/extensions, the last commit before the check.
+          #   91ad5d46 — tip of chore/supply-chain-evidence, branched off
+          #              before the check and merged into feat/extensions
+          #              (6466831e); its seven commits are unsigned.
+          # Space-separated. Add one only for already-pushed history that is
+          # merged rather than rewritten, never for new work.
+          SIGNED_OFF_FROM: >-
+            ae5950868eae46e406b88e4221e24fd1c785c9ac
+            91ad5d46dc8b23af116765165d86618cb768988d
         run: |
           set -- "${BASE}..${HEAD}"
-          if git cat-file -e "${SIGNED_OFF_FROM}^{commit}" 2>/dev/null; then
-            set -- "$@" "^${SIGNED_OFF_FROM}"
-          fi
+          for cutoff in ${SIGNED_OFF_FROM}; do
+            if git cat-file -e "${cutoff}^{commit}" 2>/dev/null; then
+              set -- "$@" "^${cutoff}"
+            fi
+          done
           missing=0
           for sha in $(git rev-list --no-merges "$@"); do
             author="$(git log -1 --format='%an <%ae>' "${sha}")"
