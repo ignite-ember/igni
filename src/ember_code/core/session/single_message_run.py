@@ -51,11 +51,10 @@ class SingleMessageRun(SessionRun):
 
     # ── Slash-command dispatch ────────────────────────────────────
     #
-    # TODO: the four :class:`PromptHandler` subclasses in
+    # TODO: the three :class:`PromptHandler` subclasses in
     # ``interactive_loop.py`` are REPL-coupled (``_QuitHandler``
-    # raises a private ``_LoopExit`` sentinel, ``_SkillHandler``
-    # uses ``print_info``, ``_MessageHandler`` calls the loop's
-    # ``_run_turn``). A future refactor could extract a headless
+    # raises a private ``_LoopExit`` sentinel, ``_MessageHandler``
+    # calls the loop's ``_run_turn``). A future refactor could extract a headless
     # ``SlashCommandRouter`` collaborator both coordinators share,
     # but that's out of scope for this diff — the non-interactive
     # path only has two branches, so a full chain here would be

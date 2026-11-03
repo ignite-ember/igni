@@ -18,9 +18,17 @@ coroutine:
   ``if/continue`` fall-through with polymorphism, mirroring
   ``commands.py``'s ``_ACTION_HANDLERS`` dispatch style.
 * :class:`_QuitHandler` / :class:`_SlashCommandHandler` /
-  :class:`_SkillHandler` / :class:`_MessageHandler` — the four
-  concrete handlers, evaluated in that order. ``_MessageHandler``
-  is the fall-through and must stay last.
+  :class:`_MessageHandler` — the three concrete handlers, evaluated
+  in that order. ``_MessageHandler`` is the fall-through and must
+  stay last.
+
+There was a fourth, ``_SkillHandler``, between the slash command and
+the message. It could never run: the dispatcher's own last tier matches
+``/<skill>`` against the same skill pool first, so a skill line never
+fell through to it. What the dispatcher did with the match was the
+bug — it printed the skill's prompt instead of running it. Skills,
+markdown commands and ``/loop <prompt>`` now run through the
+dispatcher's ``run_prompt``, which is this loop's turn pipeline.
 
 The private :class:`_LoopExit` sentinel is the ``_QuitHandler``'s
 break signal; the outer :meth:`InteractiveSessionLoop._loop`
@@ -44,8 +52,6 @@ from ember_code.core.config.settings import Settings
 from ember_code.core.session.commands import InteractiveCommandDispatcher
 from ember_code.core.session.schemas import InteractiveBanner
 from ember_code.core.session.session_run import SessionRun
-from ember_code.core.skills.executor import SkillExecutor
-from ember_code.core.utils.audit import AuditEntry
 from ember_code.core.utils.tips import get_tip
 from ember_code.core.utils.update_checker import check_for_update
 
@@ -106,67 +112,15 @@ class _SlashCommandHandler(PromptHandler):
     slash-prefixed input.
 
     The dispatcher itself decides whether the command was
-    understood: if it returns ``False``, this handler also
-    returns ``False`` so the next handler (skill match) gets a
-    chance.
+    understood: if it returns ``False`` (an unknown command, already
+    reported by nobody), this handler also returns ``False`` and the
+    line goes to the model as an ordinary message.
     """
 
     async def handle(self, text: str) -> bool:
         if not text.startswith("/"):
             return False
         return await self._loop._dispatcher.dispatch(text)
-
-
-class _SkillHandler(PromptHandler):
-    """Matches ``/skill-name args`` against the loaded skill pool
-    and, on hit, runs the skill via :class:`SkillExecutor`.
-
-    Logs the execution to the audit log so slash-skill runs
-    appear alongside tool calls.
-
-    The :meth:`SkillExecutor.execute` call is wrapped in a broad
-    ``try/except`` because :class:`SkillExecutor` only catches
-    expected agent-runtime failures — programming bugs
-    (``AttributeError``, ``TypeError``, …) intentionally
-    propagate so they're not silently flattened to a user-facing
-    "Error: ..." string. Catching here keeps a buggy skill from
-    killing the REPL; the failure still surfaces to the user via
-    ``print_error`` and to the audit log.
-    """
-
-    async def handle(self, text: str) -> bool:
-        session = self._loop._session
-        skill_match = session.skill_pool.match_user_command(text)
-        if not skill_match:
-            return False
-        skill, args = skill_match
-        session.display.print_info(f"Running skill: /{skill.name}")
-        try:
-            result = await SkillExecutor(
-                session.pool, session.settings, session.session_id
-            ).execute(skill, args)
-        except Exception as e:
-            session.display.print_error(f"Skill '{skill.name}' crashed: {e}")
-            session.audit.log(
-                AuditEntry.error(
-                    session_id=session.session_id,
-                    agent_name="skill",
-                    tool_name=f"/{skill.name}",
-                    error=str(e),
-                    error_type=type(e).__name__,
-                )
-            )
-            return True
-        session.display.print_response(result.text)
-        session.audit.log(
-            AuditEntry.tool_call(
-                session_id=session.session_id,
-                agent_name="skill",
-                tool_name=f"/{skill.name}",
-                args=args,
-            )
-        )
-        return True
 
 
 class _MessageHandler(PromptHandler):
@@ -225,13 +179,14 @@ class InteractiveSessionLoop(SessionRun):
         # ``self.session`` today, and this invariant must hold
         # (per-turn state on the dispatcher would silently change
         # lifecycle semantics now that it survives across turns).
-        self._dispatcher = InteractiveCommandDispatcher(self._session)
+        # A command that answers with a prompt to run (a skill, a
+        # markdown command, ``/loop <prompt>``) runs it as a turn here.
+        self._dispatcher = InteractiveCommandDispatcher(self._session, run_prompt=self._run_turn)
         # Ordered dispatch chain — first hit wins. ``_MessageHandler``
         # is the fall-through and must stay last.
         self._handlers: list[PromptHandler] = [
             _QuitHandler(self),
             _SlashCommandHandler(self),
-            _SkillHandler(self),
             _MessageHandler(self),
         ]
 
