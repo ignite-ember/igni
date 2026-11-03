@@ -498,7 +498,7 @@ igni ext list
 `igni ext sync` prints what it did:
 
 ```
-synced with http://localhost:7777
+synced with http://localhost:7777 (group Default)
   installed  acme.tickets 0.2.0 from http://tickets.localhost:8201
 ```
 
