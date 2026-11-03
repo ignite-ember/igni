@@ -6,66 +6,133 @@ notifications, erasure and export, sign-in to its own pages, and the
 extension it ships — without a single igni address, token request or
 signature in the service's code.
 
+Building a service and its extension for the first time? Follow
+[Your first extension](../../docs/YOUR_FIRST_EXTENSION.md) from an empty
+directory to a working extension and service; this README is the
+reference.
+
 ```python
 from fastapi import Depends, FastAPI
+from fastapi.responses import HTMLResponse
+from pydantic import BaseModel
+
 from igni_service import (
     ExportSection, IgniService, IgniSettings, Notification, Person, Subject, Target,
 )
 
-igni = IgniService.from_settings(IgniSettings())
-app = FastAPI(lifespan=igni.lifespan)
-igni.install(app)  # igni's calls, sign-in to this service's pages, calls from the extension's page
+
+class NewComment(BaseModel):
+    doc: str
+    text: str
+    watchers: list[str] = []
 
 
-@igni.on_erase
-async def erase(subject: Subject) -> None:
-    await documents.redact(org_id=subject.org_id, user_id=subject.user_id, email=subject.email)
+def create_app(igni: IgniService | None = None) -> FastAPI:
+    """The service. In a test `igni` is `FakeIgni().service()`; in production it is
+    read from the environment (*Deploying*, below)."""
+    igni = igni or IgniService.from_settings(IgniSettings())
+    app = FastAPI(lifespan=igni.lifespan)
+    igni.install(app)  # igni's calls, sign-in to this service's pages, calls from the extension's page
 
+    # What this service keeps about people: their comments, by organisation and person.
+    comments: dict[tuple[str, str], list[NewComment]] = {}
 
-@igni.on_export
-async def export(subject: Subject) -> list[ExportSection]:
-    return [ExportSection(name="Documents", rows=await documents.owned_by(subject.user_id))]
+    @igni.on_erase
+    async def erase(subject: Subject) -> None:
+        comments.pop((subject.org_id, subject.user_id), None)
 
+    @igni.on_export
+    async def export(subject: Subject) -> list[ExportSection]:
+        mine = comments.get((subject.org_id, subject.user_id), [])
+        return [ExportSection(name="Comments", rows=[{"doc": c.doc, "text": c.text} for c in mine])]
 
-@app.post("/comments")
-async def comment(body: NewComment, person: Person = Depends(igni.person)) -> Comment:
-    saved = await comments.add(person, body)
-    host = igni.host(person.org_id)
-    await host.notify(
-        Notification(
-            kind="comment",
-            title=saved.document_title,
-            body=f"{person.display_name}: {saved.text}",
-            actor=person.user_id,
-            target=Target(page="acme.example", params={"doc": saved.doc, "comment": saved.id}),
-            event_key=f"comment:{saved.id}",
-            recipients=saved.watchers,
+    @app.post("/comments")
+    async def comment(body: NewComment, person: Person = Depends(igni.person)) -> NewComment:
+        mine = comments.setdefault((person.org_id, person.user_id), [])
+        mine.append(body)
+        await igni.host(person.org_id).notify(
+            Notification(
+                kind="comment",
+                title=body.doc,
+                body=f"{person.display_name}: {body.text}",
+                actor=person.user_id,
+                target=Target(page="acme.example", params={"doc": body.doc}),
+                event_key=f"comment:{person.user_id}:{len(mine)}",
+                recipients=body.watchers,
+            )
         )
+        return body
+
+    @app.get("/mentions")
+    async def mentions(query: str, person: Person = Depends(igni.person)) -> list[str]:
+        people = await igni.host(person.org_id).directory.members(query=query)
+        return [p.email for p in people if p.is_active]
+
+    @app.get("/settings", response_class=HTMLResponse)
+    async def settings_page(person: Person = Depends(igni.web.person)) -> str:
+        return f"<h1>Settings for {person.display_name}</h1>"
+
+    @app.get("/admin", response_class=HTMLResponse)
+    async def admin_page(person: Person = Depends(igni.web.super_admin)) -> str:
+        return "<h1>Every organisation</h1>"
+
+    @app.get("/organisation/settings", response_class=HTMLResponse)
+    async def org_settings(person: Person = Depends(igni.web.org_admin)) -> str:
+        return f"<h1>{person.org_name}</h1>"
+
+    return app
+```
+
+Run it with `uvicorn --factory service:create_app`. A factory rather than a
+module-level `igni = IgniService.from_settings(...)`, so a test hands it
+igni in-process instead (*Testing a service*, below):
+
+<!-- continues -->
+```python
+import httpx
+
+from igni_service.testing import FakeIgni
+
+fake = FakeIgni()
+fake.add_member("org-1", "u-ada", email="ada@acme.test", name="Ada")
+fake.add_member("org-1", "u-max", email="max@acme.test", name="Max")
+app = create_app(fake.service())
+
+ada = {"Authorization": f"Bearer {fake.person_token('u-ada', org_id='org-1')}"}
+igni_itself = {"Authorization": f"Bearer {fake.igni_token('org-1')}"}
+transport = httpx.ASGITransport(app=app)
+async with httpx.AsyncClient(transport=transport, base_url=fake.service_url) as http:
+    sent = await http.post(
+        "/comments", json={"doc": "runbook", "text": "Looks good", "watchers": ["u-max"]}, headers=ada
     )
-    return saved
+    assert sent.status_code == 200, sent.text
+    assert [d.user_id for d in fake.deliveries] == ["u-max"]
 
-
-@app.get("/mentions")
-async def mentions(query: str, person: Person = Depends(igni.person)) -> list[str]:
-    people = await igni.host(person.org_id).directory.members(query=query)
-    return [p.email for p in people if p.is_active]
-
-
-@app.get("/settings")
-async def settings_page(person: Person = Depends(igni.web.person)) -> Page: ...
-
-
-@app.get("/admin")
-async def admin_page(person: Person = Depends(igni.web.super_admin)) -> Page: ...
-
-
-@app.get("/organisation/settings")
-async def org_settings(person: Person = Depends(igni.web.org_admin)) -> Page: ...
+    exported = await http.get("/v1/igni/subjects/u-ada/export", headers=igni_itself)
+    assert exported.json()["sections"][0]["rows"] == [{"doc": "runbook", "text": "Looks good"}]
+    assert (await http.delete("/v1/igni/subjects/u-ada", headers=igni_itself)).status_code == 204
 ```
 
 ## Installing
 
-From PyPI:
+> **Until the SDKs are on PyPI: build from a checkout.** `igni-service`
+> and `igni-extension` are not published yet, so `uv add igni-service`
+> finds nothing. Build both wheels from an igni checkout and install
+> from them:
+>
+> ```bash
+> git clone https://github.com/ignite-ember/igni.git
+> uv build --wheel --out-dir ./sdk-wheels igni/packages/igni-service
+> uv build --wheel --out-dir ./sdk-wheels igni/packages/igni-extension
+> uv add igni-service --find-links ./sdk-wheels      # or: pip install --find-links ./sdk-wheels igni-service
+> ```
+>
+> The bundle builder resolves the extension's dependencies the same way,
+> so it needs the same directory:
+> `igni-service-bundle --extension extension --out extension-bundle.tar.gz --find-links ./sdk-wheels`.
+> It says so when it cannot find `igni-extension`.
+
+Once published, from PyPI:
 
 ```bash
 uv add igni-service        # or: pip install igni-service
@@ -86,11 +153,32 @@ is unreachable, so the service starts and serves either way:
   one; replicas starting together agree on one.
 - **Registration.** On every start, with the key's public half. A restart
   finds the same registration.
-- **The thumbprint** is logged in a banner. A super admin compares it in
-  igni's portal before approving the service.
+- **The thumbprint** is logged in a banner, with the registration's state
+  and what comes next: while it is `pending`, a super admin compares the
+  thumbprint in igni's portal (*Services*) and approves the service;
+  once `approved`, an org admin switches its extension on for a group;
+  `revoked`, nothing works until a super admin decides otherwise.
 - **The extension bundle** is uploaded, signed, whenever igni holds
   different bytes — after each asset it declares that igni does not hold
-  yet, read from `extension-bundle.assets/` beside it.
+  yet, read from `extension-bundle.assets/` beside it. A new version of an
+  approved service that asks for more than the approved one is **held**
+  for a super admin, and the service logs igni's reason; machines keep the
+  approved version until then.
+- **Its log lines show under uvicorn.** uvicorn configures only its own
+  loggers, so `igni.lifespan` gives `igni_service` a stderr handler at
+  INFO when neither it nor the root logger has one. Configure logging
+  yourself and it is left as you configured it.
+
+Approval alone installs nothing anywhere. A person's igni installs the
+extension when **both** hold: a super admin has approved the service, and
+an org admin of their organisation has switched the extension on for
+their group (each person is in exactly one). An org admin can only switch
+on an approved service's extension.
+
+While a super admin has not approved it, calls that need a service token
+(the directory, notifications, events) raise `ServiceNotApproved`; once
+revoked, `ServiceRevoked`. Both are `IgniUnavailable`, so a handler written
+for that still catches them.
 
 ## People
 
@@ -98,7 +186,13 @@ is unreachable, so the service starts and serves either way:
   gave them (from the extension on their machine). A `Person`: `user_id`,
   `org_id`, `org_name`, `org_role`, `email`, `name`, `super_admin`. Every
   check on the token is made here; a refused token is a 401, and a token
-  that cannot be checked because igni is unreachable is a 503.
+  that cannot be checked because igni is unreachable is a 503. The 401's
+  body is always `Not authenticated`; its `WWW-Authenticate` says why, as
+  RFC 6750 has it — bare `Bearer` when no token was sent,
+  `Bearer error="invalid_token", error_description="the token has
+  expired"` (or *is for another audience; this service's is …*, *the
+  wrong kind of token*, *is not a JWT*, *is not signed by igni server's
+  keys*, *was revoked*) — and the service logs the same at INFO.
 - `Depends(igni.org_admin)` — the same, for an admin of the organisation
   the token is for (`org_role == "admin"`); anybody else is a 403. Being a
   super admin does not make somebody an organisation's admin.
@@ -110,8 +204,9 @@ is unreachable, so the service starts and serves either way:
   checks it later with `person_of` — one that turns an unusable token into
   an anonymous reader, say.
 - `await igni.person_of(token)` — the same check for a token held outside a
-  request header, such as a WebSocket greeting. Raises `TokenRefused` or
-  `IgniUnavailable`, so you answer in your own protocol.
+  request header, such as a WebSocket greeting. Raises `TokenRefused`
+  (its `reason` says why) or `IgniUnavailable`, so you answer in your own
+  protocol.
 - `Depends(igni.web.person)` — a person signed in to the service's own
   pages. A page that needs somebody sends a stranger to sign in and back;
   an API call gets a 401. Their tokens stay on the server and are renewed
@@ -135,17 +230,34 @@ with a token igni exchanged for the service's URL (`token_use` `app` or
 `space`). A service takes people only unless it says more:
 
 ```python
-from igni_service import App, Caller, CallerKind, Person, Space
+from fastapi import Depends, FastAPI
 
-igni = IgniService(settings, key_store=store,
-                   accepted_callers={CallerKind.PERSON, CallerKind.APP, CallerKind.SPACE})
+from igni_service import (
+    App, Caller, CallerKind, IgniService, IgniSettings, MemoryKeyStore, Person, Space,
+)
+
+igni = IgniService(
+    IgniSettings(
+        igni_server_url="https://igni.bank.internal",
+        public_base_url="https://notes.bank.internal",
+        service_name="Notes",
+    ),
+    key_store=MemoryKeyStore(),
+    accepted_callers={CallerKind.PERSON, CallerKind.APP, CallerKind.SPACE},
+)
+app = FastAPI(lifespan=igni.lifespan)
+
 
 @app.get("/v1/notes")
-async def notes(caller: Caller = Depends(igni.caller)) -> list[Note]:
+async def notes(caller: Caller = Depends(igni.caller)) -> list[str]:
     match caller:
-        case Person(): ...
-        case App(app_id=app_id): ...
-        case Space(app_id=app_id, external_id=user): ...
+        case Person(user_id=user_id):
+            return [f"notes of {user_id}"]
+        case App(app_id=app_id):
+            return [f"notes the app {app_id} keeps"]
+        case Space(app_id=app_id, external_id=user):
+            return [f"notes of {user} in {app_id}"]
+    return []
 ```
 
 `Depends(igni.caller)` answers a typed `Person`, `App` or `Space` (with its
@@ -156,6 +268,16 @@ app for one. `igni.caller_of(token)` is the same outside a request, and
 `FakeIgni.app_token` / `space_token` make tokens for tests.
 
 ## What a VM needs: VM profile requests
+
+> **Which call answers what.** An app: `app.vm_profile.request(wanted)`
+> asks, `app.vm_profile.status()` says what became of the request
+> (`pending`, `approved`, `rejected` with a reason), and
+> `app.vm_profile.effective()` is what its VM gets now. A service:
+> `igni.host(org_id).extension_vm_profile()` is what became of its
+> extension's request in that organisation. The older names —
+> `request_vm_profile`, `vm_profile_request`, `app.vm_profile()` and
+> `host.vm_profile()` — still work and raise a `DeprecationWarning`
+> naming the new call.
 
 In igni's cloud every producer — a person, an app, an app's space — runs
 in a microVM of its own, built from a **VM profile**: memory, vCPUs, idle
@@ -169,13 +291,13 @@ on the portal's *VM profiles* page, where they see exactly what would run.
 
 | Who asks | How | What approval does |
 |---|---|---|
-| an **app**, as itself | `IgniApp.request_vm_profile(...)`, with the app's own token | makes a profile from the request and assigns it to the app (its spaces' VMs get it too) |
+| an **app**, as itself | `app.vm_profile.request(...)`, with the app's own token | makes a profile from the request and assigns it to the app (its spaces' VMs get it too) |
 | an **extension** | its manifest's `vm` section (see *The extension bundle*) | makes a profile from the request, which the admin gives to the groups and apps that use the extension |
 
 A service is not an app: a service token names a service and an
 organisation, never an app, so a service cannot ask for an app's VM. A
 service reads what became of its own extension's request in an
-organisation with `await igni.host(org_id).vm_profile()` — `request.state`
+organisation with `await igni.host(org_id).extension_vm_profile()` — `request.state`
 (`pending`, `approved`, `rejected`, with the admin's `reason`), the
 `profile` the approval made, and how many groups and apps were `assigned`
 it.
@@ -193,14 +315,25 @@ An org admin registers the app on the portal (*Apps*) by pasting the
 app's **public** key; the private half never leaves the app.
 
 ```python
-from igni_service import IgniApp, VmPackages, VmProfileRequest
+from igni_service import IgniApp, MemoryKeyStore, VmPackages, VmProfileRequest
+from igni_service.testing import FakeIgni
 
-async with IgniApp(APP_ID, igni_server_url=IGNI_SERVER_URL, key_store=store) as app:
+fake = FakeIgni()  # igni, in-process, for this example; below, what production writes
+APP_ID = "app-review-bot"
+app = fake.app(APP_ID, org_id="org-1")
+# In production:
+#   app = IgniApp(APP_ID, igni_server_url="https://igni.bank.internal", key_store=store)
+
+async with app:
     print(await app.public_jwks())                   # once, for the admin to paste
-    record = await app.request_vm_profile(BROWSER)   # below
-    record.state                                     # "pending"
-    await app.vm_profile_request()                   # later: "approved" / "rejected" + reason
-    await app.vm_profile()                           # what the VM gets now: the default until approved
+    record = await app.vm_profile.request(VmProfileRequest(packages=VmPackages(apt=["jq"])))
+    assert record.state == "pending"
+    assert (await app.vm_profile.effective()).profile_name == "Standard"  # until approved
+
+    fake.approve_vm_profile("org-1", app=APP_ID)     # the org admin, on the portal
+    status = await app.vm_profile.status()
+    assert status is not None and status.state == "approved"
+    assert (await app.vm_profile.effective()).packages.apt == ["jq"]
 ```
 
 `store` is any `KeyStore` — `SqlKeyStore` on the app's own database, as a
@@ -234,24 +367,7 @@ no network at all, so the script can only read files — such as a
 `file://` mirror directory, which is mounted at the same path.
 
 ```python
-BROWSER = VmProfileRequest(
-    memory_mib=4096,           # Chromium peaks well above igni's own needs
-    normal_memory_mib=2048,
-    vcpus=2,
-    packages=VmPackages(
-        # From the bank's Ubuntu mirror: what Chromium needs to run, and
-        # what the setup script needs to place it.
-        apt=[
-            "fonts-liberation", "libnss3", "libatk-bridge2.0-0t64", "libgbm1",
-            "libasound2t64", "libxkbcommon0", "libxcomposite1", "libxdamage1",
-            "libxrandr2", "libpango-1.0-0", "libcups2t64",
-            "ca-certificates", "curl", "unzip",
-        ],
-        # From the bank's npm mirror. Pinned: the admin approves this version.
-        npm=["@playwright/mcp@0.0.84"],
-    ),
-    setup_script=SETUP,
-)
+from igni_service import VmPackages, VmProfileRequest
 
 # Runs as root in the layer's chroot, after the packages. Chromium comes
 # from inside the network — never from Playwright's CDN.
@@ -270,7 +386,28 @@ unzip -q -o "$archive" -d /opt/chromium
 mkdir -p /opt/google/chrome
 ln -sf /opt/chromium/chrome-linux/chrome /opt/google/chrome/chrome
 """
+
+BROWSER = VmProfileRequest(
+    memory_mib=4096,           # Chromium peaks well above igni's own needs
+    normal_memory_mib=2048,
+    vcpus=2,
+    packages=VmPackages(
+        # From the bank's Ubuntu mirror: what Chromium needs to run, and
+        # what the setup script needs to place it.
+        apt=[
+            "fonts-liberation", "libnss3", "libatk-bridge2.0-0t64", "libgbm1",
+            "libasound2t64", "libxkbcommon0", "libxcomposite1", "libxdamage1",
+            "libxrandr2", "libpango-1.0-0", "libcups2t64",
+            "ca-certificates", "curl", "unzip",
+        ],
+        # From the bank's npm mirror. Pinned: the admin approves this version.
+        npm=["@playwright/mcp@0.0.84"],
+    ),
+    setup_script=SETUP,
+)
 ```
+
+An app sends it with `await app.vm_profile.request(BROWSER)`.
 
 The agent then runs Playwright MCP as `playwright-mcp --headless
 --isolated` (stdio). The flags are Playwright MCP's own: `--headless` is
@@ -304,7 +441,12 @@ portal API directly (igni server's `docs/service-identity.md` §12).
 In tests, `fake.app(app_id, org_id=...)` is an `IgniApp` wired to the
 fake; `fake.approve_vm_profile(org_id, app=...)` (or `extension=...`) and
 `fake.reject_vm_profile(..., reason=...)` play the org admin;
-`fake.vm_profiles.caps` are the platform's caps.
+`fake.vm_profiles.caps` are the platform's caps. The request has to exist
+first, as on the portal: an app's once it has asked
+(`app.vm_profile.request`), an extension's once its bundle is on the fake
+(`await fake.upload(bundle, igni)`) and the service has asked after it
+(`await igni.host(org_id).extension_vm_profile()`). Approving one that
+does not exist raises `NoVmProfileRequest` (a `LookupError`) saying which.
 
 ## Somebody removed
 
@@ -380,8 +522,8 @@ the first frame (`igni.person_of`).
   members(query=..., limit=..., include_former=...)`, `await
   person(user_id)` (`None` for somebody never in the organisation),
   `await resolve([...])` (ids or addresses → members, keyed by both).
-- `await host.vm_profile()` — what became of this service's extension's VM
-  profile request here (see *What a VM needs* above).
+- `await host.extension_vm_profile()` — what became of this service's
+  extension's VM profile request here (see *What a VM needs* above).
 
 ## Reaching a producer's agent
 
@@ -403,6 +545,14 @@ igni, choose a chat, post or not.
 
 ```python
 from igni_service import Attachment, Producer
+from igni_service.testing import FakeIgni
+
+fake = FakeIgni()  # igni, in-process: what a service holds in production is its IgniService
+fake.add_member("org-1", "u-marieke", email="marieke@acme.test")
+igni, org_id = fake.service(), "org-1"
+pdf = b"%PDF-1.7 the claim form"
+with open("damage.jpg", "wb") as photo:
+    photo.write(b"\xff\xd8\xff a photo")
 
 agent = igni.host(org_id).agent(Producer.person("u-marieke"))
 
@@ -418,7 +568,9 @@ await agent.send_message(
 chat = await agent.new_chat("Claim CL-20431", thread="claim:CL-20431")
 await chat.send_message("The adjuster replied: see the report.")
 await chat.queue("When you get to it, check the invoice.")     # the next run; starts nothing
-await chat.show({"root": "r", "elements": {...}})                # json-render; never sent to the model
+await chat.show(                                                 # json-render; never sent to the model
+    {"root": "r", "elements": {"r": {"type": "Text", "props": {"text": "Paid."}}}}
+)
 await chat.rename("Claim CL-20431 (paid)")
 await chat.cancel()                                              # a working run; never one waiting on an approval
 
@@ -477,6 +629,19 @@ What a service can do in a chat, against what igni can:
 
 ## Erasure and export
 
+`igni.router` (mounted by `igni.install(app)`) answers igni's two calls
+about one person, each with a token igni signs for this service
+(`token_use` `igni`, the organisation in `org`):
+
+| igni calls | Your handler | Answer |
+|---|---|---|
+| `DELETE /v1/igni/subjects/{user_id}` | `@igni.on_erase` | 204, whether or not anything was there |
+| `GET /v1/igni/subjects/{user_id}/export` | `@igni.on_export` | 200, `{"sections": [{"name": …, "rows": [{…}]}]}` |
+
+Without a handler the route answers 501, which igni reports as
+unconfirmed under the service's name. In a test, `fake.igni_token(org_id)`
+is the token igni sends (the opening example calls both).
+
 `@igni.on_erase` and `@igni.on_export` receive a `Subject`: the person's
 `user_id` and `org_id`, and their `email` and `name` when igni's directory
 can say. Erasure must be idempotent; igni repeats it until every service
@@ -521,10 +686,18 @@ of the table signs nobody in.
 To keep them in the service's own database instead, hand the stores over:
 
 ```python
-engine = create_async_engine(settings.database_url)
-cipher = KeyCipher(settings.key_encryption_key)
+from sqlalchemy.ext.asyncio import create_async_engine
+
+from igni_service import IgniService, IgniSettings, KeyCipher, SqlKeyStore, SqlWebSessionStore
+
+engine = create_async_engine("sqlite+aiosqlite:///service.db")  # the service's own database
+cipher = KeyCipher(KeyCipher.generate())  # in production: KeyCipher(IGNI_KEY_ENCRYPTION_KEY)
 igni = IgniService(
-    IgniSettings(),
+    IgniSettings(
+        igni_server_url="https://igni.bank.internal",
+        public_base_url="https://notes.bank.internal",
+        service_name="Notes",
+    ),
     key_store=SqlKeyStore(engine, cipher),
     web_store=SqlWebSessionStore(engine, cipher),
 )
@@ -563,6 +736,27 @@ Every tool in the manifest's `permissions.tools` states MCP's four hints
 igni's permission modes decide on them, and igni server refuses a bundle
 that leaves one out — so the builder refuses it first.
 
+**State the hints once, in the code.** An extension written with
+`igni-extension` already states them on every `@ext.tool(hints=...)`.
+Leave `permissions.tools` out of `manifest.json` and the builder writes
+it into the bundle's manifest from the code (it runs
+`python -m igni_extension.manifest` on the extension, offline, from the
+wheelhouse it just built); your own file is left as it is. A manifest
+that does list them is checked against the code instead: a listed tool
+the code does not register, or a hint that differs, stops the build. A
+tool the code registers and the manifest does not list is said in a
+note: it is not offered to the agent, which is what you want for a tool
+only the extension's page calls.
+
+**Size.** The wheelhouse carries every dependency for all three
+platforms; for an extension on `igni-extension` that is about 30 MB,
+nearly all of it the MCP SDK's own dependencies three times over
+(`cryptography`, `pydantic-core`, `pywin32`). `--platform linux-x86_64`
+(repeatable: `macos-arm64`, `linux-x86_64`, `windows-x86_64`) builds for
+some only — about 10 MB for Linux alone — and a machine on any other
+platform then cannot install it, so use it only for a deployment whose
+machines are all on those.
+
 A dependency with no usable wheel stops the build, by name and platform.
 One that is pure Python and publishes only an sdist is declared in the
 extension's `pyproject.toml` and built from its sdist:
@@ -579,20 +773,55 @@ serves its keys, takes registrations and bundles, issues service tokens,
 answers the directory, plays the portal's sign-in, revokes sign-ins, and
 records notifications.
 
+`FakeIgni()` approves nothing and needs nothing approved:
+`require_approval=False` by default, so a service registering with it
+gets service tokens at once. `FakeIgni(require_approval=True)` plays a
+deployment whose super admin has not approved it yet — service tokens
+raise `ServiceNotApproved` — until the test calls `fake.approve()`;
+`fake.revoke()` plays them revoking it. `fake.hold_uploads = "reason"`
+plays igni holding a new version for a super admin.
+
 ```python
+import httpx
+from fastapi import Depends, FastAPI
+
+from igni_service import Notification, Person
 from igni_service.testing import FakeIgni
 
 fake = FakeIgni()
 fake.add_member("org-1", "u-ada", email="ada@acme.test", name="Ada")
-igni = fake.service()                                # IgniService wired to the fake
+igni = fake.service(fake.settings(public_base_url="https://service.test"))  # wired to the fake
+app = FastAPI()
+igni.install(app)
+
+
+@app.get("/settings")
+async def settings(person: Person = Depends(igni.web.person)) -> dict[str, str]:
+    return {"hello": person.name}
+
 
 token = fake.person_token("u-ada", org_id="org-1")   # what the extension would send
 igni_call = fake.igni_token("org-1")                 # what igni sends for erasure/export
-back = fake.authorize(login_redirect, user_id="u-ada", org_id="org-1")  # the portal
 
+transport = httpx.ASGITransport(app=app)
+async with httpx.AsyncClient(transport=transport, base_url="https://service.test") as browser:
+    login = await browser.get(igni.web.login_path)   # a person opening the service's pages
+    back = fake.authorize(login.headers["location"], user_id="u-ada", org_id="org-1")  # the portal
+    await browser.get(back)                          # the service keeps a session
+    assert (await browser.get("/settings")).json() == {"hello": "Ada"}
+    await browser.post(igni.web.logout_path)
+
+assert len(fake.revoked) == 1                        # the refresh token /auth/logout revoked
+
+await igni.host("org-1").notify(Notification(kind="comment", title="Runbook", recipients=["u-ada"]))
 assert [d.user_id for d in fake.deliveries] == ["u-ada"]
-assert fake.revoked == [refresh_token]                # what /auth/logout revoked
 ```
+
+`await fake.upload(bundle, igni)` uploads an extension as the service does
+at start-up — signed, over the fake's wire — from a built
+`extension-bundle.tar.gz` or straight from the extension's directory, for
+a test that needs it on igni (its VM profile request, say) without a
+lifespan or a wheelhouse.
 
 What a service sent producers' agents is `fake.events` (every kind) and
 `fake.agents.uploads`; `fake.agents.settle(event_id, "delivered")` plays
