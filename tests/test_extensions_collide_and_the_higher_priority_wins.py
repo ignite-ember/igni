@@ -7,7 +7,7 @@ priority order. It is given in two places, igni server's Services page
 and this host. The cases live
 in ``tests/fixtures/extension_impact_cases.json`` so igni server runs the
 very same ones against its own implementation; this file runs them here,
-and fails when the copy beside a sibling ember-server checkout differs.
+and fails when the copy beside a sibling igni__server checkout differs.
 """
 
 from __future__ import annotations
@@ -25,7 +25,7 @@ FIXTURE = Path(__file__).parent / "fixtures" / "extension_impact_cases.json"
 CASES: dict[str, Any] = json.loads(FIXTURE.read_text())
 SERVER_COPY = (
     Path(__file__).resolve().parents[2]
-    / "ember-server"
+    / "igni__server"
     / "tests"
     / "fixtures"
     / "extension_impact_cases.json"
@@ -76,7 +76,7 @@ def test_an_outranked_exclusive_override_says_which_editor_beat_it():
     assert entry.reason.startswith("lower priority than acme.b, which edits main")
 
 
-@pytest.mark.skipif(not SERVER_COPY.is_file(), reason="no ember-server checkout beside this one")
+@pytest.mark.skipif(not SERVER_COPY.is_file(), reason="no igni__server checkout beside this one")
 def test_igni_servers_copy_of_the_cases_is_the_same():
     assert json.loads(SERVER_COPY.read_text()) == CASES
 
