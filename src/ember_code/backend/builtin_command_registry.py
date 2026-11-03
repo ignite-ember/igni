@@ -155,10 +155,16 @@ class BuiltinCommandRegistry:
             BuiltinCommand("/model", "Switch the active model", f"{_B}.cmd_model:cmd_model"),
             BuiltinCommand("/mcp", "Open the MCP servers panel", f"{_B}.cmd_misc:cmd_mcp"),
             BuiltinCommand(
-                "/login", "Sign in to your igni server", f"{_B}.cmd_auth:cmd_login", takes_args=False
+                "/login",
+                "Sign in to your igni server",
+                f"{_B}.cmd_auth:cmd_login",
+                takes_args=False,
             ),
             BuiltinCommand(
-                "/logout", "Sign out of your igni server", f"{_B}.cmd_auth:cmd_logout", takes_args=False
+                "/logout",
+                "Sign out of your igni server",
+                f"{_B}.cmd_auth:cmd_logout",
+                takes_args=False,
             ),
             BuiltinCommand(
                 "/whoami",
