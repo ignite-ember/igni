@@ -33,6 +33,7 @@ import {
 import { nextObserverBusyState } from "./chat/observerBusy";
 import { planSessionBinding } from "./chat/sessionBinding";
 import { Arrivals } from "./chat/arrival";
+import { useChatFollow } from "./chat/followOutput";
 import {
   current as currentPage,
   openRoot,
@@ -269,6 +270,9 @@ function findAssistantTextForStats(
   }
   return undefined;
 }
+
+/** The chat list's ``atBottomThreshold``; see the ``<Virtuoso>`` below. */
+const AT_BOTTOM_THRESHOLD = 50;
 
 export default function App() {
   const client = useMemo(() => new IgniClient(), []);
@@ -1955,6 +1959,8 @@ export default function App() {
       }),
     [windowModel],
   );
+  // Virtuoso's "at bottom", once it agrees with the page (V6).
+  const follow = useChatFollow(items.length, AT_BOTTOM_THRESHOLD, tellScroll);
   const scrollToBottom = useCallback(() => {
     virtuosoRef.current?.scrollToIndex({ index: "LAST", behavior: "auto" });
     tellScroll(true);
@@ -3445,7 +3451,11 @@ export default function App() {
               // Auto-follow the tail only while the user is already
               // there; ``smooth`` is intentionally not used so streaming
               // doesn't visibly chase tokens.
-              followOutput="auto"
+              // Not before Virtuoso's "at bottom" agrees with the page: a
+              // stale one at mount would carry the view to the end on its
+              // own (V6, ``chat/followOutput``).
+              followOutput={follow.followOutput}
+              totalListHeightChanged={follow.totalListHeightChanged}
               // Virtuoso's default ``atBottomThreshold`` is 4px which
               // misses the "at bottom" transition by a sub-pixel after
               // every layout change (composer height grows on Send,
@@ -3455,8 +3465,8 @@ export default function App() {
               // ride out the layout shifts without papering over a real
               // "I scrolled up to read history" intent — pinned by
               // ``e2e/chat-scroll.spec.ts``.
-              atBottomThreshold={50}
-              atBottomStateChange={tellScroll}
+              atBottomThreshold={AT_BOTTOM_THRESHOLD}
+              atBottomStateChange={follow.atBottomStateChange}
               rangeChanged={(range) => {
                 topIndexRef.current = range.startIndex;
               }}
@@ -3465,7 +3475,10 @@ export default function App() {
               isScrolling={(moving) => {
                 if (!moving) tellScroll(windowModel.get("scroll").at_bottom);
               }}
-              scrollerRef={(el) => setScrollEl(el as HTMLElement | null)}
+              scrollerRef={(el) => {
+                follow.scrollerRef(el);
+                setScrollEl(el as HTMLElement | null);
+              }}
               increaseViewportBy={{ top: 400, bottom: 800 }}
               itemContent={(idx, item) => {
                 // ``streaming`` lights the blinking caret CSS on the

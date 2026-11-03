@@ -107,6 +107,40 @@ test.describe("chat scroll — Virtuoso followOutput contract", () => {
     await expect(atBottom(page)).resolves.toBe(false);
   });
 
+  test("opens at its top when the rows are measured late, as on a loaded machine", async ({
+    page,
+  }) => {
+    // V6. Under eight workers the list opened at its end in about half
+    // the runs (scrollTop 1606). Late ResizeObserver callbacks left
+    // Virtuoso's record of the scroller at "empty", so it reported "at
+    // bottom" with the rows already on the page; the re-render that
+    // report causes armed followOutput's "keep the bottom when the size
+    // grows", and the late measurement then scrolled to the end
+    // (`src/chat/followOutput.ts`). Holding the rows' ResizeObserver
+    // callbacks back 50 ms is that load, made certain: without the fix
+    // this opens at the end every time.
+    await page.addInitScript(() => {
+      const Native = window.ResizeObserver;
+      window.ResizeObserver = class extends Native {
+        constructor(callback: ResizeObserverCallback) {
+          super((entries, observer) => {
+            const rows = entries.some((entry) =>
+              entry.target.querySelector?.("[data-item-index]"),
+            );
+            if (rows) setTimeout(() => callback(entries, observer), 50);
+            else callback(entries, observer);
+          });
+        }
+      };
+    });
+    await gotoChatScroll(page);
+    await expect.poll(async () => itemCount(page)).toBe(60);
+    await expect(page.getByTestId("row-1")).toBeVisible();
+
+    expect(await settledScrollTop(page)).toBe(0);
+    await waitForAtBottom(page, false);
+  });
+
   test("scrolling to the LAST row flips atBottom to true", async ({ page }) => {
     await gotoChatScroll(page);
     // Virtuoso virtualizes — row-60 isn't in the DOM until we

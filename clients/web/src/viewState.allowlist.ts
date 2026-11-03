@@ -102,6 +102,9 @@ export const VIEW_STATE: Record<string, Partial<Record<Category, string[]>>> = {
     measure: ["scrollEl"],
     animation: ["pulsingItemId"],
   },
+  "chat/followOutput.ts": {
+    measure: ["agreed"],
+  },
   "components/ChatItems.tsx": {
     animation: ["copied"],
     disclosure: ["collapsed", "open", "open", "open", "open", "expanded", "open"],
