@@ -65,12 +65,13 @@ class ToolHintsMissing(Exception):
     @classmethod
     def check(cls, tools: Iterable[Tool]) -> None:
         """Raise for the tools whose annotations leave a hint unstated."""
-        missing = sorted(tool.name for tool in tools if not cls._complete(tool.annotations))
+        missing = sorted(tool.name for tool in tools if not cls.complete(tool.annotations))
         if missing:
             raise cls(missing)
 
     @staticmethod
-    def _complete(annotations: ToolAnnotations | None) -> bool:
+    def complete(annotations: ToolAnnotations | None) -> bool:
+        """Whether all four hints are stated."""
         if annotations is None:
             return False
         return None not in (

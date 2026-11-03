@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import sys
 from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
 from typing import Any
 
@@ -43,6 +44,35 @@ from igni_extension.threads import OffTheLoop
 from igni_extension.tokens import HostTokens
 
 AnyFunction = Callable[..., Any]
+
+
+class ToolNames(BaseModel):
+    """Every name one tool goes by, from where each is written.
+
+    `tool` is the name in this code (the function's, or `name=`); the
+    others are derived from it and the extension's id, by igni's rules.
+    """
+
+    #: What `ext.tool` registered, and `HostHarness.call` takes.
+    tool: str
+    #: The manifest's `permissions.tools[].name` (and `permissions.rpc` is
+    #: `rpc` below): namespaced by the extension's id, so an administrator
+    #: reading it knows whose tool it is.
+    manifest: str
+    #: What a page calls with `bridge.rpc(...)`, and `permissions.rpc` grants.
+    rpc: str
+    #: What igni registers it as for its agent, and the name its permission
+    #: rules and settings-file hooks match: `mcp_ext:<id>_<tool>`.
+    registered: str
+
+    @classmethod
+    def of(cls, extension_id: str, tool: str) -> ToolNames:
+        return cls(
+            tool=tool,
+            manifest=f"{extension_id}.{tool}",
+            rpc=f"ext.{extension_id}.{tool}",
+            registered=f"mcp_ext:{extension_id}_{tool}",
+        )
 
 
 class IgniExtension:
@@ -117,9 +147,51 @@ class IgniExtension:
                 if tool is not None:
                     tool.fn = OffTheLoop.wrap(served)
                     tool.is_async = True
+            # `lookup_ticket.manifest_name`: the line `permissions.tools` needs.
+            with contextlib.suppress(AttributeError, TypeError):
+                fn.manifest_name = ToolNames.of(self.id, name or fn.__name__).manifest  # type: ignore[attr-defined]
             return fn
 
         return off_the_loop
+
+    def tool_names(self, tool: str) -> ToolNames:
+        """Every name `tool` goes by: in code, in the manifest, from a page, in igni.
+
+        `KeyError` for a tool this extension does not register.
+        """
+        if self.mcp._tool_manager.get_tool(tool) is None:
+            known = ", ".join(sorted(t.name for t in self.mcp._tool_manager.list_tools()))
+            raise KeyError(f"{self.id} registers no tool {tool!r} (it has: {known or 'none'})")
+        return ToolNames.of(self.id, tool)
+
+    def manifest_tools(self) -> list[dict[str, Any]]:
+        """`permissions.tools` as the code states it: each tool's namespaced name and hints.
+
+        What `igni-service-bundle` writes into the bundle's manifest when
+        the extension's own leaves `permissions.tools` out, so the hints
+        are stated once, here. `python -m igni_extension.manifest <module>`
+        prints it. A tool with a hint unstated is `ToolHintsMissing`.
+        """
+        tools = sorted(self.mcp._tool_manager.list_tools(), key=lambda tool: tool.name)
+        missing = [tool.name for tool in tools if not ToolHintsMissing.complete(tool.annotations)]
+        if missing:
+            raise ToolHintsMissing(missing)
+        listed: list[dict[str, Any]] = []
+        for tool in tools:
+            annotations = tool.annotations
+            assert annotations is not None  # checked just above
+            listed.append(
+                {
+                    "name": ToolNames.of(self.id, tool.name).manifest,
+                    "annotations": {
+                        "readOnlyHint": annotations.readOnlyHint,
+                        "destructiveHint": annotations.destructiveHint,
+                        "idempotentHint": annotations.idempotentHint,
+                        "openWorldHint": annotations.openWorldHint,
+                    },
+                }
+            )
+        return listed
 
     def on[T](
         self, signal: Signal[T]
@@ -257,7 +329,30 @@ class IgniExtension:
 
     def run(self) -> None:
         """Serve igni over stdio until it closes the pipe. The console script calls this."""
+        self._hint_when_outside_igni()
         anyio.run(self._run_stdio)
+
+    def _hint_when_outside_igni(self) -> None:
+        """Say what this is when somebody starts it from a terminal, rather than seem to hang.
+
+        igni starts the process with a pipe on stdin; a terminal there
+        means a person ran the console script. It still serves — an MCP
+        inspector would — but says so first, on stderr.
+        """
+        try:
+            interactive = sys.stdin.isatty()
+        except (AttributeError, ValueError):
+            return
+        if not interactive or self.environment.host.configured:
+            return
+        print(
+            f"{self.id}: this is an igni extension's process, an MCP server igni starts "
+            "over stdio. Run inside igni: a development install (IGNI_DEV_EXTENSIONS=1 igni "
+            "ext install <dir>), or its service's bundle. To try a tool without igni, "
+            "test it: igni_extension.testing.HostHarness(ext).call(...). Waiting for MCP "
+            "messages on stdin (Ctrl-C to stop).",
+            file=sys.stderr,
+        )
 
     async def check_tools(self) -> None:
         """Refuse to serve a tool that leaves one of its four hints unstated.

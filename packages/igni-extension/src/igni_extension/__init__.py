@@ -21,12 +21,13 @@ from igni_extension.environment import (
 )
 from igni_extension.errors import (
     HostError,
+    HostErrorCode,
     HostUnavailable,
     IgniExtensionError,
     NotConfigured,
     NotSignedIn,
 )
-from igni_extension.extension import IgniExtension
+from igni_extension.extension import IgniExtension, ToolNames
 from igni_extension.hints import ToolHints, ToolHintsMissing
 from igni_extension.hooks import Allow, HookEvent, Hooks, Modify, Reject
 from igni_extension.host import Host, Notifications
@@ -47,6 +48,7 @@ __all__ = [
     "Host",
     "HostEndpoint",
     "HostError",
+    "HostErrorCode",
     "HookEvent",
     "Hooks",
     "HostUnavailable",
@@ -68,6 +70,7 @@ __all__ = [
     "Signal",
     "SignedIn",
     "Target",
+    "ToolNames",
     "ToolHints",
     "ToolHintsMissing",
     "Workspace",

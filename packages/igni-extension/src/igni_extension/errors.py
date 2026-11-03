@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from enum import StrEnum
+
 
 class IgniExtensionError(Exception):
     """Anything this SDK raises on purpose."""
@@ -28,6 +30,19 @@ class HostUnavailable(IgniExtensionError):
     """The igni host that started this process did not answer as expected."""
 
 
+class HostErrorCode(StrEnum):
+    """Why the igni host refused or failed a request. Each is the string it was."""
+
+    NOT_GRANTED = "not_granted"
+    NOT_FOUND = "not_found"
+    INVALID = "invalid"
+    READ_ONLY = "read_only"
+    STAGE_2 = "stage_2"
+    REFUSED = "refused"
+    UNAVAILABLE = "unavailable"
+    FAILED = "failed"
+
+
 class HostError(IgniExtensionError):
     """The igni host refused a request on `ext.host`, or it failed there.
 
@@ -37,9 +52,14 @@ class HostError(IgniExtensionError):
     person could not have done it either), `unavailable` (what answers it,
     igni's decision model, could not be started), `failed`. The message is
     a sentence for the extension's author.
+
+    `code` is a `HostErrorCode` — a `StrEnum`, so `code == "not_granted"`
+    still holds — or, for a code a newer igni sends that this SDK does not
+    know yet, the plain string.
     """
 
     def __init__(self, code: str, message: str) -> None:
         super().__init__(message)
-        self.code = code
+        known = {member.value: member for member in HostErrorCode}
+        self.code: str = known.get(code, code)
         self.message = message
