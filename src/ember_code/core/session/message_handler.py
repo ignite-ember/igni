@@ -105,6 +105,9 @@ class SessionMessageHandler:
         self._session_id_ref = session_id_ref
         self._context_window_ref = context_window_ref
         self._latch_input_tokens = latch_input_tokens
+        #: Why the last :meth:`handle` failed, or ``""`` when it did not —
+        #: what a headless run's exit code is made from.
+        self.last_failure = ""
         # Extractor injection — Session passes its own module's
         # ``extract_response_text`` binding so
         # ``patch("ember_code.core.session.core.extract_response_text")``
@@ -117,6 +120,7 @@ class SessionMessageHandler:
         Accepts optional media keyword arguments (images, audio,
         videos, files) which are forwarded directly to ``team.arun``.
         """
+        self.last_failure = ""
         await self._ensure_mcp()
 
         verdict = await ExtensionHookGate.ask(
@@ -137,6 +141,7 @@ class SessionMessageHandler:
             team = self._team_ref()
             response = await team.arun(effective_message, stream=False, **media_kwargs)
             self._reject_paused_run(response)
+            self._reject_failed_run(response)
             response_text = self._extract_response_text(response)
 
             self._audit.log(
@@ -199,6 +204,24 @@ class SessionMessageHandler:
             "up front (--auto-approve or a settings rule) or use a client that "
             "supports confirmations."
         )
+
+    @staticmethod
+    def _reject_failed_run(response: Any) -> None:
+        """Refuse to treat a failed run as a reply.
+
+        A non-streamed ``arun`` does not raise when the run fails — no
+        model configured, the model's reply cut off, a provider error —
+        it returns ``status=RunStatus.error`` with the error as its
+        content. That content was printed as the assistant's answer and
+        ``igni -m`` exited 0. Raise, so ``_handle_run_failure`` reports it
+        as the failure it is. Compared by name, like
+        :meth:`_reject_paused_run`.
+        """
+        status = getattr(response, "status", None)
+        if str(getattr(status, "value", status)).lower() != "error":
+            return
+        content = getattr(response, "content", None)
+        raise RuntimeError(content if isinstance(content, str) and content else "The run failed.")
 
     async def _check_user_prompt_hook(self, message: str) -> str | None:
         """Fire the ``UserPromptSubmit`` hook. Returns the blocked
@@ -325,6 +348,7 @@ class SessionMessageHandler:
         failure with a single subscription pair.
         """
         error_msg = f"Error handling message: {exc}"
+        self.last_failure = error_msg
         self._display.print_error(error_msg)
 
         self._audit.log(

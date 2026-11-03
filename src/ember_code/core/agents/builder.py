@@ -22,6 +22,7 @@ from ember_code.core.agents.tool_audience import ToolAudience
 from ember_code.core.agents.tool_audience import audience as default_audience
 from ember_code.core.config.models import ModelRegistry
 from ember_code.core.config.tool_permissions import ToolPermissions
+from ember_code.core.hooks.untrusted import UntrustedOutputHook
 from ember_code.core.tools.registry import ToolRegistry
 from ember_code.core.tools.schedule import ScheduleTools
 
@@ -138,6 +139,10 @@ class AgentBuilder:
             reasoning=definition.reasoning,
             reasoning_min_steps=(definition.reasoning_min_steps if definition.reasoning else None),
             reasoning_max_steps=(definition.reasoning_max_steps if definition.reasoning else None),
+            # Every agent the pool builds — so every agent a spawn runs, at
+            # any depth — quarantines external tool output, as the main
+            # agent's ToolEventHook does.
+            tool_hooks=UntrustedOutputHook.on(None),
         )
         return agent_cls(**args.to_agno_kwargs())
 

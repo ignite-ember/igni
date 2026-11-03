@@ -39,6 +39,7 @@ import time
 from typing import TYPE_CHECKING
 
 from ember_code.core.activity import BusyKind, background
+from ember_code.core.tools.output_tail import OutputTail
 
 if TYPE_CHECKING:
     from ember_code.core.tools.process_supervisor import ProcessSupervisor
@@ -107,6 +108,8 @@ class ManagedProcess:
     __slots__ = (
         "proc",
         "output",
+        "_trimmed_lines",
+        "_trimmed_chars",
         "lock",
         "started_at",
         "cmd",
@@ -128,6 +131,11 @@ class ManagedProcess:
         self.cmd = cmd
         self._supervisor = supervisor
         self.output: list[str] = []
+        # Lines (and their characters) the buffer cap has thrown away
+        # from the front of ``output`` — so a cut result can still say
+        # how much came before what it shows.
+        self._trimmed_lines = 0
+        self._trimmed_chars = 0
         # File handle opened lazily on first backgrounded line —
         # foreground commands skip it (their output is consumed
         # immediately by the calling tool's reply). See
@@ -201,7 +209,10 @@ class ManagedProcess:
                     # Trim if buffer is too large (keep last half)
                     total = sum(len(line) for line in self.output)
                     if total > _MAX_BUFFER:
-                        self.output = self.output[len(self.output) // 2 :]
+                        half = len(self.output) // 2
+                        self._trimmed_lines += half
+                        self._trimmed_chars += sum(len(old) + 1 for old in self.output[:half])
+                        self.output = self.output[half:]
                 # Fire line subscribers OUTSIDE the buffer lock —
                 # they're independent (the FE watcher's loop hop
                 # doesn't need the buffer to be consistent) and
@@ -269,6 +280,18 @@ class ManagedProcess:
         with self.lock:
             lines = self.output[-tail:]
         return "\n".join(lines)
+
+    def read_tail(self, tail: int = 100) -> OutputTail:
+        """The last ``tail`` lines, with what came before them counted —
+        for a result the model reads, which must say when it is cut
+        (:meth:`OutputTail.render`)."""
+        with self.lock:
+            return OutputTail.of(
+                self.output,
+                tail,
+                dropped_lines=self._trimmed_lines,
+                dropped_chars=self._trimmed_chars,
+            )
 
     def read_new(self, max_lines: int = 200) -> str:
         """Return only lines added since the last read_new() call."""

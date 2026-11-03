@@ -159,20 +159,31 @@ class TestSessionPersistence:
         assert db.get_sessions.await_args.kwargs["limit"] == 1
 
     @pytest.mark.asyncio
-    async def test_auto_name_calls_aset_session_name(self):
-        executor = MagicMock()
-        executor.aset_session_name = AsyncMock()
+    async def test_auto_name_never_calls_agnos_blocking_namer(self):
+        # Agno's ``aset_session_name`` runs a synchronous model call on
+        # the event loop — see ``test_naming_a_session_does_not_hold_the_loop``.
+        model = MagicMock()
+        model.aset_session_name = AsyncMock()
+        model.aresponse = AsyncMock(return_value=MagicMock(content="Port lookup"))
+        db = MagicMock()
+        db.get_session = AsyncMock(
+            return_value=MagicMock(
+                session_data={},
+                runs=[MagicMock(input=MagicMock(input_content="What port is it on?"))],
+            )
+        )
+        db.rename_session = AsyncMock()
 
-        p = SessionPersistence(db=MagicMock(), session_id="s1")
-        await p.auto_name(executor)
+        p = SessionPersistence(db=db, session_id="s1")
+        await p.auto_name(model)
 
-        executor.aset_session_name.assert_called_once_with(session_id="s1", autogenerate=True)
+        model.aset_session_name.assert_not_called()
+        model.aresponse.assert_awaited_once()
 
     @pytest.mark.asyncio
-    async def test_auto_name_handles_missing_method(self):
-        executor = MagicMock(spec=[])  # no aset_session_name
-        p = SessionPersistence(db=MagicMock(), session_id="s1")
-        await p.auto_name(executor)  # should not raise
+    async def test_auto_name_without_a_db_names_nothing(self):
+        p = SessionPersistence(db=None, session_id="s1")
+        assert await p.auto_name(MagicMock(spec=[])) == ""  # should not raise
 
     @pytest.mark.asyncio
     async def test_rename_no_db(self):

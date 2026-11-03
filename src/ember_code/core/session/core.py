@@ -1770,6 +1770,12 @@ class Session:
             _log_run_messages_debug(self.main_team)
         return result
 
+    @property
+    def last_turn_failure(self) -> str:
+        """Why the last :meth:`handle_message` failed (already shown to
+        the person), or ``""`` when it did not."""
+        return self._message_handler.last_failure
+
 
 class _GuardToolExecution:
     """The two fields the approval dialog reads from a requirement's tool execution."""

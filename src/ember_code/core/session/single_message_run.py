@@ -46,6 +46,9 @@ class SingleMessageRun(SessionRun):
     path.
     """
 
+    #: The exit code of a ``-m`` / ``-p`` run whose turn failed.
+    FAILED_EXIT_CODE = 1
+
     # ── Slash-command dispatch ────────────────────────────────────
     #
     # TODO: the four :class:`PromptHandler` subclasses in
@@ -102,11 +105,16 @@ class SingleMessageRun(SessionRun):
                 await self._fire_session_end()
                 return
 
-            await self._run_turn(message)
+            succeeded = await self._run_turn(message)
             self._emit_pending_plan()
             await self._fire_session_end()
         finally:
             await extensions.stop()
+        if not succeeded:
+            # The run stopped at a confirmation nobody here can answer,
+            # found no model, or failed: said on stderr already, and the
+            # exit code says it to whatever ran ``igni -m``.
+            raise SystemExit(self.FAILED_EXIT_CODE)
 
     def _emit_pending_plan(self) -> None:
         """Print a plan the agent submitted, because nothing else will.

@@ -97,6 +97,14 @@ class ProcessSupervisor:
     leak across the suite.
     """
 
+    #: How to see more of a finished foreground command's cut output.
+    #: Its registry entry is gone once it has reported, so
+    #: ``read_process_output`` cannot reach it: run it again, narrower.
+    FINISHED_SEE_MORE = (
+        "To see the rest, run the command again narrowed to what you need "
+        "(grep -n PATTERN, sed -n 'START,ENDp', head -n N) or with a larger tail."
+    )
+
     def __init__(
         self,
         registry: ProcessRegistry | None = None,
@@ -249,7 +257,9 @@ class ProcessSupervisor:
             # Promoted from foreground — announce as background so
             # the watcher picks up the row.
             self.registry.announce_start(mp)
-            output = mp.read(tail=tail)
+            output = mp.read_tail(tail).render(
+                f"read_process_output({pid}, tail=N) reads further back."
+            )
             return self._result_buffer.truncate(
                 f"Command still running after {timeout}s — backgrounded as PID {pid}.\n"
                 f"Use read_process_output({pid}) to check output.\n"
@@ -260,7 +270,7 @@ class ProcessSupervisor:
         # Command finished — wait briefly for the reader task to
         # capture any trailing output buffered after proc.wait().
         await mp.wait_for_reader(timeout=2.0)
-        output = mp.read(tail=tail)
+        output = mp.read_tail(tail).render(self.FINISHED_SEE_MORE)
         rc = proc.returncode
         self.registry.remove(pid)
 

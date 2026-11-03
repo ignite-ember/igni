@@ -61,7 +61,7 @@ class SessionsController:
         raw = await self._session.persistence.list_sessions(limit=None)
         return msg.SessionListResult(sessions=raw)
 
-    async def maybe_auto_name_session(self) -> AutoNameResult:
+    async def maybe_auto_name_session(self, *, model_busy: bool = False) -> AutoNameResult:
         """Auto-generate a name for the current session if it has none.
 
         Returns a typed :class:`AutoNameResult` — the dispatcher
@@ -72,14 +72,15 @@ class SessionsController:
         Sanitisation (stripping model-emitted markdown wrappers
         like ``**Title**`` / ``# Title`` / ``"Title"``) lives inside
         :meth:`SessionPersistence.auto_name` — callers of this
-        method never see the raw wrapped form.
+        method never see the raw wrapped form. ``model_busy`` (a run
+        is in progress) titles the session without asking the model.
         """
         persistence = self._session.persistence
         try:
             existing = await persistence.get_name()
             if existing:
                 return AutoNameResult(ok=False, name=existing, reason="already_named")
-            name = await persistence.auto_name(self._session.main_team)
+            name = await persistence.auto_name(self._session.main_team.model, model_busy=model_busy)
         except Exception as exc:
             logger.debug("session auto-name failed: %s", exc)
             return AutoNameResult(ok=False, name="", reason="error")

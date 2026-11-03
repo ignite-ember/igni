@@ -46,6 +46,7 @@ from typing import TYPE_CHECKING, Any
 
 from ember_code.core.agno_telemetry import AgnoTelemetry
 from ember_code.core.hooks.turn_results import TurnResultHook, TurnResultSink
+from ember_code.core.hooks.untrusted import UntrustedOutputHook
 from ember_code.core.tools.orchestrate_events import (
     VIS_SPEC_PREFIX,
     AgentBuildResult,
@@ -436,12 +437,11 @@ class AgentSpawn(SpawnRunner):
         # on that state without a per-spawn copy.
         agent = copy.copy(shared)
         # Its own list: the copy is shallow, and the pool's instance must
-        # not collect a hook per spawn.
+        # not collect a hook per spawn. Its tool output is quarantined
+        # whatever built it (the pool's agents already carry the hook).
+        agent.tool_hooks = UntrustedOutputHook.on(getattr(agent, "tool_hooks", None))
         if isinstance(self._hitl_coordinator, TurnResultSink):
-            agent.tool_hooks = [
-                *(agent.tool_hooks or []),
-                TurnResultHook(self._hitl_coordinator),
-            ]
+            agent.tool_hooks = [*agent.tool_hooks, TurnResultHook(self._hitl_coordinator)]
 
         defn = self._pool.get_definition(self._agent_name)
         self._grant_nested_orchestration(agent, defn)
@@ -715,9 +715,11 @@ class TeamSpawn(SpawnRunner):
         members = []
         for name in names:
             try:
-                members.append(copy.copy(pool.get(name)))
+                member = copy.copy(pool.get(name))
             except KeyError as e:
                 return SubTeamBuildResult(team=None, mode=None, error=str(e))
+            member.tool_hooks = UntrustedOutputHook.on(getattr(member, "tool_hooks", None))
+            members.append(member)
 
         team_mode = TeamMode.coerce_or_default(mode)
         team_model = deps.model_registry_factory(settings).get_model()

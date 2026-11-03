@@ -19,8 +19,13 @@ versa) and the signal is lost. Change them together.
 
 from __future__ import annotations
 
+import inspect
 import re
 import secrets
+from collections.abc import Callable
+from typing import Any
+
+from ember_code.core.hooks.queue.agno_adapter import AgnoCallableAdapter
 
 #: Tools whose result is external / attacker-influenceable content the model
 #: reads — a file's bytes, a web page, a shell command's stdout, a sub-agent's
@@ -91,3 +96,53 @@ def wrap_untrusted(text: str, nonce: str | None = None) -> str:
         return text
     n = nonce or new_nonce()
     return f"{_OPEN.format(nonce=n)}\n{text}\n{_CLOSE.format(nonce=n)}"
+
+
+class UntrustedOutputHook(AgnoCallableAdapter):
+    """Agno tool hook: an external-content tool's text result, wrapped.
+
+    The main agent's :class:`~ember_code.core.hooks.tool_hook.ToolEventHook`
+    wraps inside its own pipeline (before a PostToolUse hook message or a
+    rules suffix is appended, so those land outside the block). Every other
+    agent igni runs — a pool agent, so whatever ``spawn_agent`` /
+    ``spawn_team`` starts at any depth — carries this hook instead. Both go
+    through :meth:`quarantine`, so the two cannot wrap differently.
+
+    Before this existed only the main agent wrapped: a sub-agent's shell
+    output reached the model raw, outside the train/serve contract and
+    outside the prompt-injection defence.
+    """
+
+    def __init__(self) -> None:
+        self._mark_as_coroutine()
+
+    async def __call__(
+        self,
+        name: str = "",
+        func: Callable[..., Any] | None = None,
+        args: dict[str, Any] | None = None,
+        **_: Any,
+    ) -> Any:
+        # Parameter names are Agno's (see AgnoCallableAdapter).
+        result = func(**(args or {})) if func is not None else None
+        if inspect.isawaitable(result):
+            result = await result
+        return self.quarantine(name, result)
+
+    @staticmethod
+    def quarantine(tool_name: str, result: Any) -> Any:
+        """``result`` as the model may read it: wrapped when it is the text
+        of a tool whose output is external content, unchanged otherwise."""
+        if isinstance(result, str) and should_wrap(tool_name):
+            return wrap_untrusted(result)
+        return result
+
+    @classmethod
+    def on(cls, hooks: list[Any] | None) -> list[Any]:
+        """``hooks`` with this hook outermost — a new list, never the one
+        passed (a spawn's agent is a shallow copy of the pool's, and must
+        not add to the pool's list). Idempotent."""
+        existing = list(hooks or [])
+        if any(isinstance(hook, cls) for hook in existing):
+            return existing
+        return [cls(), *existing]

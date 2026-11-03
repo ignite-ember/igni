@@ -33,6 +33,7 @@ from ember_code.core.config.model_stream import (
     _aemit_tool_arg_deltas,
     _emit_tool_arg_deltas,
 )
+from ember_code.core.config.reply_ending import ReplyEnding
 
 
 class LoggingModel(OpenAILike):
@@ -93,13 +94,37 @@ class LoggingModel(OpenAILike):
     def invoke_stream(self, *args, **kwargs):
         self._log_call("invoke_stream", args, kwargs, stream=True)
         args = self._sanitizer.sanitize_if_needed(args, vision=self.vision)
-        yield from super().invoke_stream(*args, **kwargs)
+        ending = self._reply_ending()
+        with ending.watching():
+            yield from super().invoke_stream(*args, **kwargs)
+        ending.check()
 
     async def ainvoke_stream(self, *args, **kwargs):
         self._log_call("ainvoke_stream", args, kwargs, stream=True)
         args = self._sanitizer.sanitize_if_needed(args, vision=self.vision)
-        async for chunk in super().ainvoke_stream(*args, **kwargs):
-            yield chunk
+        ending = self._reply_ending()
+        with ending.watching():
+            async for chunk in super().ainvoke_stream(*args, **kwargs):
+                yield chunk
+        ending.check()
+
+    # ── How a reply ended ─────────────────────────────────────────
+    #
+    # A reply that stopped without a finish_reason, or at
+    # ``finish_reason=length``, is not a finished one: it raises
+    # ``ModelReplyCut`` (``reply_ending.py``) instead of passing for a
+    # complete, empty answer.
+
+    def _parse_provider_response_delta(self, response_delta):
+        ReplyEnding.note_chunk(response_delta)
+        return super()._parse_provider_response_delta(response_delta)
+
+    def _parse_provider_response(self, response, *args, **kwargs):
+        ReplyEnding.check_completion(response, self.id, self.max_tokens)
+        return super()._parse_provider_response(response, *args, **kwargs)
+
+    def _reply_ending(self) -> ReplyEnding:
+        return ReplyEnding(self.id, self.max_tokens)
 
     # ── Response streaming ────────────────────────────────────────
 
