@@ -166,7 +166,7 @@ jobs:
       - name: Locate built zip
         id: locate
         run: |
-          ZIP=$(ls clients/jetbrains/build/distributions/*.zip | head -1)
+          ZIP=$(find clients/jetbrains/build/distributions -maxdepth 1 -name '*.zip' | head -1)
           echo "path=$ZIP" >> "$GITHUB_OUTPUT"
           echo "name=$(basename "$ZIP")" >> "$GITHUB_OUTPUT"
 
@@ -290,7 +290,7 @@ jobs:
           VSCE_PAT: ${{ secrets.VSCE_PAT }}
         run: |
           cd clients/vscode
-          VSIX=$(ls *.vsix | head -1)
+          VSIX=$(find . -maxdepth 1 -name '*.vsix' | head -1)
           npx --yes @vscode/vsce publish --packagePath "$VSIX" --pat "$VSCE_PAT"
 
   # Tauri desktop installers — mac (Apple Silicon only), windows, linux.

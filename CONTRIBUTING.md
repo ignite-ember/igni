@@ -28,8 +28,10 @@ what it hosts, so the identifier is requested from the advisory itself.
    public before it ships, and released as a new version of every client.
 4. A CVE is requested from the draft once the facts are settled.
 5. The advisory is published after the fixed release is available, never
-   before, and within the disclosure bound SECURITY.md states. It names the
-   fixed version, and the release notes name the advisory.
+   before, and within the disclosure bound SECURITY.md states; if a fix
+   cannot ship inside that bound, we ask the reporter for longer and say why,
+   as SECURITY.md says. It names the fixed version, and the release notes
+   name the advisory.
 
 Watching the repository for security alerts is how to hear of one. Because
 only the macOS desktop app updates itself, the advisory is what tells
