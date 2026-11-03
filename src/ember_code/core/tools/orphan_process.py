@@ -47,6 +47,7 @@ from typing import TYPE_CHECKING
 # ``core.tools``, so there is no cycle. Moving the class down into
 # ``core`` is the tidier fix and belongs to whoever owns that file.
 from ember_code.backend.supervisor import ParentProcessProbe
+from ember_code.core.tools.output_tail import OutputTail
 from ember_code.core.tools.process_supervisor_locator import supervisors
 from ember_code.core.tools.shell_orphan_schemas import (
     OrphanProcStub,
@@ -269,6 +270,17 @@ class OrphanProcess:
             f"or has been pruned. The Kill button still works.)"
         )
         return OrphanReadResult(content=placeholder, is_placeholder=True)
+
+    def read_tail(self, tail: int = 100) -> OutputTail:
+        """The last ``tail`` lines of the log, with what came before
+        them counted — for a result the model reads, which must say
+        when it is cut (:meth:`OutputTail.render`). The placeholder
+        when there is no log, as :meth:`read` gives."""
+        store = self._resolve_log_store()
+        lines = store.lines(self.pid) if store is not None else []
+        if not lines:
+            return OutputTail(lines=[self.read_typed(tail=tail).content])
+        return OutputTail.of(lines, tail)
 
     def read_new(self, max_lines: int = 200) -> str:
         return ""

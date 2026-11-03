@@ -232,10 +232,10 @@ class EmberShellTools(Toolkit):
         if mp is None:
             return f"No tracked process with PID {pid}."
 
-        output = (
-            mp.read_tail(tail).render(f"read_process_output({pid}, tail=N) reads further back.")
-            if isinstance(mp, ManagedProcess)
-            else mp.read(tail=tail)
+        # Every kind says when it is cut — a process that outlived a
+        # restart (read back from its log) as much as one this backend runs.
+        output = mp.read_tail(tail).render(
+            f"read_process_output({pid}, tail=N) reads further back."
         )
         if mp.is_running():
             elapsed = mp.elapsed()

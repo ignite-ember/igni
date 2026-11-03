@@ -25,6 +25,8 @@ import logging
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
+from ember_code.core.tools.output_tail import OutputTail
+
 if TYPE_CHECKING:
     from ember_code.core.tools.process_log import ProcessLogStore
     from ember_code.core.tools.process_store import BackgroundProcessRow
@@ -108,14 +110,22 @@ class FinishedProcess:
         can call it without a hasattr dance."""
 
     def read(self, tail: int = 100) -> str:
+        # ``ProcessLogStore`` has no ``read``: this called one, and the
+        # AttributeError it raised was swallowed below as "no stored
+        # log", so a finished process always read back empty.
+        return "\n".join(self.read_tail(tail).lines)
+
+    def read_tail(self, tail: int = 100) -> OutputTail:
+        """The last ``tail`` lines of the stored log, with what came
+        before them counted (:meth:`OutputTail.render`)."""
         store = self._log_store
         if store is None:
-            return ""
+            return OutputTail(lines=[])
         try:
-            return store.read(self._pid, tail=tail)
+            return OutputTail.of(store.lines(self._pid), tail)
         except Exception:  # noqa: BLE001 — a missing log is not an error here
             logger.debug("no stored log for finished pid %s", self._pid)
-            return ""
+            return OutputTail(lines=[])
 
     def read_new(self, max_lines: int = 200) -> str:
         """Nothing new will ever arrive."""
