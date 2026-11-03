@@ -34,6 +34,10 @@ from ember_code.core.config.permission_eval.read_only_shell import is_read_only
         "git branch --contains abc123",
         "git branch --sort=-committerdate '--format=%(refname)'",
         "git branch --merged main -r",
+        "git for-each-ref --format='%(refname)'",
+        'git for-each-ref "--format=%(refname:short) %(objectname)" refs/heads',
+        r"git for-each-ref --format=%\(refname\) --sort=-committerdate",
+        "git for-each-ref --count=5 refs/tags | head -1",
         "sort -n data.txt",
         "sort -k2 -- -o",
         "rg --pre-glob '*.gz' needle",
@@ -64,6 +68,11 @@ def test_commands_that_only_read_run_unasked(command):
         ("git branch -d old", "delete a branch"),
         ("git branch -D old", "force-delete a branch"),
         ("git branch -m old new", "rename a branch"),
+        # Unquoted, bash reads the ``(`` as an operator: a syntax error, not
+        # the literal ``%(refname)`` git would expand. Only what the shell
+        # passes through as a literal is judged a read.
+        ("git for-each-ref --format=%(refname)", "be a shell syntax error, not a literal"),
+        ("git branch --format=%(refname)", "be a shell syntax error, not a literal"),
         ("sort -o out.txt in.txt", "write a file"),
         ("sort -ro out.txt in.txt", "write a file, flag in a cluster"),
         ("sort --output=out.txt in.txt", "write a file"),

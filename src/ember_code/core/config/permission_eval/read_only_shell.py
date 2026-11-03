@@ -155,6 +155,11 @@ _GIT_SUBCOMMANDS: dict[str, Callable[[Sequence[str]], bool]] = {
     "branch": _git_branch_lists,
     "rev-parse": _always,
     "ls-files": _always,
+    # Lists refs. None of its options writes, and a ``%(atom)`` in
+    # ``--format`` is expanded by git, not run. Unquoted, the ``(`` is a
+    # shell syntax error (bash, dash and zsh all refuse to run the line),
+    # so only a quoted or escaped format reaches this check.
+    "for-each-ref": _always,
     "blame": _always,
     "grep": _refuses_short("O", "--open-files-in-pager"),
 }
