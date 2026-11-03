@@ -37,6 +37,7 @@ from agno.run.requirement import RunRequirement
 
 from ember_code.backend.schemas_hitl import StreamFactory
 from ember_code.core.approvals.journal import SpawnLink
+from ember_code.core.hooks.untrusted import UntrustedOutputHook
 from ember_code.core.sub_agent_hitl import RestoredRun
 from ember_code.core.tools.orchestrate import OrchestrateTools
 from ember_code.core.tools.orchestrate_agent_stream import ResumedSubAgentStreamHandler
@@ -257,6 +258,14 @@ class ColdSpawnResume:
         does (a deploy, a write), and doing it twice is worse than the
         model knowing it was interrupted. So the continued run sees a
         complete turn.
+
+        Results go to the model through the rule a live call's do
+        (:meth:`UntrustedOutputHook.quarantine`): an external execution
+        result is handed over as it stands, with no tool hook in the way,
+        so a stored shell output or the spawned agent's answer would
+        otherwise reach the model unwrapped — data read as instructions,
+        and outside the format it was trained on. :attr:`INTERRUPTED` is
+        igni's own word about the call, not its output, and stays bare.
         """
         done = finished or {}
         executions: list[ToolExecution] = []
@@ -271,11 +280,17 @@ class ColdSpawnResume:
             call_id = str(call.get("id") or "")
             function = call.get("function") or {}
             if call_id == parent.tool_call_id:
-                name, args, result = parent.tool_name, dict(parent.tool_args), answer
+                name, args = parent.tool_name, dict(parent.tool_args)
+                result = UntrustedOutputHook.quarantine(name, answer)
             else:
                 name = str(function.get("name") or "")
                 args = cls._arguments(function.get("arguments"))
-                result = done.get(call_id, cls.INTERRUPTED)
+                stored = done.get(call_id)
+                result = (
+                    cls.INTERRUPTED
+                    if stored is None
+                    else UntrustedOutputHook.quarantine(name, stored)
+                )
             execution = ToolExecution(
                 tool_call_id=call_id,
                 tool_name=name,
