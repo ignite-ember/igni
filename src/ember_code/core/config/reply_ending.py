@@ -86,7 +86,20 @@ GEMINI = Provider(name="gemini", length=frozenset({"MAX_TOKENS"}), finished=froz
 
 
 class ModelReplyCut(ModelProviderError):
-    """The model's reply did not finish."""
+    """The model's reply did not finish.
+
+    ``retryable`` says whether calling the model again could end
+    differently (B31). A dropped stream (:meth:`no_ending`) is transient:
+    the same request may well finish next time. A reply cut at its length
+    limit is not: the same messages with the same ``max_tokens`` run into
+    the same limit, so each retry is another full, billed reply that is
+    cut again — three per cut reply with ``models.retries: 2``. A reply the
+    provider stopped (a content filter, a refusal) is the provider's
+    decision about that content, so it is not retried either; the person
+    rephrases.
+    """
+
+    retryable: bool = True
 
     @classmethod
     def no_ending(cls, model_id: str) -> ModelReplyCut:
@@ -100,6 +113,12 @@ class ModelReplyCut(ModelProviderError):
 
     @classmethod
     def stopped(cls, model_id: str, reason: str) -> ModelReplyCut:
+        cut = cls._stopped(model_id, reason)
+        cut.retryable = False
+        return cut
+
+    @classmethod
+    def _stopped(cls, model_id: str, reason: str) -> ModelReplyCut:
         # The provider's word is quoted unless it carries a phrase Agno
         # reads as a context-window error.
         said = (
@@ -118,13 +137,40 @@ class ModelReplyCut(ModelProviderError):
     @classmethod
     def at_length(cls, model_id: str, cap: int | None) -> ModelReplyCut:
         limit = f" ({cap} tokens)" if cap else ""
-        return cls(
+        cut = cls(
             f"The model's reply was cut off at its output length limit{limit} "
             "before it finished (finish_reason=length). Try again, or ask "
             "for a shorter answer.",
             model_name=model_id,
             model_id=model_id,
         )
+        cut.retryable = False
+        return cut
+
+
+class ReplyCutRetries:
+    """Agno's model-call retry, less the replies a retry cannot fix.
+
+    Mixed into every model class igni builds. Agno retries a
+    :class:`~agno.exceptions.ModelProviderError` unless its status or
+    message says otherwise; a :class:`ModelReplyCut` that is not
+    ``retryable`` is raised at once, so the run ends in one ``run_error``
+    after one call. The retries themselves are the model's
+    (``ModelRegistry`` sets ``models.retries`` on it), not the agent's:
+    Agno's agent and team re-run the whole run on any exception, with no
+    such test.
+    """
+
+    def _is_retryable_error(self, error: ModelProviderError) -> bool:
+        # A non-streamed reply is checked inside Agno's ``invoke``, whose
+        # catch-all re-raises it as a plain ModelProviderError: the cut is
+        # its ``__cause__``.
+        cause: BaseException | None = error
+        while cause is not None:
+            if isinstance(cause, ModelReplyCut) and not cause.retryable:
+                return False
+            cause = cause.__cause__
+        return super()._is_retryable_error(error)  # type: ignore[misc]
 
 
 class ReplyEnding:

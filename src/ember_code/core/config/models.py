@@ -383,12 +383,18 @@ class ModelRegistry:
                     builder.endpoint_for(entry) or f"{entry.provider}'s default endpoint",
                     self.settings.api_url or "not set",
                 )
-        return builder.build(
+        model = builder.build(
             entry,
             cloud_token=cloud_token,
             llm_logger=self._llm_logger,
             cloud_auth=cloud_auth,
         )
+        # Transient failures are retried here, per model call, where Agno
+        # asks whether the error is worth retrying; the agents and the team
+        # get ``retries=0`` (B31, ``reply_ending.ReplyCutRetries``).
+        if hasattr(model, "retries"):
+            model.retries = self.settings.models.retries
+        return model
 
     def get_context_window(self, name: str | None = None) -> int:
         """Get the context window size for a model.

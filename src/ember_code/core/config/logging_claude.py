@@ -29,10 +29,10 @@ from agno.models.anthropic import Claude
 
 from ember_code.core.config.llm_call_logger import LlmCallLogger
 from ember_code.core.config.message_sanitizer import MessageSanitizer
-from ember_code.core.config.reply_ending import ANTHROPIC, ReplyEnding
+from ember_code.core.config.reply_ending import ANTHROPIC, ReplyCutRetries, ReplyEnding
 
 
-class LoggingClaude(Claude):
+class LoggingClaude(ReplyCutRetries, Claude):
     """Agno's ``Claude``, logging each call and honouring ``vision``."""
 
     def __init__(

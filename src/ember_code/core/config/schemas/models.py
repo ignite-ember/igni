@@ -26,9 +26,11 @@ class ModelsConfig(BaseModel):
     default: str = ""
     max_context_window: int = 200_000
     max_run_timeout: int = 300  # total timeout for a single arun() call (seconds)
-    # Retry count for transient model-API failures (timeouts, 5xx). Applied
-    # to both the main team agent and pool specialists. Surfaced here so
-    # users can tune it from settings without touching code.
+    # Retry count for transient model-API failures (timeouts, 5xx, a
+    # dropped stream), per model call: set on every model ModelRegistry
+    # builds. A reply cut at its length limit or stopped by the provider
+    # is not retried (B31). Surfaced here so users can tune it from
+    # settings without touching code.
     retries: int = 2
     # Registry is heterogeneous by design: cloud discovery writes
     # typed :class:`ModelRegistryEntry` instances (via

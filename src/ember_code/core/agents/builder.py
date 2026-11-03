@@ -134,7 +134,11 @@ class AgentBuilder:
             tools=tools if tools else None,
             markdown=True,
             num_history_runs=self._context.settings.storage.max_history_runs,
-            retries=self._context.settings.models.retries,
+            # The model retries its own calls (ModelRegistry sets
+            # models.retries on it). Agno's agent-level retry re-runs the
+            # whole run on any exception — a reply cut at its length limit
+            # three times over, billed each time (B31).
+            retries=0,
             db=self._context.db,
             reasoning=definition.reasoning,
             reasoning_min_steps=(definition.reasoning_min_steps if definition.reasoning else None),

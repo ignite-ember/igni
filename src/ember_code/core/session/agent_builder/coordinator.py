@@ -157,10 +157,12 @@ class MainAgentBuilder:
             tools=tools,
             instructions=instructions,
             markdown=True,
-            # Retry transient model-API failures (timeouts, 5xx)
-            # before bubbling up. Same default as the specialist
-            # pool — see ``pool.build_agent``.
-            retries=s.settings.models.retries,
+            # Transient model-API failures (timeouts, 5xx, a dropped
+            # stream) are retried by the model, per call (ModelRegistry
+            # sets models.retries on it), where Agno asks whether the error
+            # is worth retrying. Agno's run-level retry re-ran the whole
+            # run on any exception, a length-cut reply included (B31).
+            retries=0,
             db=s.db,
             session_id=s.session_id,
             user_id=s.user_id,
