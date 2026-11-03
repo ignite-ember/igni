@@ -18,6 +18,7 @@ turns the same lifecycle into two classes:
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import logging
 import os
@@ -39,6 +40,7 @@ from ember_code.backend.session_orchestrator import SessionOrchestrator
 from ember_code.backend.supervisor import BackendSupervisor
 from ember_code.backend.workspace_signals import WorkspaceSignals
 from ember_code.core import air_gap
+from ember_code.core.activity import background
 from ember_code.core.agno_telemetry import AgnoTelemetry
 from ember_code.core.config.settings import Settings, load_settings
 from ember_code.core.db.locator import StorageLocator
@@ -489,15 +491,9 @@ class BackendApp:
         )
 
         try:
-            if self._ws_port is not None:
-                # GUI shells (Tauri / VSCode / JetBrains webviews)
-                # may open long after the BE is ready, and webviews
-                # reload at will. No timeout here — shutdown comes
-                # from signals, the parent watchdog, or an explicit
-                # Shutdown message instead.
-                await self._transport.wait_for_connection(timeout=None)
-            else:
-                await self._transport.wait_for_connection()
+            if not await self._wait_for_a_window():
+                logger.info("Shutdown requested before any window connected")
+                return
             await self._start_extensions()
             # Read igni server's notifications and follow its stream;
             # after the client is connected, so the counts this pushes
@@ -535,6 +531,43 @@ class BackendApp:
                 await self._service_tokens.stop()
             await self._origins.stop_all()
             await self._supervisor.teardown()
+
+    async def _wait_for_a_window(self) -> bool:
+        """Wait for the first client, or for shutdown, whichever comes first.
+
+        ``True`` when a window connected; ``False`` when shutdown was asked
+        for first. GUI shells (Tauri / VSCode / JetBrains webviews) may open
+        long after the BE is ready and webviews reload at will, so on
+        WebSocket there is no timeout — shutdown comes from signals, the
+        parent watchdog, or an explicit Shutdown message instead.
+
+        It used to await the connection alone. Closing the transport, which
+        is all a shutdown does to it, does not wake a wait for the first
+        client — so a SIGTERM before any window connected left the backend
+        serving nobody forever: teardown never ran and the discovery
+        lockfile stayed behind for the next launch to find.
+        """
+        assert self._supervisor is not None
+        if self._ws_port is not None:
+            connecting = self._transport.wait_for_connection(timeout=None)
+        else:
+            connecting = self._transport.wait_for_connection()
+        # Daemons, not busy work: a backend waiting for its first window is
+        # idle, and a layer that suspends idle processes may suspend it.
+        connected = background.daemon(connecting, name="first-window")
+        stopping = background.daemon(self._supervisor.wait_for_shutdown(), name="first-window-stop")
+        try:
+            await asyncio.wait({connected, stopping}, return_when=asyncio.FIRST_COMPLETED)
+        finally:
+            for waiter in (connected, stopping):
+                if not waiter.done():
+                    waiter.cancel()
+                    with contextlib.suppress(asyncio.CancelledError):
+                        await waiter
+        if stopping.done() and not stopping.cancelled():
+            return False
+        connected.result()  # a timed-out wait raises here, as it always did
+        return True
 
     def _build_notifications(self, settings: Settings) -> NotificationCenter:
         """The floor's notifications, both paths (igni server's ``docs/service-identity.md`` §10).
