@@ -8,7 +8,8 @@ picker, MCP panel, login widget) get plain-text equivalents.
 
 from __future__ import annotations
 
-from typing import ClassVar
+from collections.abc import Awaitable, Callable
+from typing import Any, ClassVar
 
 from ember_code.backend.command_handler import CommandHandler, CommandResult
 from ember_code.core.session.core import Session
@@ -36,10 +37,19 @@ class InteractiveCommandDispatcher:
         CommandAction.MCP: "_render_mcp_status",
         CommandAction.COMPACT: "_render_compact",
         CommandAction.LOGIN: "_render_login",
+        CommandAction.RUN_PROMPT: "_render_run_prompt",
     }
 
-    def __init__(self, session: Session) -> None:
+    def __init__(
+        self,
+        session: Session,
+        run_prompt: Callable[[str], Awaitable[Any]] | None = None,
+    ) -> None:
         self.session = session
+        # How a ``RUN_PROMPT`` result (a skill, a markdown command,
+        # ``/loop <prompt>``) becomes a turn: the REPL passes its own
+        # turn pipeline. Without one, the prompt is shown, not run.
+        self._run_prompt = run_prompt
 
     async def dispatch(self, command: str) -> bool:
         """Dispatch a slash command. Returns True if handled, False if unknown."""
@@ -79,6 +89,20 @@ class InteractiveCommandDispatcher:
         display.print_info("Context compacted. Old messages summarized and cleared.")
         if result.content:
             display.print_info(f"Summary:\n{result.content}")
+
+    async def _render_run_prompt(self, result: CommandResult) -> None:
+        """Run the command's rendered prompt as a model turn.
+
+        A skill, a markdown command and ``/loop <prompt>`` all answer
+        with the prompt to run. This used to fall through to the
+        kind-based renderer, which printed that prompt as information
+        and ran nothing — so in the REPL no skill or markdown command
+        ever reached the model.
+        """
+        if self._run_prompt is None:
+            self._render_by_kind(result)
+            return
+        await self._run_prompt(result.content)
 
     async def _render_login(self, result: CommandResult) -> None:
         self.session.display.print_info(

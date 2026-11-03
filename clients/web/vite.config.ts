@@ -74,5 +74,28 @@ export default defineConfig({
       "src/**/*.{test,spec}.{ts,tsx}",
       "../../packages/**/*.{test,spec}.{ts,tsx}",
     ],
+    // ``npx vitest run --coverage`` (CI's Linux web job). Every source
+    // file counts, loaded by a test or not: without ``include`` v8 only
+    // reports the files some test imported, so ``App.tsx`` and four
+    // settings panels at 0% were simply absent and the total read 69%
+    // instead of 47%. The packages the app is built from are measured
+    // too — they sit outside this root, hence ``allowExternal``.
+    coverage: {
+      provider: "v8",
+      allowExternal: true,
+      include: ["src/**/*.{ts,tsx}", "**/packages/*/src/**/*.{ts,tsx}"],
+      exclude: ["**/node_modules/**", "**/*.test.*", "**/*.spec.*", "**/*.generated.ts", "**/*.d.ts"],
+      reporter: ["text-summary"],
+      // The floor: statements / branches / functions / lines when it was
+      // set (68.7 / 61.9 / 65.0 / 70.6), minus one point, so the number
+      // can only go up. Raise it when coverage rises; never lower it to
+      // let a change through.
+      thresholds: {
+        statements: 67.7,
+        branches: 60.9,
+        functions: 64,
+        lines: 69.6,
+      },
+    },
   },
 });

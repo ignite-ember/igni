@@ -337,8 +337,14 @@ export function PluginsPanel({
           selection={selected}
           plugins={plugins}
           busy={busy}
+          // Labelled with the plugin's name, which is what this page's
+          // Install button checks: labelled "install" it never saw itself
+          // busy, stayed enabled, and a second press started a second
+          // install of the same plugin.
           onInstall={(ref) =>
-            void act("install", () => client.rpc("install_plugin", { ref }))
+            void act(selected.row.name || "install", () =>
+              client.rpc("install_plugin", { ref }),
+            )
           }
           onToggle={(p) =>
             void act(p.name || "", () =>
@@ -395,8 +401,8 @@ export function PluginsPanel({
           markets={markets}
           installedByName={installedByName}
           busy={busy}
-          onInstall={(ref) =>
-            void act("install", () => client.rpc("install_plugin", { ref }))
+          onInstall={(p) =>
+            void act(p.name, () => client.rpc("install_plugin", { ref: p.source }))
           }
           onOpen={(market, p) =>
             setSelected({ kind: "marketplace", market, row: p })
@@ -492,7 +498,7 @@ function MarketplaceTab({
   catalog: Array<{ market: string; plugin: MarketplacePlugin }>;
   installedByName: Set<string>;
   busy: string;
-  onInstall: (ref: string) => void;
+  onInstall: (p: MarketplacePlugin) => void;
   onOpen: (market: string, p: MarketplacePlugin) => void;
 }) {
   if (markets === null) return <PluginsSkeleton />;
@@ -533,7 +539,7 @@ function MarketplaceTab({
                       <button
                         className="btn btn-sm btn-primary"
                         disabled={busy === plugin.name}
-                        onClick={() => onInstall(plugin.source)}
+                        onClick={() => onInstall(plugin)}
                         title={`Install from ${plugin.source}`}
                       >
                         {busy === plugin.name ? "…" : "Install"}

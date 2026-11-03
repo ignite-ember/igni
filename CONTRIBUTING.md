@@ -92,6 +92,16 @@ The Python suite runs every test as if inside a customer's network: a test
 that reaches the internet fails unless it carries the `reaches_the_internet`
 marker. It also fails the run if a test leaves files in the repository root.
 
+CI measures coverage too, and fails below a floor that only goes up: line and
+branch coverage of `src/ember_code` (`--cov-fail-under` in the `test` job),
+and the web suite's `coverage.thresholds` in `clients/web/vite.config.ts`
+(`npx vitest run --coverage`). To see where you stand:
+
+```bash
+uv run pytest tests/ -q --cov=ember_code --cov-branch --cov-report=term-missing
+cd clients/web && npx vitest run --coverage
+```
+
 ## What a change needs
 
 - **A test.** New behaviour comes with tests that exercise it, and a bug fix

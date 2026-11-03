@@ -405,7 +405,17 @@ export class IgniClient {
         reject,
         timer,
       });
-      this.send(fe.rpcRequest(method, args, id, caller));
+      // As in `request()`: a send that throws (no socket) must take its
+      // waiter and timer with it. Thrown from the executor, the promise
+      // rejected but the waiter stayed registered for the full timeout —
+      // one per attempt from a panel polling a backend that is down.
+      try {
+        this.send(fe.rpcRequest(method, args, id, caller));
+      } catch (e) {
+        clearTimeout(timer);
+        this.rpcWaiters.delete(id);
+        reject(e);
+      }
     });
   }
 

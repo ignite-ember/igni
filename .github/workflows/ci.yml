@@ -98,13 +98,64 @@ jobs:
       - name: Install dependencies
         run: uv sync --extra dev --extra otel
 
+      # Line and branch coverage over the core, with a floor: the total
+      # when it was set (87.6%, T6, 2026-11-03), minus one point, so it can only
+      # go up. Raise it as coverage rises; never lower it to let a change
+      # through. ``--cov-report=`` keeps the per-file table out of the log;
+      # the floor check still prints the total.
       - name: Run tests
-        run: uv run pytest tests/ -q -rs
+        run: >-
+          uv run pytest tests/ -q -rs
+          --cov=ember_code --cov-branch --cov-report=
+          --cov-fail-under=86.5
 
       - name: The cloud layer's tests
         run: |
           uv pip install -e packages/igni-cloud
           uv run --no-sync pytest packages/igni-cloud/tests -q -rs
+
+  # The extension sandbox's real Linux path: bubblewrap with a network
+  # namespace of its own, and bridge.py relaying the egress proxy into it
+  # (tests/test_an_extension_process_is_confined_to_its_grants.py). On
+  # the test job those tests skip — ubuntu-latest ships no bwrap, and
+  # Ubuntu 24.04's AppArmor stops unprivileged user namespaces — so the
+  # Linux half of the sandbox ran nowhere. Its own job so the main one
+  # pays nothing for the apt install.
+  sandbox-linux:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version-file: .python-version
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+
+      - name: Install dependencies
+        run: uv sync --extra dev --extra otel
+
+      - name: Install bubblewrap and allow it user namespaces
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y bubblewrap
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+          bwrap --unshare-net --ro-bind / / --dev /dev --proc /proc true
+
+      # The Linux tests skip themselves where bwrap cannot run. Here it
+      # can, so a skip naming bwrap or Linux is a failure: otherwise the
+      # job would go green having run nothing it exists for.
+      - name: Sandbox tests under real bubblewrap
+        run: |
+          uv run --no-sync pytest tests/test_an_extension_process_is_confined_to_its_grants.py \
+            tests/test_the_sandbox_bridge_relays_loopback_ports_to_unix_sockets.py \
+            -q -rs 2>&1 | tee sandbox.log
+          test "${PIPESTATUS[0]}" -eq 0
+          if grep -E "SKIPPED.*(bwrap|Linux)" sandbox.log; then
+            echo "A Linux sandbox test skipped on a runner that has bwrap" >&2
+            exit 1
+          fi
 
   # igni's stores against PostgreSQL, the cloud's database (docs/CLOUD.md
   # section 9). The suite above runs them on SQLite; here the same tests
@@ -203,8 +254,16 @@ jobs:
       - name: Typecheck
         run: npx tsc -b --noEmit
 
+      # Coverage once, on Linux: the numbers do not depend on the OS, and
+      # the other two runners keep their plain, faster run. The floor is
+      # ``coverage.thresholds`` in vite.config.ts.
       - name: Unit tests
+        if: runner.os != 'Linux'
         run: npx vitest run
+
+      - name: Unit tests, with the coverage floor
+        if: runner.os == 'Linux'
+        run: npx vitest run --coverage
 
   # The browser suite is its own job, in a container.
   #
