@@ -59,13 +59,13 @@ __all__ = [
 logger = logging.getLogger(__name__)
 
 #: The environment variable the launcher hands the per-launch secret in.
-TOKEN_ENV = "IGNI_WS_TOKEN"
+TOKEN_ENV = "IGNI_WS_TOKEN"  # noqa: S105 — an environment variable's name, not a secret
 #: Development escape hatch: no token, with a loud warning.
-DEV_NO_TOKEN_ENV = "IGNI_DEV_NO_WS_TOKEN"
+DEV_NO_TOKEN_ENV = "IGNI_DEV_NO_WS_TOKEN"  # noqa: S105 — an environment variable's name, not a secret
 #: The subprotocol igni's clients speak and the server selects.
 SUBPROTOCOL = "igni.v1"
 #: The offered subprotocol that carries the token: ``igni-token.<token>``.
-TOKEN_PROTOCOL_PREFIX = "igni-token."
+TOKEN_PROTOCOL_PREFIX = "igni-token."  # noqa: S105 — a subprotocol prefix, not a secret
 
 #: The Tauri webview's origins (macOS/Linux, Windows http and https).
 TAURI_ORIGINS = frozenset(

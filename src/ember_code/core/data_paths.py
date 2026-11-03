@@ -107,7 +107,7 @@ class ProjectIds:
         project_id = str(project)
         try:
             result = subprocess.run(
-                ["git", "remote", "get-url", "origin"],
+                ["git", "remote", "get-url", "origin"],  # noqa: S607 — git from PATH, as the user runs it
                 capture_output=True,
                 text=True,
                 cwd=str(project),

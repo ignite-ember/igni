@@ -91,8 +91,8 @@ class GitWorkspace:
 
     def _git(self, *args: str) -> str | None:
         try:
-            result = subprocess.run(
-                ["git", *args],
+            result = subprocess.run(  # noqa: S603 — git with an argv list, no shell
+                ["git", *args],  # noqa: S607 — git from PATH, as the user runs it
                 cwd=self.project_dir,
                 capture_output=True,
                 text=True,

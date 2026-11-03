@@ -584,6 +584,7 @@ it brings that run code — or that would switch safety off — wait for trust.
 | Project plugins | `.igni/plugins/`, `.claude/plugins/` |
 | Markdown commands' `` !`cmd` `` tokens | `.igni/commands/`, `.claude/commands/` (the token becomes a "not run" marker; the command itself still loads) |
 | `permissions.*` (rules, categories, `mode`) and `safety.*` (safety lists, Bypass guard) | `.igni/config.yaml`, `config.local.yaml`, `settings.json`, `settings.local.json` |
+| A model's `api_key_cmd` (a program igni runs for the key) | `models.registry.*` in `.igni/config.yaml`, `config.local.yaml` |
 
 Keys a project may never set, trusted or not, stay as before: `network`,
 `air_gapped`, `api_url`, `portal_url`, `update_endpoint`,

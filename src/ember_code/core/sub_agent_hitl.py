@@ -228,7 +228,7 @@ class SubAgentHITLCoordinator:
                     f"{time.strftime('%H:%M:%S')} pid={os.getpid()} "
                     f"coord.push_requirement: coord_id={id(self)} run_id={run_id} path={agent_path}\n"
                 )
-        except Exception:
+        except Exception:  # noqa: S110 — a debug trace; its failure must not reach the run
             pass
 
     def _write(self, req_id: str) -> None:

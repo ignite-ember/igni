@@ -145,7 +145,7 @@ class TestTheCallbackContract:
         import urllib.request
 
         try:
-            with urllib.request.urlopen(url, timeout=5) as response:
+            with urllib.request.urlopen(url, timeout=5) as response:  # noqa: S310 — the test's own loopback URL
                 return response.status, response.read().decode()
         except urllib.error.HTTPError as exc:
             return exc.code, exc.read().decode()

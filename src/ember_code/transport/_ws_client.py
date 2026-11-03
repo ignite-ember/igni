@@ -83,6 +83,6 @@ class MirroredClient:
         we're tearing down, the peer state no longer matters."""
         try:  # noqa: SIM105
             await self.conn.close()
-        except Exception:
+        except Exception:  # noqa: S110 — the peer is already gone
             # pragma: no cover — defensive; peer already gone
             pass

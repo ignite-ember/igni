@@ -409,7 +409,7 @@ class PlanTransactionCoordinator:
                 continue
             try:
                 models.append(PlanTaskInput.model_validate(entry))
-            except Exception:
+            except Exception:  # noqa: S112 — an invalid task is skipped; the rest are kept
                 continue
         return models
 

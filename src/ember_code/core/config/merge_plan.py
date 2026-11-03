@@ -136,7 +136,44 @@ class ProjectYamlTier(YamlTier):
                 source=self._source.path,
                 why="a project may set only once you trust the folder (igni trust)",
             )
+            payload = self._without_key_commands(payload)
         return accumulator.merge(payload)
+
+    def _without_key_commands(self, payload: dict[str, Any]) -> dict[str, Any]:
+        """``payload`` less each model's ``api_key_cmd``, for an untrusted folder.
+
+        ``api_key_cmd`` is a program igni runs to fetch a key when it builds
+        the model. From a repository nobody has trusted yet it is the
+        repository's code, run by opening it: ``api_key_cmd: sh -c '…'`` in
+        a cloned ``.igni/config.yaml``. Found by the bandit lint (S603).
+        ``api_key_env`` names a variable and runs nothing, so it stays.
+        """
+        models = payload.get("models")
+        if not isinstance(models, dict):
+            return payload
+        registry = models.get("registry")
+        if not isinstance(registry, dict):
+            return payload
+        refused = [
+            name
+            for name, entry in registry.items()
+            if isinstance(entry, dict) and "api_key_cmd" in entry
+        ]
+        if not refused:
+            return payload
+        logger.warning(
+            "%s sets api_key_cmd for %s, which runs a program; ignored until you "
+            "trust the folder (igni trust).",
+            self._source.path,
+            ", ".join(sorted(refused)),
+        )
+        cleaned = {
+            name: (
+                {k: v for k, v in entry.items() if k != "api_key_cmd"} if name in refused else entry
+            )
+            for name, entry in registry.items()
+        }
+        return {**payload, "models": {**models, "registry": cleaned}}
 
 
 def drop_project_keys(

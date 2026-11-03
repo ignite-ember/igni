@@ -32,7 +32,7 @@ logger = logging.getLogger(__name__)
 # named constant so the same magic string doesn't get spelled twice
 # (previously duplicated between ``resolve_api_key`` and the
 # cloud-discovery construction path in ``cloud_models.py``).
-CLOUD_TOKEN_SENTINEL = "cloud_token"
+CLOUD_TOKEN_SENTINEL = "cloud_token"  # noqa: S105 — a sentinel value, not a secret
 
 
 class ResolvedApiKey(BaseModel):
@@ -169,7 +169,8 @@ class ModelRegistryEntry(BaseModel):
             # twelve placeholders the .igni rename left behind.
             f"Add `api_key` for it in {DEFAULT_DATA_DIR}/config.yaml — or `api_key_env` / "
             "`api_key_cmd` in the project's config, which name a secret rather "
-            "than containing one and are safe to commit."
+            "than containing one and are safe to commit (`api_key_cmd` runs once "
+            "you trust the folder)."
         )
 
     def _api_key_from_env(self) -> str | None:
@@ -183,7 +184,7 @@ class ModelRegistryEntry(BaseModel):
         # Bounded timeout so a hung ``api_key_cmd`` (e.g. a keychain
         # prompt that never returns) can't wedge session bring-up.
         try:
-            result = subprocess.run(
+            result = subprocess.run(  # noqa: S603 — the user's own key command; from a project only once trusted (merge_plan)
                 shlex.split(self.api_key_cmd),
                 capture_output=True,
                 text=True,

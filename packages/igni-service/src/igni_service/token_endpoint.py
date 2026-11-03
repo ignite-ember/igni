@@ -28,7 +28,7 @@ class IssuedTokens(BaseModel):
     access_token: str
     expires_in: int = 600
     refresh_token: str = ""
-    token_type: str = "Bearer"
+    token_type: str = "Bearer"  # noqa: S105 — the OAuth token type, not a token
 
 
 class GrantRefused(IgniError):

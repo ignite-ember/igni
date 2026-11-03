@@ -76,7 +76,7 @@ class TokenGrant(BaseModel):
     """igni server's answer to a ``vm-sign-in`` or ``vm-credential`` exchange."""
 
     access_token: str
-    token_type: str = "Bearer"
+    token_type: str = "Bearer"  # noqa: S105 — the OAuth token type, not a token
     expires_in: int = 900
     vm_credential: str
 

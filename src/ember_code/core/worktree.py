@@ -50,7 +50,7 @@ def _run_git(args: list[str], cwd: Path) -> subprocess.CompletedProcess[str]:
     timeout) touches one place. Module-scoped because it takes only
     primitives — Rule 6's stateless-leaf exception applies.
     """
-    return subprocess.run(args, cwd=cwd, capture_output=True, text=True)
+    return subprocess.run(args, cwd=cwd, capture_output=True, text=True)  # noqa: S603 — git with an argv list, no shell
 
 
 # ─── Models ─────────────────────────────────────────────────────

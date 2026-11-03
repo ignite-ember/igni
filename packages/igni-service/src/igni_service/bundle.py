@@ -259,7 +259,8 @@ class CommandRunner:
         extra_env: Iterable[tuple[str, str]] = (),
     ) -> subprocess.CompletedProcess[str]:
         env = {**os.environ, "SOURCE_DATE_EPOCH": self.SOURCE_DATE_EPOCH, **dict(extra_env)}
-        return subprocess.run(
+        # uv and pip, with an argv list and no shell.
+        return subprocess.run(  # noqa: S603
             list(command), cwd=cwd, env=env, capture_output=True, text=True, check=False
         )
 

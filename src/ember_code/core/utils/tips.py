@@ -211,12 +211,12 @@ class TipRegistry(BaseModel):
 
         matching = [tip.render(ctx) for tip in self.contextual if self._safe_match(tip, ctx)]
         if matching:
-            return random.choice(matching)
+            return random.choice(matching)  # noqa: S311 — picks a tip, not a secret
         return self.random_general()
 
     def random_general(self) -> str:
         """Return a random general (context-free) tip."""
-        return random.choice(self.general)
+        return random.choice(self.general)  # noqa: S311 — picks a tip, not a secret
 
     def _safe_match(self, tip: ContextualTip, ctx: TipContext) -> bool:
         """Evaluate ``tip.matches(ctx)`` treating predicate failure as non-match.

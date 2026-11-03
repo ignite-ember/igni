@@ -78,12 +78,12 @@ logger = logging.getLogger(__name__)
 
 #: The variables an extension process is started with.
 ENV_SERVICE_URL = "IGNI_SERVICE_URL"
-ENV_TOKEN_URL = "IGNI_SERVICE_TOKEN_URL"
-ENV_TOKEN_SECRET = "IGNI_SERVICE_TOKEN_SECRET"
+ENV_TOKEN_URL = "IGNI_SERVICE_TOKEN_URL"  # noqa: S105 — an environment variable's name, not a secret
+ENV_TOKEN_SECRET = "IGNI_SERVICE_TOKEN_SECRET"  # noqa: S105 — an environment variable's name, not a secret
 
 #: RFC 8693, as igni server's token endpoint names them.
-TOKEN_EXCHANGE_GRANT = "urn:ietf:params:oauth:grant-type:token-exchange"
-ACCESS_TOKEN_TYPE = "urn:ietf:params:oauth:token-type:access_token"
+TOKEN_EXCHANGE_GRANT = "urn:ietf:params:oauth:grant-type:token-exchange"  # noqa: S105 — an OAuth grant type URN, not a secret
+ACCESS_TOKEN_TYPE = "urn:ietf:params:oauth:token-type:access_token"  # noqa: S105 — an OAuth token type URN, not a secret
 
 #: Fetch a new token when the cached one has less than this left.
 RENEW_BEFORE_SECONDS = 60.0
@@ -144,7 +144,7 @@ class CachedToken(BaseModel):
 class ServiceTokenExchange:
     """Trades the igni session for service tokens, and keeps them."""
 
-    TOKEN_PATH = "/v1/oauth/token"
+    TOKEN_PATH = "/v1/oauth/token"  # noqa: S105 — an endpoint path, not a secret
 
     def __init__(
         self,

@@ -39,7 +39,7 @@ class GitClient:
         instead of a cryptic FileNotFoundError when git isn't on PATH."""
         try:
             subprocess.run(
-                ["git", "--version"],
+                ["git", "--version"],  # noqa: S607 — git from PATH, as the user runs it
                 check=True,
                 capture_output=True,
                 timeout=5,
@@ -134,7 +134,7 @@ class GitClient:
         cwd: Path | None = None,
     ) -> subprocess.CompletedProcess:
         try:
-            result = subprocess.run(
+            result = subprocess.run(  # noqa: S603 — git with an argv list, no shell; URLs pass PluginSourcePolicy first
                 args,
                 cwd=str(cwd) if cwd else None,
                 capture_output=True,

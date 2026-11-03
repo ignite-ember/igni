@@ -88,7 +88,7 @@ class IncarnationScope(BaseModel):
         return list(
             c.execute(
                 text(
-                    f'SELECT a.id, a.filename, a.oid, a.size FROM public."{self.ATTACHMENTS}" a '
+                    f'SELECT a.id, a.filename, a.oid, a.size FROM public."{self.ATTACHMENTS}" a '  # noqa: S608 — a constant table name; values are bound
                     "JOIN pg_largeobject_metadata m ON m.oid = a.oid::oid "
                     "WHERE a.org = :org AND a.producer = :producer ORDER BY a.id"
                 ),
@@ -197,7 +197,7 @@ class ProducerData:
                     summary.large_objects += 1
                     summary.large_object_bytes += int(size)
                 for table, condition, params in scope.tables(c):
-                    deleted = c.execute(text(f"DELETE FROM {table} WHERE {condition}"), params)
+                    deleted = c.execute(text(f"DELETE FROM {table} WHERE {condition}"), params)  # noqa: S608 — names from the catalog, quoted; values bound
                     if deleted.rowcount:
                         summary.rows[table] = deleted.rowcount
                 # Whatever else it owned (an object no row names) goes with it.
@@ -230,7 +230,9 @@ class ProducerData:
                 with archive.open(self.ROWS, "w", force_zip64=True) as rows:
                     for table, condition, params in scope.tables(c):
                         found = c.execution_options(stream_results=True).execute(
-                            text(f"SELECT * FROM {table} WHERE {condition}"), params
+                            # Names from the catalog, quoted; the values are bound.
+                            text(f"SELECT * FROM {table} WHERE {condition}"),  # noqa: S608
+                            params,
                         )
                         for row in found.mappings():
                             rows.write(PortableJson.line(table, dict(row)))

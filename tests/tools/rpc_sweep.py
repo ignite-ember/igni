@@ -179,7 +179,7 @@ async def sweep(url: str, include_mutating: bool) -> dict[str, tuple[str, str]]:
                     return None
                 try:
                     msg = json.loads(raw)
-                except Exception:
+                except Exception:  # noqa: S112 — a sweep moves on past a method it cannot call
                     continue
                 # Matched on **id alone**, not on `type == "rpc_response"`.
                 # The dispatcher special-cases handlers that return a

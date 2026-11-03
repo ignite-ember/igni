@@ -202,8 +202,26 @@ target-version = "py310"
 line-length = 100
 
 [tool.ruff.lint]
-select = ["E", "F", "W", "I", "UP", "B", "SIM"]
-ignore = ["E501"]
+# ``S`` is flake8-bandit: security lint. A finding is fixed, or carries a
+# ``# noqa: S…`` on its own line saying why it is not one there.
+select = ["E", "F", "W", "I", "UP", "B", "SIM", "S"]
+ignore = [
+    "E501",
+    # ``assert`` stripped under ``python -O``. igni is never run that way
+    # (no launcher, packaging or client passes -O or PYTHONOPTIMIZE), and
+    # its asserts state invariants and narrow types; none is the check
+    # that keeps an input out. The one rule switched off rather than
+    # annotated, because the annotation would go on 425 lines saying the
+    # same thing.
+    "S101",
+]
+
+[tool.ruff.lint.per-file-ignores]
+# Tests: fake tokens and passwords are fixtures, /tmp paths are inputs to
+# the code under test, and the processes they start (git, the CLI) are
+# fixed argv lists of tools the test needs.
+"tests/**" = ["S105", "S106", "S107", "S108", "S603", "S607"]
+"packages/igni-cloud/tests/**" = ["S105", "S106", "S603", "S311"]
 
 [tool.ruff.lint.isort]
 # ``target-version`` is py310 (see above), which predates ``tomllib``,

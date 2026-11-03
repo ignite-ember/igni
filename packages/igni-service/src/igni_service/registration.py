@@ -57,7 +57,7 @@ class ClientMetadata(BaseModel):
     client_uri: str
     kind: str = "service"
     redirect_uris: list[str] = Field(default_factory=list)
-    token_endpoint_auth_method: str = "private_key_jwt"
+    token_endpoint_auth_method: str = "private_key_jwt"  # noqa: S105 — an RFC 7591 auth method, not a secret
     jwks: ClientJwks
 
 

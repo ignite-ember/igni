@@ -34,7 +34,7 @@ from ember_code.extensions.sandbox.plan import SandboxPlan
 PROXY_PORT = 3128
 
 #: Directories replaced by an empty tmpfs before the grants are bound.
-HIDDEN = ("/home", "/root", "/run", "/tmp", "/var/tmp")
+HIDDEN = ("/home", "/root", "/run", "/tmp", "/var/tmp")  # noqa: S108 — paths the sandbox hides, not files it writes
 
 
 class Bubblewrap:

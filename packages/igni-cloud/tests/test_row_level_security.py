@@ -138,7 +138,7 @@ def test_each_producer_sees_only_its_rows_in_every_table(
             user = producer.scope.agno_user_id
             c.execute(
                 text(
-                    f"INSERT INTO {AGNO_SCHEMA}.ember_sessions (session_id, session_type, "
+                    f"INSERT INTO {AGNO_SCHEMA}.ember_sessions (session_id, session_type, "  # noqa: S608 — a constant schema name
                     "user_id, created_at) VALUES (:s, 'agent', :u, 1)"
                 ),
                 {"s": f"{user}#s1", "u": user},
@@ -149,9 +149,9 @@ def test_each_producer_sees_only_its_rows_in_every_table(
         engine = producer.engine()
         with engine.connect() as c:
             for table in tables:
-                rows = c.execute(text(f'SELECT org, producer FROM "{table.name}"')).all()
+                rows = c.execute(text(f'SELECT org, producer FROM "{table.name}"')).all()  # noqa: S608 — table names from the model
                 assert rows == [(producer.tenant.org, producer.tenant.producer)], table.name
-            agno = c.execute(text(f"SELECT user_id FROM {AGNO_SCHEMA}.ember_sessions")).all()
+            agno = c.execute(text(f"SELECT user_id FROM {AGNO_SCHEMA}.ember_sessions")).all()  # noqa: S608 — a constant schema name
             assert agno == [(producer.scope.agno_user_id,)]
         engine.dispose()
 

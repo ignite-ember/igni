@@ -64,8 +64,8 @@ logger = logging.getLogger(__name__)
 Answer = TypeVar("Answer", bound=BaseModel)
 
 URL_ENV = "IGNI_DECISIONS_URL"
-TOKEN_ENV = "IGNI_DECISIONS_TOKEN"
-SECRET_ENV = "IGNI_DECISIONS_SECRET"
+TOKEN_ENV = "IGNI_DECISIONS_TOKEN"  # noqa: S105 — an environment variable's name, not a secret
+SECRET_ENV = "IGNI_DECISIONS_SECRET"  # noqa: S105 — an environment variable's name, not a secret
 
 
 class Connection(BaseModel):

@@ -237,7 +237,7 @@ def is_read_only(command: str) -> bool:
     segments: list[list[str]] = [[]]
     for token in tokens:
         if token and set(token) <= _OPERATOR_CHARS:
-            if token != "|":
+            if token != "|":  # noqa: S105 — a shell token, not a credential
                 return False
             segments.append([])
             continue

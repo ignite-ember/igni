@@ -53,7 +53,7 @@ logger = logging.getLogger(__name__)
 
 #: The variables an extension process is started with.
 ENV_HOST_URL = "IGNI_HOST_URL"
-ENV_HOST_SECRET = "IGNI_HOST_SECRET"
+ENV_HOST_SECRET = "IGNI_HOST_SECRET"  # noqa: S105 — an environment variable's name, not a secret
 
 LOOPBACK = "127.0.0.1"
 PATH = "/v1/host"

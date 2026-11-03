@@ -38,7 +38,7 @@ class Principal(BaseModel):
     #: Where it travels: the MCP request's ``_meta`` key, and the hook frame's field.
     META_KEY: ClassVar[str] = "igni/principal"
     #: The header a process names the caller with when it asks for a service token.
-    TOKEN_HEADER: ClassVar[str] = "X-Igni-Principal"
+    TOKEN_HEADER: ClassVar[str] = "X-Igni-Principal"  # noqa: S105 — a header's name, not a secret
 
     kind: PrincipalKind
     #: The person's or the app's id on igni server.

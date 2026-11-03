@@ -139,7 +139,7 @@ class FilesController:
             from ember_code.core.paths import home_config_dir
 
             roots.append(home_config_dir())
-        except Exception:  # noqa: BLE001 — a preview must not fail on this
+        except Exception:  # noqa: BLE001, S110 — a preview must not fail on this
             pass
 
         configured = getattr(getattr(self._session, "settings", None), "storage", None)
