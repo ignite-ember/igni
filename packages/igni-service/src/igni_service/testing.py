@@ -24,10 +24,13 @@ from __future__ import annotations
 import hashlib
 import io
 import json
+import shutil
 import tarfile
+import tempfile
 import uuid
 from collections.abc import Collection
 from datetime import timedelta
+from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qs, urlencode, urlsplit
 
@@ -43,12 +46,12 @@ from igni_service.crypto import ALGORITHM, AssetClaim, Base64Url, BundleClaim, J
 from igni_service.directory import Member, Organisation
 from igni_service.keystore import KeyStore, MemoryKeyStore, StoredKey
 from igni_service.notifications import Notification, NotificationBatch, Notifier
-from igni_service.registration import PublishedExtension
+from igni_service.registration import ExtensionBundle, PublishedExtension
 from igni_service.revocations import Revocation, RevocationPage, RevokedKind
 from igni_service.service import IgniService
 from igni_service.settings import IgniSettings
 from igni_service.testing_items import FakeAgents, SentEvent
-from igni_service.testing_vm_profiles import FakeCaps, FakeVmProfiles
+from igni_service.testing_vm_profiles import FakeCaps, FakeVmProfiles, NoVmProfileRequest
 from igni_service.tokens import PEOPLE_ONLY, CallerKind
 from igni_service.urls import IgniPaths, ServiceUrl
 from igni_service.vm_profiles import VmProfileRequestRecord
@@ -383,10 +386,56 @@ class FakeIgni:
             clock=self.clock,
         )
 
+    async def upload(
+        self, bundle: str | Path | ExtensionBundle, service: IgniService
+    ) -> HeldExtension:
+        """Upload an extension as `service` does at start-up: registered, signed, over the wire.
+
+        `bundle` is a built `extension-bundle.tar.gz`, or an extension's
+        directory — its `manifest.json`, `README.md`, `plugin/` and `ui/` are
+        archived as they are, with no wheelhouse, which is all this fake
+        reads. Answers what the fake now holds (or holds back, with
+        `hold_uploads`). For a test that needs the extension on igni — its
+        VM profile request, its pages — without a lifespan or a build.
+        """
+        if not isinstance(bundle, ExtensionBundle):
+            bundle = self._bundle_of(Path(bundle))
+        await service.registration.ship(bundle)
+        client_id = await service.registration.client_id()
+        return self.held_extensions.get(client_id) or self.extensions[client_id]
+
+    @staticmethod
+    def _bundle_of(path: Path) -> ExtensionBundle:
+        if path.is_file() and path.name != "manifest.json":
+            found = ExtensionBundle.at(path)
+            if found is None:
+                raise ValueError(f"{path} is not an extension bundle")
+            return found
+        directory = path.parent if path.is_file() else path
+        if not (directory / "manifest.json").is_file():
+            raise ValueError(f"{directory} has no manifest.json")
+        with tempfile.TemporaryDirectory() as tmp:
+            staging = Path(tmp) / "bundle"
+            staging.mkdir()
+            for name in ("manifest.json", "README.md", "plugin", "ui"):
+                source = directory / name
+                if source.is_dir():
+                    shutil.copytree(source, staging / name)
+                elif source.is_file():
+                    shutil.copy2(source, staging / name)
+            return ExtensionBundle(BundleArchive.write(staging, Path(tmp) / "bundle.tar.gz"))
+
     def approve_vm_profile(
         self, org_id: str, *, app: str | None = None, extension: str | None = None
     ) -> VmProfileRequestRecord:
-        """Play an org admin approving an app's or an extension's VM profile request."""
+        """Play an org admin approving an app's or an extension's VM profile request.
+
+        The request must exist: an app's once it asked
+        (`app.vm_profile.request`), an extension's once its bundle is
+        uploaded and the service asked after it
+        (`host.extension_vm_profile()`). `NoVmProfileRequest` (a
+        `LookupError`) otherwise, saying so.
+        """
         kind, subject = self._subject(app, extension)
         return self.vm_profiles.approve(org_id, kind, subject)
 
@@ -1198,6 +1247,7 @@ __all__ = [
     "FakeIgni",
     "IgniPaths",
     "ManualClock",
+    "NoVmProfileRequest",
     "NotifyCall",
     "SentEvent",
 ]

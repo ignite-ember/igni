@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import warnings
 from datetime import datetime
 
 from igni_service.agent_wire import AgentWire
@@ -51,6 +52,15 @@ class Host:
         return await self._notifier.send(self._org_id, notifications)
 
     async def vm_profile(self) -> ServiceVmProfile:
+        """Deprecated: `host.extension_vm_profile()`, which says what it answers."""
+        warnings.warn(
+            "host.vm_profile() is deprecated; call host.extension_vm_profile()",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        return await self.extension_vm_profile()
+
+    async def extension_vm_profile(self) -> ServiceVmProfile:
         """What became of this service's extension's VM request here.
 
         The request is the extension manifest's `vm` section; this

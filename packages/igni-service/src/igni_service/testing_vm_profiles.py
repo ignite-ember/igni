@@ -67,6 +67,21 @@ MANIFEST_FIELDS: dict[str, str] = {
 }
 
 
+class NoVmProfileRequest(LookupError):
+    """A test played the org admin on a request nobody has made yet."""
+
+    def __init__(self, org_id: str, kind: str, subject_id: str) -> None:
+        extension = (
+            "An extension's request is its uploaded manifest's `vm` section, and appears the "
+            "first time the service asks after it: upload the bundle (start the service with "
+            "IGNI_EXTENSION_BUNDLE, or `await fake.upload(bundle, igni)`), then "
+            f"`await igni.host({org_id!r}).extension_vm_profile()`."
+        )
+        app = "An app's appears once it asks: `await app.vm_profile.request(...)`."
+        how = f"{extension} {app}" if kind == "extension" else f"{app} {extension}"
+        super().__init__(f"no VM profile request from {kind} {subject_id} in {org_id}. {how}")
+
+
 class FakeCaps(BaseModel):
     """The platform's caps; igni server's defaults."""
 
@@ -113,7 +128,11 @@ class FakeVmProfiles:
     # ── Playing the org admin ───────────────────────────────────────
 
     def request(self, org_id: str, kind: str, subject_id: str) -> VmProfileRequestRecord:
-        return self.requests[(org_id, kind, subject_id)]
+        """The request `subject_id` made in `org_id`. `NoVmProfileRequest` if it made none."""
+        try:
+            return self.requests[(org_id, kind, subject_id)]
+        except KeyError:
+            raise NoVmProfileRequest(org_id, kind, subject_id) from None
 
     def approve(
         self, org_id: str, kind: str, subject_id: str, *, by: str = "u-admin"
