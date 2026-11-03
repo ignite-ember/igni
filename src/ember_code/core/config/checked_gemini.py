@@ -18,9 +18,10 @@ from __future__ import annotations
 from agno.models.google import Gemini
 
 from ember_code.core.config.reply_ending import GEMINI, ReplyCutRetries, ReplyEnding
+from ember_code.core.config.tool_names import ToolNameBoundary
 
 
-class CheckedGemini(ReplyCutRetries, Gemini):
+class CheckedGemini(ToolNameBoundary, ReplyCutRetries, Gemini):
     """Agno's ``Gemini``, failing a reply that did not finish."""
 
     def invoke_stream(self, *args, **kwargs):

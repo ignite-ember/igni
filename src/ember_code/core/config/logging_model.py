@@ -34,9 +34,10 @@ from ember_code.core.config.model_stream import (
     _emit_tool_arg_deltas,
 )
 from ember_code.core.config.reply_ending import ReplyCutRetries, ReplyEnding
+from ember_code.core.config.tool_names import ToolNameBoundary
 
 
-class LoggingModel(ReplyCutRetries, OpenAILike):
+class LoggingModel(ToolNameBoundary, ReplyCutRetries, OpenAILike):
     """Thin OpenAI-compatible model wrapper that logs, sanitizes,
     and interleaves progressive tool-arg deltas.
 
