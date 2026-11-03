@@ -116,8 +116,11 @@ The first run in a folder:
    [Workspace trust](docs/CONFIGURATION.md). `igni trust` records the answer
    outside a session; `--trust` trusts it for one run.
 2. Writes `igni.md` (project instructions) and `.igni/` — `config.yaml`, the
-   built-in agents in `.igni/agents/` and skills in `.igni/skills/`. Neither
-   is gitignored for you; commit `igni.md`, and decide about `.igni/`.
+   built-in agents in `.igni/agents/` and skills in `.igni/skills/`. Signed
+   in to an igni server whose group policy ships agents (the Default group
+   does), `.igni/agents/` is not written: the agents are your group's, in
+   `~/.igni/group-policy/agents/`. Neither is gitignored for you; commit
+   `igni.md`, and decide about `.igni/`.
 
 ### A headless run cannot ask you anything
 
@@ -238,6 +241,8 @@ Agents are `.md` files with YAML frontmatter. Each agent has a role, tools, and 
 ```
 
 Open them, read them, change them. Drop new `.md` files in to add your own agents.
+Signed in to an igni server, the built-in ones are your group's
+(`~/.igni/group-policy/agents/`); a `.md` you add to `.igni/agents/` still loads.
 
 ### Orchestrator
 
