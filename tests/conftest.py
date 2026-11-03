@@ -20,6 +20,7 @@ from ember_code.extensions.faults import ExtensionFaults
 from ember_code.extensions.host.hooks import ExtensionHooks
 from ember_code.extensions.host.processes import ExtensionProcesses
 from tests.egress_guard import EgressGuard, InternalNetwork
+from tests.root_guard import RootGuard
 from tests.storage_backends import ThrowawayPostgres
 
 # Load environment variables from .env at the repo root before any test
@@ -29,6 +30,30 @@ from tests.storage_backends import ThrowawayPostgres
 _ENV_FILE = Path(__file__).resolve().parent.parent / ".env"
 if _ENV_FILE.is_file():
     load_dotenv(_ENV_FILE, override=False)
+
+
+#: The repository root, watched for files a test leaves there (``root_guard.py``).
+_ROOT = Path(__file__).resolve().parent.parent
+_ROOT_GUARD = pytest.StashKey[RootGuard]()
+
+
+def pytest_sessionstart(session: pytest.Session) -> None:
+    session.stash[_ROOT_GUARD] = RootGuard.taking(_ROOT)
+
+
+def pytest_sessionfinish(session: pytest.Session, exitstatus: int) -> None:
+    """Fail a run that left stray files in the repository root."""
+    guard = session.stash.get(_ROOT_GUARD, None)
+    if guard is None:
+        return
+    strays = guard.strays()
+    if not strays:
+        return
+    reporter = session.config.pluginmanager.get_plugin("terminalreporter")
+    if reporter is not None:
+        reporter.write_sep("=", "stray files in the repository root", red=True)
+        reporter.write_line(guard.report(strays))
+    session.exitstatus = pytest.ExitCode.TESTS_FAILED
 
 
 #: The marker a test carries when reaching the internet is what it is for.
