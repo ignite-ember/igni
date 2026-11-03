@@ -19,7 +19,14 @@ from pathlib import Path
 import pytest
 
 from igni_service import BundleError
-from igni_service.bundle import BundleBuilder, BundleCommand, HashedRequirements
+from igni_service.bundle import (
+    PLATFORMS,
+    AgentTool,
+    BundleBuilder,
+    BundleCommand,
+    CodeTools,
+    HashedRequirements,
+)
 from igni_service.registration import ExtensionBundle
 
 PLATFORM_NAMES = ("macOS arm64", "Linux x86_64", "Windows x86_64")
@@ -120,8 +127,46 @@ def members(archive: Path) -> list[str]:
         return sorted(member.name for member in tar.getmembers())
 
 
-def builder(extension: Path, index: Path) -> BundleBuilder:
-    return BundleBuilder(extension, find_links=[index], no_index=True, build_isolation=False)
+class StubTools(CodeTools):
+    """The tools the extension's code registers, as `python -m igni_extension.manifest` says."""
+
+    def __init__(self, tools: list[dict[str, object]] | None = None) -> None:
+        self.tools = None if tools is None else [AgentTool.model_validate(t) for t in tools]
+
+    def read(self, wheels: Path, package: str, module: str) -> list[AgentTool] | None:
+        return self.tools
+
+
+def builder(
+    extension: Path, index: Path, *, code_tools: CodeTools | None = None, **kwargs: object
+) -> BundleBuilder:
+    return BundleBuilder(
+        extension,
+        find_links=[index],
+        no_index=True,
+        build_isolation=False,
+        code_tools=code_tools or StubTools(),
+        **kwargs,  # type: ignore[arg-type]
+    )
+
+
+def bundled_manifest(archive: Path) -> dict[str, object]:
+    with tarfile.open(fileobj=io.BytesIO(archive.read_bytes()), mode="r:gz") as tar:
+        extracted = tar.extractfile("manifest.json")
+        assert extracted is not None
+        loaded: dict[str, object] = json.loads(extracted.read())
+        return loaded
+
+
+LOOKUP: dict[str, object] = {
+    "name": "acme.example.lookup",
+    "annotations": {
+        "readOnlyHint": True,
+        "destructiveHint": False,
+        "idempotentHint": True,
+        "openWorldHint": False,
+    },
+}
 
 
 def test_a_bundle_carries_the_manifest_its_files_and_a_wheelhouse(
@@ -331,3 +376,109 @@ class TestEveryFileIsPinnedByHash:
         )
 
         assert status == 0
+
+
+class TestUntilTheSdksAreOnPyPI:
+    def test_a_missing_igni_extension_says_how_to_build_it_from_a_checkout(
+        self, tmp_path: Path, index: Path
+    ) -> None:
+        extension = write_extension(tmp_path / "extension", dependencies=["igni-extension"])
+
+        with pytest.raises(BundleError) as failed:
+            builder(extension, index).build(tmp_path / "bundle.tar.gz")
+
+        said = str(failed.value)
+        assert "uv build --wheel --out-dir" in said
+        assert "packages/igni-extension" in said
+        assert "--find-links" in said
+
+
+class TestPermissionsToolsComeFromTheCode:
+    """The hints are stated once, on `ext.tool`; the bundle's manifest is written from them."""
+
+    def test_a_manifest_without_permissions_tools_gets_the_code_s(
+        self, tmp_path: Path, index: Path
+    ) -> None:
+        extension = write_extension(tmp_path / "extension", dependencies=[])
+
+        report = builder(extension, index, code_tools=StubTools([LOOKUP])).build(
+            tmp_path / "bundle.tar.gz"
+        )
+
+        permissions = bundled_manifest(report.out)["permissions"]
+        assert isinstance(permissions, dict)
+        assert permissions["tools"] == [LOOKUP]
+        assert any("written from the code" in note for note in report.notes)
+        # The author's own file is left as it was.
+        assert "permissions" not in json.loads((extension / "manifest.json").read_text())
+
+    def test_a_declared_tool_whose_hints_differ_from_the_code_stops_the_build(
+        self, tmp_path: Path, index: Path
+    ) -> None:
+        extension = write_extension(tmp_path / "extension", dependencies=[])
+        manifest = json.loads((extension / "manifest.json").read_text())
+        declared = json.loads(json.dumps(LOOKUP))
+        declared["annotations"]["readOnlyHint"] = False
+        manifest["permissions"] = {"tools": [declared]}
+        (extension / "manifest.json").write_text(json.dumps(manifest))
+
+        with pytest.raises(BundleError, match="acme.example.lookup") as failed:
+            builder(extension, index, code_tools=StubTools([LOOKUP])).build(
+                tmp_path / "bundle.tar.gz"
+            )
+
+        assert "readOnlyHint" in str(failed.value)
+
+    def test_a_declared_tool_the_code_does_not_register_stops_the_build(
+        self, tmp_path: Path, index: Path
+    ) -> None:
+        extension = write_extension(tmp_path / "extension", dependencies=[])
+        manifest = json.loads((extension / "manifest.json").read_text())
+        manifest["permissions"] = {"tools": [LOOKUP]}
+        (extension / "manifest.json").write_text(json.dumps(manifest))
+
+        with pytest.raises(BundleError, match="does not register"):
+            builder(extension, index, code_tools=StubTools([])).build(tmp_path / "bundle.tar.gz")
+
+    def test_a_matching_declaration_is_kept_as_written(self, tmp_path: Path, index: Path) -> None:
+        extension = write_extension(tmp_path / "extension", dependencies=[])
+        manifest = json.loads((extension / "manifest.json").read_text())
+        manifest["permissions"] = {"tools": [LOOKUP]}
+        (extension / "manifest.json").write_text(json.dumps(manifest))
+
+        report = builder(extension, index, code_tools=StubTools([LOOKUP])).build(
+            tmp_path / "bundle.tar.gz"
+        )
+
+        assert bundled_manifest(report.out) == manifest
+
+    def test_an_extension_not_written_with_the_sdk_is_read_from_its_manifest_only(
+        self, tmp_path: Path, index: Path
+    ) -> None:
+        """No igni-extension in its wheelhouse: nothing to read, and nothing said about it."""
+        extension = write_extension(tmp_path / "extension", dependencies=["tinydep"])
+
+        report = BundleBuilder(
+            extension, find_links=[index], no_index=True, build_isolation=False
+        ).build(tmp_path / "bundle.tar.gz")
+
+        assert report.notes == []
+
+
+class TestFewerPlatforms:
+    def test_a_bundle_can_be_built_for_some_platforms_only_and_says_so(
+        self, tmp_path: Path, index: Path
+    ) -> None:
+        extension = write_extension(tmp_path / "extension", dependencies=["tinydep"])
+        linux = [p for p in PLATFORMS if p.asset.value == "linux-x86_64"]
+
+        report = builder(extension, index, platforms=linux).build(tmp_path / "bundle.tar.gz")
+
+        assert any("Linux x86_64 only" in note for note in report.notes)
+
+    def test_the_command_takes_platform_names(self) -> None:
+        args = BundleCommand.parser().parse_args(
+            ["--platform", "linux-x86_64", "--platform", "macos-arm64"]
+        )
+
+        assert args.platform == ["linux-x86_64", "macos-arm64"]

@@ -32,9 +32,19 @@ or with `--allow-sdist wikipedia`. An allowed one is built from its sdist
 and must come out pure Python (`py3-none-any`); anything else still stops
 the build. Nothing is skipped silently.
 
+**`permissions.tools` is written from the code** when the extension is
+built with `igni-extension` and its manifest leaves `permissions.tools`
+out: the builder runs `python -m igni_extension.manifest` on it, from the
+wheelhouse it just filled, and the bundle's manifest gets every tool with
+the hints `ext.tool(hints=...)` states. A manifest that does declare them
+is checked against the code instead, and a difference stops the build.
+
 The archive is deterministic — sorted members, zero mtimes and owners, a
 zero gzip timestamp — so the same inputs give the same SHA-256, and the
 service uploads only when the bundle really changed.
+
+Until the SDKs are on PyPI, `igni-extension` is built from an igni
+checkout and handed to the builder with `--find-links` (`CHECKOUT_HINT`).
 """
 
 from __future__ import annotations
@@ -124,6 +134,19 @@ PLATFORMS: tuple[Platform, ...] = (
 )
 
 
+#: What to do while the SDKs are not on PyPI. Said when a resolution
+#: fails because one of them cannot be found.
+CHECKOUT_HINT = """\
+The igni SDKs are not on PyPI yet. Build them from an igni checkout and
+point the builder at the wheels:
+
+  uv build --wheel --out-dir ./sdk-wheels <igni checkout>/packages/igni-extension
+  igni-service-bundle --extension extension --out extension-bundle.tar.gz --find-links ./sdk-wheels"""
+
+#: The SDKs a resolution may fail to find before they are published.
+SDKS = ("igni-extension", "igni-service")
+
+
 class PythonPackaging(BaseModel):
     """The manifest's `python` packaging."""
 
@@ -150,6 +173,64 @@ class AgentTool(BaseModel):
 
     name: str
     annotations: ToolAnnotations
+
+
+class CodeTools:
+    """The tools an `igni-extension` extension registers, read from its own code.
+
+    Runs `python -m igni_extension.manifest <module>` in a throwaway
+    environment installed from the wheelhouse only (`uv run --offline
+    --no-index`), so it runs what the bundle ships and needs no network.
+    Answers `None` when there is nothing to read: an extension not built
+    with `igni-extension`, or a wheelhouse with nothing for this machine.
+    """
+
+    def __init__(self, runner: CommandRunner | None = None) -> None:
+        self._runner = runner or CommandRunner()
+        #: Why the last `read` answered `None`, when it was worth saying.
+        self.problem = ""
+
+    def read(self, wheels: Path, package: str, module: str) -> list[AgentTool] | None:
+        self.problem = ""
+        if not any(
+            Requirement.normalise(w.name.split("-")[0]) == "igni-extension"
+            for w in wheels.glob("*.whl")
+        ):
+            return None
+        ran = self._runner.run(
+            [
+                "uv",
+                "run",
+                "--no-project",
+                "--isolated",
+                "--offline",
+                "--no-index",
+                "--find-links",
+                str(wheels),
+                "--python",
+                sys.executable,
+                "--with",
+                package,
+                "python",
+                "-m",
+                "igni_extension.manifest",
+                module,
+            ]
+        )
+        if ran.returncode != 0:
+            lines = [line.strip() for line in ran.stderr.strip().splitlines() if line.strip()]
+            said = next(
+                (line for line in lines if line.startswith(("error:", "×", "igni_extension"))),
+                lines[-1] if lines else "no output",
+            )
+            self.problem = said.lstrip("× ").strip()
+            return None
+        try:
+            listed = json.loads(ran.stdout)
+            return [AgentTool.model_validate(tool) for tool in listed["tools"]]
+        except (ValueError, KeyError, TypeError, ValidationError) as exc:
+            self.problem = f"igni_extension.manifest answered something else: {exc}"
+            return None
 
 
 class BundlePermissions(BaseModel):
@@ -310,8 +391,10 @@ class BundleBuilder:
         platforms: Sequence[Platform] = PLATFORMS,
         runner: CommandRunner | None = None,
         fetcher: AssetFetcher | None = None,
+        code_tools: CodeTools | None = None,
     ) -> None:
         self._dir = extension_dir.resolve()
+        self._code_tools = code_tools or CodeTools(runner)
         self._find_links = [path.resolve() for path in find_links]
         self._no_index = no_index
         self._build_isolation = build_isolation
@@ -388,7 +471,9 @@ class BundleBuilder:
             wheels = staging / manifest.python.wheels
             wheels.mkdir(parents=True)
             self._extension_wheel(manifest, wheels, scratch)
-            notes = self._wheelhouse(wheels, scratch)
+            notes = self._platform_notes()
+            notes += self._wheelhouse(wheels, scratch)
+            notes += self._tools_from_code(manifest, staging / "manifest.json", wheels)
             archive = BundleArchive.write(staging, out)
             built = sorted(path.name for path in wheels.glob("*.whl"))
         assets_dir = self._assets(manifest, out)
@@ -403,6 +488,80 @@ class BundleBuilder:
             assets=manifest.assets,
             notes=notes,
         )
+
+    def _platform_notes(self) -> list[str]:
+        if set(self._platforms) == set(PLATFORMS):
+            return []
+        names = ", ".join(platform.name for platform in self._platforms)
+        return [
+            f"wheels for {names} only: a machine on any other platform cannot install this bundle"
+        ]
+
+    def _module(self, manifest: BundleManifest) -> str:
+        scripts = self._table("project", "scripts")
+        return str(scripts.get(manifest.python.entry, "")).partition(":")[0].strip()
+
+    def _tools_from_code(self, manifest: BundleManifest, staged: Path, wheels: Path) -> list[str]:
+        """Write `permissions.tools` from the code, or check the manifest's against it."""
+        module = self._module(manifest)
+        code = self._code_tools.read(wheels, manifest.python.package, module) if module else None
+        if code is None:
+            problem = getattr(self._code_tools, "problem", "")
+            if not problem:
+                return []
+            if manifest.permissions.tools:
+                return [
+                    f"could not read the tools from the code ({problem}); "
+                    "permissions.tools is the manifest's, unchecked"
+                ]
+            return [
+                f"could not read the tools from the code ({problem}), and the manifest "
+                "declares no permissions.tools: the agent is offered none of its tools. "
+                "Build on a platform the bundle includes, or declare them."
+            ]
+        raw = json.loads(staged.read_text())
+        permissions = raw.get("permissions") if isinstance(raw.get("permissions"), dict) else None
+        if permissions is None or "tools" not in permissions:
+            if not code:
+                return []
+            raw.setdefault("permissions", {})["tools"] = [tool.model_dump() for tool in code]
+            staged.write_text(json.dumps(raw, indent=2) + "\n")
+            return [
+                "permissions.tools written from the code: " + ", ".join(tool.name for tool in code)
+            ]
+        by_name = {tool.name: tool for tool in code}
+        problems: list[str] = []
+        for declared in manifest.permissions.tools:
+            name = (
+                declared.name
+                if declared.name.startswith(f"{manifest.id}.")
+                else f"{manifest.id}.{declared.name}"
+            )
+            found = by_name.pop(name, None)
+            if found is None:
+                problems.append(f"{declared.name}: declared, and the code does not register it")
+                continue
+            differ = [
+                f"{hint} {getattr(declared.annotations, hint)} in the manifest, "
+                f"{getattr(found.annotations, hint)} in the code"
+                for hint in ToolAnnotations.model_fields
+                if getattr(declared.annotations, hint) != getattr(found.annotations, hint)
+            ]
+            if differ:
+                problems.append(f"{declared.name}: " + "; ".join(differ))
+        if problems:
+            raise BundleError(
+                "permissions.tools does not say what the code does:\n  "
+                + "\n  ".join(problems)
+                + "\nFix the manifest, or leave permissions.tools out and the builder "
+                "writes it from the code."
+            )
+        if by_name:
+            return [
+                "not offered to the agent (registered, not in permissions.tools): "
+                + ", ".join(sorted(by_name))
+            ]
+        return []
 
     def _assets(self, manifest: BundleManifest, out: Path) -> Path:
         """Every declared asset in `<out>.assets/<sha256>`, and nothing else there.
@@ -502,8 +661,14 @@ class BundleBuilder:
             extra_env=platform.uv_env,
         )
         if compiled.returncode != 0:
+            hint = ""
+            if any(
+                re.search(rf"\b{sdk}\b.*(not found|was not found|no versions)", compiled.stderr)
+                for sdk in SDKS
+            ):
+                hint = f"\n{CHECKOUT_HINT}"
             raise BundleError(
-                f"could not resolve the dependencies for {platform.name}:\n{compiled.stderr}"
+                f"could not resolve the dependencies for {platform.name}:\n{compiled.stderr}{hint}"
             )
         return HashedRequirements.parse(out.read_text())
 
@@ -670,6 +835,17 @@ class BundleCommand:
             action="store_true",
             help="build with this interpreter's packages instead of fetching build backends",
         )
+        parser.add_argument(
+            "--platform",
+            action="append",
+            default=[],
+            choices=[platform.asset.value for platform in PLATFORMS],
+            help=(
+                "build wheels for this platform only (repeatable). Every platform by "
+                "default; fewer makes a smaller bundle that machines on the others cannot "
+                "install, for a deployment whose machines are all on these"
+            ),
+        )
         return parser
 
     @classmethod
@@ -682,6 +858,9 @@ class BundleCommand:
                 find_links=args.find_links,
                 no_index=args.no_index,
                 build_isolation=not args.no_build_isolation,
+                platforms=[
+                    p for p in PLATFORMS if not args.platform or p.asset.value in args.platform
+                ],
             ).build(args.out)
         except BundleError as exc:
             print(f"extension bundle: {exc}", file=sys.stderr)
