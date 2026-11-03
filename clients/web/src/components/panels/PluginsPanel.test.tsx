@@ -263,7 +263,10 @@ describe("a plugin's page", () => {
   });
 
   it("reads an installed plugin's own copy, and offers disable and remove", async () => {
-    const { sent } = panelWith();
+    // A toggle that takes a moment, as it does on a slow runner.
+    const { sent } = panelWith({
+      set_plugin_enabled: () => new Promise((done) => setTimeout(() => done(null), 50)),
+    });
     fireEvent.click(await screen.findByRole("button", { name: /^Installed/ }));
     fireEvent.click(screen.getByText("commit-tools"));
     expect(await screen.findByText("/plugins/commit-tools")).toBeTruthy();
@@ -271,7 +274,12 @@ describe("a plugin's page", () => {
     fireEvent.click(screen.getByRole("button", { name: "Disable" }));
     await waitFor(() => expect(sent("set_plugin_enabled")).toHaveLength(1));
     expect(sent("set_plugin_enabled")[0].args).toEqual({ name: "commit-tools", enabled: false });
-    fireEvent.click(screen.getByRole("button", { name: "Remove" }));
+    // The page is busy until the toggle settles, and a press on a busy
+    // button does nothing: on a slow runner (Windows CI) Remove was
+    // pressed while still disabled and never sent.
+    const remove = screen.getByRole("button", { name: "Remove" }) as HTMLButtonElement;
+    await waitFor(() => expect(remove.disabled).toBe(false));
+    fireEvent.click(remove);
     await waitFor(() => expect(sent("remove_plugin")).toHaveLength(1));
     // Removed: back on the list.
     expect(await screen.findByRole("button", { name: /^Installed/ })).toBeTruthy();
