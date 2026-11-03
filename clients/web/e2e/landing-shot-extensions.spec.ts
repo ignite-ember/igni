@@ -24,7 +24,7 @@
  * measured with `locator.boundingBox()` so the landing page can put
  * numbered markers on them.
  *
- * Run with:  npx playwright test e2e/landing-shot-extensions.spec.ts
+ * Run with:  IGNI_E2E_SHOTS=1 npx playwright test e2e/landing-shot-extensions.spec.ts
  * Output:    LANDING_SHOT_DIR (defaults to ./landing-shots)
  */
 
@@ -44,6 +44,15 @@ import {
 } from "./fixtures/claims-desk";
 
 const OUT = process.env.LANDING_SHOT_DIR || "landing-shots";
+
+// Every test here writes product shots, some of them tracked, so none runs
+// in a full `npx playwright test` unless asked for. Like app-shots.spec.ts.
+test.skip(
+  process.env.IGNI_E2E_SHOTS !== "1",
+  "Set IGNI_E2E_SHOTS=1 to write the landing shots. They overwrite the " +
+    "PNGs tracked under landing-shots/ and assert almost nothing, so a " +
+    "full run must not write them.",
+);
 const ZONES_DIR = `${OUT}/.zones`;
 
 const DESKTOP = { width: 1280, height: 720 };
@@ -306,7 +315,7 @@ async function openClaimsPage(page: Page) {
 }
 
 for (const theme of ["light", "dark"] as const) {
-  test.describe(`desktop ${theme}`, () => {
+  test.describe(`desktop ${theme}`, { tag: "@manual" }, () => {
     test.use({ viewport: DESKTOP, deviceScaleFactor: DESKTOP_SCALE });
 
     test(`1 plain igni, ${theme}`, async ({ page, backend, appUrl }) => {
@@ -471,7 +480,7 @@ for (const theme of ["light", "dark"] as const) {
     });
   });
 
-  test.describe(`phone ${theme}`, () => {
+  test.describe(`phone ${theme}`, { tag: "@manual" }, () => {
     test.use({ viewport: PHONE, deviceScaleFactor: PHONE_SCALE });
 
     test(`1 plain igni, phone, ${theme}`, async ({ page, backend, appUrl }) => {

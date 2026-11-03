@@ -8,7 +8,7 @@
  * phone width, and a single short turn rather than two so the frame
  * is not wall-to-wall text.
  *
- * Run with:  npx playwright test e2e/landing-shot-mobile.spec.ts
+ * Run with:  IGNI_E2E_SHOTS=1 npx playwright test e2e/landing-shot-mobile.spec.ts
  * Output:    LANDING_SHOT_DIR (defaults to ./landing-shots)
  */
 
@@ -17,6 +17,15 @@ import { signedInStatus } from "./fixtures/backend";
 
 const OUT = process.env.LANDING_SHOT_DIR || "landing-shots";
 
+// Every test here writes product shots, some of them tracked, so none runs
+// in a full `npx playwright test` unless asked for. Like app-shots.spec.ts.
+test.skip(
+  process.env.IGNI_E2E_SHOTS !== "1",
+  "Set IGNI_E2E_SHOTS=1 to write the landing shots. They overwrite the " +
+    "PNGs tracked under landing-shots/ and assert almost nothing, so a " +
+    "full run must not write them.",
+);
+
 const MODEL = "igni 1.0 27b";
 const PROJECT = "/Users/dev/acme/payments-api";
 
@@ -24,7 +33,8 @@ const PROJECT = "/Users/dev/acme/payments-api";
 // which is a real surface rather than a contrivance.
 test.use({ viewport: { width: 460, height: 660 }, deviceScaleFactor: 2 });
 
-test("capture phone product shot", async ({ page, backend, appUrl }) => {
+const capture = "capture phone product shot";
+test(capture, { tag: "@manual" }, async ({ page, backend, appUrl }) => {
   backend.onRpc("attach_session", () => ({
     session_id: "sess-landing",
     project_dir: PROJECT,

@@ -6,7 +6,7 @@
  * representative conversation over the wire, and captures the
  * window at 1920x1080 in both themes.
  *
- * Run with:  npx playwright test e2e/landing-shot.spec.ts
+ * Run with:  IGNI_E2E_SHOTS=1 npx playwright test e2e/landing-shot.spec.ts
  * Output:    LANDING_SHOT_DIR (defaults to ./landing-shots)
  *
  * This is a capture harness, not a test — the only assertions are
@@ -18,6 +18,15 @@ import type { FixtureBackend } from "./fixtures/backend";
 import { signedInStatus } from "./fixtures/backend";
 
 const OUT = process.env.LANDING_SHOT_DIR || "landing-shots";
+
+// Every test here writes product shots, some of them tracked, so none runs
+// in a full `npx playwright test` unless asked for. Like app-shots.spec.ts.
+test.skip(
+  process.env.IGNI_E2E_SHOTS !== "1",
+  "Set IGNI_E2E_SHOTS=1 to write the landing shots. They overwrite the " +
+    "PNGs tracked under landing-shots/ and assert almost nothing, so a " +
+    "full run must not write them.",
+);
 
 // Logical viewport for the capture. The PNG comes out at
 // LOGICAL x SCALE = 1920x1080; rendering at fewer logical pixels is
@@ -73,7 +82,8 @@ function tool(
 
 test.use({ viewport: LOGICAL, deviceScaleFactor: SCALE });
 
-test("capture landing product shot", async ({ page, backend, appUrl }) => {
+const capture = "capture landing product shot";
+test(capture, { tag: "@manual" }, async ({ page, backend, appUrl }) => {
   // Seat the session in a believable project before first paint so
   // the header shows a real folder rather than /tmp/test-project.
   backend.onRpc("attach_session", () => ({

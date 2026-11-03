@@ -102,6 +102,24 @@ describe("the e2e suite cannot skip quietly", () => {
     ).toEqual({});
   });
 
+  it("a spec writing the tracked landing shots runs only when asked", () => {
+    // landing-shots/igni-app-*.png are committed, and the three
+    // landing-shot specs overwrote them on every full Playwright run:
+    // a changed binary in `git status` after any test run, one stray
+    // `git add -A` from replacing the website's pictures. They write
+    // only under IGNI_E2E_SHOTS=1 now, as app-shots.spec.ts always did.
+    const writers = specFiles().filter((f) => read(f).includes("landing-shots"));
+    expect(writers.length).toBeGreaterThanOrEqual(3);
+    const ungated = writers.filter((f) => {
+      const src = read(f);
+      return !(
+        /process\.env\.IGNI_E2E_SHOTS\s*!==\s*["']1["']/.test(src) &&
+        /\btest\.skip\s*\(/.test(src)
+      );
+    });
+    expect(ungated, "these write landing-shots/ on every run").toEqual([]);
+  });
+
   it("the reporter is wired into the Playwright config", () => {
     // A guard that nothing runs is worse than no guard — F126's dead
     // indentation check. Pin the wiring, not just the file's existence.
