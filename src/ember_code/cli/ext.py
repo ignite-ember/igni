@@ -24,7 +24,6 @@ tell somebody to run first.
 
 from __future__ import annotations
 
-import json
 import tempfile
 from collections.abc import Iterator
 from contextlib import contextmanager
@@ -32,11 +31,12 @@ from pathlib import Path
 
 import click
 
+from ember_code.cli.ext_scaffold import Scaffold
 from ember_code.core.config.group_policy import CachedSettingsFetcher, GroupPolicyUnavailable
 from ember_code.core.config.settings import load_settings
 from ember_code.core.network_policy import NetworkPolicy
 from ember_code.core.plugins.git import GitClient, GitError
-from ember_code.extensions.manifest import ExtensionManifest, Workspace
+from ember_code.extensions.manifest import EXTENSION_ID, ExtensionManifest, Workspace
 from ember_code.extensions.profile import DEV_FLAG, DevelopmentFlag
 from ember_code.extensions.store import ExtensionStore, StoreError
 
@@ -374,7 +374,20 @@ def install(
     click.echo(f"installed {manifest.display_name} ({manifest.id}) to {target} for development")
     _echo_grants(manifest)
     click.echo()
-    click.echo("Restart igni for it to start.")
+    click.echo(_STARTS)
+
+
+#: What to restart, said exactly: "restart igni" read as "run igni
+#: again", and the app's backend kept running with what it had.
+_STARTS = (
+    f"It starts the next time igni's backend starts: quit the igni app (and any "
+    f"'igni' backend process it left running) and open it again with {DEV_FLAG}=1 "
+    f"in its environment. An 'igni -m ...' run with {DEV_FLAG}=1 starts it too."
+)
+_STOPS = (
+    "It stops the next time igni's backend starts: quit the igni app (and any "
+    "'igni' backend process it left running) and open it again."
+)
 
 
 def _echo_grants(manifest: ExtensionManifest) -> None:
@@ -390,7 +403,7 @@ def _echo_grants(manifest: ExtensionManifest) -> None:
         ("workspace paths", ", ".join(permissions.workspacePaths) or "all"),
         ("egress", ", ".join(permissions.egress) or "none"),
         ("secrets", ", ".join(permissions.secrets) or "none"),
-        ("agent tools", ", ".join(permissions.tools) or "none"),
+        ("agent tools", ", ".join(tool.name for tool in permissions.tools) or "none"),
         ("backend methods", ", ".join(permissions.rpc) or "none"),
         ("host objects", ", ".join(permissions.host) or "none"),
     ]
@@ -444,168 +457,63 @@ def remove(extension_id: str, root: str | None) -> None:
             f"It came from {distributed.service_url} through igni, and is installed "
             "again at the next sync while that service is approved."
         )
-    click.echo("Restart igni for it to stop.")
+    click.echo(_STOPS)
 
 
 @ext.command("init")
 @click.argument("directory", type=click.Path(path_type=Path))
-@click.option("--id", "extension_id", default=None, help="Reverse-DNS id.")
-def init(directory: Path, extension_id: str | None) -> None:
+@click.option("--id", "extension_id", default=None, help="Reverse-DNS id, e.g. acme.tickets.")
+@click.option(
+    "--dev",
+    "shape",
+    flag_value="dev",
+    default=True,
+    help="(default) 'dev' packaging: a command igni runs on this machine. Never leaves it.",
+)
+@click.option(
+    "--service",
+    "shape",
+    flag_value="service",
+    help=(
+        "'python' packaging and the service that ships it: two tools, a hook, a page, "
+        "a VM request, export and erasure, and tests on the SDKs' fakes."
+    ),
+)
+def init(directory: Path, extension_id: str | None, shape: str) -> None:
     """Scaffold an extension that runs.
 
-    Development packaging, because the other two need something an
-    author does not have on a laptop: a container registry, or a
-    deployed service. What this writes installs and starts as-is —
-    a scaffold that needs edits before it works is a scaffold that
-    teaches nothing about whether the install path is sound.
+    There are four packagings. ``--dev`` (the default) is a command igni
+    runs on this machine — the quickest to start, and it reaches nobody
+    else. ``--service`` is ``python`` packaging with the service that
+    ships it through igni server, which is how an extension reaches
+    other people. ``endpoint`` and ``sidecar`` need a deployed service
+    or a container registry, so they are not scaffolded.
+
+    What this writes installs and starts as-is — a scaffold that needs
+    edits before it works is a scaffold that teaches nothing about
+    whether the install path is sound.
     """
     if directory.exists() and any(directory.iterdir()):
         raise click.ClickException(f"{directory} is not empty")
 
-    name = extension_id or f"local.{directory.resolve().name.replace('_', '-')}"
-    (directory / "ui").mkdir(parents=True, exist_ok=True)
+    scaffold = Scaffold(directory, extension_id)
+    if not EXTENSION_ID.match(scaffold.id):
+        raise click.ClickException(
+            f"{scaffold.id!r} is not a usable extension id: give one with --id, "
+            "reverse-DNS and lower case, e.g. --id acme.tickets"
+        )
 
-    manifest = {
-        "$schema": "https://igni.sh/schema/extension-manifest-1.json",
-        "id": name,
-        "version": "0.1.0",
-        "contract": f">={CONTRACT_VERSION} <2",
-        "name": directory.resolve().name,
-        "trust": "unsigned",
-        "dev": {"command": ["python", "server.py"]},
-        "permissions": {"rpc": [f"ext.{name}.*"]},
-        "contributes": {
-            "pages": [
-                {"kind": f"{name}.main", "label": directory.resolve().name[:24], "sidebar": True}
-            ]
-        },
-    }
-    (directory / "manifest.json").write_text(json.dumps(manifest, indent=2) + "\n")
-    (directory / "server.py").write_text(_SERVER)
-    (directory / "ui" / "index.html").write_text(_PAGE.replace("{{ID}}", name))
-    (directory / "README.md").write_text(_README.replace("{{ID}}", name))
+    written = scaffold.write_service() if shape == "service" else scaffold.write_dev()
 
-    click.echo(f"created {directory}")
+    click.echo(f"created {directory} ({scaffold.id})")
+    for name in written:
+        click.echo(f"  {name}")
     click.echo()
-    click.echo(f"  igni ext doctor {directory}")
-    click.echo(f"  {DEV_FLAG}=1 igni ext install {directory}")
-
-
-_SERVER = '''"""This extension's backend.
-
-An MCP server. igni calls its tools as ``ext.<id>.<tool>`` when this
-extension's UI asks, and only the ones ``permissions.rpc`` grants.
-"""
-
-import json
-
-from mcp.server.fastmcp import FastMCP
-
-server = FastMCP("extension")
-
-
-@server.tool()
-def hello() -> str:
-    """Whatever your UI needs. Return JSON and it arrives as data."""
-    return json.dumps({"message": "hello from the extension backend"})
-
-
-if __name__ == "__main__":
-    server.run()
-'''
-
-_PAGE = """<!doctype html>
-<html lang="en">
-  <head>
-    <meta charset="utf-8" />
-    <title>Extension</title>
-  </head>
-  <body class="igni-root">
-    <div id="root">Loading…</div>
-    <script type="module">
-      // The bridge, inlined so this scaffold has no build step. A
-      // real extension imports @ignite-ember/extension-bridge and gets this
-      // with types — see examples/reference-extension.
-      const host = window.parent;
-      let nonce = null;
-      let next = 0;
-      const waiting = new Map();
-
-      window.addEventListener("message", (event) => {
-        const message = event.data;
-        if (event.source !== host || message?.igni !== 1) return;
-        if (message.kind === "hello") {
-          nonce = message.nonce;
-          call("ext.{{ID}}.hello").then(
-            (value) => render(value.message),
-            (error) => render("could not reach the backend: " + error.message),
-          );
-          return;
-        }
-        if (message.kind === "result") {
-          const waiter = waiting.get(message.id);
-          if (!waiter) return;
-          waiting.delete(message.id);
-          message.ok ? waiter.resolve(message.value) : waiter.reject(new Error(message.error));
-        }
-      });
-
-      function call(method, args = {}) {
-        const id = String(++next);
-        return new Promise((resolve, reject) => {
-          waiting.set(id, { resolve, reject });
-          host.postMessage({ igni: 1, kind: "call", nonce, id, method, args }, "*");
-        });
-      }
-
-      function render(text) {
-        document.getElementById("root").textContent = text;
-      }
-    </script>
-  </body>
-</html>
-"""
-
-_README = """# {{ID}}
-
-An igni extension, scaffolded by `igni ext init`.
-
-```
-manifest.json   what it is and what it may do
-server.py       its backend, an MCP server
-ui/index.html   the page igni frames
-```
-
-## Run it
-
-```bash
-igni ext doctor .                          # check it
-IGNI_DEV_EXTENSIONS=1 igni ext install .   # a development install
-```
-
-Start igni with `IGNI_DEV_EXTENSIONS=1` too — a development install
-does not run without it.
-
-Then restart igni. The page appears in the sidebar.
-
-## What to change first
-
-- **`permissions.rpc`** decides which backend methods your UI may
-  call. It is enforced by the backend against this manifest, not by
-  the frame — narrow it and your own panel stops working, and the
-  refusal will tell you which line to add.
-- **`server.py`** is where your data comes from. A tool that returns
-  JSON arrives in the UI as data rather than a string.
-- **`ui/index.html`** inlines a minimal bridge so this has no build
-  step. For anything real, use `@ignite-ember/ui-react` and
-  `@ignite-ember/extension-bridge` — see `examples/reference-extension`.
-
-## Before anybody else installs it
-
-Nobody else installs it from here. An extension reaches people's
-machines from its service, through igni server: package it as
-`python` with its wheelhouse, and have the service upload the signed
-bundle at start-up (igni server's `docs/service-identity.md` §8).
-Once a super admin
-approves the service, every signed-in igni installs it.
-"""
+    click.echo("next:")
+    if shape == "service":
+        click.echo(f"  cd {directory} && uv sync && uv run pytest")
+        click.echo(f"  igni ext doctor {directory / 'extension'}")
+        click.echo(f"  then {directory / 'README.md'} — shipping it through igni server")
+    else:
+        click.echo(f"  igni ext doctor {directory}")
+        click.echo(f"  {DEV_FLAG}=1 igni ext install {directory}")

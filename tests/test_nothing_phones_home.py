@@ -53,9 +53,17 @@ _ALLOWED_HOSTS: dict[str, str] = {
     # and an editor that does is resolving a schema the author asked
     # it to, on their machine, about their own file. The schema it
     # names ships in the repository at
-    # docs/extension-manifest.schema.json.
-    "igni.sh": "the $schema identifier in a scaffolded extension manifest",
-    # `ignite-ember.sh` and `api.ignite-ember.sh` used to be here, and
+    # docs/extension-manifest.schema.json, and is published at that
+    # address so an editor that does resolve it finds it.
+    "ignite-ember.sh": "the $schema identifier in a scaffolded extension manifest "
+    "(cli/ext_scaffold.py) — nothing in igni requests it",
+    # What `igni ext init --service` writes for the author to run: the
+    # service's own development URLs, and the test's base URL under the
+    # reserved `.test` TLD (RFC 2606). Text in a file, not requests.
+    "localhost": "the development URLs in the README `igni ext init --service` writes",
+    "tickets.test": "RFC 2606 base URL in the tests `igni ext init --service` writes",
+    # `api.ignite-ember.sh` used to be here, and so did `ignite-ember.sh`
+    # as an API host (it is back above only as a schema identifier), and
     # the second carried a paragraph beginning "OPEN QUESTION, not a
     # settled answer": `api_url` defaulted to the vendor, so a CLI
     # nobody configured talked to infrastructure that should not exist,
