@@ -2,7 +2,7 @@
 
 How CodeIndex, Artifacts and third-party capabilities attach to igni — and what igni promises not to break underneath them.
 
-> **Status: specification.** Parts are built; [Milestones](#milestones) is the only statement of which. This banner used to read "nothing below is implemented yet" while that table listed eight rows as shipped — believe the table.
+> **Status: specification.** Parts are built; [Milestones](#milestones) is the only statement of which. To build one, start with [Your first extension](YOUR_FIRST_EXTENSION.md), which goes from an empty directory to an extension and its service running in igni.
 >
 > **"Remote" always means inside the customer's own network.** igni hosts nothing. A laptop talking to an on-prem Artifacts service is still fully air-gapped.
 
@@ -204,6 +204,7 @@ model. igni is one tree of objects (`host.sessions`, `host.chat`,
 and methods; an extension handles a signal and, while handling it, reads
 and writes the model:
 
+<!-- illustrative -->
 ```python
 @ext.on(ext.host.chat.run_completed)
 async def review(run: Run) -> None:
@@ -266,6 +267,7 @@ starting a run, or waiting for the run going. Files go with it, imported
 as a person's upload is. The extension's code is not involved: it sees
 the post on `chat.message_added`, and cannot change it.
 
+<!-- illustrative -->
 ```python
 await igni.host(org_id).agent(Producer.person("u-marieke")).send_message(
     "Claim CL-20431 arrived; assess the damage.", thread="claim:CL-20431"
@@ -277,6 +279,7 @@ type and posts nothing; the handler acts through its host calls, and the
 agent runs only if it posts. An event no handler took is reported to the
 service as `not_handled`.
 
+<!-- illustrative -->
 ```python
 @ext.on_service_event("index.ready")
 async def ready(event: ServiceEvent) -> None:
@@ -303,8 +306,12 @@ There is no extension marketplace and no group policy that pushes one.
    service registered, over `{"extension", "version", "sha256"}`.
 2. **A super admin approves the service**, having compared its key's
    thumbprint and read what the extension would put on machines.
-3. **Every signed-in igni installs it.** At session start-up and on
-   sign-in the host lists `GET {igni}/v1/extensions` as the signed-in
+   Approval is trust, and gives the extension to nobody.
+3. **An org admin switches it on for a group** (§4). Until one does,
+   nobody in that organisation is offered it.
+4. **Every signed-in igni in that group installs it.** At session
+   start-up, on sign-in, and on `igni ext sync`, the host lists
+   `GET {igni}/v1/extensions` as the signed-in
    person, and for each entry whose version or digest differs from what
    is installed downloads `GET /v1/extensions/{id}/bundle`, verifies
    the JWS against the entry's `publisher_jwks` (RS256 or ES256, by
@@ -457,9 +464,7 @@ would be asking which agents belong to what.
 
 Keybindings, context menus, custom editors, theme overrides, i18n.
 
-Also **`chatRenderers`** (inline rendering of an extension's tool results in the chat transcript). It was in the table above before anything implemented or specified it, which made it look declarable, and it is unlikely ever to arrive: a tool result that wants a rich view emits a `json-render` spec, which the chat already renders, and a second mechanism for the same job would be a second thing to keep in step.
-
-`indicators` was here too, for the same reason, and has moved back into the table — because the *first* extension needs one. `CodeIndexIndicator` sits in the composer today, hardcoded, and when CodeIndex becomes an extension that chip either comes from its manifest or is lost. "Nothing has specified it" was right about the specification and wrong about the need, which is the difference a real extraction surfaces and a reasoned list does not.
+Also **`chatRenderers`** (inline rendering of an extension's tool results in the chat transcript). It is unlikely ever to arrive: a tool result that wants a rich view emits a `json-render` spec, which the chat already renders, and a second mechanism for the same job would be a second thing to keep in step.
 
 Additive changes are never breaking, so omitting is cheap and premature inclusion is forever.
 
@@ -467,9 +472,10 @@ Additive changes are never breaking, so omitting is cheap and premature inclusio
 
 ## 2. The manifest
 
+<!-- illustrative -->
 ```jsonc
 {
-  "$schema": "https://igni.sh/schema/extension-manifest-1.json",
+  "$schema": "https://ignite-ember.sh/schema/extension-manifest-1.json",
 
   "id": "igni.codeindex",             // reverse-DNS, immutable, namespaces everything
   "version": "1.4.0",
@@ -517,11 +523,9 @@ Additive changes are never breaking, so omitting is cheap and premature inclusio
 excerpt. Point an editor at it with the `$schema` line above and it
 completes and checks as you type;
 `tests/test_a_manifest_is_checked_against_its_schema.py` validates
-every example manifest in the repository against it on every run. That
-test exists because the first manifest written against this section
-broke it in three places — a sidecar with no `image`, a `menu` entry
-misfiled as a `command`, and a prompt fragment with an anchor and no
-text — none of which prose alone had caught.
+every example manifest in the repository against it on every run. The
+excerpt above declares every packaging at once to show them; a real
+manifest has exactly one.
 
 **`tools` and `rpc` are different lists.** `permissions.tools` is MCP
 tools the extension may register with the *agent*, each with its hints
@@ -556,11 +560,6 @@ directory, on the Neo4j and the Java runtime it ships as assets, with the
 chunk vectors embedded by the ONNX model it also ships. None of it is
 igni's, nothing of it is downloaded on a person's machine, and all of it
 leaves when the extension does.
-
-There used to be a `requires` field — a kind (`graph-db`, `embedder`, …)
-that igni would provision on a laptop and bind in a deployment. Nothing
-passed the installer a resolver, so an extension declaring it could not
-install anywhere; the field is gone, and the manifest refuses it.
 
 **What igni *does* provide is its floor**: identity and a token for the
 extension's own service, the host object model, notifications, and its
@@ -672,20 +671,18 @@ Entitlement can change mid-session (packs poll on a short TTL). A revocation mov
 
 Optional, and packaging-independent *within a single-user backend*: the client is the same whether the capability behind it is a sidecar on this machine or an endpoint elsewhere, and the local backend serves the bundle either way — from the sidecar, or proxied from the registered endpoint. A shared backend contributes no UI at all (see above). A headless extension contributes none of this.
 
-- **Served on a loopback port of its own**, one listener per extension, by the backend the client is talking to. Not `/ext/<id>/` under one port, which is what this said first: a path prefix is a naming convention the browser has never heard of, so every extension would share `localStorage`, `IndexedDB` and the right to reach into the next one's frame. A port is part of an origin; a path is not. Entitlement and the contract check are enforced before the listener starts rather than before each byte.
+- **Served on a loopback port of its own**, one listener per extension, by the backend the client is talking to. Not `/ext/<id>/` under one port: a path prefix is a naming convention the browser has never heard of, so every extension would share `localStorage`, `IndexedDB` and the right to reach into the next one's frame. A port is part of an origin; a path is not. Entitlement and the contract check are enforced before the listener starts rather than before each byte.
 - **Framed** with `sandbox="allow-scripts allow-forms allow-same-origin"`. The frame gets a real origin — its own port — and `allow-same-origin` is safe here precisely because that origin is not the host's: the frame cannot reach the embedder's document, storage or cookies, and the familiar "allow-scripts plus allow-same-origin lets a frame drop its own sandbox" applies to a frame that is same-origin *with its embedder*, which this never is.
 - **No `allow-popups`**, so nothing in the frame opens a window or a tab of its own — not a link with `target="_blank"`, not `window.open`. A page opens a link with `bridge.host.app.open_external(url)`: `https://` only, under the `links` permission, opened by its window the way igni opens every link outside it (HOST_OBJECT_MODEL, *Links out of igni*).
-- **Per-extension CSP**: `default-src 'self'`, and `connect-src` is `'self'`, the extension's **own service** and its **declared egress** — each as `https://` and `wss://` origins, nothing wider (§6, *A page and its own service*). The bundle cannot open an undeclared socket, which is what makes egress auditable. The bridge is `postMessage` and is not governed by CSP at all, so "no `connect-src` beyond the bridge" — the earlier wording — meant `'none'` and would have blocked the extension from loading its own data files.
+- **Per-extension CSP**: `default-src 'self'`, and `connect-src` is `'self'`, the extension's **own service** and its **declared egress** — each as `https://` and `wss://` origins, nothing wider (§6, *A page and its own service*). The bundle cannot open an undeclared socket, which is what makes egress auditable. The bridge is `postMessage` and is not governed by CSP at all. `script-src` is `'self'` too, so a page's script is a file in its bundle (`<script type="module" src="main.js">`) — an inline `<script>` does not run.
 
 > **Why `allow-same-origin` is present**, measured in Chromium against two real origins rather than argued from the spec. Without it the frame has an opaque origin and **its own `panel.js` does not load** — for a module script the blocker is CORS rather than CSP, since from an opaque origin fetching its own file is a cross-origin request, and `'self'` would refuse the rest. The frame renders and nothing in it runs.
 >
 > The second reason is the one that decides the bridge. A `postMessage` from an opaque origin arrives at the host as `origin: "null"`, so the host cannot tell one extension from another, and the origin check every inbound message depends on has nothing to check. With a port each, `e.origin` is that extension's own `http://127.0.0.1:<port>`.
->
-> These two bullets used to specify an opaque origin *and* `default-src 'self'`. They were coherent only while every extension shared one port, where an opaque origin was the only isolation on offer.
 - **Bridge API, as built**: `rpc`, `navigate`, `close`, `params`/`onParams`, `settings`, `host`/`on` (the host object model and its signals), `service` (the extension's own service: `url`, `token()`, `fetch(path, init)`, `websocket(path)`), `setLocation`, `theme`/`onTheme`, `tokens`. Origin, source window and per-session nonce checked on every inbound message.
 
   `settings` is what `contributes.settings` is configured to, as an administrator left it. It is fixed for the life of the frame — a change applies at the next mount — so there is no `onSettings`. It is a separate namespace from `params` on purpose: `params` is *where you are*, replayed from `setLocation`, and this is *how you are set up*. One namespace would make a setting named `doc` and a link carrying `?doc=` the same key.
-- **Bridge API, not built**: `identity`, `setTitle`, `setStatus`, `storage`, and per-call budgets or cancellation. This list used to be written in the present tense alongside the one above, which told an author that live push was solved. `HostMessage` is `hello | theme | params | result | host-reply | signal | service-token-reply`: a page subscribes to host-model signals at runtime with `bridge.on(signal, fn)`, granted by `permissions.host`, so following what happens in igni does not mean polling.
+- **Bridge API, not built**: `identity`, `setTitle`, `setStatus`, `storage`, and per-call budgets or cancellation. `HostMessage` is `hello | theme | params | result | host-reply | signal | service-token-reply`: a page subscribes to host-model signals at runtime with `bridge.on(signal, fn)`, granted by `permissions.host`, so following what happens in igni does not mean polling.
 
   `notify` means a message in *igni's* chrome. An extension's own toasts, inside its own frame, are published as `ToastHost`/`useToast` — the two are not interchangeable, and only something the user must see after navigating away belongs to the host.
 
@@ -697,7 +694,7 @@ Optional, and packaging-independent *within a single-user backend*: the client i
 
 **The dividing rule:** the iframe owns pages; json-render owns anything inline in the chat stream. Per-message iframes wreck scrolling, selection and performance.
 
-Per business-ops **D16**, capability UI renders in the igni app only — never inside the VS Code or JetBrains host.
+Capability UI renders in the igni app only — never inside the VS Code or JetBrains host.
 
 ---
 
@@ -716,13 +713,13 @@ The manifest's `trust` (`first-party` / `partner` / `unsigned`) is the author's 
 
 **We do not sign, review or countersign anyone else's capability.** The host verifies the bundle is what the approved service signed — nothing more. The service's public key arrives with the listing from the customer's own igni server, so verification needs nothing outside their network.
 
-**Only a super admin decides what is distributed**, by approving a service. No user install outside development, no marketplace fetch, no group policy push: software inventory is an accreditation control.
+**Only a super admin decides what is distributed**, by approving a service, and an org admin decides who in their organisation gets it, by switching it on for a group. No user install outside development, no marketplace fetch, no group policy push: software inventory is an accreditation control.
 
 ### Permissions
 
 Declared, admin-granted, base-enforced, deny by default: `workspace` (none/read/write, path-scoped), `egress` (the hosts its pages may connect to, empty by default), `secrets` (named grants the deployment resolves), `tools` (MCP tools it may register with the agent, each with its four hints), `rpc` (backend methods its UI may call over the bridge — exact names, or a `*`-suffixed prefix, because this list is read by whoever approves the install), `host` (objects of the host object model its process and page may reach, same grammar), `hooks` (igni's hook events its process answers — on the five that decide it may stop or change the event; the rest it is told), `service` (what its service may send a producer's agent beyond a plain event: `messages`, `attachments`, `chats`).
 
-**Where each one is enforced, and how far.** This list was written before any of it was, and for a while the only enforced permission was `rpc` — which made the rest a list of restrictions that restricted nothing.
+**Where each one is enforced, and how far.**
 
 | Permission | Enforced at | How far it goes |
 |---|---|---|
@@ -782,7 +779,7 @@ extension written with it cannot leave one out.
 
 **`decide` sends text to a model, but not off the machine.** `host.decide` runs igni's decision model (Laya) on what the extension sends, in igni's decisions service: on a desktop that is a process beside the backend, so nothing leaves the person's machine; in the cloud it is the node's shared service, inside the deployment. igni does not log the text. It is a grant like any other because it spends CPU and memory — the first call loads a model of about 400M parameters — and because the Bypass guard shares the model: igni answers the guard first, so an extension's questions can wait but never delay an approval. Zero-shot accuracy is modest; an extension acting on an answer should have measured it on its own data (HOST_OBJECT_MODEL, *Typed decisions on this machine*).
 
-**Secrets are values, not handles.** This section said "a handle, never a value" for as long as nothing implemented it. A handle needs an exchange step, and an extension's service is an MCP server igni *calls* — there is no channel for it to call back on. So the honest statement is the one above, and the handle exchange joins the list of things not built. What that costs: a secret is in the service's process environment, visible to anything that can read it there.
+**Secrets are values, not handles.** A handle needs an exchange step, and an extension's service is an MCP server igni *calls* — there is no channel for it to call back on, so the handle exchange is not built. What that costs: a secret is in the service's process environment, visible to anything that can read it there.
 
 **The process is sandboxed to its grants, and approving its service is still the decision to run it.** An extension's process is its service's own code, from a bundle that service signed. igni starts it in an OS sandbox — Seatbelt on macOS, bubblewrap on Linux — written from its manifest: it reaches its own service and its `egress` hosts through igni's egress proxy and nothing else (narrowed to hosts inside the network when air-gapped; on macOS, services on this machine stay reachable); it reads its bundle, its runtime, its data directory and the workspace when granted, and not the rest of the person's home; it writes its data directory, its temp directory and the workspace for `write`. On **Windows it is not sandboxed yet**, and where no sandbox is available it runs unconfined with a warning — unless `extensions.require_sandbox` is set in managed settings, which refuses it. `extensions.sandbox: false` (managed or user settings, never a project's) turns this off for development. A super admin still approves the service on a Services page that shows everything the extension declares. igni also confines what it decides itself: which of its own objects, methods, tools and secrets an extension reaches, and what an extension's page — which renders content — may load and call.
 
@@ -841,7 +838,7 @@ Install, registration, upgrade, permission grant, tool invocation and bridge cal
 | licence expired | `DISABLED` with the renewal fix | hard stop on a *paying* customer mid-contract |
 | id collides with a base name | install error naming both | last-writer-wins |
 
-Plus: validate at install not at use; supervise with backoff and open a circuit after repeated failure; atomic reversible upgrades; unknown fields ignored in both directions with a report of what was dropped.
+Plus: validate at install not at use; supervise with backoff and open a circuit after repeated failure; atomic reversible upgrades. An unknown manifest field is refused, not ignored — a key that is silently dropped is a permission the author believes they declared — and the error names the field, where it is, and the nearest field that does exist ("`permisions`: not a manifest field — did you mean `permissions`?").
 
 Every call into a capability carries a **deadline** — the agent loop is never blocked — and a concurrency, result-size and token budget. The deadlines, all igni's: a hook event, 2 s (`ExtensionHooks.TIMEOUT_S`); an agent's tool call, the MCP session's read timeout; a page's call or a slash command, `CALL_TIMEOUT_S` over that; a prompt contribution's text, `FRAGMENT_TIMEOUT_S`; a health probe, `PROBE_TIMEOUT_S`; starting and restarting a service, `START_TIMEOUT_S` and `RESTART_TIMEOUT_S`. Signals (`@ext.on`) and the hook events that decide nothing are sent and never waited on.
 
@@ -872,8 +869,6 @@ Three published things, and nothing else about how igni is drawn:
 
 These three are a promise. **Everything else about igni's appearance is not**, and the distinction is what keeps restyling the app possible: `theme.css` holds about two thousand classes and three dozen of them are published.
 
-This replaces a line that read "the React component tree, CSS class names, any token not published as a theme variable" — written before there was a package, when no class name was published and the sentence was true. It stopped being true the moment `igni-ui.css` shipped, and a floor that contradicts what we hand people is worse than one that promises too much.
-
 ## Not in the floor
 
 - Importing anything from `ember_code.*` — the contributions are the interface, not the package.
@@ -886,15 +881,15 @@ This replaces a line that read "the React component tree, CSS class names, any t
 
 ## 9. Developing one
 
-- **The reference extension is `examples/reference-extension/`** — a compliance scanner, around 200 lines, written against the published surface and nothing else. It is the answer to "what does an extension look like", and a standing check on this contract: anything it has to hand-roll is something the floor is missing, and its README keeps that list.
-- **`igni ext init <dir>`** scaffolds one that runs as written — manifest, an MCP server, a framed page with the bridge inlined so there is no build step, and a README. `igni ext doctor` checks a bundle and prints the contract version this igni implements; `igni ext install` (development only, behind `IGNI_DEV_EXTENSIONS=1`) copies it into `<data>/extensions/<id>/`, prints the permissions it is being granted, and the backend starts it at its next boot. `list` says where each one came from, and `remove` does what it says — one igni distributed comes back at the next sync while its service is approved.
+- **Start with [Your first extension](YOUR_FIRST_EXTENSION.md).** It is task-ordered — write an extension and its service, bundle it, run the service, approve it, switch it on for a group, sync, use it in chat and on its page, ask for a VM profile, answer export and erasure, and test it all on the SDKs' fakes — and every file it shows is a file in `examples/ticket-lookup/`, whose tests run in CI.
+- **The reference extension is `examples/reference-extension/`** — a compliance scanner, around 200 lines, written against the published surface and nothing else. Anything it has to hand-roll is something the floor is missing, and its README keeps that list.
+- **`igni ext init <dir>`** scaffolds one that runs as written. `igni ext doctor` checks a bundle and prints the contract version this igni implements; `igni ext install` (development only, behind `IGNI_DEV_EXTENSIONS=1`) copies it into `<data>/extensions/<id>/` and prints the permissions it is being granted; a backend starts it at its next start-up. `igni ext sync` installs, updates and removes what igni server distributes to the signed-in person, as start-up and sign-in do. `list` says where each one came from, and `remove` does what it says — one igni distributed comes back at the next sync while its service is approved and switched on for your group.
 - **An install outlives the process that made it**, which is why the CLI writes to a store rather than talking to a running backend: a CLI that needed one could install nothing before it started, and nothing would survive it stopping.
 - **Dev mode** is `IGNI_DEV_EXTENSIONS=1`, the only thing that lets a bundle igni server did not distribute install or start, whatever trust it claims. An environment variable and not a setting a bundle can reach, because the easiest way to ship must not be the one with no provenance. The persistent banner and hot reload do not exist yet.
-- **Shipping it** is the service's job: package it as `python` with its wheelhouse and have the service upload the signed bundle at start-up (§8 of igni server's `service-identity.md`).
-- **`igni ext doctor`** checks manifest schema, contract range, permissions, collisions, deprecations, the MCP round-trip and the phones-home scan. **If doctor passes, it loads** — that equivalence is the promise.
+- **Shipping it** is the service's job: package it as `python` with its wheelhouse and have the service upload the signed bundle at start-up (§8 of igni server's `service-identity.md`). A super admin approves the service, and an org admin switches the extension on for each group that should have it.
+- **What `igni ext doctor` checks**: the manifest against the schema (naming the field and the fix), the contract range, the packaging (a wheelhouse or something to build one from, a `ui/` for pages, a dev command that exists), grants that cannot be delivered or are wider than they look (`permissions.rpc` of `*` or outside `ext.<id>.`, tool names without the `<id>.` prefix), and then it **starts the process and does the MCP round-trip** with a timeout, reporting what the server answered and any tool it registers that `permissions.tools` does not declare. It does not check collisions with other installed extensions or scan for phoning home. <!-- TODO-F1: confirm against what doctor prints -->
 - **Errors carry fixes**, because the reader is often a partner's L2 engineer with no internet.
 - **Observability**: logs in the Watcher panel, state in the subsystem view, versions in the diagnostic bundle.
-- **A changelog for the contract itself.**
 
 ---
 
@@ -919,7 +914,7 @@ This replaces a line that read "the React component tree, CSS class names, any t
 | `ext.<id>.*` RPC namespace | **shipped** (`extensions/registry.py`, `extensions/rpc.py`, `extensions/service.py`) |
 | Sidecar supervision / install pipeline | not started — the registry takes a manifest and a bound service; nothing yet starts a container or registers an endpoint |
 | Backend static origin, one port per extension | **shipped** (`extensions/origin.py`) |
-| Sandboxed iframe + bridge | **shipped** (`extensions/ExtensionFrame.tsx`, `bridge.ts`, `protocol.ts`) — the host-side permission check now has its backend counterpart; nothing renders the frame yet |
+| Sandboxed iframe + bridge | **shipped** (`extensions/ExtensionFrame.tsx`, `bridge.ts`, `protocol.ts`) — igni's app renders it as an extension's page (`extensions/ExtensionPage.tsx`, in the web app and the desktop app), with the permission check in the backend |
 | Policy cache keyed by `group_id` | not started |
 | Extensions in group packs | **removed** — extensions come from their services through igni |
 | Infrastructure for extensions (`requires`) | **removed** — an extension runs what it needs from `IGNI_EXTENSION_DATA` |
@@ -931,10 +926,6 @@ This replaces a line that read "the React component tree, CSS class names, any t
 That proves the easy half and should not be quoted as more. All four of its RPCs are base `RpcMethod` members, so what was demonstrated is a first-party panel reaching first-party methods through a postMessage hop, in a unit test, against a stub window.
 
 ### A third party calling its own service
-
-This used to say it was not possible, and it was right: `RpcMethod` is a closed enum and the router validates against it exhaustively, so `ext.acme.scanner.list` missed the dispatch table and came back `Unknown RPC method` — a message indistinguishable from a typo, which is why the gap survived being written down in three places.
-
-The namespace is now real.
 
 **Grammar.** `ext.<extension-id>.<method>`. The method is the final segment and the id is everything before it, so `ext.a.b.c` is id `a.b` and method `c`. Resolving that against the installed set instead would have meant a call's meaning changing depending on what else happened to be installed.
 
@@ -950,7 +941,7 @@ The namespace is now real.
 
 Authorisation is decided before the service is consulted, and that ordering is tested rather than asserted: otherwise a permissions problem surfaces as a connection error and sends an author looking in the wrong place.
 
-**Enforced here, not in the client.** The web client checks the grant before forwarding and its comment said the backend re-checked. That was aspirational — there was nothing to re-check with. A frame is a renderer; its check is a courtesy that makes the error immediate.
+**Enforced here, not in the client.** The web client checks the grant before forwarding too, but a frame is a renderer; its check is a courtesy that makes the error immediate.
 
 **The transport is MCP**, per §Principles. An extension's service answers `ext.<id>.<method>` as a tool call named `<method>`, on the same server that serves the agent. Two grant lists over one server: `permissions.tools` is what the *agent* may call, `permissions.rpc` what the extension's own *UI* may call. `structuredContent` is used where a server sends it; otherwise text blocks are joined and parsed as JSON when they are JSON, because that is what a server written for a UI sends.
 
@@ -965,4 +956,20 @@ Authorisation is decided before the service is consulted, and that ordering is t
 - MCP: [`core/mcp/config.py`](../src/ember_code/core/mcp/config.py), [`docs/MCP.md`](MCP.md)
 - Prompt placeholder to generalise: [`core/prompts/__init__.py`](../src/ember_code/core/prompts/__init__.py), [`core/agents/loader.py`](../src/ember_code/core/agents/loader.py)
 - Air-gap enforcement: [`tests/test_nothing_phones_home.py`](../tests/test_nothing_phones_home.py)
-- Commercial framing: `igni__business-ops/strategy/decisions.md` (D1, D3, D4, D7, D11, D16), `strategy/license-enforcement.md`
+
+## Changelog
+
+What this document used to say, kept short so the text above reads as the current contract.
+
+- **Status banner.** It once read "nothing below is implemented yet" while Milestones listed eight rows as shipped. Milestones is the statement of what is built.
+- **`requires`.** A field naming infrastructure (`graph-db`, `embedder`, …) that igni would provision. Nothing passed the installer a resolver, so an extension declaring it could not install anywhere; it is gone, and a manifest carrying it is refused.
+- **The UI origin.** Extension pages were first specified under `/ext/<id>/` on one port with an opaque origin and `default-src 'self'`. That was coherent only while every extension shared one port; each now has a loopback port and a real origin (§5). The CSP's `connect-src` once read "nothing beyond the bridge", which meant `'none'` and would have blocked a page's own data files.
+- **The bridge.** Its unbuilt calls were once listed in the present tense beside the built ones, which read as live push being solved. It is solved now by `bridge.on`, and the two lists are separate.
+- **Permissions.** The list was written before any of it was enforced, and for a while only `rpc` was. The table in §6 says where each one is enforced now.
+- **Secrets** were specified as "a handle, never a value" while nothing implemented a handle. They are values (§6).
+- **Unknown manifest fields** were once to be "ignored, with a report of what was dropped". They are refused, with the nearest known field suggested (§7).
+- **The UI floor** once excluded "the React component tree, CSS class names, any token not published as a theme variable", written before `igni-ui.css` and `@ignite-ember/ui-react` existed.
+- **`chatRenderers` and `indicators`** were in §1's table before anything specified them. `chatRenderers` left (a tool result renders through json-render); `indicators` came back, because CodeIndex's composer chip needs it.
+- **`ext.<id>.*`.** A third party could not call its own service: `RpcMethod` is closed and `ext.acme.scanner.list` came back `Unknown RPC method`. The namespace is real now (Milestones, *A third party calling its own service*), and the backend enforces the grant the web client also checks.
+- **The schema's URL** was `https://igni.sh/schema/extension-manifest-1.json`, which never resolved. It is `https://ignite-ember.sh/schema/extension-manifest-1.json`.
+- **Shipping** once read as if a super admin's approval alone put an extension on machines. An org admin also switches it on per group (§4).
