@@ -181,7 +181,7 @@ with a notice when none do, and fail when only some do:
 | `COSIGN_PASSWORD` | secret | its password |
 | `COSIGN_PUBLIC_KEY` | variable | `cosign.pub` |
 
-The names are igni server's (its `docs/OFFLINE_UPDATES.md`). Whether igni's
+The names are igni server's (its offline-updates guide). Whether igni's
 releases use the same key pair as igni server's images is the key ceremony's
 decision; one key means a customer holds one public key. If the key is moved
 into a GitHub environment, add `environment:` to those two jobs and limit the
