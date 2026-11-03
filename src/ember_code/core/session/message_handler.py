@@ -93,6 +93,7 @@ class SessionMessageHandler:
         context_window_ref: Callable[[], int],
         latch_input_tokens: Callable[[int], None],
         extract_response_text: Callable[[Any], str] | None = None,
+        permission_evaluator_ref: Callable[[], Any] | None = None,
     ) -> None:
         self._hook_executor = hook_executor
         self._audit = audit
@@ -113,6 +114,9 @@ class SessionMessageHandler:
         # ``patch("ember_code.core.session.core.extract_response_text")``
         # in tests still intercepts.
         self._extract_response_text = extract_response_text or _default_extract_response_text
+        # Read through a callable for the same reason as the refs above: the
+        # session rebuilds its evaluator with the team.
+        self._permission_evaluator_ref = permission_evaluator_ref or (lambda: None)
 
     async def handle(self, message: str, **media_kwargs: Any) -> str:
         """Handle a single user message and return the response.
@@ -140,6 +144,7 @@ class SessionMessageHandler:
         try:
             team = self._team_ref()
             response = await team.arun(effective_message, stream=False, **media_kwargs)
+            response = await self._resume_what_the_policy_decided(team, response)
             self._reject_paused_run(response)
             self._reject_failed_run(response)
             response_text = self._extract_response_text(response)
@@ -174,6 +179,68 @@ class SessionMessageHandler:
 
         except Exception as exc:
             return await self._handle_run_failure(exc)
+
+    #: How many times one turn may stop at a pause the policy settles before
+    #: the handler stops resuming it. A turn that reads a dozen files pauses
+    #: a dozen times; a run that loops is cut off rather than spun forever.
+    _MAX_POLICY_RESUMES = 50
+
+    async def _resume_what_the_policy_decided(self, team: Any, response: Any) -> Any:
+        """Settle the pauses nobody needs to be asked about, and continue.
+
+        Agno pauses every call to a tool built with ``requires_confirmation``
+        — the shell, whenever ``shell_execute`` is ``ask`` — before the
+        permission evaluator has looked at it. The backend the windowed
+        clients use answers such a pause from the evaluator first
+        (``backend/pause_handler.py``): plan mode's read-only commands, an
+        allow rule, ``--accept-edits`` run, and a deny rule is refused,
+        without a dialog. This path did not, so a headless ``igni -m`` with
+        ``permissions.mode: plan`` stopped at ``cat README.md`` — the very
+        read docs/SECURITY.md says plan mode lets through — and an allow
+        rule was honoured in the window and not on the command line.
+
+        The evaluator's verdict is applied exactly as the backend applies
+        it: ALLOW confirms, DENY rejects with its reason (the model reads
+        it), anything else is left paused and :meth:`_reject_paused_run`
+        reports it. Nothing is allowed here that the evaluator did not
+        allow.
+        """
+        evaluator = self._permission_evaluator_ref()
+        if evaluator is None:
+            return response
+        from ember_code.core.config.permission_eval import PermissionDecision
+
+        for _ in range(self._MAX_POLICY_RESUMES):
+            if not _is_paused(response):
+                return response
+            requirements = list(getattr(response, "active_requirements", None) or [])
+            if not requirements:
+                return response
+            verdicts = []
+            for req in requirements:
+                tool = getattr(req, "tool_execution", None)
+                name = str(getattr(tool, "tool_name", "") or "")
+                args = dict(getattr(tool, "tool_args", None) or {})
+                try:
+                    outcome = evaluator.evaluate_outcome(name, args)
+                except Exception:  # noqa: BLE001 — an unanswerable pause, reported below
+                    logger.warning("permission evaluation failed for %s", name, exc_info=True)
+                    return response
+                if outcome.decision not in (PermissionDecision.ALLOW, PermissionDecision.DENY):
+                    return response
+                verdicts.append((req, outcome))
+            for req, outcome in verdicts:
+                if outcome.decision is PermissionDecision.ALLOW:
+                    req.confirm()
+                else:
+                    req.reject(note=f"Blocked: {outcome.reason}")
+            response = await team.acontinue_run(
+                run_response=response,
+                requirements=list(getattr(response, "requirements", None) or []),
+                session_id=self._session_id_ref(),
+                stream=False,
+            )
+        return response
 
     @staticmethod
     def _reject_paused_run(response: Any) -> None:
@@ -372,3 +439,9 @@ class SessionMessageHandler:
                 payload=payload.model_dump(),
             )
         return error_msg
+
+
+def _is_paused(response: Any) -> bool:
+    """``status`` is paused — compared by name, so Agno stays a lazy import."""
+    status = getattr(response, "status", None)
+    return str(getattr(status, "value", status)).lower() == "paused"

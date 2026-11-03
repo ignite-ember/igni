@@ -377,6 +377,9 @@ class Session:
             session_id_ref=lambda: self.session_id,
             context_window_ref=lambda: self._context_window,
             latch_input_tokens=self.latch_input_tokens,
+            # Not ``self.permission_evaluator``: it is written when the tool
+            # hook is built, after this handler, and again on every rebuild.
+            permission_evaluator_ref=lambda: getattr(self, "permission_evaluator", None),
             extract_response_text=lambda resp: extract_response_text(resp),
         )
 
