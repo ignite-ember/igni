@@ -98,6 +98,11 @@ class ServedOrganisations(BaseModel):
 class Revoked(TokenRefused):
     """A token igni has revoked: refused like any other bad token."""
 
+    def __init__(
+        self, reason: str = "the token was revoked: its holder was removed or signed out"
+    ) -> None:
+        super().__init__(reason)
+
 
 class RevocationsStale(IgniUnavailable):
     """The revocations cannot be trusted now: no token is accepted."""
@@ -174,7 +179,7 @@ class RevocationList:
                 return int(claims["iat_ms"])
             return int(float(claims["iat"]) * 1000)
         except (KeyError, TypeError, ValueError):
-            raise TokenRefused() from None
+            raise TokenRefused("the token's iat is not a number") from None
 
     def __len__(self) -> int:
         return len(self._watermarks)

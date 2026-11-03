@@ -77,8 +77,10 @@ logger = logging.getLogger(__name__)
 #: is refused with the same 401 as a bad one.
 _BEARER = HTTPBearer(auto_error=False)
 
-#: Said for every refusal. Telling "expired" from "wrong audience" from
-#: "unknown key" would tell whoever holds the token which door it failed at.
+#: The body of every refusal. Why is in the RFC 6750 challenge and the
+#: log, and only in the terms `TokenRefused` allows: what anybody holding
+#: the token could read from it (expired, another audience, the wrong
+#: kind), never which signature check failed.
 _REFUSAL = "Not authenticated"
 
 
@@ -289,8 +291,8 @@ class IgniService:
         token = self._bare(credentials)
         try:
             return await self.verifier.person(token)
-        except TokenRefused:
-            raise self._refused() from None
+        except TokenRefused as refused:
+            raise self._refused(refused) from None
         except IgniUnavailable as exc:
             raise self._cannot_check(exc) from exc
 
@@ -304,8 +306,8 @@ class IgniService:
         token = self._bare(credentials)
         try:
             return await self.verifier.caller(token, accept=self.accepted_callers)
-        except TokenRefused:
-            raise self._refused() from None
+        except TokenRefused as refused:
+            raise self._refused(refused) from None
         except IgniUnavailable as exc:
             raise self._cannot_check(exc) from exc
 
@@ -380,8 +382,8 @@ class IgniService:
         token = self._bare(credentials)
         try:
             return await self.verifier.igni_call(token)
-        except TokenRefused:
-            raise self._refused() from None
+        except TokenRefused as refused:
+            raise self._refused(refused) from None
         except IgniUnavailable as exc:
             raise self._cannot_check(exc) from exc
 
@@ -404,15 +406,28 @@ class IgniService:
     @staticmethod
     def _bare(credentials: HTTPAuthorizationCredentials | None) -> str:
         if credentials is None or credentials.scheme.lower() != "bearer":
+            # No token at all: RFC 6750 §3.1 — a challenge with no error.
             raise IgniService._refused()
         return credentials.credentials
 
     @staticmethod
-    def _refused() -> HTTPException:
+    def challenge(refused: TokenRefused | None = None) -> str:
+        """The `WWW-Authenticate` value for a 401: bare for no token, RFC 6750's error otherwise."""
+        if refused is None:
+            return "Bearer"
+        said = " ".join(refused.reason.replace('"', "'").replace("\\", "/").split())
+        return f'Bearer error="invalid_token", error_description="{said}"'
+
+    @staticmethod
+    def _refused(refused: TokenRefused | None = None) -> HTTPException:
+        if refused is not None:
+            # Visible under uvicorn (`igni_service.logs`): the line the
+            # extension's author looks for when their call is a 401.
+            logger.info("igni: refused a token: %s", refused.reason)
         return HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail=_REFUSAL,
-            headers={"WWW-Authenticate": "Bearer"},
+            headers={"WWW-Authenticate": IgniService.challenge(refused)},
         )
 
     @staticmethod

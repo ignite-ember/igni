@@ -370,10 +370,14 @@ class WebSignIn:
         claims = await self._verifier.claims(issued.access_token, use=TokenUse.USER)
         client_id = await self._registration.client_id()
         if claims.get("azp") not in (None, client_id):
-            raise TokenRefused()
+            raise TokenRefused(
+                "the sign-in answered with a token for another client, or for no organisation"
+            )
         person = Person.from_claims(claims)
         if not person.user_id or not person.org_id:
-            raise TokenRefused()
+            raise TokenRefused(
+                "the sign-in answered with a token for another client, or for no organisation"
+            )
         return person
 
     def _session(

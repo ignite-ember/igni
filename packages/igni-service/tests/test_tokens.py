@@ -222,3 +222,65 @@ async def test_org_admin_is_an_admin_of_the_organisation_the_token_is_for(
     assert max_there.json() == {"admin": "u-max", "org": OTHER_ORG}
     assert root.status_code == 403, "a super admin is not every organisation's admin"
     assert nobody.status_code == 401
+
+
+class TestARefusalSaysWhy:
+    """RFC 6750 §3: `error="invalid_token"` and a description; and a line in the log.
+
+    The body stays "Not authenticated". The description says only what can
+    be read from the token itself — expiry, audience, kind — which whoever
+    holds it can decode anyway; it is what the author of the extension
+    calling this needs, and what the service's operator reads in the log.
+    """
+
+    async def test_no_token_is_a_challenge_without_an_error(self, http: httpx.AsyncClient) -> None:
+        response = await http.get("/me")
+
+        assert response.headers["www-authenticate"] == "Bearer"
+
+    @pytest.mark.parametrize(
+        ("overrides", "said"),
+        [
+            ({"aud": "http://another-service.test"}, "audience"),
+            ({"use": "refresh"}, "kind of token"),
+            ({"org": ""}, "organisation"),
+        ],
+        ids=["wrong-audience", "wrong-kind", "no-org"],
+    )
+    async def test_a_refused_token_says_why_in_the_challenge_and_the_log(
+        self,
+        http: httpx.AsyncClient,
+        fake: FakeIgni,
+        caplog: pytest.LogCaptureFixture,
+        overrides: dict[str, str],
+        said: str,
+    ) -> None:
+        token = fake.person_token("u-ada", org_id=ORG, **overrides)
+
+        with caplog.at_level("INFO", logger="igni_service"):
+            response = await http.get("/me", headers=bearer(token))
+
+        assert response.status_code == 401
+        assert response.json() == {"detail": "Not authenticated"}
+        challenge = response.headers["www-authenticate"]
+        assert challenge.startswith('Bearer error="invalid_token", error_description="')
+        assert said in challenge
+        assert any(said in record.getMessage() for record in caplog.records)
+
+    async def test_garbage_and_expiry_are_told_apart(
+        self, http: httpx.AsyncClient, fake: FakeIgni, clock: ManualClock
+    ) -> None:
+        garbage = await http.get("/me", headers=bearer("not a jwt"))
+        token = fake.person_token("u-ada", org_id=ORG)
+        clock.advance(601)
+        expired = await http.get("/me", headers=bearer(token))
+
+        assert "not a JWT" in garbage.headers["www-authenticate"]
+        assert "expired" in expired.headers["www-authenticate"]
+
+    async def test_a_description_never_breaks_the_header(self) -> None:
+        refused = TokenRefused('the token is "odd"\nreally')
+
+        assert IgniService.challenge(refused) == (
+            'Bearer error="invalid_token", error_description="the token is \'odd\' really"'
+        )

@@ -62,8 +62,25 @@ class CallerKind(StrEnum):
         return TokenUse.USER if self is CallerKind.PERSON else self.value
 
 
+#: Everything about a token's signature, said as one thing: which check
+#: failed (algorithm, key id, signature) is not for whoever holds it.
+_NOT_SIGNED = "the token is not signed by igni server's keys"
+_NO_ORGANISATION = "the token names no person, or no organisation"
+
+
 class TokenRefused(IgniError):
-    """The token is not one this service accepts. Deliberately says no more."""
+    """The token is not one this service accepts, and why.
+
+    The reason is said only in terms anybody holding the token could read
+    from it themselves — expired, for another audience, the wrong kind —
+    or as "not signed by igni" for everything about its signature. It goes
+    in the 401's RFC 6750 challenge and the service's log, never in the
+    body, which stays "Not authenticated".
+    """
+
+    def __init__(self, reason: str = "the token is not one this service accepts") -> None:
+        super().__init__(reason)
+        self.reason = reason
 
 
 class Person(BaseModel):
@@ -199,12 +216,12 @@ class TokenVerifier:
         try:
             header = jwt.get_unverified_header(bare)
         except jwt.PyJWTError:
-            raise TokenRefused() from None
+            raise TokenRefused("the token is not a JWT") from None
         if header.get("alg") != ALGORITHM:
-            raise TokenRefused()
+            raise TokenRefused(_NOT_SIGNED)
         key = await self._keys.key(str(header.get("kid") or ""))
         if key is None:
-            raise TokenRefused()
+            raise TokenRefused(_NOT_SIGNED)
         issuer = await self._igni.issuer()
         try:
             claims: dict[str, Any] = jwt.decode(
@@ -223,18 +240,31 @@ class TokenVerifier:
                     "verify_nbf": False,
                 },
             )
+        except jwt.InvalidAudienceError:
+            raise TokenRefused(
+                f"the token is for another audience; this service's is {self._igni.own_url}"
+            ) from None
+        except jwt.InvalidIssuerError:
+            raise TokenRefused("the token was issued by somebody other than igni server") from None
+        except jwt.MissingRequiredClaimError as exc:
+            raise TokenRefused(f"the token has no {exc.claim!r} claim") from None
         except (jwt.PyJWTError, ValueError):
-            raise TokenRefused() from None
+            raise TokenRefused(_NOT_SIGNED) from None
         allowed = {use} if isinstance(use, str) else set(use)
         if claims.get("token_use") not in allowed:
-            raise TokenRefused()
+            raise TokenRefused(
+                f"the wrong kind of token: token_use {claims.get('token_use')!r}, "
+                f"and this takes {' or '.join(sorted(allowed))}"
+            )
         try:
             expires, issued = float(claims["exp"]), float(claims["iat"])
         except (TypeError, ValueError):
-            raise TokenRefused() from None
+            raise TokenRefused("the token's exp or iat is not a number") from None
         now = self._clock.wall()
-        if now >= expires or issued > now + self.LEEWAY:
-            raise TokenRefused()
+        if now >= expires:
+            raise TokenRefused("the token has expired")
+        if issued > now + self.LEEWAY:
+            raise TokenRefused("the token was issued in the future; check this machine's clock")
         if self.revocations is not None and claims.get("token_use") != TokenUse.IGNI:
             # A removed person is refused at once, not when their token
             # expires; igni's own calls are not anybody's session.
@@ -247,7 +277,7 @@ class TokenVerifier:
         if not person.user_id or not person.org_id:
             # Every user token names one organisation. One that does not
             # is not one igni minted for a person.
-            raise TokenRefused()
+            raise TokenRefused(_NO_ORGANISATION)
         return person
 
     async def caller(self, token: str, *, accept: Collection[CallerKind] = PEOPLE_ONLY) -> Caller:
@@ -264,15 +294,15 @@ class TokenVerifier:
         if use == TokenUse.USER:
             caller = Person.from_claims(claims)
             if not caller.user_id or not caller.org_id:
-                raise TokenRefused()
+                raise TokenRefused(_NO_ORGANISATION)
         elif use == TokenUse.APP:
             caller = App.from_claims(claims)
             if not caller.app_id or not caller.org_id:
-                raise TokenRefused()
+                raise TokenRefused("the token names no app, or no organisation")
         else:
             caller = Space.from_claims(claims)
             if not caller.space_id or not caller.org_id or not caller.app_id:
-                raise TokenRefused()
+                raise TokenRefused("the token names no space, app or organisation")
         return caller
 
     async def igni_call(self, token: str) -> IgniCall:
@@ -280,5 +310,5 @@ class TokenVerifier:
         claims = await self.claims(token, use=TokenUse.IGNI)
         org_id = str(claims.get("org") or "")
         if not org_id or claims.get("sub") != await self._igni.issuer():
-            raise TokenRefused()
+            raise TokenRefused("the token is not igni's own call for an organisation")
         return IgniCall(org_id=org_id)
