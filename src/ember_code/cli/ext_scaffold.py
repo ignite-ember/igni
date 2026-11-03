@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import json
 import re
+import sys
 from pathlib import Path
 
 #: Where the manifest's JSON Schema is published. The same file is
@@ -94,7 +95,9 @@ class Scaffold:
     def __init__(self, directory: Path, extension_id: str | None) -> None:
         self.directory = directory
         self.title = directory.resolve().name
-        self.id = extension_id or "local." + re.sub(r"[^a-z0-9-]+", "-", self.title.lower()).strip("-")
+        self.id = extension_id or "local." + re.sub(r"[^a-z0-9-]+", "-", self.title.lower()).strip(
+            "-"
+        )
 
     # ── helpers ───────────────────────────────────────────────────
 
@@ -135,7 +138,11 @@ class Scaffold:
             "contract": ">=1.0 <2",
             "name": self.title,
             "trust": "unsigned",
-            "dev": {"command": ["python", "server.py"]},
+            # The interpreter igni runs on: it has the mcp package
+            # server.py imports, and a bare "python" is on no PATH on a
+            # stock Mac. Point it at your own environment's once
+            # server.py needs more than mcp.
+            "dev": {"command": [sys.executable, "server.py"]},
             "permissions": {"rpc": [f"ext.{self.id}.*"]},
             "contributes": {
                 "pages": [{"kind": f"{self.id}.main", "label": self.title[:24], "sidebar": True}]
@@ -259,6 +266,10 @@ server.py       its backend, an MCP server
 ui/index.html   the page igni frames
 ui/main.js      the page's script (a file: the page's CSP refuses inline scripts)
 ```
+
+`dev.command` runs `server.py` with the Python igni itself runs on,
+which has the `mcp` package. Point it at your own environment's
+`python` once `server.py` needs more.
 
 ## Run it
 

@@ -24,6 +24,7 @@ tell somebody to run first.
 
 from __future__ import annotations
 
+import asyncio
 import tempfile
 from collections.abc import Iterator
 from contextlib import contextmanager
@@ -31,6 +32,7 @@ from pathlib import Path
 
 import click
 
+from ember_code.cli.ext_doctor import Findings, NameCheck, ProcessProbe
 from ember_code.cli.ext_scaffold import Scaffold
 from ember_code.core.config.group_policy import CachedSettingsFetcher, GroupPolicyUnavailable
 from ember_code.core.config.settings import load_settings
@@ -61,11 +63,28 @@ def _store(root: str | None) -> ExtensionStore:
     type=click.Path(exists=True, file_okay=False, path_type=Path),
     default=".",
 )
-def doctor(bundle: Path) -> None:
+@click.option(
+    "--no-start",
+    is_flag=True,
+    help="Check the manifest only; do not start the process.",
+)
+@click.option(
+    "--timeout",
+    type=float,
+    default=60.0,
+    show_default=True,
+    help="Seconds the process has to answer MCP's initialize and tools/list.",
+)
+def doctor(bundle: Path, no_start: bool, timeout: float) -> None:
     """Check a bundle and say what is wrong with it.
 
-    Reads and never writes, so it is safe to run first and safe to
-    run on somebody else's directory.
+    Checks the manifest, then starts the process the way igni would —
+    a 'dev' command from the bundle, a 'python' package installed into
+    a throwaway environment — and asks it, over MCP, for its tools.
+    Writes nothing outside a temporary directory, so it is safe to run
+    first and safe to run on somebody else's directory. A 'python'
+    source checkout with no wheelhouse is built, which needs its
+    dependencies on an index or under PIP_FIND_LINKS.
     """
     click.echo(f"contract implemented by this igni: {CONTRACT_VERSION}")
 
@@ -169,10 +188,42 @@ def doctor(bundle: Path) -> None:
     if any(grant == "*" for grant in manifest.permissions.rpc):
         problems.append("permissions.rpc contains '*', which grants every method")
 
+    findings = Findings()
+    names = NameCheck(manifest)
+    names.check(findings)
+
     if notes:
         click.echo()
         for note in notes:
             click.echo(f"  - {note}")
+
+    click.echo()
+    if no_start:
+        click.echo("  process    not started (--no-start)")
+    elif problems or manifest.sidecar is not None:
+        click.echo("  process    not started: fix the problems below first")
+    elif manifest.endpoint is not None:
+        click.echo("  process    not started: an endpoint is somebody else's process")
+    else:
+        probe = asyncio.run(ProcessProbe(manifest, bundle, timeout=timeout).run())
+        if probe.error is not None:
+            problems.append(f"starting it: {probe.error}")
+        else:
+            click.echo(f"  process    started it and asked for its tools: {len(probe.tools)}")
+            if probe.tools:
+                click.echo()
+                click.echo("  each tool's names (the server's own, then where each is used):")
+                for row in names.table(probe.tools):
+                    click.echo(row)
+            names.compare(probe.tools, findings)
+
+    problems.extend(findings.problems)
+    for note in findings.notes:
+        click.echo(f"  - {note}")
+    if findings.warnings:
+        click.echo()
+        for warning in findings.warnings:
+            click.echo(f"  ~ warning: {warning}")
 
     if problems:
         click.echo()

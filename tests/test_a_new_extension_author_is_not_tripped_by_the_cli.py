@@ -179,7 +179,7 @@ def test_init_service_writes_an_extension_its_service_and_their_tests(run, tmp_p
     assert manifest["permissions"]["hooks"] == ["PostToolUse"]
     assert "vm" in manifest
 
-    doctor = run("doctor", str(target / "extension"))
+    doctor = run("doctor", str(target / "extension"), "--no-start")
     assert doctor.exit_code == 0, doctor.output
     assert "no problems found" in doctor.output
 
