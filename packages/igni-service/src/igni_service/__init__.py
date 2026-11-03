@@ -20,6 +20,8 @@ from igni_service.errors import (
     IgniUnavailable,
     KeyStoreError,
     NotificationRefused,
+    ServiceNotApproved,
+    ServiceRevoked,
     VmProfileRefused,
 )
 from igni_service.events import EventAccepted, Producer
@@ -93,6 +95,8 @@ __all__ = [
     "MemoryWebSessionStore",
     "Notification",
     "NotificationRefused",
+    "ServiceNotApproved",
+    "ServiceRevoked",
     "Organisation",
     "PEOPLE_ONLY",
     "Producer",

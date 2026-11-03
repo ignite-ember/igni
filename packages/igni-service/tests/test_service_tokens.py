@@ -5,7 +5,7 @@ from __future__ import annotations
 import jwt
 import pytest
 
-from igni_service import IgniService, IgniUnavailable
+from igni_service import IgniService, IgniUnavailable, ServiceNotApproved, ServiceRevoked
 from igni_service.testing import FakeIgni, ManualClock
 from igni_service.urls import IgniPaths
 
@@ -85,6 +85,31 @@ async def test_an_unapproved_service_is_told_so_in_igni_words(clock: ManualClock
 
     fake.approve()
     assert await igni.tokens.token(ORG)
+
+
+async def test_a_service_waiting_for_approval_is_told_it_is_not_approved(
+    clock: ManualClock,
+) -> None:
+    """Not "unavailable": nothing will change by retrying until a super admin approves it."""
+    fake = FakeIgni(clock=clock, require_approval=True)
+    igni = fake.service()
+
+    with pytest.raises(ServiceNotApproved, match="waiting for a super admin") as refused:
+        await igni.tokens.token(ORG)
+
+    # Every `except IgniUnavailable` written before still catches it.
+    assert isinstance(refused.value, IgniUnavailable)
+
+
+async def test_a_revoked_service_is_told_it_is_revoked(igni: IgniService, fake: FakeIgni) -> None:
+    await igni.tokens.token(ORG)
+    fake.revoke()
+    igni.tokens.forget()
+
+    with pytest.raises(ServiceRevoked, match="revoked") as refused:
+        await igni.tokens.token(ORG)
+
+    assert isinstance(refused.value, IgniUnavailable)
 
 
 async def test_a_token_names_one_organisation(igni: IgniService) -> None:

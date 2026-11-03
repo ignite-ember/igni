@@ -245,6 +245,8 @@ class FakeIgni:
         self.revoked: list[str] = []
         #: igni's revocations, in order (`publish_revocation`).
         self.revocations: list[Revocation] = []
+        #: Why the last client assertion was refused, in igni's words.
+        self._refusal: str | None = None
 
     def reset(self) -> None:
         """Forget what happened, keep who exists.
@@ -921,9 +923,15 @@ class FakeIgni:
         except jwt.PyJWTError:
             return None
         client = self._client(client_id)
-        if client is None or client.state == "revoked":
+        if client is None:
+            return None
+        # igni server's own words (its `assertions.py`), which the SDK
+        # reads to tell "not approved yet" from "revoked".
+        if client.state == "revoked":
+            self._refusal = "this client has been revoked"
             return None
         if self.require_approval and client.state != "approved":
+            self._refusal = "this client is waiting for a super admin to approve it"
             return None
         try:
             claims = jwt.decode(
@@ -1047,9 +1055,12 @@ class FakeIgni:
                 del self._refresh_tokens[other]
         return httpx.Response(200)
 
-    @staticmethod
-    def _invalid_client() -> httpx.Response:
-        return httpx.Response(401, json={"error": "invalid_client"})
+    def _invalid_client(self) -> httpx.Response:
+        body = {"error": "invalid_client"}
+        if self._refusal:
+            body["error_description"] = self._refusal
+            self._refusal = None
+        return httpx.Response(401, json=body)
 
     # ── The directory ───────────────────────────────────────────────
 

@@ -20,7 +20,7 @@ import httpx
 from pydantic import BaseModel
 
 from igni_service.clock import Clock
-from igni_service.errors import IgniUnavailable
+from igni_service.errors import IgniUnavailable, ServiceNotApproved, ServiceRevoked
 from igni_service.registration import ServiceRegistration
 from igni_service.server import IgniServer
 from igni_service.signing import SigningKey
@@ -91,8 +91,23 @@ class ServiceTokens:
         except GrantRefused as exc:
             # `invalid_client` while a super admin has not approved this
             # service yet, or after they revoked it. Said in igni's own
-            # words, because that is the sentence to act on.
-            raise IgniUnavailable(f"igni server refused a service token: {exc}") from exc
+            # words, because that is the sentence to act on — and as its
+            # own kind, because "try again later" is the wrong advice.
+            raise self.refusal(exc) from exc
+
+    @staticmethod
+    def refusal(exc: GrantRefused) -> IgniUnavailable:
+        """What igni's refusal of a service token means, as the error to raise."""
+        message = f"igni server refused a service token: {exc}"
+        said = exc.detail.lower()
+        if "waiting for a super admin" in said or "not approved" in said:
+            return ServiceNotApproved(
+                f"{message}. A super admin approves this service in igni's portal under "
+                "Services, after checking the thumbprint this service logged at start-up."
+            )
+        if "revoked" in said:
+            return ServiceRevoked(message)
+        return IgniUnavailable(message)
 
     async def request(
         self, method: str, path: str, *, org_id: str, **kwargs: Any
