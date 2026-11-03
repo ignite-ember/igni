@@ -1,5 +1,7 @@
 # igni
 
+[![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/ignite-ember/igni/badge)](https://scorecard.dev/viewer/?uri=github.com/ignite-ember/igni)
+
 **One spark ignites a team.** An AI coding assistant built with [Agno](https://github.com/agno-agi/agno) orchestration.
 
 [ignite-ember.sh](https://ignite-ember.sh)
@@ -275,6 +277,9 @@ Agents can pause execution to request confirmation or user input before proceedi
 - [Build Plan](docs/BUILD_PLAN.md) — The same work as ordered items, with the files they touch and how each one is verified
 - [Migration](docs/MIGRATION.md) — Coming from Claude Code or Codex
 - [Security](docs/SECURITY.md) — Threat model, permissions, and enterprise hardening
+- [Reporting a vulnerability](SECURITY.md) — where to send it, and what happens next
+- [Verifying a release](docs/VERIFYING_RELEASES.md) — checksums, SBOMs, build provenance and signatures, online and air-gapped
+- [Vulnerability management](docs/VULNERABILITY_MANAGEMENT.md) — what is scanned, what gates, and the remediation targets
 - [Development](docs/DEVELOPMENT.md) — Contributing and extending igni
 
 ## License

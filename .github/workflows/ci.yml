@@ -7,13 +7,19 @@ on:
     branches: [main]
   workflow_call:
 
+# Read-only. Nothing here writes to the repository; artifacts upload with
+# the runner's own token. A workflow that calls this one (release.yml) can
+# only narrow it, never widen it.
+permissions:
+  contents: read
+
 jobs:
   lint:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
         with:
           # Read from ``.python-version`` rather than written out here.
           # The version is one fact; every copy of it is a chance to
@@ -21,7 +27,7 @@ jobs:
           python-version-file: .python-version
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v4
+        uses: astral-sh/setup-uv@38f3f104447c67c051c4a08e39b64a148898af3a # v4.2.0
 
       - name: Install dependencies
         run: |
@@ -53,15 +59,15 @@ jobs:
   security:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
         with:
           # Read from ``.python-version`` rather than written out here.
           python-version-file: .python-version
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v4
+        uses: astral-sh/setup-uv@38f3f104447c67c051c4a08e39b64a148898af3a # v4.2.0
 
       - name: Install dependencies
         run: uv sync --all-extras
@@ -70,6 +76,39 @@ jobs:
       # on the first new advisory rather than one carrying an exception list.
       - name: pip-audit
         run: uv run --with pip-audit pip-audit
+
+  # npm and cargo: the web UI every client bundles, the VS Code extension,
+  # and the desktop shell's crates. Unlike pip-audit above this gates on
+  # CRITICAL only, with named exceptions in
+  # .github/dependency-audit-allowlist.toml — every advisory is still
+  # printed. The first run found one critical in each tree: DOMPurify
+  # (fixed by a patch bump in the lockfile) and zip's RUSTSEC-2026-0369,
+  # which is Windows-only here and on the allowlist with the reasoning.
+  # docs/VULNERABILITY_MANAGEMENT.md, V-2 and V-3.
+  dependency-audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: "20"
+
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+
+      - uses: taiki-e/install-action@682ce6c3c696a4cd5168a05f98e51aa02b877941 # v2.89.1
+        with:
+          tool: cargo-audit
+
+      # Reads the lockfiles only; nothing is installed.
+      - name: npm audit (web UI, VS Code extension)
+        run: uv run --no-project --with 'cvss>=3,<4' python scripts/dependency_audit.py npm clients/web clients/vscode .
+
+      - name: cargo audit (desktop shell)
+        run: uv run --no-project --with 'cvss>=3,<4' python scripts/dependency_audit.py cargo clients/tauri/src-tauri
+
   test:
     runs-on: ubuntu-latest
     steps:
@@ -79,16 +118,16 @@ jobs:
       # skips itself rather than draw conclusions from a window of one. It had
       # therefore never run anywhere it was enforced, which is the state that
       # test's own docstring calls worse than having no rule at all.
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           fetch-depth: 0
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
         with:
           python-version-file: .python-version
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v4
+        uses: astral-sh/setup-uv@38f3f104447c67c051c4a08e39b64a148898af3a # v4.2.0
 
       # The core alone — the desktop's wheel, without psycopg or the
       # cloud layer: everything it does must work, and every cloud test
@@ -178,14 +217,14 @@ jobs:
           --health-timeout 5s
           --health-retries 10
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
         with:
           python-version-file: .python-version
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v4
+        uses: astral-sh/setup-uv@38f3f104447c67c051c4a08e39b64a148898af3a # v4.2.0
 
       # PostgreSQL storage is the igni-cloud package's (an entry point,
       # found by the database URL), so it is installed here.
@@ -210,14 +249,14 @@ jobs:
   packages:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
         with:
           python-version-file: .python-version
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v4
+        uses: astral-sh/setup-uv@38f3f104447c67c051c4a08e39b64a148898af3a # v4.2.0
 
       - name: Lint, type-check and test the SDKs
         run: make packages-check
@@ -240,9 +279,9 @@ jobs:
       run:
         working-directory: clients/web
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: "20"
           cache: "npm"
@@ -289,7 +328,7 @@ jobs:
       run:
         working-directory: clients/web
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
       # No setup-node and no `playwright install`: the image ships both
       # Node and the matching browsers, and installing a second copy of
@@ -307,7 +346,7 @@ jobs:
       # `e2e/fixtures/live-be.ts` spawns a backend whenever this venv
       # exists, so preparing it is what enables that coverage.
       - name: Install uv
-        uses: astral-sh/setup-uv@v4
+        uses: astral-sh/setup-uv@38f3f104447c67c051c4a08e39b64a148898af3a # v4.2.0
 
       - name: Install the backend for the live-backend E2E
         working-directory: .
@@ -322,7 +361,7 @@ jobs:
 
       - name: Upload Playwright report on failure
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: playwright-report
           path: clients/web/playwright-report/
@@ -343,9 +382,9 @@ jobs:
       matrix:
         os: [ubuntu-latest, macos-latest, windows-latest]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: "20"
           cache: "npm"
@@ -363,7 +402,7 @@ jobs:
           mkdir -p clients/jetbrains/src/main/resources/webui
           cp -R clients/web/dist/. clients/jetbrains/src/main/resources/webui/
 
-      - uses: actions/setup-java@v4
+      - uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3 # v4.9.1
         with:
           distribution: "zulu"
           java-version: "21"
@@ -397,7 +436,7 @@ jobs:
       # not to ship a deliverable.
       - name: Upload plugin artifact
         if: runner.os == 'Linux'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: ember-code-jetbrains
           path: clients/jetbrains/build/distributions/*.zip
@@ -415,9 +454,9 @@ jobs:
       matrix:
         os: [ubuntu-latest, macos-latest, windows-latest]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: "20"
           cache: "npm"
@@ -457,7 +496,7 @@ jobs:
 
       - name: Upload VSIX artifact
         if: runner.os == 'Linux'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: ember-code-vscode
           path: clients/vscode/*.vsix
@@ -471,8 +510,8 @@ jobs:
   proxy-propagation:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: "20"
       - name: Run proxy integration test
@@ -486,7 +525,7 @@ jobs:
   tauri-rust:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
       - name: Install Linux WebKitGTK deps
         run: |
@@ -495,9 +534,11 @@ jobs:
             libwebkit2gtk-4.1-dev libssl-dev libgtk-3-dev \
             libayatana-appindicator3-dev librsvg2-dev
 
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable branch, 2026-10-16
+        with:
+          toolchain: stable
 
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           workspaces: clients/tauri/src-tauri
 

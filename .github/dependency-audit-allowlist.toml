@@ -1,0 +1,36 @@
+# Exceptions to the npm and cargo dependency gate (scripts/dependency_audit.py).
+#
+# The gate fails on any advisory at or above `critical` that is not named
+# here. An entry names ONE advisory against ONE package, says why it does not
+# reach anything igni runs (or why there is nothing to take), and carries a
+# `review_by` date: after it, the gate fails until somebody re-reads the
+# advisory and moves the date or deletes the entry. An entry that stops
+# matching is reported so it can be deleted.
+#
+# Python has no entries and takes none: pip-audit in ci.yml fails on every
+# advisory. docs/VULNERABILITY_MANAGEMENT.md describes the whole policy.
+#
+#   [[allow]]
+#   ecosystem = "npm" | "cargo"
+#   advisory  = "GHSA-…" | "RUSTSEC-…" (or any alias the tool reports)
+#   package   = "<name as the tool reports it>"
+#   reason    = "…"
+#   review_by = 2027-01-31
+
+[[allow]]
+ecosystem = "cargo"
+advisory = "RUSTSEC-2026-0369"
+package = "zip"
+reason = """
+`ZipStreamReader::extract()` / `ZipArchive::extract()` apply Unix permission
+bits through symlinks. Both copies of zip in the desktop app are
+Windows-only dependencies (`cfg(target_os = "windows")`): igni-app reads
+uv.exe out of uv's release zip with `by_index` + `io::copy` and never calls
+`extract`; tauri-plugin-updater calls `extract` only on a Windows update
+payload, after its minisign signature verifies, and igni publishes no
+Windows updater payload (latest.json lists darwin-aarch64 only). Unix
+permission handling does not run on Windows. The fix is zip 9, a major
+version neither igni-app's `zip = "2"` nor tauri-plugin-updater 2.10's
+`zip = "4"` accepts; take it when the updater moves.
+"""
+review_by = 2027-02-01
