@@ -750,8 +750,12 @@ class BackendServer:
         return await self.sessions.list_sessions()
 
     async def maybe_auto_name_session(self) -> AutoNameResult:
-        """See :meth:`SessionsController.maybe_auto_name_session`."""
-        return await self.sessions.maybe_auto_name_session()
+        """See :meth:`SessionsController.maybe_auto_name_session`.
+
+        A run in progress has the model: the session is titled
+        without it rather than queueing a call behind the person's work.
+        """
+        return await self.sessions.maybe_auto_name_session(model_busy=self.processing)
 
     async def title_session(self, name: str) -> PersistResult:
         """See :meth:`SessionsController.title`."""

@@ -133,11 +133,10 @@ class SessionPersistence:
 
     # ── Session name ───────────────────────────────────────────
 
-    async def auto_name(self, executor: Any) -> str:
-        """Ask Agno to auto-generate a session name from
-        conversation. Returns the (cleaned) name, or ``""`` on
-        failure."""
-        return await self._namer.auto_name(executor)
+    async def auto_name(self, model: Any, *, model_busy: bool = False) -> str:
+        """Title the session from its first message(s) — see
+        :meth:`SessionNamer.auto_name`. Returns the title, or ``""``."""
+        return await self._namer.auto_name(model, model_busy=model_busy)
 
     async def rename(self, new_name: str) -> PersistResult:
         """Manually rename the current session.
