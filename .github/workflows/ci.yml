@@ -7,6 +7,12 @@ on:
     branches: [main]
   workflow_call:
 
+# Read-only. Nothing here writes to the repository; artifacts upload with
+# the runner's own token. A workflow that calls this one (release.yml) can
+# only narrow it, never widen it.
+permissions:
+  contents: read
+
 jobs:
   lint:
     runs-on: ubuntu-latest
@@ -70,6 +76,39 @@ jobs:
       # on the first new advisory rather than one carrying an exception list.
       - name: pip-audit
         run: uv run --with pip-audit pip-audit
+
+  # npm and cargo: the web UI every client bundles, the VS Code extension,
+  # and the desktop shell's crates. Unlike pip-audit above this gates on
+  # CRITICAL only, with named exceptions in
+  # .github/dependency-audit-allowlist.toml — every advisory is still
+  # printed. The first run found one critical in each tree: DOMPurify
+  # (fixed by a patch bump in the lockfile) and zip's RUSTSEC-2026-0369,
+  # which is Windows-only here and on the allowlist with the reasoning.
+  # docs/VULNERABILITY_MANAGEMENT.md, V-2 and V-3.
+  dependency-audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: "20"
+
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+
+      - uses: taiki-e/install-action@682ce6c3c696a4cd5168a05f98e51aa02b877941 # v2.89.1
+        with:
+          tool: cargo-audit
+
+      # Reads the lockfiles only; nothing is installed.
+      - name: npm audit (web UI, VS Code extension)
+        run: uv run --no-project --with 'cvss>=3,<4' python scripts/dependency_audit.py npm clients/web clients/vscode .
+
+      - name: cargo audit (desktop shell)
+        run: uv run --no-project --with 'cvss>=3,<4' python scripts/dependency_audit.py cargo clients/tauri/src-tauri
+
   test:
     runs-on: ubuntu-latest
     steps:

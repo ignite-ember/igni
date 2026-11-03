@@ -1,0 +1,63 @@
+# Version updates, weekly, for every lockfile igni ships from, and for the
+# actions the workflows run. Security updates (Dependabot alerts) are a
+# repository setting and open their own pull requests whenever an advisory
+# lands; this file is the routine half.
+#
+# Minor and patch updates are grouped per directory so a week's drift is one
+# pull request to review, not twenty. Majors arrive one by one, because each
+# is a decision. An action pinned by commit SHA with a `# vX.Y.Z` comment
+# (OpenSSF Scorecard's Pinned-Dependencies check) is updated SHA and comment
+# together.
+version: 2
+updates:
+  # The CLI / backend (uv.lock) and the two Python SDKs, each with its own lock.
+  - package-ecosystem: uv
+    directories:
+      - /
+      - /packages/igni-service
+      - /packages/igni-extension
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    groups:
+      python-minor-and-patch:
+        update-types: [minor, patch]
+
+  # The web UI every client bundles, the VS Code extension, and the root
+  # package.json.
+  - package-ecosystem: npm
+    directories:
+      - /
+      - /clients/web
+      - /clients/vscode
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    groups:
+      npm-minor-and-patch:
+        update-types: [minor, patch]
+
+  # The desktop shell.
+  - package-ecosystem: cargo
+    directory: /clients/tauri/src-tauri
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    groups:
+      cargo-minor-and-patch:
+        update-types: [minor, patch]
+
+  # The JetBrains plugin's build (the IntelliJ Platform Gradle plugin, JUnit).
+  - package-ecosystem: gradle
+    directory: /clients/jetbrains
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 3
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      actions:
+        patterns: ["*"]
