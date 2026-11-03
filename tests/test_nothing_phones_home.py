@@ -362,3 +362,64 @@ def test_the_web_asks_before_it_leaves_the_network(tmp_path):
     allowed = ToolPermissions(project_dir=tmp_path, settings_permissions=opted_in)
     assert not allowed.needs_confirmation("WebSearch")
     assert not allowed.needs_confirmation("WebFetch")
+
+
+def test_bypass_lets_the_web_through_unasked(tmp_path):
+    """C2: the web asks in the normal modes, and Bypass (``--auto-approve``,
+    ``/bypass``) still means "do not ask me". A search or fetch runs unasked
+    there, at registry time (no Agno pause is built) and at run time (a pause
+    from a toolkit built before ``/bypass`` is confirmed by the evaluator).
+
+    What Bypass keeps: an explicit ``deny`` wins over it, and its guard still
+    turns a fetch carrying what looks like a secret back into a prompt."""
+    import ember_code.cli as cli_module
+    from ember_code.cli.options import CliOptions
+    from ember_code.core.config.permission_eval import (
+        PermissionDecision,
+        PermissionEvaluator,
+        PermissionMode,
+    )
+    from ember_code.core.config.tool_permissions import ToolPermissions
+    from ember_code.core.hooks.bypass_guard import READ_ONLY_TOOLS
+    from ember_code.core.hooks.bypass_rules import flag_url
+
+    perms = cli_module.load_settings_from_options(CliOptions(auto_approve=True)).permissions
+    assert perms.mode == "bypassPermissions"
+    # The defaults still say ask; Bypass is what lets them through.
+    assert (perms.web_search, perms.web_fetch) == ("ask", "ask")
+
+    registry = ToolPermissions(project_dir=tmp_path, settings_permissions=perms)
+    assert not registry.needs_confirmation("WebSearch")
+    assert not registry.needs_confirmation("WebFetch")
+
+    cat_deny, cat_ask, cat_allow = perms.category_rules()
+    evaluator = PermissionEvaluator.from_strings(
+        mode=perms.mode,
+        deny=[*perms.deny, *cat_deny],
+        ask=[*perms.ask, *cat_ask, "WebSearch", "WebFetch"],
+        allow=[*perms.allow, *cat_allow],
+    )
+    for tool, args in (
+        ("web_search", {"query": "igni"}),
+        ("fetch_url", {"url": "https://example.test/"}),
+        ("fetch_json", {"url": "https://example.test/x.json"}),
+    ):
+        assert evaluator.evaluate(tool, args) is PermissionDecision.ALLOW, tool
+
+    # A /bypass flipped mid-session reaches the same answer.
+    flipped = PermissionEvaluator.from_strings(mode=PermissionMode.DEFAULT, ask=["WebFetch"])
+    flipped.set_mode(PermissionMode.BYPASS_PERMISSIONS)
+    assert flipped.evaluate("fetch_url", {"url": "https://example.test/"}) is (
+        PermissionDecision.ALLOW
+    )
+
+    # The hard blocks Bypass keeps.
+    denied = PermissionEvaluator.from_strings(
+        mode=PermissionMode.BYPASS_PERMISSIONS, deny=["WebFetch"]
+    )
+    assert denied.evaluate("fetch_url", {"url": "https://example.test/"}) is (
+        PermissionDecision.DENY
+    )
+    assert "web_search" in READ_ONLY_TOOLS
+    assert flag_url("https://example.test/") is None
+    assert flag_url("https://example.test/?token=abc") is not None

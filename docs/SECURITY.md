@@ -470,6 +470,15 @@ true` turns every one of these off ([CONFIGURATION.md](CONFIGURATION.md),
 | Agno's run telemetry | Off | Never on unless `AGNO_TELEMETRY=true` is set, and overruled when air-gapped |
 | OpenTelemetry export | Off | Only to a collector an administrator names |
 
+**The web asks, and that is decided, not provisional.** In the normal modes a
+web search or URL fetch waits for a person's yes (`--strict` denies it unless a
+rule allows it; `air_gapped` builds neither tool). Bypass (`--auto-approve`,
+`/bypass`) means "do not ask me", so there both run unasked like every other
+tool, keeping what Bypass always keeps: an explicit `deny` still wins, and its
+last check still turns a fetch whose URL carries what looks like a secret or
+token, or that the safety model flags, back into a prompt.
+`tests/test_nothing_phones_home.py` pins both halves.
+
 Nothing goes to Ignite Ember: there is no vendor-operated service in the path.
 `tests/test_nothing_phones_home.py` holds the list of hosts the code may name
 and fails the build on a new one; `tests/test_an_air_gapped_install_makes_no_outbound_call.py`
