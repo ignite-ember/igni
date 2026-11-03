@@ -2,11 +2,14 @@
 
 Extensions reach people's machines from their services, through igni
 server: a service uploads its signed bundle, a super admin approves the
-service, and every signed-in igni installs it (igni server's ``docs/service-identity.md``
-§8). There is no extension marketplace and no policy that pushes one.
+service, an organisation admin switches the extension on for a group,
+and the igni of everyone in that group installs it at its next sync
+(igni server's ``docs/service-identity.md`` §8). There is no extension
+marketplace and no policy that pushes one.
 
 What is left here is the author's side. ``init`` scaffolds one,
-``doctor`` checks one, and ``install`` runs one from a directory or a
+``doctor`` checks one, ``sync`` fetches what igni server lists now,
+and ``install`` runs one from a directory or a
 repository — a **development install**, which needs
 ``IGNI_DEV_EXTENSIONS=1`` because it is the one way onto a machine that
 does not go through igni.

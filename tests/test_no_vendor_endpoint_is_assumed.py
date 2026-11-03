@@ -65,6 +65,11 @@ _VENDOR_URL = re.compile(r"https?://(?:[\w-]+\.)*ignite-ember\.sh")
 #: is separately allow-listed in `test_nothing_phones_home.py`.
 _DOCS = "docs.ignite-ember.sh"
 
+#: A JSON Schema identifier — the ``$schema`` `igni ext init` writes
+#: into a manifest so an author's editor finds the schema. Contacts
+#: nothing from igni; also allow-listed in `test_nothing_phones_home.py`.
+_SCHEMA_ID = re.compile(r"https://ignite-ember\.sh/schema/[\w.-]+\.json")
+
 
 def _modules() -> list[pathlib.Path]:
     return sorted(_SRC.rglob("*.py"))
@@ -92,7 +97,8 @@ class TestNoVendorEndpointIsBakedIn:
     def test_no_module_contains_a_vendor_url(self):
         offenders: dict[str, list[str]] = {}
         for module in _modules():
-            hits = [h for h in _VENDOR_URL.findall(module.read_text()) if _DOCS not in h]
+            text = _SCHEMA_ID.sub("", module.read_text())
+            hits = [h for h in _VENDOR_URL.findall(text) if _DOCS not in h]
             if hits:
                 offenders[str(module.relative_to(_SRC))] = sorted(set(hits))
 

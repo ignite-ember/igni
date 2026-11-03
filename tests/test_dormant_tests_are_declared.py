@@ -23,6 +23,12 @@ TESTS_DIR = Path(__file__).parent
 #: Every environment variable that can make part of the suite dormant,
 #: with why it exists and what provides it.
 DECLARED_GATES: dict[str, str] = {
+    "IGNI_SDK_PYTHON": (
+        "An interpreter with igni-extension and igni-service installed, to run "
+        "the tests `igni ext init --service` writes. igni's own environment "
+        "does not carry the SDKs — they are packages of their own under "
+        "packages/ — so the test skips without one."
+    ),
     "IGNI_TEST_LLM_API_KEY": (
         "Live model calls, which cost money per run. Not in the per-push "
         "CI: .github/workflows/live-model.yml runs them weekly and on "
