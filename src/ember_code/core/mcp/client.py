@@ -64,6 +64,32 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+def _with_stderr(reason: str, stderr_tail: str) -> str:
+    if not stderr_tail:
+        return reason
+    return f"{reason.rstrip('. ')}. Its process said on stderr: {stderr_tail}"
+
+
+def _no_tools_reason(name: str, *, stderr_tail: str) -> str:
+    """Why a connection that listed no tools failed.
+
+    Nearly always a process that exited before it answered, and then
+    its stderr is the reason, so it comes first. The IDE hint is for
+    the IDE's own MCP server (the one connection where "no tools" means
+    a setting is off) and is wrong for anything else — an extension's
+    developer was told to check an IDE they were not using.
+    """
+    if name.startswith("ext:"):
+        said = (
+            f"Its last lines on stderr: {stderr_tail}"
+            if stderr_tail
+            else "It wrote nothing to stderr; run its command by hand to see what it does."
+        )
+        return f"its MCP server returned no tools, or its process exited first. {said}"
+    generic = "MCP server connected but returned no tools. Ensure the IDE has MCP support enabled."
+    return _with_stderr(generic, stderr_tail)
+
+
 class MCPClientManager:
     """Manages connections to external MCP servers.
 
@@ -209,7 +235,7 @@ class MCPClientManager:
             return MCPConnectResult.failure(str(exc))
         except Exception as exc:
             logger.warning("MCP connect '%s' failed: %s", name, exc)
-            return MCPConnectResult.failure(str(exc))
+            return MCPConnectResult.failure(_with_stderr(str(exc), self._stderr_tail(name, config)))
 
         if mcp_tools is None:
             # _open_transport already logged and reported via the
@@ -227,8 +253,7 @@ class MCPClientManager:
             except Exception as exc:  # pragma: no cover — cleanup best-effort
                 logger.debug("MCP '%s' cleanup after empty-tools failed: %s", name, exc)
             return MCPConnectResult.failure(
-                "MCP server connected but returned no tools. "
-                "Ensure the IDE has MCP support enabled."
+                _no_tools_reason(name, stderr_tail=self._stderr_tail(name, config))
             )
 
         # Cache the full functions dict so we can restore an
@@ -237,6 +262,21 @@ class MCPClientManager:
         self._clients[name] = mcp_tools
         self._tool_filter.apply(name, mcp_tools)
         return MCPConnectResult.success(mcp_tools)
+
+    def _stdio_tail(self, name: str) -> str:
+        tail = getattr(self._stdio_binding, "stderr_tail", None)
+        if tail is None:
+            return ""
+        try:
+            result = tail(name)
+        except Exception:  # pragma: no cover — a diagnostic must not fail a connect
+            return ""
+        return result if isinstance(result, str) else ""
+
+    def _stderr_tail(self, name: str, config: MCPServerConfig) -> str:
+        """What a stdio server's process last said on stderr, or ``""``."""
+        transport = str(getattr(config.type, "value", config.type))
+        return self._stdio_tail(name) if transport == "stdio" else ""
 
     async def _open_transport(self, name: str, config: MCPServerConfig) -> MCPTools | None:
         """Dispatch to the transport-specific opener.

@@ -72,11 +72,40 @@ class StdioMCPBinding:
 
     def __init__(self, errlog_path: Path):
         self._errlog_path = errlog_path
+        #: Where in :attr:`errlog_path` each server's latest process
+        #: began writing, so :meth:`stderr_tail` can say what *that*
+        #: process said rather than whatever the shared file ends with.
+        self._offsets: dict[str, int] = {}
 
     @property
     def errlog_path(self) -> Path:
         """Filesystem path the subprocess stderr appends to."""
         return self._errlog_path
+
+    def stderr_tail(self, name: str, *, lines: int = 5, max_chars: int = 600) -> str:
+        """The last few lines ``name``'s latest process wrote to stderr.
+
+        Empty when it wrote nothing or was never opened here. A process
+        that exits at start-up says why on stderr, and that line is the
+        one thing a person needs; without this it went to a temp file
+        nobody was told about and the reason they saw was a guess.
+
+        The log is shared by every server, so lines another server wrote
+        meanwhile can appear; at start-up, which is when this is asked,
+        that is rare and harmless.
+        """
+        start = self._offsets.get(name)
+        if start is None:
+            return ""
+        try:
+            with open(os.fspath(self._errlog_path), "rb") as log:
+                log.seek(start)
+                text = log.read().decode("utf-8", errors="replace")
+        except OSError:
+            return ""
+        tail = [line.rstrip() for line in text.splitlines() if line.strip()][-lines:]
+        joined = " | ".join(tail)
+        return joined[-max_chars:]
 
     @classmethod
     def default_errlog_path(cls) -> Path:
@@ -119,6 +148,8 @@ class StdioMCPBinding:
         # Must stay open for MCP session lifetime; ownership
         # transfers to MCPTools via ``_errlog`` below.
         errlog = open(os.fspath(self._errlog_path), "a")  # noqa: SIM115
+        errlog.seek(0, os.SEEK_END)
+        self._offsets[name] = errlog.tell()
         params = StdioServerParameters(
             command=config.command,
             args=config.args or [],

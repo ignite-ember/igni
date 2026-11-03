@@ -81,6 +81,11 @@ class ExtensionHealth:
         self._interval = interval_s
         self._task: asyncio.Task | None = None
         self._last_restart: dict[str, float] = {}
+        #: Why each failed extension first failed. A probe that finds it
+        #: "not connected", and a restart that fails again, are true and
+        #: are not why; the first cause is what a person needs, so later
+        #: failures are added to it rather than put in its place.
+        self._first_cause: dict[str, str] = {}
         # Probes for one extension are serialised: a failed call and
         # the periodic sweep can land together, and two concurrent
         # restarts of one service is two subprocesses.
@@ -166,11 +171,16 @@ class ExtensionHealth:
                 if entry.state is not ExtensionState.READY:
                     logger.info("extension %s is answering again", extension_id)
                     self._registry.set_state(extension_id, ExtensionState.READY)
+                self._first_cause.pop(extension_id, None)
                 return ExtensionState.READY
 
             if entry.state is ExtensionState.READY:
                 logger.warning("extension %s stopped answering: %s", extension_id, reason)
-            self._registry.set_state(extension_id, ExtensionState.FAILED, reason)
+            elif entry.state is ExtensionState.FAILED and entry.reason:
+                # It failed before this probe (at start-up, say), and
+                # that reason is the cause; "not connected" is its effect.
+                self._first_cause.setdefault(extension_id, entry.reason)
+            self._fail(extension_id, reason)
 
             if await self._restart(extension_id):
                 return ExtensionState.READY
@@ -243,18 +253,12 @@ class ExtensionHealth:
             await self._mcp.disconnect_one(name)
             result = await asyncio.wait_for(self._mcp.connect(name), RESTART_TIMEOUT_S)
         except Exception as exc:
-            self._registry.set_state(
-                extension_id, ExtensionState.FAILED, f"its service could not be restarted: {exc}"
-            )
+            self._fail(extension_id, f"its service could not be restarted: {exc}")
             return False
 
         if not getattr(result, "ok", False):
             reason = getattr(result, "reason", "") or "no reason given"
-            self._registry.set_state(
-                extension_id,
-                ExtensionState.FAILED,
-                f"its service did not restart: {reason}",
-            )
+            self._fail(extension_id, f"its service did not restart: {reason}")
             return False
 
         # The binding holds a server name rather than a session, so it
@@ -263,8 +267,15 @@ class ExtensionHealth:
         # could quietly break.
         self._rpc.bind(extension_id, McpExtensionService(manager=self._mcp, server_name=name))
         self._registry.set_state(extension_id, ExtensionState.READY)
+        self._first_cause.pop(extension_id, None)
         logger.info("extension %s restarted", extension_id)
         return True
+
+    def _fail(self, extension_id: str, reason: str) -> None:
+        """Mark it ``FAILED``, keeping the first cause in front."""
+        first = self._first_cause.setdefault(extension_id, reason)
+        text = first if reason in first else f"{first} (then: {reason})"
+        self._registry.set_state(extension_id, ExtensionState.FAILED, text)
 
     # ── The call path's hook ───────────────────────────────────────
 
