@@ -18,6 +18,7 @@ Deterministic — no LLM, no network. Fast (<1s).
 from __future__ import annotations
 
 import asyncio
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -40,6 +41,7 @@ class _FakeRequirement:
         self.confirmed = False
         self.rejected = False
         self.reject_note: str | None = None
+        self.tool_execution = SimpleNamespace(tool_name="edit_file", tool_args={})
 
     def is_resolved(self) -> bool:
         return self.confirmed or self.rejected
@@ -245,7 +247,8 @@ class TestSubAgentHITLPlumbing:
         await asyncio.wait_for(spawn_task, timeout=2)
 
         assert agent._requirement.rejected
-        assert agent._requirement.reject_note == "User denied"
+        # The trained refusal shape, naming the tool — not a bare "User denied".
+        assert agent._requirement.reject_note == "Blocked: the person declined 'edit_file'."
 
     @pytest.mark.asyncio
     async def test_no_coordinator_passes_silently(self):

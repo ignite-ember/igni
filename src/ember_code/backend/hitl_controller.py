@@ -55,6 +55,7 @@ from ember_code.backend.schemas_hitl import (
 )
 from ember_code.backend.schemas_pause import PauseHandleResult, PendingRequirement
 from ember_code.backend.schemas_run import StopHookPayload
+from ember_code.core.approvals.declined import declined_note
 from ember_code.core.config.permission_eval import PermissionRule
 from ember_code.core.config.tool_permissions import (
     PermissionLevel,
@@ -116,7 +117,8 @@ class AgnoDecisionApplier:
             if action is HitlAction.CONFIRM:
                 req.confirm()
             else:
-                req.reject(note="User denied")
+                tool_execution = getattr(req, "tool_execution", None)
+                req.reject(note=declined_note(str(getattr(tool_execution, "tool_name", "") or "")))
         except Exception as exc:
             logger.warning(
                 "resolve_hitl_batch: requirement %s %s() raised %s; skipping",

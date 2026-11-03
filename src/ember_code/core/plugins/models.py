@@ -298,6 +298,11 @@ class MarketplaceEntry(BaseModel):
     url: str
     last_fetched: str | None = None  # ISO-8601 UTC; None until first fetch
     cached: MarketplaceCatalog | None = None
+    #: Who registered it: ``"user"`` for ``/plugin marketplace add``,
+    #: ``"default"`` for session start under ``plugins.default_marketplace:
+    #: true``. ``None`` is an entry written before the field existed — for
+    #: the official marketplace, the old default's auto-registration (B29).
+    added_by: Literal["user", "default"] | None = None
 
     def mark_fetched(self, catalog: MarketplaceCatalog) -> None:
         """Overwrite ``cached`` with a fresh catalog and stamp
@@ -358,6 +363,10 @@ class MarketplaceRegistry(BaseModel):
         # catalog + timestamp so views holding a reference to
         # ``existing`` see the merge.
         existing.url = entry.url
+        # Asked for by a person sticks: a later auto-registration does not
+        # turn it back into the default's.
+        if entry.added_by == "user" or existing.added_by is None:
+            existing.added_by = entry.added_by
         if entry.cached is not None:
             existing.mark_fetched(entry.cached)
         else:

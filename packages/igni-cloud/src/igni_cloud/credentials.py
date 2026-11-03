@@ -33,8 +33,8 @@ class EnvironmentCredentials(CredentialSource):
     ``IGNI_ACCESS_TOKEN_EXPIRES_AT`` and ``IGNI_EMAIL`` are optional.
     """
 
-    TOKEN_FILE_ENV = "IGNI_ACCESS_TOKEN_FILE"
-    TOKEN_ENV = "IGNI_ACCESS_TOKEN"
+    TOKEN_FILE_ENV = "IGNI_ACCESS_TOKEN_FILE"  # noqa: S105 — an environment variable's name, not a secret
+    TOKEN_ENV = "IGNI_ACCESS_TOKEN"  # noqa: S105 — an environment variable's name, not a secret
     EXPIRES_ENV = "IGNI_ACCESS_TOKEN_EXPIRES_AT"
     EMAIL_ENV = "IGNI_EMAIL"
 

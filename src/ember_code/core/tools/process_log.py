@@ -125,6 +125,20 @@ class ProcessLogStore:
             logger.debug("process log open failed for pid=%s: %s", pid, exc)
             return None
 
+    def lines(self, pid: int) -> list[str]:
+        """Every line of the pid's log file, newlines stripped; empty
+        when the file is missing or unreadable. For a tail that says
+        how much came before it (:class:`OutputTail`)."""
+        path = self.path(pid)
+        try:
+            with open(path, encoding="utf-8", errors="replace") as f:
+                return f.read().rstrip("\n").split("\n") if path.stat().st_size else []
+        except FileNotFoundError:
+            return []
+        except OSError as exc:
+            logger.debug("process log read failed for %s: %s", path, exc)
+            return []
+
     def tail(self, pid: int, n: int = 200) -> str:
         """Return the last ``n`` lines of the pid's log file as a
         single ``\\n``-joined string. Returns an empty string when

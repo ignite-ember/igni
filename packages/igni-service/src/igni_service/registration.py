@@ -57,7 +57,7 @@ class ClientMetadata(BaseModel):
     client_uri: str
     kind: str = "service"
     redirect_uris: list[str] = Field(default_factory=list)
-    token_endpoint_auth_method: str = "private_key_jwt"
+    token_endpoint_auth_method: str = "private_key_jwt"  # noqa: S105 — an RFC 7591 auth method, not a secret
     jwks: ClientJwks
 
 
@@ -209,30 +209,48 @@ class ServiceRegistration:
     async def register(self) -> Registration:
         """Register, or find this key's registration again. Raises `IgniUnavailable`."""
         async with self._lock:
-            body = (await self.metadata()).model_dump(exclude_none=True)
-            try:
-                response = await self._igni.http.post(self._igni.url(IgniPaths.CLIENTS), json=body)
-            except httpx.HTTPError as exc:
-                raise IgniUnavailable(
-                    f"could not reach igni server to register: {type(exc).__name__}"
-                ) from exc
-            if response.status_code not in (200, 201):
-                raise IgniUnavailable(
-                    f"igni server refused the registration: {response.status_code} {response.text}"
-                )
-            try:
-                self._registration = Registration.model_validate(response.json())
-            except (ValidationError, ValueError) as exc:
-                raise IgniUnavailable(
-                    "igni server answered the registration with something else"
-                ) from exc
-            self.registered.set()
+            return await self._register()
+
+    async def ensure(self) -> Registration:
+        """The registration held, registering first if there is none. Raises `IgniUnavailable`.
+
+        The check is made under the lock. Made before it, every caller that
+        arrived while the first registration was in flight saw none and
+        registered again once the lock was theirs: Team Notes sent two
+        POST /v1/clients on every start, the start-up's and a page's.
+        """
+        if self._registration is not None:
             return self._registration
+        async with self._lock:
+            if self._registration is not None:
+                return self._registration
+            return await self._register()
+
+    async def _register(self) -> Registration:
+        """The registration request itself; the caller holds the lock."""
+        body = (await self.metadata()).model_dump(exclude_none=True)
+        try:
+            response = await self._igni.http.post(self._igni.url(IgniPaths.CLIENTS), json=body)
+        except httpx.HTTPError as exc:
+            raise IgniUnavailable(
+                f"could not reach igni server to register: {type(exc).__name__}"
+            ) from exc
+        if response.status_code not in (200, 201):
+            raise IgniUnavailable(
+                f"igni server refused the registration: {response.status_code} {response.text}"
+            )
+        try:
+            self._registration = Registration.model_validate(response.json())
+        except (ValidationError, ValueError) as exc:
+            raise IgniUnavailable(
+                "igni server answered the registration with something else"
+            ) from exc
+        self.registered.set()
+        return self._registration
 
     async def client_id(self) -> str:
         """This service's client id at igni, registering first if need be."""
-        registration = self._registration or await self.register()
-        return registration.client_id
+        return (await self.ensure()).client_id
 
     async def published(self) -> PublishedExtension | None:
         """What igni holds for this client's extension, or `None`."""
@@ -358,7 +376,7 @@ class ServiceRegistration:
 
     async def start(self) -> Registration:
         """Register, say the thumbprint, ship the extension. Raises `IgniUnavailable`."""
-        registration = await self.register()
+        registration = await self.ensure()
         logger.warning(
             "\n"
             "  ============================================================\n"

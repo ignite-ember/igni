@@ -173,7 +173,7 @@ models:
 
 | Claude Code | igni | Notes |
 |---|---|---|
-| `"allow": ["Bash(npm run *)"]` | `permissions.shell_restricted: "allow"` | Ember uses category-based + patterns |
+| `"allow": ["Bash(npm run *)"]` | `permissions.allow: ["Bash(npm run *)"]` | Same rule syntax |
 | `"deny": ["Read(.env)"]` | `safety.protected_paths: [".env"]` | Ember uses a dedicated protected paths list |
 | `"ask": ["Bash(git push *)"]` | `safety.require_confirmation: ["git push"]` | Same concept, different syntax |
 

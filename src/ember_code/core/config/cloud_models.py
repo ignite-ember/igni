@@ -82,7 +82,7 @@ class FetchReason(str, enum.Enum):
     #: "tell me where your server is". Collapsing them would send
     #: somebody to a login flow with nothing to log in to.
     NO_SERVER = "no_server"
-    NO_TOKEN = "no_token"
+    NO_TOKEN = "no_token"  # noqa: S105 — a sentinel value, not a secret
     HTTP_ERROR = "http_error"
     DECODE_ERROR = "decode_error"
     BAD_SHAPE = "bad_shape"

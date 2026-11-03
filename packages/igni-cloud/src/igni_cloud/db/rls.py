@@ -92,10 +92,10 @@ class TenantFunctions:
         body = {
             cls.ORG: "SELECT org FROM public.producer_roles WHERE role_name = session_user",
             cls.PRODUCER: (
-                f"SELECT {cls.STORED} FROM public.producer_roles WHERE role_name = session_user"
+                f"SELECT {cls.STORED} FROM public.producer_roles WHERE role_name = session_user"  # noqa: S608 — a constant expression; no input
             ),
             cls.AGNO_PREFIX: (
-                f"SELECT org || '/' || {cls.STORED} || '/' FROM public.producer_roles "
+                f"SELECT org || '/' || {cls.STORED} || '/' FROM public.producer_roles "  # noqa: S608 — a constant expression; no input
                 "WHERE role_name = session_user"
             ),
         }

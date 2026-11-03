@@ -59,7 +59,7 @@ _SECRET_PATH_SUBSTR: tuple[str, ...] = (
 _READ_UTILS = r"cat|bat|less|more|head|tail|nl|tac|xxd|od|hexdump|strings|base64|cp|rsync|install|openssl|grep|egrep|rg|ag|ack"
 #: Secret/key targets as they appear inside a shell command.
 _SECRET_IN_SHELL = (
-    r"(~?/?\.ssh/|\bid_rsa\b|\bid_ed25519\b|\bid_ecdsa\b|\bid_dsa\b|\.aws/credentials|"
+    r"(~?/?\.ssh/|\bid_rsa\b|\bid_ed25519\b|\bid_ecdsa\b|\bid_dsa\b|\.aws/credentials|"  # noqa: S105 — a pattern that detects secrets, not one
     r"\.netrc\b|\.git-credentials\b|\.pypirc\b|\.npmrc\b|\.kube/config|\.docker/config\.json|"
     r"\.pem\b|\.p12\b|\.pfx\b)"
 )

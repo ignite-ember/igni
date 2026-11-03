@@ -142,7 +142,7 @@ class ExtensionEnvironment(BaseModel):
 
     model_config = ConfigDict(frozen=True)
 
-    SECRET: ClassVar[str] = "IGNI_SECRET_"
+    SECRET: ClassVar[str] = "IGNI_SECRET_"  # noqa: S105 — an environment variable prefix, not a secret
 
     workspace: Workspace = Field(default_factory=Workspace)
     #: This extension's own directory on this machine; None outside igni.

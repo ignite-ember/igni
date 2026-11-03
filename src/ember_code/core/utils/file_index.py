@@ -31,7 +31,7 @@ def _git_ls_files(project_dir: Path) -> list[str]:
     """Run git ls-files and return relative paths."""
     try:
         result = subprocess.run(
-            ["git", "ls-files", "--cached", "--others", "--exclude-standard"],
+            ["git", "ls-files", "--cached", "--others", "--exclude-standard"],  # noqa: S607 — git from PATH, as the user runs it
             cwd=project_dir,
             capture_output=True,
             text=True,

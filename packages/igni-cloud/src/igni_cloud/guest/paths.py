@@ -29,7 +29,7 @@ class GuestPaths(BaseModel):
     RESTORED_ENV: ClassVar[str] = "IGNI_RESTORED_FILE"
     SUSPENDING_ENV: ClassVar[str] = "IGNI_SUSPENDING_FILE"
     SUSPEND_READY_ENV: ClassVar[str] = "IGNI_SUSPEND_READY_FILE"
-    TOKEN_ENV: ClassVar[str] = "IGNI_ACCESS_TOKEN_FILE"
+    TOKEN_ENV: ClassVar[str] = "IGNI_ACCESS_TOKEN_FILE"  # noqa: S105 — an environment variable's name, not a secret
     MANAGED_SETTINGS_ENV: ClassVar[str] = "IGNI_MANAGED_SETTINGS_FILE"
     VM_CREDENTIAL_ENV: ClassVar[str] = "IGNI_VM_CREDENTIAL_FILE"
     DEFAULT_VM_CREDENTIAL: ClassVar[str] = "/vol/igni/vm-credential"

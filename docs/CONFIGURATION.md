@@ -181,7 +181,7 @@ There are three providers:
 | `effort` | string | no | `anthropic` only. `output_config.effort`: `low`, `medium`, `high`, `xhigh` or `max` |
 | `prompt_caching` | bool | no | `anthropic` only. `cache_control` on the system prompt and tools. Default `true` |
 
-> **API key resolution order:** `api_key` (direct) → `api_key_env` (env var) → `api_key_cmd` (shell command). The special value `cloud_token` resolves to your your igni server login credentials (from `/login`).
+> **API key resolution order:** `api_key` (direct) → `api_key_env` (env var) → `api_key_cmd` (shell command). The special value `cloud_token` resolves to your igni server login credentials (from `/login`), and is sent only to your igni server: an entry whose requests go to any other origin than `api_url` (scheme, host and port) gets no token, whichever config file it came from.
 
 ### Comparison with Claude Code
 
@@ -271,11 +271,11 @@ models:
 permissions:
   # "ask" = confirm before use, "allow" = auto-allow, "deny" = block
   file_write: "ask"
-  file_read: "allow"
+  file_read: "allow"             # no effect: igni has no read tool (SECURITY.md)
   shell_execute: "ask"
-  shell_restricted: "allow"       # read-only commands (rg, find, tree)
-  web_search: "allow"
-  web_fetch: "allow"
+  shell_restricted: "allow"       # no effect: reads ask in default mode (SECURITY.md)
+  web_search: "ask"               # a request out of the network: asked each time
+  web_fetch: "ask"
   git_push: "ask"
   git_destructive: "ask"          # force-push, reset --hard, etc.
 
@@ -584,6 +584,8 @@ it brings that run code — or that would switch safety off — wait for trust.
 | Project plugins | `.igni/plugins/`, `.claude/plugins/` |
 | Markdown commands' `` !`cmd` `` tokens | `.igni/commands/`, `.claude/commands/` (the token becomes a "not run" marker; the command itself still loads) |
 | `permissions.*` (rules, categories, `mode`) and `safety.*` (safety lists, Bypass guard) | `.igni/config.yaml`, `config.local.yaml`, `settings.json`, `settings.local.json` |
+| A model's `api_key_cmd` (a program igni runs for the key) and `api_key_env` (a variable of your environment, sent to the URL the same file names) | `models.registry.*` in `.igni/config.yaml`, `config.local.yaml` |
+| The key your own config gives a model the project re-points (a different `url` or `provider`): the entry keeps only a key the project itself gives | `models.registry.*` in `.igni/config.yaml`, `config.local.yaml` |
 
 Keys a project may never set, trusted or not, stay as before: `network`,
 `air_gapped`, `api_url`, `portal_url`, `update_endpoint`,
@@ -701,12 +703,12 @@ What it turns off:
 | Desktop updater | `github.com/ignite-ember/igni/releases`, or `update_endpoint` | `update_endpoint` only; no request if none is set |
 | Desktop first launch | Downloads uv, CPython, `ignite-ember` and the decision model | No download; the app runs on `runtime_python` (below), or refuses with a message naming it |
 | Decision model (Laya, Hugging Face) | Downloaded on first use if not cached | Loaded only from the local cache, with the hub offline; refused with a message saying how to pre-seed it |
-| Plugin marketplace at session start | Clones `github.com/anthropics/claude-plugins-official` | Not registered or refreshed; only local paths and `plugins.marketplaces` |
+| Plugin marketplace at session start | Only `plugins.marketplaces`; `github.com/anthropics/claude-plugins-official` too if `plugins.default_marketplace: true` (off by default) | Not registered or refreshed; only local paths and `plugins.marketplaces` |
 | `/plugin marketplace add`, `/plugin install`, `/plugin update`, the plugins panel, group-policy plugins | Any git URL | Local paths and hosts inside the network (below); others are refused before git runs |
 | `igni ext install <url>` | Clones any git URL | Hosts inside the network only; others are refused before git runs |
 | MCP servers reached by URL | Connected | Hosts inside the network only; others are refused as a failed connection |
 | HTTP hooks | Sent | Hosts inside the network only; others are not sent and count as a failed hook |
-| WebFetch, WebSearch (DuckDuckGo) | Allowed | Denied; neither toolkit is built |
+| WebFetch, WebSearch (DuckDuckGo) | Asks before each request (`allow` to skip asking) | Denied; neither toolkit is built |
 | Agno's run telemetry (`os-api.agno.com`) | Off; an explicit `AGNO_TELEMETRY=true` is honoured | Off; an explicit `AGNO_TELEMETRY=true` is overruled with a warning |
 | OpenTelemetry export (`telemetry.otlp`) | None unless an administrator names a collector | Only to a collector inside the network; another is refused with a warning |
 
@@ -726,9 +728,10 @@ A project's `.igni/config.yaml` and `config.local.yaml` may not set
 switch the mode off nor name a host as inside. Those keys are ignored there,
 with a warning.
 
-The plugin clone also has its own switch, independent of air-gapped mode:
-`plugins.default_marketplace: false` stops igni registering Anthropic's
-marketplace and leaves everything else as it was.
+The plugin clone also has its own switch, independent of air-gapped mode and
+off by default: `plugins.default_marketplace: true` has igni register
+Anthropic's marketplace at session start, a clone from github.com. Air-gapped
+mode ignores it.
 
 `/plugin update` checks the URL a plugin was installed from (recorded in
 `plugins.json` since this release; for older installs, the plugin's git

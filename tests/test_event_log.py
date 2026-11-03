@@ -131,7 +131,7 @@ class TestGetChatHistoryVizSplicing:
                     continue
                 try:
                     spec = _json.loads(json_str)
-                except Exception:
+                except Exception:  # noqa: S112 — a record that is not JSON is not the one sought
                     continue
                 if not isinstance(spec, dict):
                     continue

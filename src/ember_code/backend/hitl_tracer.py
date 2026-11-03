@@ -83,6 +83,6 @@ class HITLTracer:
             self._path.parent.mkdir(parents=True, exist_ok=True)
             with open(self._path, "a") as f:
                 f.write(f"{time.strftime('%H:%M:%S')} pid={os.getpid()} {text}\n")
-        except Exception:
+        except Exception:  # noqa: S110 — a debug trace; its failure must not reach the run
             # Best-effort — never let a trace-write failure surface.
             pass

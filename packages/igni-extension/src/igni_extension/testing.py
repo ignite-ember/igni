@@ -81,7 +81,7 @@ class TokenClaims(BaseModel):
     email: str = ""
     name: str = ""
     aud: str
-    token_use: str = "user"
+    token_use: str = "user"  # noqa: S105 — a claim's value, not a secret
     jti: str
 
 
@@ -107,7 +107,7 @@ class FakeHostTokenEndpoint:
         )
     """
 
-    TOKEN_URL = "http://127.0.0.1:47011/igni/service-token"
+    TOKEN_URL = "http://127.0.0.1:47011/igni/service-token"  # noqa: S105 — a loopback URL for tests, not a secret
     SERVICE_URL = "http://service.test"
 
     def __init__(

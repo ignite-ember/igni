@@ -184,3 +184,40 @@ class TestReadOnlyIsAWall:
         from ember_code.core.hooks.permission_pipeline import _denial_message
 
         assert _denial_message("edit_file") == "Blocked: permission policy denied 'edit_file'."
+
+
+class TestTheUnreadCategoriesAreDocumentedAsUnread:
+    """``file_read`` and ``shell_restricted`` are accepted and read by nothing.
+
+    CONFIGURATION.md and SECURITY.md said ``shell_restricted: allow`` let
+    read-only commands (rg, find, tree) run. It never did: the default mode asks
+    for ``cat`` like any other command. The code is right: a read that never
+    asks, beside ``web_fetch``, is how a file leaves the machine, and plan mode
+    is where read-only commands run unasked. So the docs say what the code does.
+    """
+
+    UNREAD = ("file_read", "shell_restricted")
+
+    def test_they_map_to_no_tool(self):
+        for category in self.UNREAD:
+            assert category not in PermissionsConfig.CATEGORY_FUNCTIONS
+
+    def test_a_read_only_command_still_asks_in_the_default_mode(self):
+        perms = PermissionsConfig(shell_restricted="allow")
+
+        # DEFER: no rule decides it, so the call goes to the person.
+        assert _decide(perms, "run_shell_command", {"command": "cat README.md"}) == "DEFER"
+
+    @pytest.mark.parametrize("doc", ["docs/CONFIGURATION.md", "docs/SECURITY.md"])
+    def test_every_documented_line_says_it_has_no_effect(self, doc: str):
+        from pathlib import Path
+
+        text = (Path(__file__).resolve().parent.parent / doc).read_text()
+        lines = [
+            line
+            for line in text.splitlines()
+            if any(line.strip().startswith(f"{c}:") for c in self.UNREAD)
+        ]
+        assert lines, f"{doc} no longer lists them; drop this test"
+        for line in lines:
+            assert "no effect" in line, f"{doc}: {line.strip()!r} reads as if it did something"

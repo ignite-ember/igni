@@ -15,6 +15,10 @@ What it does not do is :class:`LoggingModel`'s progressive tool-argument
 events. Agno's ``Claude`` reports a ``tool_use`` block once, whole, when
 the block closes; it never surfaces the ``input_json_delta`` fragments in
 between, so there is nothing to interleave.
+
+Like :class:`LoggingModel`, it reads how each reply ended
+(``reply_ending.py``): a ``stop_reason`` of ``max_tokens``, a ``refusal``,
+or none at all is a :class:`ModelReplyCut`, not a finished empty answer.
 """
 
 from __future__ import annotations
@@ -25,9 +29,10 @@ from agno.models.anthropic import Claude
 
 from ember_code.core.config.llm_call_logger import LlmCallLogger
 from ember_code.core.config.message_sanitizer import MessageSanitizer
+from ember_code.core.config.reply_ending import ANTHROPIC, ReplyCutRetries, ReplyEnding
 
 
-class LoggingClaude(Claude):
+class LoggingClaude(ReplyCutRetries, Claude):
     """Agno's ``Claude``, logging each call and honouring ``vision``."""
 
     def __init__(
@@ -58,13 +63,32 @@ class LoggingClaude(Claude):
     def invoke_stream(self, *args, **kwargs):
         self._log_call("invoke_stream", args, kwargs, stream=True)
         args = self._sanitizer.sanitize_if_needed(args, vision=self.vision)
-        yield from super().invoke_stream(*args, **kwargs)
+        ending = self._reply_ending()
+        with ending.watching():
+            yield from super().invoke_stream(*args, **kwargs)
+        ending.check()
 
     async def ainvoke_stream(self, *args, **kwargs):
         self._log_call("ainvoke_stream", args, kwargs, stream=True)
         args = self._sanitizer.sanitize_if_needed(args, vision=self.vision)
-        async for chunk in super().ainvoke_stream(*args, **kwargs):
-            yield chunk
+        ending = self._reply_ending()
+        with ending.watching():
+            async for chunk in super().ainvoke_stream(*args, **kwargs):
+                yield chunk
+        ending.check()
+
+    # ── How a reply ended ─────────────────────────────────────────
+
+    def _parse_provider_response_delta(self, response, *args, **kwargs):
+        ReplyEnding.note_chunk(response)
+        return super()._parse_provider_response_delta(response, *args, **kwargs)
+
+    def _parse_provider_response(self, response, *args, **kwargs):
+        ReplyEnding.check_completion(response, self.id, self.max_tokens, ANTHROPIC)
+        return super()._parse_provider_response(response, *args, **kwargs)
+
+    def _reply_ending(self) -> ReplyEnding:
+        return ReplyEnding(self.id, self.max_tokens, ANTHROPIC)
 
     # ── Private helpers ───────────────────────────────────────────
 

@@ -309,7 +309,7 @@ class RpcMethod(StrEnum):
     # origin, never an argument — see
     # :class:`~ember_code.extensions.service_token.PageServiceTokens`.
     # Pool-level: a token is the person's, not a session's.
-    EXTENSION_SERVICE_TOKEN = "extension_service_token"
+    EXTENSION_SERVICE_TOKEN = "extension_service_token"  # noqa: S105 — an RPC method's name, not a secret
     # Events a service sent its extension for this producer, handed in by
     # the platform (the gateway, in the cloud): each starts or resumes the
     # agent's run once (``extensions/service_events.py``). Answers which

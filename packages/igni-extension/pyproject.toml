@@ -63,8 +63,15 @@ src = ["src", "tests"]
 extend-exclude = ["src/igni_extension/host_model.py"]
 
 [tool.ruff.lint]
-select = ["E", "F", "W", "I", "UP", "B", "SIM"]
-ignore = ["E501"]
+# ``S`` is flake8-bandit (security lint), as in igni's own pyproject: a
+# finding is fixed or carries a ``# noqa: S…`` saying why it is not one.
+# ``S101`` (assert) is off for the reason given there.
+select = ["E", "F", "W", "I", "UP", "B", "SIM", "S"]
+ignore = ["E501", "S101"]
+
+[tool.ruff.lint.per-file-ignores]
+# Fake tokens are fixtures; the processes tests start are fixed argv lists.
+"tests/**" = ["S105", "S106", "S603", "S607"]
 
 [tool.mypy]
 python_version = "3.12"

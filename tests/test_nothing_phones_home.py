@@ -294,3 +294,132 @@ def test_the_update_check_can_be_turned_off():
     # that mistake.
     assert calls == [], calls
     assert result.available is False
+
+
+def test_an_unconfigured_session_start_clones_no_marketplace(tmp_path):
+    """No outbound call by default, air-gapped or not.
+
+    Every session start of an install nobody configured used to register
+    Anthropic's plugin marketplace: a `git clone` from github.com. It is
+    opt-in now (`plugins.default_marketplace: true`), and this runs the
+    real session-start phase on default settings with git refusing to
+    start, so a clone anywhere in it fails the test.
+    """
+    import asyncio
+    import subprocess
+    from unittest.mock import patch
+
+    from ember_code.core.config.schemas import StorageConfig
+    from ember_code.core.config.settings import Settings
+    from ember_code.core.session.core import Session
+    from ember_code.core.session.startup.marketplace import MarketplaceWarmupPhase
+
+    started: list[list[str]] = []
+
+    def no_git(args, **kwargs) -> subprocess.CompletedProcess:
+        started.append(list(args))
+        raise AssertionError(f"git was started at session start: {args}")
+
+    settings = Settings(storage=StorageConfig(data_dir=str(tmp_path / "data")))
+    assert settings.air_gapped is False
+    session = Session.__new__(Session)
+    session.settings = settings
+    with patch("ember_code.core.plugins.git.subprocess.run", no_git):
+        asyncio.run(MarketplaceWarmupPhase(session)._refresh_all())
+
+    assert started == []
+
+
+def test_the_default_marketplace_is_registered_only_on_request(tmp_path):
+    from ember_code.core.config.schemas import PluginsConfig
+    from ember_code.core.config.settings import Settings
+    from ember_code.core.plugins.marketplace_store import DEFAULT_MARKETPLACES
+    from ember_code.core.plugins.source_policy import PluginSourcePolicy
+
+    [(_name, official)] = DEFAULT_MARKETPLACES
+    assert PluginSourcePolicy.from_settings(Settings()).marketplaces_to_register() == []
+    opted_in = Settings(plugins=PluginsConfig(default_marketplace=True))
+    assert PluginSourcePolicy.from_settings(opted_in).marketplaces_to_register() == [official]
+    opted_in.air_gapped = True
+    assert PluginSourcePolicy.from_settings(opted_in).marketplaces_to_register() == []
+
+
+def test_the_web_asks_before_it_leaves_the_network(tmp_path):
+    """WebSearch (DuckDuckGo) and WebFetch went out the moment the model
+    called them: both defaulted to "allow". A request out of the customer's
+    network now needs a person's yes unless the config says otherwise."""
+    from ember_code.core.config.schemas.permissions import PermissionsConfig
+    from ember_code.core.config.settings import Settings
+    from ember_code.core.config.tool_permissions import ToolPermissions
+
+    defaults = Settings().permissions
+    assert (defaults.web_search, defaults.web_fetch) == ("ask", "ask")
+    asked = ToolPermissions(project_dir=tmp_path, settings_permissions=defaults)
+    assert asked.needs_confirmation("WebSearch")
+    assert asked.needs_confirmation("WebFetch")
+
+    opted_in = PermissionsConfig(web_search="allow", web_fetch="allow")
+    allowed = ToolPermissions(project_dir=tmp_path, settings_permissions=opted_in)
+    assert not allowed.needs_confirmation("WebSearch")
+    assert not allowed.needs_confirmation("WebFetch")
+
+
+def test_bypass_lets_the_web_through_unasked(tmp_path):
+    """C2: the web asks in the normal modes, and Bypass (``--auto-approve``,
+    ``/bypass``) still means "do not ask me". A search or fetch runs unasked
+    there, at registry time (no Agno pause is built) and at run time (a pause
+    from a toolkit built before ``/bypass`` is confirmed by the evaluator).
+
+    What Bypass keeps: an explicit ``deny`` wins over it, and its guard still
+    turns a fetch carrying what looks like a secret back into a prompt."""
+    import ember_code.cli as cli_module
+    from ember_code.cli.options import CliOptions
+    from ember_code.core.config.permission_eval import (
+        PermissionDecision,
+        PermissionEvaluator,
+        PermissionMode,
+    )
+    from ember_code.core.config.tool_permissions import ToolPermissions
+    from ember_code.core.hooks.bypass_guard import READ_ONLY_TOOLS
+    from ember_code.core.hooks.bypass_rules import flag_url
+
+    perms = cli_module.load_settings_from_options(CliOptions(auto_approve=True)).permissions
+    assert perms.mode == "bypassPermissions"
+    # The defaults still say ask; Bypass is what lets them through.
+    assert (perms.web_search, perms.web_fetch) == ("ask", "ask")
+
+    registry = ToolPermissions(project_dir=tmp_path, settings_permissions=perms)
+    assert not registry.needs_confirmation("WebSearch")
+    assert not registry.needs_confirmation("WebFetch")
+
+    cat_deny, cat_ask, cat_allow = perms.category_rules()
+    evaluator = PermissionEvaluator.from_strings(
+        mode=perms.mode,
+        deny=[*perms.deny, *cat_deny],
+        ask=[*perms.ask, *cat_ask, "WebSearch", "WebFetch"],
+        allow=[*perms.allow, *cat_allow],
+    )
+    for tool, args in (
+        ("web_search", {"query": "igni"}),
+        ("fetch_url", {"url": "https://example.test/"}),
+        ("fetch_json", {"url": "https://example.test/x.json"}),
+    ):
+        assert evaluator.evaluate(tool, args) is PermissionDecision.ALLOW, tool
+
+    # A /bypass flipped mid-session reaches the same answer.
+    flipped = PermissionEvaluator.from_strings(mode=PermissionMode.DEFAULT, ask=["WebFetch"])
+    flipped.set_mode(PermissionMode.BYPASS_PERMISSIONS)
+    assert flipped.evaluate("fetch_url", {"url": "https://example.test/"}) is (
+        PermissionDecision.ALLOW
+    )
+
+    # The hard blocks Bypass keeps.
+    denied = PermissionEvaluator.from_strings(
+        mode=PermissionMode.BYPASS_PERMISSIONS, deny=["WebFetch"]
+    )
+    assert denied.evaluate("fetch_url", {"url": "https://example.test/"}) is (
+        PermissionDecision.DENY
+    )
+    assert "web_search" in READ_ONLY_TOOLS
+    assert flag_url("https://example.test/") is None
+    assert flag_url("https://example.test/?token=abc") is not None

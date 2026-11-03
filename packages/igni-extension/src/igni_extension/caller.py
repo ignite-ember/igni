@@ -54,7 +54,7 @@ class Caller(BaseModel):
     #: Where the host puts it: the MCP request's `_meta` key, and the hook frame's field.
     META_KEY: ClassVar[str] = "igni/principal"
     #: How a token request names whom the token is for.
-    TOKEN_HEADER: ClassVar[str] = "X-Igni-Principal"
+    TOKEN_HEADER: ClassVar[str] = "X-Igni-Principal"  # noqa: S105 — a header's name, not a secret
 
     kind: CallerKind
     #: The person's or the app's id on igni server.

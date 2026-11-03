@@ -48,6 +48,7 @@ from ember_code.core.hooks.permission_pipeline import (
 )
 from ember_code.core.hooks.rules_suffixer import RulesSuffixer
 from ember_code.core.hooks.tool_call_invoker import ToolCallInvoker
+from ember_code.core.hooks.untrusted import unwrap_untrusted
 from ember_code.core.observability.runtime import OtelRuntime
 from ember_code.core.utils.rules_index import RulesIndex
 
@@ -206,8 +207,11 @@ class ToolEventHook:
         """
         if not isinstance(result, ToolResult) or not isinstance(result.content, str):
             return None
-        if result.content.startswith("Error: "):
-            return result.content.removeprefix("Error: ")
+        # Read through the untrusted-output block: every MCP result is
+        # wrapped by now, Agno's own "Error: …" included.
+        content = unwrap_untrusted(result.content)
+        if content.startswith("Error: "):
+            return content.removeprefix("Error: ")
         return None
 
 

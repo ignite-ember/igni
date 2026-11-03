@@ -55,11 +55,25 @@ igni                             # start coding
 `igni` is the command; `ignite-ember` is kept as an alias so existing
 shell aliases and scripts keep working. Both are the same entry point.
 
-To point it at your own igni server, set `api_url` in
-`.igni/config.local.yaml` and type `/login` **inside** a session — it is a
-slash command, not a shell subcommand. `igni /login` at a shell prompt
-answers `Error: No such command`, which is what this Quick Start used to
-tell you to run.
+To point it at your own igni server, set `api_url` in your user config,
+`~/.igni/config.yaml` — not a project's `.igni/config.yaml` or
+`config.local.yaml`, which may not name a server and are ignored for it,
+with a warning — and type `/login` **inside** a session. It is a slash
+command, not a shell subcommand: `igni /login` at a shell prompt answers
+`Error: No such command`.
+
+```yaml
+# ~/.igni/config.yaml
+api_url: https://igni-api.acme.example
+# Only when the portal (the sign-in page) is not on the API's origin,
+# e.g. the API on :7777 and the portal on :3000:
+portal_url: https://igni.acme.example
+```
+
+`portal_url` is worked out from `api_url` when both run under one name and
+differ by a host label (`api.acme.example` → `acme.example`); set it when
+they differ any other way, such as by port, or sign-in opens a page the API
+does not serve.
 
 Or bring your own model (OpenAI, Anthropic, Groq, Ollama, etc.):
 

@@ -299,3 +299,32 @@ class TestTheHistoricalExemptionIsNarrow:
             f"these are exempt and no longer need to be: "
             f"{sorted(set(_HISTORICAL) - set(still_needed))}"
         )
+
+
+#: How the package and the repository used to be called. `pip install
+#: ember-code[web]` installs nothing of igni's, and the clone URL is gone.
+_OLD_NAMES = re.compile(r"ember-code\.git|pip install \"?ember-code|ember-code\[")
+
+
+@pytest.mark.parametrize("doc", _DOCS, ids=lambda d: d.name)
+def test_no_document_installs_or_clones_by_an_old_name(doc):
+    if doc.name in _HISTORICAL:
+        pytest.skip(f"{doc.name} records what was true at the time; see _HISTORICAL")
+    found = sorted(set(_OLD_NAMES.findall(doc.read_text())))
+    assert not found, (
+        f"{doc.name} names {found}. The package is `ignite-ember` (pyproject's "
+        f"`name`) and the repository github.com/ignite-ember/igni."
+    )
+
+
+def test_the_readme_puts_the_server_in_the_user_config():
+    """A project's config may not name a server (`merge_plan.py`), so the
+    README's old advice — `api_url` in `.igni/config.local.yaml` — was
+    ignored with a warning, and the CLI never reached the server."""
+    readme = (_ROOT / "README.md").read_text()
+    section = readme[readme.index("To point it at your own igni server") :][:1200]
+    assert "~/.igni/config.yaml" in section
+    assert "portal_url" in section
+    from ember_code.core.config.merge_plan import ProjectYamlTier
+
+    assert {"api_url", "portal_url"} <= set(ProjectYamlTier._NOT_FROM_A_PROJECT)

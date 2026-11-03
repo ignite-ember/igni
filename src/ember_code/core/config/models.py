@@ -303,7 +303,9 @@ class ModelRegistry:
         # Context-window resolver reuses the registry's already-derived
         # cloud token so ``/models/{id}`` fetches against the Ember
         # gateway don't re-read credentials from disk.
-        self.context_windows = ContextWindowResolver(cloud_token=self._cloud_token)
+        self.context_windows = ContextWindowResolver(
+            cloud_token=self._cloud_token, server_url=settings.api_url
+        )
 
     # ── Public: model resolution ──────────────────────────────────
 
@@ -361,12 +363,38 @@ class ModelRegistry:
             available = ", ".join(sorted(self._catalog.available_providers())) or "(none)"
             raise ValueError(f"Unknown provider {entry.provider!r}. Available: {available}.")
 
-        return builder.build(
+        # igni server's token goes only to igni server (B28). A model entry
+        # names its own ``url``, and a repository's ``.igni/config.yaml``
+        # can add one, so ``api_key: cloud_token`` with a ``url`` of the
+        # repository's choosing handed the signed-in person's token to that
+        # host. The token now travels only to the origin of ``api_url``,
+        # which only user, group or managed settings may set — whoever
+        # wrote the entry, trusted folder or not: no legitimate entry
+        # needs igni server's token anywhere else.
+        if ModelRegistryEntry.same_origin(builder.endpoint_for(entry), self.settings.api_url):
+            cloud_token, cloud_auth = self._cloud_token, self._cloud_auth
+        else:
+            cloud_token, cloud_auth = None, None
+            if self._cloud_token and entry.needs_cloud_token():
+                logger.warning(
+                    "Model %r asks for the igni server token, but it sends to %s, "
+                    "not to your igni server (api_url %s); the token is not sent.",
+                    resolved_name,
+                    builder.endpoint_for(entry) or f"{entry.provider}'s default endpoint",
+                    self.settings.api_url or "not set",
+                )
+        model = builder.build(
             entry,
-            cloud_token=self._cloud_token,
+            cloud_token=cloud_token,
             llm_logger=self._llm_logger,
-            cloud_auth=self._cloud_auth,
+            cloud_auth=cloud_auth,
         )
+        # Transient failures are retried here, per model call, where Agno
+        # asks whether the error is worth retrying; the agents and the team
+        # get ``retries=0`` (B31, ``reply_ending.ReplyCutRetries``).
+        if hasattr(model, "retries"):
+            model.retries = self.settings.models.retries
+        return model
 
     def get_context_window(self, name: str | None = None) -> int:
         """Get the context window size for a model.

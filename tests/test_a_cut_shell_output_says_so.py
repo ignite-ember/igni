@@ -90,3 +90,62 @@ def test_lines_the_buffer_already_dropped_are_counted():
 
 def test_nothing_left_out_renders_the_lines_alone():
     assert OutputTail.of(["a", "b"], 100).render("More.") == "a\nb"
+
+
+# ── A process that outlived a restart ───────────────────────────────
+
+
+def _restored(kind: str, tmp_path, lines: list[str]):
+    """A process read back from its log after a restart, of ``kind``."""
+    import os
+    import time
+
+    from ember_code.core.tools.finished_process import FinishedProcess
+    from ember_code.core.tools.orphan_process import OrphanProcess
+    from ember_code.core.tools.process_log import ProcessLogStore
+
+    store = ProcessLogStore(tmp_path)
+    pid = os.getpid()
+    path = store.path(pid)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("\n".join(lines) + "\n")
+    if kind == "orphan":
+        return pid, OrphanProcess(
+            pid=pid, cmd="serve", started_epoch=int(time.time()), pgid=None, log_store=store
+        )
+    return pid, FinishedProcess(
+        pid=pid, cmd="build", started_epoch=0, finished_epoch=5, exit_code=1, log_store=store
+    )
+
+
+@pytest.mark.parametrize("kind", ["orphan", "finished"])
+async def test_a_process_from_before_a_restart_says_when_it_is_cut(kind, tmp_path):
+    """read_process_output on a process the previous backend started read
+    its log file and cut it to the last ``tail`` lines with nothing to say
+    so. A finished one read back nothing at all: it asked the log store
+    for a method it does not have, and the error was taken for "no log"."""
+    supervisor = ProcessSupervisor()
+    shell = EmberShellTools(base_dir=tmp_path, supervisor=supervisor)
+    pid, process = _restored(kind, tmp_path, LOG_LINES)
+    supervisor.registry.add(process)
+
+    result = await shell.read_process_output(pid)
+
+    assert (
+        "[Output truncated: 6000 lines; the first 5900 are not shown, only the last 100. " in result
+    )
+    assert f"... ({_omitted_chars(LOG_LINES[:5900])} characters truncated) ..." in result
+    assert result.rstrip().endswith(LOG_LINES[-1])
+
+
+@pytest.mark.parametrize("kind", ["orphan", "finished"])
+async def test_a_restored_log_that_fits_is_returned_whole(kind, tmp_path):
+    supervisor = ProcessSupervisor()
+    shell = EmberShellTools(base_dir=tmp_path, supervisor=supervisor)
+    pid, process = _restored(kind, tmp_path, LOG_LINES[:50])
+    supervisor.registry.add(process)
+
+    result = await shell.read_process_output(pid)
+
+    assert "Output truncated" not in result
+    assert "\n".join(LOG_LINES[:50]) in result

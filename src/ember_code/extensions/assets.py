@@ -376,7 +376,7 @@ class Unpacker:
                         )
                     if stat.S_ISLNK(info.external_attr >> 16):
                         raise AssetError(f"{archive.name} has a link: {info.filename}")
-                zipped.extractall(into)
+                zipped.extractall(into)  # noqa: S202 — every member was checked above: no path outside, no link
                 for info in infos:
                     mode = (info.external_attr >> 16) & 0o777
                     if mode & 0o111 and not info.is_dir():

@@ -19,8 +19,8 @@ pip install ignite-ember
 **From source:**
 
 ```bash
-git clone https://github.com/ignite-ember/ember-code.git
-cd ember-code
+git clone https://github.com/ignite-ember/igni.git
+cd igni
 uv pip install -e ".[dev]"
 ```
 
@@ -28,8 +28,17 @@ uv pip install -e ".[dev]"
 
 **Option A: your igni server**
 
-Point `api_url` at the server your team runs, start a session, and type the
-slash command inside it:
+Point `api_url` at the server your team runs — in `~/.igni/config.yaml`; a
+project's config may not name a server — start a session, and type the slash
+command inside it. Set `portal_url` too when the portal (the sign-in page) is
+not on the API's origin, for example the API on port 7777 and the portal on
+3000:
+
+```yaml
+# ~/.igni/config.yaml
+api_url: https://igni-api.acme.example
+portal_url: https://igni.acme.example   # only if it can't be derived from api_url
+```
 
 ```bash
 igni                    # then, at the prompt:
@@ -260,7 +269,7 @@ For BYOM, the minimum is a model registry entry (see [Authenticate](#authenticat
 permissions:
   file_write: ask           # ask before writing files (default)
   shell_execute: ask        # ask before running commands (default)
-  web_search: allow         # enable web search
+  web_search: allow         # search without asking (default: ask)
 ```
 
 ### Project Instructions
@@ -364,10 +373,11 @@ Use igni as a tool server in VS Code, Cursor, or JetBrains:
 
 ### Web Tools
 
-Enable web search and URL fetching:
+Web search and URL fetching ask before each request by default — each is a
+request out of your network. To install them and let them run without asking:
 
 ```bash
-pip install ember-code[web]
+pip install "ignite-ember[web]"
 ```
 
 ```yaml

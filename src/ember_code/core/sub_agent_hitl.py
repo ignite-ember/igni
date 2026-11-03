@@ -40,6 +40,7 @@ from typing import TYPE_CHECKING, Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from ember_code.core.approvals.declined import declined_note
 from ember_code.core.approvals.journal import ApprovalJournal, ApprovalOrigin, SpawnLink
 from ember_code.core.layer import Layers
 from ember_code.core.paths import DEFAULT_DATA_DIR
@@ -227,7 +228,7 @@ class SubAgentHITLCoordinator:
                     f"{time.strftime('%H:%M:%S')} pid={os.getpid()} "
                     f"coord.push_requirement: coord_id={id(self)} run_id={run_id} path={agent_path}\n"
                 )
-        except Exception:
+        except Exception:  # noqa: S110 — a debug trace; its failure must not reach the run
             pass
 
     def _write(self, req_id: str) -> None:
@@ -392,7 +393,10 @@ class SubAgentHITLCoordinator:
         if action == "confirm":
             entry.requirement.confirm()
         else:
-            entry.requirement.reject(note="User denied")
+            tool_execution = getattr(entry.requirement, "tool_execution", None)
+            entry.requirement.reject(
+                note=declined_note(str(getattr(tool_execution, "tool_name", "") or ""))
+            )
         entry.event.set()
         # Answered: a restart from here on must not ask again. A
         # restored request stays until its run is continued

@@ -70,7 +70,7 @@ class TestPreToolUse:
 class TestPostToolUse:
     @pytest.mark.asyncio
     async def test_fires_for_matching(self):
-        outfile = Path(tempfile.mktemp(suffix=".json"))
+        outfile = Path(tempfile.mkdtemp()) / "out.json"
         hooks = {
             "PostToolUse": [
                 HookDefinition(
@@ -97,7 +97,7 @@ class TestPostToolUse:
 class TestPostToolUseFailure:
     @pytest.mark.asyncio
     async def test_fires_on_error(self):
-        outfile = Path(tempfile.mktemp(suffix=".json"))
+        outfile = Path(tempfile.mkdtemp()) / "out.json"
         hooks = {"PostToolUseFailure": [HookDefinition(type="command", command=f"cat > {outfile}")]}
         hook = ToolEventHook(HookExecutor(hooks), session_id="s1")
 

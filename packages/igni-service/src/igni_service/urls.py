@@ -35,7 +35,7 @@ class IgniPaths:
     DISCOVERY = "/.well-known/openid-configuration"
     JWKS = "/.well-known/jwks.json"
     CLIENTS = "/v1/clients"
-    TOKEN = "/v1/oauth/token"
+    TOKEN = "/v1/oauth/token"  # noqa: S105 — an endpoint path, not a secret
     REVOKE = "/v1/oauth/revoke"
     DIRECTORY = "/v1/directory"
     NOTIFICATIONS = "/v1/service-notifications"

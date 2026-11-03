@@ -7,6 +7,7 @@ import json
 import logging
 from pathlib import Path
 
+import httpx
 import pytest
 from fastapi import FastAPI
 
@@ -159,3 +160,37 @@ async def test_an_unreadable_bundle_leaves_the_registration_standing(
     assert registration is not None
     assert "unreadable" in caplog.text
     assert fake.extensions == {}
+
+
+async def test_callers_during_start_up_share_the_one_registration(fake: FakeIgni) -> None:
+    """A page asking for the client id while start-up registers does not register again.
+
+    The check that a registration was held ran outside the lock, so every
+    caller that arrived while the first one was in flight registered once
+    more when the lock came free: two POST /v1/clients per Team Notes start.
+    """
+    inner = fake.transport()
+
+    class InFlight(httpx.AsyncBaseTransport):
+        """igni over a network: a request is in flight for a moment, and others run meanwhile."""
+
+        async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
+            await asyncio.sleep(0.01)
+            return await inner.handle_async_request(request)
+
+    igni = IgniService(
+        fake.settings(),
+        key_store=MemoryKeyStore(),
+        http=httpx.AsyncClient(transport=InFlight()),
+        clock=fake.clock,
+        retry_min=0.01,
+    )
+
+    ids = await asyncio.gather(
+        igni.registration.start(),
+        igni.registration.client_id(),
+        igni.registration.client_id(),
+    )
+
+    assert len(fake.requests_to(IgniPaths.CLIENTS)) == 1
+    assert ids[1] == ids[2] == ids[0].client_id

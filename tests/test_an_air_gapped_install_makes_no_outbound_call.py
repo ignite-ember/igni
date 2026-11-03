@@ -185,8 +185,10 @@ class TestTheUpdateCheck:
 
 class TestTheMarketplaceClone:
     async def test_session_start_does_not_clone_the_default(self, tmp_path):
+        """Not even with the opt-in on: air-gapped mode overrules it."""
         git = GitRecorder()
-        phase = MarketplaceWarmupPhase(_session_with(_air_gapped(tmp_path)))
+        settings = _air_gapped(tmp_path, default_marketplace=True)
+        phase = MarketplaceWarmupPhase(_session_with(settings))
         with patch("ember_code.core.plugins.git.subprocess.run", git):
             await phase._refresh_all()
         assert git.calls == []
@@ -194,7 +196,7 @@ class TestTheMarketplaceClone:
     async def test_a_public_marketplace_registered_earlier_is_not_refreshed(self, tmp_path):
         """Turning the switch on after the default was registered must not
         leave a six-hourly clone of github.com behind."""
-        settings = _air_gapped(tmp_path)
+        settings = _air_gapped(tmp_path, default_marketplace=True)
         _register(Path(settings.storage.data_dir), MarketplaceEntry(name="official", url=OFFICIAL))
         git = GitRecorder()
         with patch("ember_code.core.plugins.git.subprocess.run", git):
@@ -272,8 +274,9 @@ class TestTheSourcePolicy:
         assert not policy.allows("https://github.com/acme/some-plugin")
 
     def test_air_gap_removes_the_default_from_registration(self):
-        assert PluginSourcePolicy(air_gapped=True).marketplaces_to_register() == []
-        assert PluginSourcePolicy().marketplaces_to_register() == [OFFICIAL]
+        opted_in = PluginSourcePolicy(default_marketplace=True)
+        assert opted_in.marketplaces_to_register() == [OFFICIAL]
+        assert opted_in.model_copy(update={"air_gapped": True}).marketplaces_to_register() == []
 
     def test_without_the_switch_everything_is_allowed(self):
         assert PluginSourcePolicy().allows(OFFICIAL)

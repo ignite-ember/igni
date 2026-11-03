@@ -60,6 +60,15 @@ class ProviderClientBuilder(ABC):
         — the token as it was when the model was built.
         """
 
+    def endpoint_for(self, entry: ModelRegistryEntry) -> str | None:
+        """The URL this builder's client sends ``entry``'s requests to.
+
+        :class:`ModelRegistry` hands igni server's token to a build only
+        when this is igni server's own origin. ``None`` means the SDK's
+        own default host, which never is.
+        """
+        return entry.url
+
 
 class OpenAILikeBuilder(ProviderClientBuilder):
     """Builder for OpenAI-compatible providers.
@@ -172,15 +181,22 @@ class GeminiBuilder(ProviderClientBuilder):
     def __init__(self) -> None:
         self._gemini_cls: type | None = None
         try:
-            from agno.models.google import Gemini  # noqa: WPS433 — lazy optional dep
+            from ember_code.core.config.checked_gemini import (  # noqa: WPS433 — lazy optional dep
+                CheckedGemini,
+            )
 
-            self._gemini_cls = Gemini
+            self._gemini_cls = CheckedGemini
         except ImportError:
             self._gemini_cls = None
 
     @property
     def available(self) -> bool:
         return self._gemini_cls is not None
+
+    def endpoint_for(self, entry: ModelRegistryEntry) -> str | None:
+        """Google's: the Gemini SDK is not given ``entry.url``."""
+        _ = entry
+        return None
 
     def build(
         self,
@@ -225,7 +241,9 @@ class GeminiBuilder(ProviderClientBuilder):
         if entry.temperature is not None:
             kwargs["temperature"] = entry.temperature
         if entry.max_tokens is not None:
-            kwargs["max_tokens"] = entry.max_tokens
+            # Gemini's name for it; ``max_tokens`` is no field of Agno's
+            # ``Gemini`` and failed the build with a TypeError.
+            kwargs["max_output_tokens"] = entry.max_tokens
         return kwargs
 
 
@@ -285,6 +303,9 @@ class AnthropicBuilder(ProviderClientBuilder):
             )
         kwargs = self._build_kwargs(entry, cloud_token=cloud_token, cloud_auth=cloud_auth)
         return self._claude_cls(logger=llm_logger, vision=entry.vision, **kwargs)
+
+    def endpoint_for(self, entry: ModelRegistryEntry) -> str | None:
+        return self.base_url_for(entry)
 
     @classmethod
     def base_url_for(cls, entry: ModelRegistryEntry) -> str:

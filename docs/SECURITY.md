@@ -37,15 +37,26 @@ Every tool call goes through permission checks before execution.
 
 ```yaml
 permissions:
-  file_read: "allow"
+  file_read: "allow"             # no effect (see below)
   file_write: "ask"
   shell_execute: "ask"
-  shell_restricted: "allow"       # read-only commands (rg, find, tree)
-  web_search: "deny"
-  web_fetch: "deny"
+  shell_restricted: "allow"       # no effect (see below)
+  web_search: "ask"               # a request out of your network: asked each time
+  web_fetch: "ask"
   git_push: "ask"
   git_destructive: "ask"          # force-push, reset --hard, etc.
 ```
+
+`file_read` and `shell_restricted` are accepted and read by nothing, on
+purpose. igni has no read tool — a file is read with `run_shell_command` — so
+in the default mode `cat`, `ls` and `rg` ask like any other command, and a
+headless `igni -m` cannot read a file unless something allows it. To let reads
+run unasked, add allow rules (`permissions.allow`, or "Allow similar" at the
+prompt), or set `permissions.mode: plan`, where a command runs without asking
+only if it is built entirely from read-only commands (`rg`, `cat`, `ls`, `git
+diff`, …) and anything else is put to you. The default mode does not make that
+exemption: a read nobody sees, next to `web_fetch`, is how a file leaves the
+machine.
 
 **Approval prompts:**
 
@@ -305,7 +316,7 @@ Hooks also run code. Your organisation's group policy can ship hooks, and they r
 
 ### Workspace trust
 
-Opening a folder never runs its code or loosens safety until the person trusts it: an untrusted folder's tools, hooks, workflows, language servers, monitors, plugins and markdown-command shell tokens do not run, and its config cannot set `permissions.*`, `safety.*` or the mode. Decisions live in `~/.igni/workspace-trust.json`, keyed by path and git remote. Organisations set `workspace_trust.mode` (`ask` / `trusted_remotes` / `never`) from managed settings or group policy only, and managed permission values are final against every lower tier. See [Workspace trust](CONFIGURATION.md#workspace-trust).
+Opening a folder never runs its code or loosens safety until the person trusts it: an untrusted folder's tools, hooks, workflows, language servers, monitors, plugins and markdown-command shell tokens do not run, and its config cannot set `permissions.*`, `safety.*` or the mode, nor send a credential to a host it names (no model `api_key_cmd` or `api_key_env`, and a model it re-points keeps no key from your own config). igni server's token goes only to the origin of `api_url`, trusted folder or not. Decisions live in `~/.igni/workspace-trust.json`, keyed by path and git remote. Organisations set `workspace_trust.mode` (`ask` / `trusted_remotes` / `never`) from managed settings or group policy only, and managed permission values are final against every lower tier. See [Workspace trust](CONFIGURATION.md#workspace-trust).
 
 ### 9. Guardrails (AI Safety)
 
@@ -438,6 +449,40 @@ Control which MCP servers are allowed or required:
   }
 }
 ```
+
+### Outbound connections by default
+
+What an install nobody has configured contacts on its own, and why each one
+is on or off. "On request" means only when the person asks for it; `air_gapped:
+true` turns every one of these off ([CONFIGURATION.md](CONFIGURATION.md),
+"Air-gapped mode").
+
+| Connection | Default | Why |
+|---|---|---|
+| The model endpoints and igni server you configure | On | The product: nothing is configured, so nothing is contacted until you name one |
+| Update check (`pypi.org`) | On, daily | How a fix reaches you: the Cyber Resilience Act asks for security updates to be on by default with an opt-out. `update_check_ttl: 0` turns it off |
+| Desktop updater (`github.com/ignite-ember/igni/releases`, or `update_endpoint`) | On (desktop app) | The same reason; it checks with `update_check_ttl` (0 turns it off) and installs only a signed release, when you press Install |
+| Desktop first launch (uv, CPython, `ignite-ember`, the decision model) | Once, at install | Installing the app; a pre-provisioned `runtime_python` skips it |
+| Decision model (Laya, from Hugging Face) | On first use | Used by Bypass mode's guard and by extensions that ask; loaded from the local cache when it is there |
+| Web search (DuckDuckGo) and URL fetch | **Asks each time** | A request the model decides on, out of your network: it waits for your yes. `permissions.web_search` / `web_fetch: allow` lets them run unasked; `deny` removes them |
+| Anthropic's plugin marketplace (github.com) | **Off** | `plugins.default_marketplace: true`, or `/plugin marketplace add`, on request |
+| Plugin, extension and MCP installs and updates | On request | Only what you install, from where you name |
+| Agno's run telemetry | Off | Never on unless `AGNO_TELEMETRY=true` is set, and overruled when air-gapped |
+| OpenTelemetry export | Off | Only to a collector an administrator names |
+
+**The web asks, and that is decided, not provisional.** In the normal modes a
+web search or URL fetch waits for a person's yes (`--strict` denies it unless a
+rule allows it; `air_gapped` builds neither tool). Bypass (`--auto-approve`,
+`/bypass`) means "do not ask me", so there both run unasked like every other
+tool, keeping what Bypass always keeps: an explicit `deny` still wins, and its
+last check still turns a fetch whose URL carries what looks like a secret or
+token, or that the safety model flags, back into a prompt.
+`tests/test_nothing_phones_home.py` pins both halves.
+
+Nothing goes to Ignite Ember: there is no vendor-operated service in the path.
+`tests/test_nothing_phones_home.py` holds the list of hosts the code may name
+and fails the build on a new one; `tests/test_an_air_gapped_install_makes_no_outbound_call.py`
+proves each row's air-gapped behaviour.
 
 ### Network Restrictions
 

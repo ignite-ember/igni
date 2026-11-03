@@ -286,8 +286,10 @@ class GroupPolicyPack(BaseModel):
                     parsed = json.loads(o.content) if o.content_type == "json" else {}
                     if isinstance(parsed, dict):
                         result = _deep_merge(result, parsed)
-                except Exception:
-                    pass
+                except Exception as exc:
+                    # An organisation's setting that did not apply must not
+                    # go unnoticed: it was dropped with no trace at all.
+                    logger.warning("group policy: a settings entry was not applied: %s", exc)
         return result
 
     def agent_entries(self) -> list[GroupPolicyEntry]:
@@ -426,7 +428,8 @@ class GroupPolicyCache:
         return self.dir_for("plugins")
 
     def _content_hash(self, content: str) -> str:
-        return hashlib.md5(content.encode()).hexdigest()[:12]
+        # Change detection, not integrity: the pack's signature is checked elsewhere.
+        return hashlib.md5(content.encode(), usedforsecurity=False).hexdigest()[:12]
 
     def _materialize_plugin(self, o: GroupPolicyEntry) -> None:
         """Install or skip-write a single plugin entry.

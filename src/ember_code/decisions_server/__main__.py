@@ -32,7 +32,7 @@ from ember_code.core.activity import background
 from ember_code.decisions_server.app import DecisionsApp
 from ember_code.decisions_server.model import LayaModel
 
-SECRET_ENV = "IGNI_DECISIONS_SECRET"
+SECRET_ENV = "IGNI_DECISIONS_SECRET"  # noqa: S105 — an environment variable's name, not a secret
 
 
 class DecisionsServer:

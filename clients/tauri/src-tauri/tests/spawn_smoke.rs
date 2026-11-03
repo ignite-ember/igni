@@ -21,23 +21,14 @@
 //! pre-built, and (c) actually opens a webview window on macOS. Run it
 //! with ``cargo test -- --ignored``.
 //!
-//! **Nothing runs this in CI**, and this paragraph used to claim
-//! otherwise — "CI sets the env var on the macOS runner where those
-//! preconditions hold". No workflow sets ``IGNI_TAURI_SMOKE``, the only
-//! Rust job runs on ``ubuntu-latest``, and it passed ``--lib``, which
-//! skips this directory entirely. Three independent reasons, and the
-//! sentence claiming coverage is how none of them got noticed.
+//! CI runs it: the ``tauri-smoke`` job in ``ci.yml`` builds the web
+//! bundle and the venv, then ``xvfb-run cargo test -- --ignored`` on
+//! Linux, where WebKitGTK gets a virtual display. For a long time
+//! nothing ran it at all while this paragraph said CI did; the
+//! ``tauri-rust`` job only compiles it.
 //!
-//! CI compiles it now — ``--lib`` is gone, so a refactor that breaks
-//! this file fails there, which is the most likely decay. *Running* it
-//! needs a macOS runner with the venv, the web bundle and a built
-//! binary, and that is not wired up. Until it is, this test runs when a
-//! person runs it, and the honest reading of a green CI is "it still
-//! compiles".
-//!
-//! Currently macOS-only (uses ``pgrep``/``lsof``). Linux support is
-//! a small addition (same tools exist); Windows would need a
-//! different process-tree probe.
+//! macOS and Linux (``ps``, ``lsof`` and ``kill``, which both have).
+//! Windows would need a different process-tree probe.
 
 use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
@@ -189,12 +180,13 @@ fn pid_alive(pid: u32) -> bool {
 /// --ignored` runs it. Nothing outside this file referenced the env
 /// var, so there was nothing to keep working.
 #[test]
-#[ignore = "needs macOS, a built debug binary, the project venv and clients/web/dist;             pops a webview window. Run with `cargo test -- --ignored`."]
+#[ignore = "needs a built debug binary, the project venv, clients/web/dist and a display;             pops a webview window. Run with `cargo test -- --ignored` (CI: the tauri-smoke job)."]
 fn tauri_binary_boots_be_and_watchdog_cleans_up_on_exit() {
-    if !cfg!(target_os = "macos") {
-        eprintln!("skip: tauri_binary_boots_be_and_watchdog_cleans_up_on_exit only supports macOS today");
-        return;
-    }
+    // A Windows run would pass by probing nothing, so it fails instead.
+    assert!(
+        cfg!(unix),
+        "tauri_binary_boots_be_and_watchdog_cleans_up_on_exit probes processes with ps and lsof: macOS or Linux only"
+    );
 
     let root = repo_root();
     let venv_python = root.join(".venv").join("bin").join("python");
@@ -290,11 +282,17 @@ fn tauri_binary_boots_be_and_watchdog_cleans_up_on_exit() {
     });
 
     // ── Phase B: BE binds a loopback port ──
-    let port = poll_until(Duration::from_secs(10), || listening_port(be_pid))
+    //
+    // 60s, not the 10s this had: the backend now takes about 12s from
+    // spawn to listening on an M-series Mac (it imports the model stack
+    // before it binds), so the first run in months failed here with
+    // "transport never started" while the shell was fine. A CI runner is
+    // slower still. The bound is for a hang, not a speed check.
+    let port = poll_until(Duration::from_secs(60), || listening_port(be_pid))
         .unwrap_or_else(|| {
             panic!(
                 "BE (pid={be_pid}) is alive but never bound a loopback TCP \
-                 port within 10s — transport never started"
+                 port within 60s — transport never started"
             )
         });
     assert!(
