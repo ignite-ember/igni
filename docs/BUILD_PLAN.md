@@ -86,7 +86,7 @@ Still to wire: the port has to reach the frontend through the extension-status R
 
 `CodeIndexPanel` turned out to use exactly one thing, `client.rpc`, four times. So the bridge's job is narrower than the plan assumed, and A3's gate will turn on a type rather than on behaviour: the panel's prop is the concrete `IgniClient` class, and no bridge can satisfy that without being one. Narrowing the prop to what the panel actually uses is a one-line change — which means the "empty diff" gate cannot be met literally, and the honest form of it is "one line, and that line documents what the panel needed all along".
 
-One host CSP needs `frame-src` for the loopback origins: `clients/tauri/src-tauri/tauri.conf.json:16` (`default-src 'self'`). **Not the IDE clients** — D16 freezes them at context-handoff scope and extensions render in the igni app only, so `clients/vscode/src/extension.ts:304` keeps its `default-src 'none'` and the JetBrains panel is untouched. An extension that wanted an IDE surface would be asking for the decision to be reopened, not for a CSP line.
+One host CSP needs `frame-src` for the loopback origins: `clients/tauri/src-tauri/tauri.conf.json:16` (`default-src 'self'`). **Not the IDE clients** — they are frozen at context-handoff scope and extensions render in the igni app only, so `clients/vscode/src/extension.ts:304` keeps its `default-src 'none'` and the JetBrains panel is untouched. An extension that wanted an IDE surface would be asking for that scope to be reopened, not for a CSP line.
 
 *Done when:* the bridge refuses a method the manifest did not ask for — **met, host-side**.
 

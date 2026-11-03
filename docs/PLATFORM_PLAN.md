@@ -106,7 +106,7 @@ The SI runs this, not us. `partner-enablement-gaps.md` names several of these as
 - **Drain on upgrade**, window **configurable by the enterprise** via group policy. Blue/green behind the router: new sessions to the new process, old one drains to the cap. An interrupted run stays visible and resendable — never a bare "connection lost".
 - **Retention setting + one reaper over every store** — session rows, traces, scratch, logs, artifacts — reporting what it deleted. A policy that prunes conversations and leaves traces reads as compliance and isn't. Infrastructure (encryption, backups, keys) is the SI's; **data lifecycle is ours**.
 - **Data minimisation** as the design default, so retention has less to clean.
-- **Distinct principals per paid extension, per period** — a set, not a meter. D11 caps named users per band and the true-up number has to come from somewhere.
+- **Distinct principals per paid extension, per period** — a set, not a meter. Pricing caps named users per band and the true-up number has to come from somewhere.
 
 ---
 
@@ -126,7 +126,7 @@ Small once Phase 3 exists.
 
 | | |
 |---|---|
-| IDE plugins | Frozen at context-handoff scope (business-ops **D16**). Extensions render in the igni app only. |
+| IDE plugins | Frozen at context-handoff scope. Extensions render in the igni app only. |
 | Coding | A single-user-backend concern. The shared backend works on documents, data and connected systems. |
 | Extensions | One concept, two packagings — sidecar or remote. UI is an optional contribution. |
 | Tools | Always MCP. No second tool transport. |
