@@ -67,6 +67,10 @@ class SchedulerRunner:
         self._semaphore = asyncio.Semaphore(max(1, max_concurrent))
         self._running = False
         self._poll_task: asyncio.Task | None = None
+        #: Set while the poll loop sleeps between checks — the only point
+        #: where cancelling it interrupts nothing.
+        self._poll_idle = False
+        self._poked: asyncio.Event | None = None
         self._active_tasks: set[asyncio.Task] = set()
         self._wake_holder = f"scheduler:{id(self):x}"
         self._next_due: datetime | None = None
@@ -84,24 +88,49 @@ class SchedulerRunner:
             self._semaphore._value,
         )
 
-    def stop(self) -> None:
-        """Stop the polling loop and cancel active task executions."""
+    def stop(self) -> asyncio.Task | None:
+        """Stop the polling loop and cancel active task executions.
+
+        A loop asleep between checks is cancelled. One in the middle of a
+        check is not: it is told to stop and finishes the check first.
+        Cancelled inside a database call, SQLAlchemy's shielded close of
+        the aiosqlite connection can wait on a worker that will never
+        answer, and the event loop then cannot close — the backend's
+        shutdown hung there. Returns the poll task, for :meth:`aclose`.
+        """
         self._running = False
-        if self._poll_task:
-            self._poll_task.cancel()
-            self._poll_task = None
+        task, self._poll_task = self._poll_task, None
+        if task is not None:
+            if self._poll_idle:
+                task.cancel()
+            elif self._poked is not None:
+                self._poked.set()
         for t in self._active_tasks:
             t.cancel()
         self._active_tasks.clear()
         ActivityRegistry.shared().wake(self._wake_holder, None)
         logger.info("Scheduler stopped")
+        return task
+
+    #: How long :meth:`aclose` waits for a check in flight to finish.
+    CLOSE_TIMEOUT_SECONDS = 10.0
+
+    async def aclose(self) -> None:
+        """:meth:`stop`, then wait for the poll loop to be gone."""
+        task = self.stop()
+        if task is None or task.done():
+            return
+        _done, pending = await asyncio.wait({task}, timeout=self.CLOSE_TIMEOUT_SECONDS)
+        if pending:
+            logger.warning("Scheduler check did not finish in time; cancelling it")
+            task.cancel()
 
     @property
     def is_running(self) -> bool:
         return self._running
 
     async def _poll_loop(self) -> None:
-        poked = asyncio.Event()
+        poked = self._poked = asyncio.Event()
         loop = asyncio.get_running_loop()
 
         def poke() -> None:
@@ -115,8 +144,14 @@ class SchedulerRunner:
                     await self._check_and_spawn()
                 except Exception:
                     logger.exception("Scheduler poll error")
-                with contextlib.suppress(TimeoutError):
-                    await asyncio.wait_for(poked.wait(), self._next_delay())
+                if not self._running:
+                    break
+                self._poll_idle = True
+                try:
+                    with contextlib.suppress(TimeoutError):
+                        await asyncio.wait_for(poked.wait(), self._next_delay())
+                finally:
+                    self._poll_idle = False
                 poked.clear()
         finally:
             registry.off_rearm(poke)

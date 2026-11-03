@@ -117,3 +117,63 @@ class TestSchedulerRunner:
         # completion and the push never arrived. Asserting only the flag is what
         # let that ship, so the value is pinned here too.
         on_completed.assert_called_once_with("t2", "callback test", True, "ok")
+
+
+class TestStoppingMidCheck:
+    """A stop does not cancel the poll loop inside a database call.
+
+    Cancelled there, SQLAlchemy's shielded close of the aiosqlite connection
+    waited on a worker that never answered, and the event loop could not
+    close: ``test_a_signal_stops_a_backend_nobody_ever_connected_to`` hung
+    in its teardown on every run.
+    """
+
+    @staticmethod
+    def _runner(store):
+        return SchedulerRunner(
+            store=store,
+            execute_fn=AsyncMock(return_value="done"),
+            poll_interval=0.1,
+            task_timeout=5,
+            max_concurrent=1,
+        )
+
+    async def test_a_check_in_flight_finishes_and_the_loop_ends(self):
+        started, release = asyncio.Event(), asyncio.Event()
+        finished: list[bool] = []
+
+        async def due_tasks():
+            started.set()
+            try:
+                await release.wait()
+            except asyncio.CancelledError:
+                finished.append(False)
+                raise
+            finished.append(True)
+            return []
+
+        store = MagicMock()
+        store.get_due_tasks = due_tasks
+        runner = self._runner(store)
+        runner.start()
+        await asyncio.wait_for(started.wait(), 5)
+
+        closing = asyncio.create_task(runner.aclose())
+        await asyncio.sleep(0.05)
+        assert not closing.done()  # waiting for the check, not cancelling it
+        release.set()
+        await asyncio.wait_for(closing, 5)
+
+        assert finished == [True]
+        assert not runner.is_running
+
+    async def test_an_idle_loop_is_cancelled_at_once(self):
+        store = MagicMock()
+        store.get_due_tasks = AsyncMock(return_value=[])
+        runner = self._runner(store)
+        runner.start()
+        await asyncio.sleep(0.05)  # through its first check, now asleep
+
+        await asyncio.wait_for(runner.aclose(), 1)
+
+        assert store.get_due_tasks.await_count == 1

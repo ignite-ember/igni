@@ -176,7 +176,7 @@ class SchedulerController:
         if runner is None:
             return
         try:
-            runner.stop()
+            await runner.aclose()
         finally:
             self._runner = None
 
