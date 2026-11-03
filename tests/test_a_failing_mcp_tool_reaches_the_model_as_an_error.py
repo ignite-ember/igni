@@ -14,6 +14,7 @@ Agno's ``FunctionCall``.
 from __future__ import annotations
 
 import json
+import logging
 import sys
 from pathlib import Path
 
@@ -88,3 +89,51 @@ async def test_a_tool_that_answers_is_unchanged(manager):
 
     assert call.error is None
     assert "ok T-1" in str(call.result)
+
+
+class _Records(logging.Handler):
+    def __init__(self) -> None:
+        super().__init__(logging.DEBUG)
+        self.records: list[logging.LogRecord] = []
+
+    def emit(self, record: logging.LogRecord) -> None:
+        self.records.append(record)
+
+
+@pytest.fixture
+def agno_output():
+    """What Agno's own logger writes to the terminal during the call."""
+    records = _Records()
+    agno = logging.getLogger("agno")
+    agno.addHandler(records)
+    yield records.records
+    agno.removeHandler(records)
+
+
+@pytest.fixture
+def debug_log():
+    records = _Records()
+    ours = logging.getLogger("ember_code.core.mcp.tool_errors")
+    before = ours.level
+    ours.addHandler(records)
+    ours.setLevel(logging.DEBUG)
+    yield records.records
+    ours.removeHandler(records)
+    ours.setLevel(before)
+
+
+async def test_an_expected_failure_prints_one_line_not_a_traceback(manager, agno_output, debug_log):
+    """A tool that says "no such ticket" is working; its failure is one line.
+
+    Agno logs every raising entrypoint with ``log_exception`` — the full
+    traceback at ERROR, on stderr, in the middle of ``igni -m`` output.
+    """
+    await _call(manager, "mcp_tickets_boom")
+
+    shown = [r for r in agno_output if r.levelno >= logging.WARNING]
+    assert shown, "the failure was not reported at all"
+    assert all(r.exc_info is None for r in shown), "a traceback was printed"
+    assert len(shown) == 1
+    assert "database connection lost (simulated)" in shown[0].getMessage()
+    # The traceback is still there for ``igni --debug`` (debug.log).
+    assert any(r.exc_info for r in debug_log)

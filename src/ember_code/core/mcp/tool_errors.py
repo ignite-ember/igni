@@ -15,13 +15,24 @@ wrapper raises :class:`MCPToolFailed` with it — the result's text parts
 joined, which is what the server meant to say. A context variable carries
 it from the session to the wrapper because Agno's own ``call_tool`` sits
 between them and swallows every exception into a string.
+
+Agno logs every entrypoint that raises twice: a one-line warning ("Could
+not run function ...: <message>") and ``log_exception`` — the full
+traceback at ERROR, on stderr, in the middle of ``igni -m`` output. For
+:class:`MCPToolFailed` the traceback is igni's own wrapper and says
+nothing the message does not, so :class:`_OneLine` keeps the warning and
+moves the traceback to this module's logger at DEBUG (``igni --debug``
+writes it to debug.log).
 """
 
 from __future__ import annotations
 
 import functools
+import logging
 from contextvars import ContextVar
 from typing import Any
+
+logger = logging.getLogger(__name__)
 
 #: Set by the wrapper for the length of one call; ``None`` outside one.
 _failures: ContextVar[list[tuple[str, bool]] | None] = ContextVar("mcp_tool_failures", default=None)
@@ -64,11 +75,36 @@ def record_failure(message: str, *, answered: bool) -> None:
         holder.append((message, answered))
 
 
+class _OneLine(logging.Filter):
+    """On Agno's logger: an MCPToolFailed's traceback goes to DEBUG, not stderr."""
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        exc = record.exc_info[1] if record.exc_info else None
+        if not isinstance(exc, MCPToolFailed):
+            return True
+        logger.debug("MCP tool failed: %s", exc, exc_info=record.exc_info)
+        # Agno's warning just before this record already said it in one line.
+        return False
+
+
+_ONE_LINE = _OneLine()
+
+
+def _quiet_agno_tracebacks() -> None:
+    # Agno switches its module-level logger between these three as a run
+    # moves between an agent, a team and a workflow.
+    for name in ("agno", "agno-team", "agno-workflow"):
+        agno = logging.getLogger(name)
+        if _ONE_LINE not in agno.filters:
+            agno.addFilter(_ONE_LINE)
+
+
 def raise_on_failure(mcp_tools: Any) -> None:
     """Wrap each of ``mcp_tools``'s functions so a failure raises.
 
     Idempotent: a function already wrapped is left alone.
     """
+    _quiet_agno_tracebacks()
     for function in (getattr(mcp_tools, "functions", None) or {}).values():
         entrypoint = getattr(function, "entrypoint", None)
         if entrypoint is None or getattr(entrypoint, "_igni_raises_on_failure", False):
