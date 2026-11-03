@@ -27,7 +27,7 @@ from ember_code.core.hooks.tool_events import (
     PostToolUseFailurePayload,
     PostToolUsePayload,
 )
-from ember_code.core.hooks.untrusted import should_wrap, wrap_untrusted
+from ember_code.core.hooks.untrusted import UntrustedOutputHook
 
 logger = logging.getLogger(__name__)
 
@@ -73,9 +73,9 @@ class ToolCallInvoker:
         # data (prompt-injection defense) BEFORE any trusted, igni-generated
         # annotation is appended, so the hook message / rules suffix land OUTSIDE
         # the block. String results from external-content tools only — igni's own
-        # control tools return guidance the model is meant to act on.
-        if isinstance(result, str) and should_wrap(ctx.name):
-            result = wrap_untrusted(result)
+        # control tools return guidance the model is meant to act on. The
+        # same rule every other agent's UntrustedOutputHook applies.
+        result = UntrustedOutputHook.quarantine(ctx.name, result)
         return self._with_hook_message(ctx, result, post.message)
 
     @staticmethod

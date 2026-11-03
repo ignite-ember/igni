@@ -333,6 +333,7 @@ class AgentConstructorArgs(BaseModel):
     reasoning: bool = False
     reasoning_min_steps: int | None = None
     reasoning_max_steps: int | None = None
+    tool_hooks: list[Any] | None = None
 
     def to_agno_kwargs(self) -> dict[str, Any]:
         """Emit the kwargs Agno actually expects.
@@ -356,6 +357,8 @@ class AgentConstructorArgs(BaseModel):
         }
         if self.db is not None:
             kwargs["db"] = self.db
+        if self.tool_hooks:
+            kwargs["tool_hooks"] = self.tool_hooks
         if self.reasoning:
             kwargs["reasoning"] = True
             kwargs["reasoning_min_steps"] = self.reasoning_min_steps
