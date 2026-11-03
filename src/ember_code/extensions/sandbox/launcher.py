@@ -275,6 +275,15 @@ class ExtensionSandbox:
                 ", ".join(plan.withheld),
             )
 
+        if plan.plain_http_service:
+            logger.warning(
+                "extension %s: its service %s is plain http, so its process may not reach "
+                "it. Serve the service over https, or, developing on this machine, start "
+                "igni with IGNI_DEV_EXTENSIONS=1.",
+                manifest.id,
+                plan.plain_http_service,
+            )
+
         proxy = EgressProxy(
             manifest.id, plan.hosts, connect=self._connect, token=secrets.token_urlsafe(24)
         )

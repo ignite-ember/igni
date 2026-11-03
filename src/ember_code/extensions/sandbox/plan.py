@@ -67,6 +67,10 @@ class SandboxPlan:
     hosts: HostAllowList = field(default_factory=HostAllowList)
     #: Hosts the manifest grants that an air gap took away, for the log.
     withheld: list[str] = field(default_factory=list)
+    #: Its service, when it is plain http outside development and so not
+    #: granted: said once at start-up, since the proxy's refusal cannot
+    #: tell "not its service" from "its service, over http".
+    plain_http_service: str | None = None
     #: igni's own loopback ports the process is told about.
     loopback_ports: list[int] = field(default_factory=list)
     #: igni's own loopback ports it was not granted (macOS denies them;
@@ -209,6 +213,8 @@ class SandboxPlan:
                 default = 443 if parts.scheme == "https" else 80
                 bracketed = f"[{host}]" if ":" in host else host
                 entries.append(f"{bracketed}:{port or default}")
+            elif host and parts.scheme == "http":
+                self.plain_http_service = service_url.strip()
         entries += list(manifest.permissions.egress)
         for entry in entries:
             pair = HostAllowList.parse(entry)

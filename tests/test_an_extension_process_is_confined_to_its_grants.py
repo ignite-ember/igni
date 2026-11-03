@@ -269,6 +269,20 @@ def test_its_own_service_and_its_egress_are_what_it_may_reach(tmp_path):
     ]
 
 
+def test_a_plain_http_service_outside_development_is_named_with_the_fix(tmp_path):
+    """The tutorial's service is http://tickets.localhost:8201. Outside
+    development the process may not reach it, and the proxy's refusal said
+    it was "not its service" — it is; it is plain http. The plan names it,
+    so the launcher can say what to do."""
+    m = manifest()
+    plan = plan_for(tmp_path, m, service_url="http://tickets.localhost:8201")
+    assert plan.hosts.entries == []
+    assert plan.plain_http_service == "http://tickets.localhost:8201"
+    dev = plan_for(tmp_path, m, service_url="http://tickets.localhost:8201", development=True)
+    assert dev.hosts.entries == ["tickets.localhost:8201"]
+    assert dev.plain_http_service is None
+
+
 def test_an_air_gap_narrows_the_list_to_hosts_inside_the_network(tmp_path):
     m = manifest(egress=["git.acme.internal", "api.github.com"])
     air_gapped = NetworkPolicy(air_gapped=True, internal_hosts=["*.acme.internal"])
