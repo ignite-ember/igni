@@ -140,6 +140,16 @@ leave; every other event is told. There is no separate interception
 layer, and the model's writes are not hook events — an extension that
 disagrees with one reacts to it. A process answers hooks; a page cannot.
 
+A tool event's `tool_name` is igni's registered name for the tool
+(`mcp_ext:acme.tickets_lookup_ticket` for an extension's, `read_file`
+for a built-in), the one `matcher`s and permission rules use; an
+extension is also given `tool_manifest_name`, the `<id>.<tool>` form of
+its manifest (`acme.tickets.lookup_ticket`, empty for a tool that is no
+extension's). The model is sent neither: providers accept only
+`[a-zA-Z0-9_-]`, so igni sends `mcp_ext_acme_tickets_lookup_ticket` and
+maps the call back. A tool that fails reaches the model as its error,
+marked failed, and is `PostToolUseFailure`, not `PostToolUse`.
+
 Being told when something happens is the host object model's signals
 (below): an extension subscribes with `@ext.on(ext.host.<object>.<signal>)`
 from its process or `bridge.on(bridge.host.<object>.<signal>, fn)` from
@@ -593,7 +603,7 @@ so the admin decides where). A new version whose `vm` differs is
 pending again, and VMs keep the approved profile until then. Every value
 is still held to the platform's caps; a field left out takes the
 deployment's Standard value. The service that ships the extension reads
-what became of it with `igni.host(org_id).vm_profile()` (igni-service).
+what became of it with `igni.host(org_id).extension_vm_profile()` (igni-service).
 
 It only matters in igni's cloud: a desktop install ignores it. Air-gapped,
 everything comes from inside the network — packages from the
@@ -830,7 +840,7 @@ Install, registration, upgrade, permission grant, tool invocation and bridge cal
 
 | If this fails | Then | Never |
 |---|---|---|
-| sidecar / endpoint down | `FAILED` + reason + fix; agent told it is unavailable | session crash, agent hang |
+| sidecar / endpoint down, or a process that exits at start-up | `FAILED` + reason (with its last stderr lines) + fix; agent told it is unavailable | session crash, agent hang |
 | call times out | deadline fires, cancelled, degraded once per session | silent retry storm |
 | UI throws | the frame survives; `ErrorBoundary` keeps the rest of the extension up | blank page, broken shell |
 | manifest / entry invalid | refused at install, every error named at once | partial load |
@@ -887,7 +897,7 @@ These three are a promise. **Everything else about igni's appearance is not**, a
 - **An install outlives the process that made it**, which is why the CLI writes to a store rather than talking to a running backend: a CLI that needed one could install nothing before it started, and nothing would survive it stopping.
 - **Dev mode** is `IGNI_DEV_EXTENSIONS=1`, the only thing that lets a bundle igni server did not distribute install or start, whatever trust it claims. An environment variable and not a setting a bundle can reach, because the easiest way to ship must not be the one with no provenance. The persistent banner and hot reload do not exist yet.
 - **Shipping it** is the service's job: package it as `python` with its wheelhouse and have the service upload the signed bundle at start-up (§8 of igni server's `service-identity.md`). A super admin approves the service, and an org admin switches the extension on for each group that should have it.
-- **What `igni ext doctor` checks**: the manifest against the schema (naming the field and the fix), the contract range, the packaging (a wheelhouse or something to build one from, a `ui/` for pages, a dev command that exists), grants that cannot be delivered or are wider than they look (`permissions.rpc` of `*` or outside `ext.<id>.`, tool names without the `<id>.` prefix), and then it **starts the process and does the MCP round-trip** with a timeout, reporting what the server answered and any tool it registers that `permissions.tools` does not declare. It does not check collisions with other installed extensions or scan for phoning home. <!-- TODO-F1: confirm against what doctor prints -->
+- **What `igni ext doctor` checks**: the manifest against the schema (naming the field and the fix), the contract range, the packaging (a wheelhouse or something to build one from, a `ui/` for pages, a dev command that exists), grants that cannot be delivered or are wider than they look (`permissions.rpc` of `*` or outside `ext.<id>.`, tool names without the `<id>.` prefix), and then it **starts the process and does the MCP round-trip** with a timeout, printing each tool's names (code, manifest, page, registry, model), any tool it registers that `permissions.tools` does not declare, and the last lines of its stderr if it dies. `--no-start` skips the round-trip. It does not check collisions with other installed extensions or scan for phoning home.
 - **Errors carry fixes**, because the reader is often a partner's L2 engineer with no internet.
 - **Observability**: logs in the Watcher panel, state in the subsystem view, versions in the diagnostic bundle.
 

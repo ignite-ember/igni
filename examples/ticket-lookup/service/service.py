@@ -3,7 +3,7 @@
 Registers with igni server, ships the extension bundle, answers erasure and
 export, and reports what became of the extension's VM profile request.
 
-    uvicorn --factory service:create_app --port 18201
+    uvicorn --factory service:create_app --app-dir service --port 8201
 """
 
 from fastapi import Depends, FastAPI
@@ -37,7 +37,7 @@ def create_app(igni: IgniService | None = None) -> FastAPI:
     @app.get("/v1/vm-profile")
     async def vm_profile(person: Person = Depends(igni.org_admin)) -> dict:
         """What became of the extension's `vm` request in the caller's organisation."""
-        status = await igni.host(person.org_id).vm_profile()
+        status = await igni.host(person.org_id).extension_vm_profile()
         return status.model_dump(mode="json")
 
     return app

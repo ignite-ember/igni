@@ -16,8 +16,10 @@ checkout, as every command until *1. Write the extension* is):
 cp -R examples/ticket-lookup ~/ticket-lookup
 ```
 
-> **Shortcut.** `igni ext init --service ~/ticket-lookup` writes the same
-> layout with your own id. <!-- TODO-F1: confirm flag name and what it writes -->
+> **Shortcut.** `igni ext init --service --id acme.tickets ~/ticket-lookup`
+> writes the same pieces with your own id — `extension/`, `service/`,
+> `tests/`, and a `pyproject.toml` for one dev environment — and its README
+> says what to run. This page follows the copy.
 
 How the pieces fit — [EXTENSIBILITY.md](EXTENSIBILITY.md) is the
 contract, and the two SDK READMEs are the reference:
@@ -317,18 +319,45 @@ Check it:
 igni ext doctor extension
 ```
 
-`doctor` validates the manifest, starts the extension and lists its tools
-over MCP, and says what is wrong, with the fix.
-<!-- TODO-F1: paste doctor's real output here -->
+Until the SDK is on PyPI, `doctor` builds the extension from source with
+pip, so point it at your wheels:
 
-### One tool, four names
+```bash
+PIP_FIND_LINKS=~/igni-wheels igni ext doctor extension
+```
+
+`doctor` validates the manifest, starts the extension, asks it for its
+tools over MCP (with a timeout), and says what is wrong, with the fix. The
+end of what it prints:
+
+```
+  process    started it and asked for its tools: 2
+
+  each tool's names (the server's own, then where each is used):
+    lookup_ticket          manifest acme.tickets.lookup_ticket
+                           page     ext.acme.tickets.lookup_ticket
+                           registry mcp_ext:acme.tickets_lookup_ticket
+                           model    mcp_ext_acme_tickets_lookup_ticket
+    ticket_from_service    manifest acme.tickets.ticket_from_service
+                           page     ext.acme.tickets.ticket_from_service (not granted in permissions.rpc)
+                           registry mcp_ext:acme.tickets_ticket_from_service
+                           model    mcp_ext_acme_tickets_ticket_from_service
+
+  no problems found
+```
+
+The page may call only `lookup_ticket`, because `permissions.rpc` grants
+only that; the agent may call both.
+
+### One tool, five names
 
 | Where | Name | Who uses it |
 |---|---|---|
 | Your code | `lookup_ticket` | the function; `HostHarness.call("lookup_ticket", …)` in tests |
 | `permissions.tools` | `acme.tickets.lookup_ticket` | the manifest: `<id>.<tool>` |
 | `permissions.rpc`, the page | `ext.acme.tickets.lookup_ticket` | `call(…)` from the page |
-| The agent, hooks, permission rules | `mcp_ext:acme.tickets_lookup_ticket` | <!-- TODO-F2: the registered name, what hooks' tool_name is, and the name the model is sent per provider --> |
+| igni: hooks' `tool_name`, permission rules, transcripts | `mcp_ext:acme.tickets_lookup_ticket` | the registered name; an extension's hook also gets `tool_manifest_name` = `acme.tickets.lookup_ticket` |
+| The model | `mcp_ext_acme_tickets_lookup_ticket` | what every provider (OpenAI-compatible, Anthropic, Gemini, a local model) is sent, since they accept only `[a-zA-Z0-9_-]`; igni maps the call back |
 
 ## 2. Bundle it
 
@@ -353,7 +382,7 @@ the tests can hand it a fake.
 Registers with igni server, ships the extension bundle, answers erasure and
 export, and reports what became of the extension's VM profile request.
 
-    uvicorn --factory service:create_app --port 18201
+    uvicorn --factory service:create_app --app-dir service --port 8201
 """
 
 from fastapi import Depends, FastAPI
@@ -387,7 +416,7 @@ def create_app(igni: IgniService | None = None) -> FastAPI:
     @app.get("/v1/vm-profile")
     async def vm_profile(person: Person = Depends(igni.org_admin)) -> dict:
         """What became of the extension's `vm` request in the caller's organisation."""
-        status = await igni.host(person.org_id).vm_profile()
+        status = await igni.host(person.org_id).extension_vm_profile()
         return status.model_dump(mode="json")
 
     return app
@@ -411,7 +440,23 @@ uvicorn --factory service:create_app --app-dir service --port 8201
 ```
 
 It prints its identity — client id, state and the key's thumbprint — and
-what to do next. <!-- TODO-F3: paste the new state-specific banner -->
+the next step for that state:
+
+```
+  ============================================================
+  igni service identity
+    client id:   09075090-00ee-446b-bc17-67ddb2b30023
+    state:       pending
+    URL:         http://tickets.localhost:8201
+    thumbprint:  mYhl4fFoNkMKUZLRePT1ppX00Eq7Q12RGPPak-4_OAo
+  A super admin approves this service in igni's portal under
+  Services, after checking the thumbprint there is this one.
+  ============================================================
+```
+
+Restart it once approved and the last lines say an org admin switches it
+on for a group. A new version that asks for more than the approved one is
+**held**, and the service logs a warning saying so.
 
 ## 4. A super admin approves the service
 
@@ -437,19 +482,32 @@ api_url: http://localhost:7777
 portal_url: http://localhost:5173
 ```
 
-Sign in — `/login` inside an `igni` session opens the portal in your
-browser — and install what igni server gives you:
-<!-- TODO-F1: non-interactive `igni login`, if added -->
+Sign in, and install what igni server gives you:
 
 ```bash
+igni login        # opens the portal's sign-in page; it prints the address too
 igni ext sync
 igni ext list
 ```
 
-`igni ext list` shows `acme.tickets  0.2.0  from http://tickets.localhost:8201`.
-igni also syncs at start-up (`igni`, `igni -m`, `igni -p`) and on
-sign-in, so after the first time you do not need `ext sync`; under
-`air_gapped` it reaches only your igni server. <!-- TODO-F1: confirm output and behaviour -->
+(A script that already holds an access token signs in with
+`printf %s "$TOKEN" | igni login --token-stdin`.)
+
+`igni ext sync` prints what it did:
+
+```
+synced with http://localhost:7777
+  installed  acme.tickets 0.2.0 from http://tickets.localhost:8201
+```
+
+and `igni ext list` shows `acme.tickets  0.2.0  from http://tickets.localhost:8201`.
+If it says *nothing is switched on for you*, step 4 or 5 is not done yet.
+
+You need `ext sync` only the first time: every `igni -m` / `igni -p` run
+syncs before it starts (best-effort, 30 seconds at most, carrying on
+without it when igni server cannot be reached), and so does the igni app
+when it starts and when you sign in. Under `air_gapped` it reaches only
+your igni server.
 
 ## 7. Use it
 
@@ -482,7 +540,8 @@ and apps that use the extension. A desktop install ignores `vm`.
 
 The service reads what became of it — `GET /v1/vm-profile` in
 `service.py`, as an org admin, which calls
-`igni.host(org_id).vm_profile()`. <!-- TODO-F3: the new alias name (C15) -->
+`igni.host(org_id).extension_vm_profile()`: the request, and the
+profile approved from it, if any.
 
 ## 9. Export and erasure
 

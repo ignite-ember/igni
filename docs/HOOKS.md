@@ -281,7 +281,16 @@ Every hook receives a JSON object on stdin with common fields plus event-specifi
 `tool_name` carries the **internal tool function name** — the same value
 a `matcher` is tested against, never the friendly catalog name. A payload
 can contain `edit_file` or `run_shell_command`; it can never contain
-`Edit` or `Bash`.
+`Edit` or `Bash`. An extension's tool is matched by its registered name,
+`mcp_ext:<extension id>_<tool>` (`mcp_ext:acme.tickets_lookup_ticket`).
+That is not the name the model is sent: providers accept only
+`[a-zA-Z0-9_-]`, so igni renames it at the provider boundary
+(`mcp_ext_acme_tickets_lookup_ticket`) and maps the call back before
+anything here sees it. An *extension's* hook (EXTENSIBILITY.md) is also
+given `tool_manifest_name`, the `<id>.<tool>` form its manifest uses.
+
+A tool that fails reaches the model as its error, marked failed, and is
+reported as `PostToolUseFailure`, not `PostToolUse`.
 
 Two more things the wire shape guarantees:
 
