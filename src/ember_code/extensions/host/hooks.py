@@ -191,7 +191,7 @@ class ExtensionHooks:
         """An event that decides nothing: sent to each extension that hooks it, never awaited."""
         frame = HookMessage(
             event=event,
-            value=to_jsonable_python(payload, fallback=str),
+            value=to_jsonable_python(self._with_manifest_name(payload), fallback=str),
             principal=self._principal_wire(),
         )
         text = frame.model_dump_json()
@@ -213,6 +213,27 @@ class ExtensionHooks:
             self._faults.answered(extension_id)
         else:
             self._faults.failed(extension_id, f"its tool {tool_name}: {detail or 'no answer'}")
+
+    def manifest_tool_name(self, tool_name: str) -> str:
+        """An extension's tool as its manifest names it, or ``""``.
+
+        ``mcp_ext:acme.tickets_lookup_ticket`` → ``acme.tickets.lookup_ticket``:
+        the form ``permissions.tools`` declares. A tool event's ``tool_name``
+        stays the registered name — what igni's own hooks, permission rules
+        and transcripts use, so a matcher keeps matching — and carries this
+        beside it as ``tool_manifest_name``.
+        """
+        extension_id = self._owner(tool_name)
+        if extension_id is None:
+            return ""
+        prefix = f"{tool_name_prefix(server_name(extension_id))}_"
+        return f"{extension_id}.{tool_name[len(prefix) :]}"
+
+    def _with_manifest_name(self, value: dict[str, Any]) -> dict[str, Any]:
+        tool_name = value.get("tool_name")
+        if not isinstance(tool_name, str):
+            return value
+        return {**value, "tool_manifest_name": self.manifest_tool_name(tool_name)}
 
     def _owner(self, tool_name: str) -> str | None:
         """The extension a registered tool name is from: ``mcp_ext:<id>_<tool>``."""
@@ -244,7 +265,9 @@ class ExtensionHooks:
                     reason=self._faults.not_responding(extension_id),
                 )
             try:
-                answer = await self._ask(extension_id, spec.event, current)
+                answer = await self._ask(
+                    extension_id, spec.event, self._with_manifest_name(current)
+                )
                 current_or_reason = self._apply(spec, extension_id, current, answer)
                 self._faults.answered(extension_id)
             except HookFailure as exc:
@@ -364,22 +387,29 @@ class ExtensionHooks:
             raise HookFailure(f"it changed {spec.event.value}, which has nothing to change")
         if not isinstance(answer.value, dict):
             raise HookFailure("its change is not the event's value")
+        # Told, not part of the value: an answer echoing it changes nothing.
+        proposed = {k: v for k, v in answer.value.items() if k not in _INFORMATIONAL}
         stray = sorted(
             key
-            for key, new in answer.value.items()
+            for key, new in proposed.items()
             if key not in spec.modify and current.get(key) != new
         )
         if stray:
             raise HookFailure(f"it changed {', '.join(stray)}, which cannot be changed")
         changed = dict(current)
         for key in spec.modify:
-            if key in answer.value:
-                changed[key] = answer.value[key]
+            if key in proposed:
+                changed[key] = proposed[key]
         try:
             checked: BaseModel = spec.value.model_validate(changed)
         except ValidationError as exc:
             raise HookFailure(f"its change does not fit {spec.event.value}: {exc}") from exc
         return checked.model_dump(mode="json")
+
+
+#: Fields the host adds to what an extension is handed, which are not the
+#: event's to change: ``tool_manifest_name`` (:meth:`ExtensionHooks.manifest_tool_name`).
+_INFORMATIONAL = frozenset({"tool_manifest_name"})
 
 
 __all__ = ["ExtensionHooks", "HookFailure"]

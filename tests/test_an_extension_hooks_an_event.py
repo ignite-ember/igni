@@ -619,7 +619,8 @@ async def test_a_process_answers_a_hook_over_its_socket(rig: HostRig) -> None:
         asking = asyncio.create_task(ExtensionHooks.shared().ask(PRE, CALL))
         frame = json.loads(await socket.recv())
         assert frame["op"] == "hook" and frame["event"] == "PreToolUse"
-        assert frame["value"] == CALL
+        # The host adds the manifest name; "" for a tool that is no extension's.
+        assert frame["value"] == {**CALL, "tool_manifest_name": ""}
         await socket.send(
             json.dumps(
                 {
@@ -651,3 +652,63 @@ async def test_a_process_that_goes_away_has_failed_what_it_owed(rig: HostRig) ->
     verdict = await asking
 
     assert not verdict.allowed and "went away" in verdict.reason
+
+
+# ── Which name a tool event carries ───────────────────────────────
+
+
+async def test_an_extension_tool_s_event_carries_its_manifest_name_too(
+    registry: ExtensionRegistry, hooks: ExtensionHooks
+) -> None:
+    """``tool_name`` is the registered name, as igni's own hooks and rules see it;
+    ``tool_manifest_name`` is the name the manifest's ``permissions.tools`` uses."""
+    install(registry, "acme.tickets", "PreToolUse")
+    install(registry, "acme.tickets.extra", "PreToolUse")
+    hooker = StandIn(hooks, "acme.tickets", allow)
+    StandIn(hooks, "acme.tickets.extra", allow)
+
+    for registered, manifest_name in [
+        ("mcp_ext:acme.tickets_lookup_ticket", "acme.tickets.lookup_ticket"),
+        ("mcp_ext:acme.tickets.extra_find", "acme.tickets.extra.find"),
+        ("run_shell_command", ""),
+    ]:
+        call = {**CALL, "tool_name": registered}
+        verdict = await hooks.ask(PRE, call)
+        assert verdict.allowed
+        asked = hooker.asked[-1][1]
+        assert asked["tool_name"] == registered
+        assert asked["tool_manifest_name"] == manifest_name
+
+
+async def test_a_told_tool_event_carries_the_manifest_name_too(
+    registry: ExtensionRegistry, hooks: ExtensionHooks
+) -> None:
+    install(registry, "acme.tickets", "PostToolUseFailure")
+    told = StandIn(hooks, "acme.tickets", lambda _: None)
+
+    hooks.tell(
+        "PostToolUseFailure",
+        {"session_id": "s-1", "tool_name": "mcp_ext:acme.tickets_lookup_ticket", "error": "x"},
+    )
+
+    assert told.told[0][1]["tool_manifest_name"] == "acme.tickets.lookup_ticket"
+
+
+async def test_a_change_that_echoes_the_manifest_name_is_still_a_change(
+    registry: ExtensionRegistry, hooks: ExtensionHooks
+) -> None:
+    """The SDK hands the value back whole; the field it was told is not a stray change."""
+    install(registry, "acme.tickets", "PreToolUse")
+    StandIn(
+        hooks,
+        "acme.tickets",
+        lambda value: {
+            "outcome": "modify",
+            "value": {**value, "tool_args": {"command": "ls -l"}},
+        },
+    )
+
+    verdict = await hooks.ask(PRE, {**CALL, "tool_name": "mcp_ext:acme.tickets_lookup_ticket"})
+
+    assert verdict.allowed, verdict.reason
+    assert verdict.value["tool_args"] == {"command": "ls -l"}
