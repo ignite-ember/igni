@@ -93,6 +93,12 @@ class VmProfileRequest(BaseModel):
     volume_max_gib: int | None = Field(default=None, ge=1)
     #: Days unwoken after which the app's VM is erased; `None` is never.
     erase_after_idle_days: int | None = Field(default=None, ge=1, le=3650)
+    #: Whether the VM may reach the internet. Left out (or False): internal
+    #: only — igni and the deployment's own allowed addresses. True asks the
+    #: org admin for internet egress, a security grant they see as such;
+    #: a node that is air-gapped, or not allowed to grant internet, still
+    #: starts the VM internal-only.
+    internet: bool | None = None
 
     def body(self) -> dict[str, object]:
         """The JSON igni is sent: only what was set."""
@@ -112,6 +118,8 @@ class RequestedVmProfile(BaseModel):
     volume_gib: int
     volume_max_gib: int
     erase_after_idle_days: int | None = None
+    #: Internet egress asked for; False is internal only.
+    internet: bool = False
 
 
 class RequestSubject(BaseModel):
@@ -186,6 +194,9 @@ class EffectiveVmProfile(BaseModel):
     setup_script: str | None = None
     volume_max_gib: int
     erase_after_idle_days: int | None = None
+    #: Whether the VM may reach the internet (where its node may grant it);
+    #: False, and absent from an older igni server: internal only.
+    internet: bool = False
 
 
 class AppVmProfile(EffectiveVmProfile):

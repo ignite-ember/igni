@@ -48,6 +48,7 @@ STANDARD: dict[str, Any] = {
     "volume_gib": 10,
     "volume_max_gib": 50,
     "erase_after_idle_days": None,
+    "internet": False,
 }
 
 #: The manifest's spelling of each field (camelCase, as the rest of it).
@@ -62,6 +63,7 @@ MANIFEST_FIELDS: dict[str, str] = {
     "volumeGib": "volume_gib",
     "volumeMaxGib": "volume_max_gib",
     "eraseAfterIdleDays": "erase_after_idle_days",
+    "internet": "internet",
 }
 
 
@@ -321,6 +323,7 @@ class FakeVmProfiles:
             setup_script=s.setup_script,
             volume_max_gib=min(s.volume_max_gib, caps.max_volume_gib),
             erase_after_idle_days=s.erase_after_idle_days,
+            internet=s.internet,
         )
 
 

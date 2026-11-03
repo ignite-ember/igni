@@ -560,6 +560,10 @@ class VmRequest(Strict):
     erase_after_idle_days: int | None = Field(
         default=None, alias="eraseAfterIdleDays", ge=1, le=3650
     )
+    #: Internet egress for the VM. False (the default) is internal only;
+    #: True asks the org admin for a security grant, and a node that is
+    #: air-gapped, or may not grant internet, still runs the VM internal-only.
+    internet: bool = False
 
 
 class ExtensionManifest(Strict):

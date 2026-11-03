@@ -223,3 +223,70 @@ class TestAServiceReadsItsExtensionsRequest:
         answer = await igni.host(ORG).vm_profile()
 
         assert answer.extension_id is None and answer.request is None
+
+
+class TestInternetIsAskedForAndInternalByDefault:
+    """C12: a VM reaches the internet only when its profile says so — a grant an org admin approves."""
+
+    def test_left_out_it_is_not_sent_and_set_it_is(self) -> None:
+        assert "internet" not in BROWSER.body()
+        assert VmProfileRequest(internet=True).body() == {"internet": True}
+        assert VmProfileRequest(internet=False).body() == {"internet": False}
+
+    def test_a_profile_from_an_older_igni_server_is_internal_only(self) -> None:
+        from igni_service.vm_profiles import EffectiveVmProfile, RequestedVmProfile
+
+        older = {"profile_id": "p", "profile_name": "Standard", "memory_mib": 4096}
+        older |= {"normal_memory_mib": 1024, "vcpus": 1, "volume_max_gib": 50}
+        assert EffectiveVmProfile.model_validate(older).internet is False
+        requested = RequestedVmProfile.model_validate(
+            {"memory_mib": 4096, "normal_memory_mib": 1024, "vcpus": 1}
+            | {"volume_gib": 10, "volume_max_gib": 50}
+        )
+        assert requested.internet is False
+
+    async def test_an_app_asking_for_internet_gets_it_only_once_approved(
+        self, app: IgniApp, fake: FakeIgni
+    ) -> None:
+        record = await app.request_vm_profile(VmProfileRequest(internet=True))
+
+        assert record.is_pending and record.requested.internet is True
+        [put] = fake.requests_to(IgniPaths.app_vm_profile_request(app.app_id))
+        assert put.json_body() == {"internet": True}
+        assert (await app.vm_profile()).internet is False
+
+        fake.approve_vm_profile(ORG, app=app.app_id)
+        assert (await app.vm_profile()).internet is True
+
+    async def test_asking_for_internet_after_an_approval_is_pending_again(
+        self, app: IgniApp, fake: FakeIgni
+    ) -> None:
+        await app.request_vm_profile(BROWSER)
+        fake.approve_vm_profile(ORG, app=app.app_id)
+
+        again = await app.request_vm_profile(BROWSER.model_copy(update={"internet": True}))
+
+        assert again.is_pending
+        assert (await app.vm_profile()).internet is False
+
+    async def test_an_extension_s_manifest_asks_for_internet(
+        self, fake: FakeIgni, tmp_path: Path
+    ) -> None:
+        igni = await shipped(fake, write_bundle(tmp_path, {**MANIFEST_VM, "internet": True}))
+
+        here = await igni.host(ORG).vm_profile()
+        assert here.request is not None and here.request.requested.internet is True
+        fake.approve_vm_profile(ORG, extension="acme.browser")
+        here = await igni.host(ORG).vm_profile()
+        assert here.profile is not None and here.profile.internet is True
+
+    async def test_a_manifest_that_says_nothing_is_internal_only(
+        self, fake: FakeIgni, tmp_path: Path
+    ) -> None:
+        igni = await shipped(fake, write_bundle(tmp_path, MANIFEST_VM))
+
+        here = await igni.host(ORG).vm_profile()
+        assert here.request is not None and here.request.requested.internet is False
+        fake.approve_vm_profile(ORG, extension="acme.browser")
+        here = await igni.host(ORG).vm_profile()
+        assert here.profile is not None and here.profile.internet is False

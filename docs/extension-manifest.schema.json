@@ -622,6 +622,11 @@
           "minimum": 1,
           "description": "An app's VM not woken for this many days is erased; null is never.",
           "maximum": 3650
+        },
+        "internet": {
+          "type": "boolean",
+          "default": false,
+          "description": "Whether the VM may reach the internet. False (the default): internal only — igni and the deployment's own allowed addresses. True asks for internet egress, which the org admin approves as a security grant; an air-gapped node, or one not allowed to grant internet, still runs the VM internal-only."
         }
       },
       "examples": [

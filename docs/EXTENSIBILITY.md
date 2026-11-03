@@ -578,7 +578,8 @@ browser, a native library, more memory — says so in its manifest:
   "packages": { "apt": ["fonts-liberation", "libnss3", "…"], "npm": ["@playwright/mcp@0.0.84"] },
   "setupScript": "#!/bin/sh\nset -eu\n…",   // runs as root when the profile's layer is built
   "memoryMib": 4096, "normalMemoryMib": 2048, "vcpus": 2
-  // also expectedMemoryMib, idleBeforePauseS, volumeGib, volumeMaxGib, eraseAfterIdleDays
+  // also expectedMemoryMib, idleBeforePauseS, volumeGib, volumeMaxGib, eraseAfterIdleDays,
+  // and internet: true to ask for internet egress (internal only by default)
 }
 ```
 
