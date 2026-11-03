@@ -274,8 +274,8 @@ permissions:
   file_read: "allow"             # no effect: igni has no read tool (SECURITY.md)
   shell_execute: "ask"
   shell_restricted: "allow"       # no effect: reads ask in default mode (SECURITY.md)
-  web_search: "allow"
-  web_fetch: "allow"
+  web_search: "ask"               # a request out of the network: asked each time
+  web_fetch: "ask"
   git_push: "ask"
   git_destructive: "ask"          # force-push, reset --hard, etc.
 
@@ -707,7 +707,7 @@ What it turns off:
 | `igni ext install <url>` | Clones any git URL | Hosts inside the network only; others are refused before git runs |
 | MCP servers reached by URL | Connected | Hosts inside the network only; others are refused as a failed connection |
 | HTTP hooks | Sent | Hosts inside the network only; others are not sent and count as a failed hook |
-| WebFetch, WebSearch (DuckDuckGo) | Allowed | Denied; neither toolkit is built |
+| WebFetch, WebSearch (DuckDuckGo) | Asks before each request (`allow` to skip asking) | Denied; neither toolkit is built |
 | Agno's run telemetry (`os-api.agno.com`) | Off; an explicit `AGNO_TELEMETRY=true` is honoured | Off; an explicit `AGNO_TELEMETRY=true` is overruled with a warning |
 | OpenTelemetry export (`telemetry.otlp`) | None unless an administrator names a collector | Only to a collector inside the network; another is refused with a warning |
 

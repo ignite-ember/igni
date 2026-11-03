@@ -51,8 +51,12 @@ class PermissionsConfig(BaseModel):
     file_write: str = "ask"
     shell_execute: str = "ask"
     shell_restricted: str = "allow"
-    web_search: str = "allow"
-    web_fetch: str = "allow"
+    # The web asks by default: a search or fetch the model decides on is
+    # a request out of the customer's network, and none leaves without a
+    # person's yes unless the config says ``allow``. ``air_gapped`` denies
+    # both and builds neither toolkit.
+    web_search: str = "ask"
+    web_fetch: str = "ask"
     git_push: str = "ask"
     git_destructive: str = "ask"
     # Claude Code-style permission system (mirrors
@@ -178,12 +182,12 @@ class PermissionsConfig(BaseModel):
 
         **Only categories someone actually set are emitted.** The schema
         defaults are left inert on purpose, and the reason is not caution for
-        its own sake: ``web_search`` and ``web_fetch`` default to ``"allow"``,
-        so emitting defaults would hand the model an explicit allow rule for the
-        web under ``--strict`` — loosening a safety flag as a side effect of
-        making config work. ``file_write`` and ``shell_execute`` default to
-        ``"ask"``, which is already what an unmatched tool does, so emitting
-        those would only add ``PERMISSION_REQUEST`` hook traffic.
+        its own sake: ``web_search`` and ``web_fetch`` defaulted to ``"allow"``
+        then, so emitting defaults would have handed the model an explicit allow
+        rule for the web under ``--strict`` — loosening a safety flag as a side
+        effect of making config work. Every category's default is ``"ask"`` or
+        unread now, which is already what an unmatched tool does, so emitting
+        them would only add ``PERMISSION_REQUEST`` hook traffic.
 
         ``safety.require_confirmation`` rides along in the ask bucket — see
         :meth:`_confirmation_ask_rules` for why it is here and what it does not

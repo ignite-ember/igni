@@ -41,8 +41,8 @@ permissions:
   file_write: "ask"
   shell_execute: "ask"
   shell_restricted: "allow"       # no effect (see below)
-  web_search: "deny"
-  web_fetch: "deny"
+  web_search: "ask"               # a request out of your network: asked each time
+  web_fetch: "ask"
   git_push: "ask"
   git_destructive: "ask"          # force-push, reset --hard, etc.
 ```
@@ -449,6 +449,31 @@ Control which MCP servers are allowed or required:
   }
 }
 ```
+
+### Outbound connections by default
+
+What an install nobody has configured contacts on its own, and why each one
+is on or off. "On request" means only when the person asks for it; `air_gapped:
+true` turns every one of these off ([CONFIGURATION.md](CONFIGURATION.md),
+"Air-gapped mode").
+
+| Connection | Default | Why |
+|---|---|---|
+| The model endpoints and igni server you configure | On | The product: nothing is configured, so nothing is contacted until you name one |
+| Update check (`pypi.org`) | On, daily | How a fix reaches you: the Cyber Resilience Act asks for security updates to be on by default with an opt-out. `update_check_ttl: 0` turns it off |
+| Desktop updater (`github.com/ignite-ember/igni/releases`, or `update_endpoint`) | On (desktop app) | The same reason; it checks with `update_check_ttl` (0 turns it off) and installs only a signed release, when you press Install |
+| Desktop first launch (uv, CPython, `ignite-ember`, the decision model) | Once, at install | Installing the app; a pre-provisioned `runtime_python` skips it |
+| Decision model (Laya, from Hugging Face) | On first use | Used by Bypass mode's guard and by extensions that ask; loaded from the local cache when it is there |
+| Web search (DuckDuckGo) and URL fetch | **Asks each time** | A request the model decides on, out of your network: it waits for your yes. `permissions.web_search` / `web_fetch: allow` lets them run unasked; `deny` removes them |
+| Anthropic's plugin marketplace (github.com) | **Off** | `plugins.default_marketplace: true`, or `/plugin marketplace add`, on request |
+| Plugin, extension and MCP installs and updates | On request | Only what you install, from where you name |
+| Agno's run telemetry | Off | Never on unless `AGNO_TELEMETRY=true` is set, and overruled when air-gapped |
+| OpenTelemetry export | Off | Only to a collector an administrator names |
+
+Nothing goes to Ignite Ember: there is no vendor-operated service in the path.
+`tests/test_nothing_phones_home.py` holds the list of hosts the code may name
+and fails the build on a new one; `tests/test_an_air_gapped_install_makes_no_outbound_call.py`
+proves each row's air-gapped behaviour.
 
 ### Network Restrictions
 

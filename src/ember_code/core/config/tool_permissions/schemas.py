@@ -317,8 +317,10 @@ class ToolPermissionDefaults(BaseModel):
             "Edit": "ask",
             "Bash": "ask",
             "BashOutput": "ask",
-            "WebSearch": "allow",
-            "WebFetch": "allow",
+            # Asked, not allowed: a request out of the network needs a
+            # person's yes by default (``permissions.web_*: allow`` opts out).
+            "WebSearch": "ask",
+            "WebFetch": "ask",
             "NotebookEdit": "ask",
         }
     )

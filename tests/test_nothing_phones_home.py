@@ -342,3 +342,23 @@ def test_the_default_marketplace_is_registered_only_on_request(tmp_path):
     assert PluginSourcePolicy.from_settings(opted_in).marketplaces_to_register() == [official]
     opted_in.air_gapped = True
     assert PluginSourcePolicy.from_settings(opted_in).marketplaces_to_register() == []
+
+
+def test_the_web_asks_before_it_leaves_the_network(tmp_path):
+    """WebSearch (DuckDuckGo) and WebFetch went out the moment the model
+    called them: both defaulted to "allow". A request out of the customer's
+    network now needs a person's yes unless the config says otherwise."""
+    from ember_code.core.config.schemas.permissions import PermissionsConfig
+    from ember_code.core.config.settings import Settings
+    from ember_code.core.config.tool_permissions import ToolPermissions
+
+    defaults = Settings().permissions
+    assert (defaults.web_search, defaults.web_fetch) == ("ask", "ask")
+    asked = ToolPermissions(project_dir=tmp_path, settings_permissions=defaults)
+    assert asked.needs_confirmation("WebSearch")
+    assert asked.needs_confirmation("WebFetch")
+
+    opted_in = PermissionsConfig(web_search="allow", web_fetch="allow")
+    allowed = ToolPermissions(project_dir=tmp_path, settings_permissions=opted_in)
+    assert not allowed.needs_confirmation("WebSearch")
+    assert not allowed.needs_confirmation("WebFetch")

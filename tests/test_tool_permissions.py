@@ -134,10 +134,10 @@ class TestToolPermissions:
         # default level for a tool nothing can call is a rule about
         # nothing — so it now falls through to the "ask" fallback,
         # pinned below.
-        assert perms.get_level("WebFetch") == "allow"
+        assert perms.get_level("WebFetch") == "ask"
         assert perms.get_level("Write") == "ask"
         assert perms.get_level("Bash") == "ask"
-        assert perms.get_level("WebSearch") == "allow"
+        assert perms.get_level("WebSearch") == "ask"
         assert perms.get_level("NotebookEdit") == "ask"
 
     def test_is_denied(self, tmp_path):
@@ -148,7 +148,8 @@ class TestToolPermissions:
     def test_needs_confirmation(self, tmp_path):
         perms = ToolPermissions(project_dir=tmp_path)
         assert perms.needs_confirmation("Bash")
-        assert not perms.needs_confirmation("WebSearch")
+        # The web asks by default: nothing leaves the network unasked.
+        assert perms.needs_confirmation("WebSearch")
 
     def test_loads_settings_file(self, tmp_path):
         settings_dir = tmp_path / CONFIG_DIR

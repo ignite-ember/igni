@@ -269,7 +269,7 @@ For BYOM, the minimum is a model registry entry (see [Authenticate](#authenticat
 permissions:
   file_write: ask           # ask before writing files (default)
   shell_execute: ask        # ask before running commands (default)
-  web_search: allow         # enable web search
+  web_search: allow         # search without asking (default: ask)
 ```
 
 ### Project Instructions
@@ -373,7 +373,8 @@ Use igni as a tool server in VS Code, Cursor, or JetBrains:
 
 ### Web Tools
 
-Enable web search and URL fetching:
+Web search and URL fetching ask before each request by default — each is a
+request out of your network. To install them and let them run without asking:
 
 ```bash
 pip install "ignite-ember[web]"
