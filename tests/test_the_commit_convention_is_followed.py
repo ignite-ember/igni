@@ -44,7 +44,12 @@ _TRAILER = re.compile(r"^`?Co-Authored-By:\s*(.+?)`?\s*$", re.M | re.I)
 #: The retired company trailer, in both spellings. The rule was written with
 #: ``igniteember.sh`` and the history carries ``ignite-ember.sh``; a check that
 #: knew only the rule's own typo would pass over every real occurrence.
-_RETIRED = re.compile(r"ignite-?ember\.sh", re.I)
+#: The retired *company* trailer, `Ignite Ember <noreply@ignite-ember.sh>`
+#: (also spelt `igniteember.sh`). Only the `noreply@` address: the founder's
+#: own `dmytro.zezyk@ignite-ember.sh` is a real person and an accepted
+#: squash-merge co-author, and matching the whole domain failed main's first
+#: squash merge (4ee4c173) for naming its own author.
+_RETIRED = re.compile(r"noreply@ignite-?ember\.sh", re.I)
 
 
 #: Where Rule 5 stops naming accepted trailers and starts explaining itself.
@@ -186,7 +191,7 @@ class TestTheRuleIsReadable:
         that was survivable is that the check never ran."""
         accepted = _accepted_trailers()
 
-        assert len(accepted) == 2, accepted
+        assert len(accepted) == 3, accepted
         assert _address(accepted[0]) != _address(accepted[1])
 
     def test_the_placeholder_address_is_admitted_to_be_one(self):
