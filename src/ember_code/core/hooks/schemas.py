@@ -5,7 +5,7 @@ from __future__ import annotations
 from enum import Enum
 from typing import TYPE_CHECKING, Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, PrivateAttr
 
 # ``HookMatcher`` is a leaf module — its own dependencies (re,
 # logging, typing) never reach back into schemas.py. The
@@ -17,7 +17,13 @@ from ember_code.core.hooks.matcher import HookMatcher
 if TYPE_CHECKING:
     from pathlib import Path
 
-HookType = Literal["command", "http", "prompt", "mcp_tool", "agent"]
+#: The types that have a handler. ``"agent"`` used to be listed here
+#: because the upstream spec names it; nothing in this package
+#: implements it, so a settings file declaring it validated, loaded,
+#: and was skipped at DEBUG. Keep this list equal to the set
+#: registered in ``handlers/registry.py`` — ``HookExecutor`` warns at
+#: construction about any configured type outside it.
+HookType = Literal["command", "http", "prompt", "mcp_tool"]
 
 
 class PermissionDecision(str, Enum):
@@ -68,9 +74,7 @@ class MergeStrategy(str, Enum):
 class HookDefinition(BaseModel):
     """A single hook definition.
 
-    Five handler types modelled on Claude Code's catalog
-    (``mcp_tool``, ``prompt``, and the ``agent`` type the spec
-    also names):
+    Four handler types, modelled on Claude Code's catalog:
 
     - ``command`` — shell command; the agent's payload goes in on
       stdin, exit codes drive control flow (2 blocks, 0 + JSON is
@@ -88,6 +92,10 @@ class HookDefinition(BaseModel):
     # Kept as ``str`` (not the ``HookType`` Literal) so unknown/misspelt
     # values validate successfully; the handler-registry dispatch then
     # gracefully skips them (see ``tests/test_hook_handler_types.py``).
+    # Tolerated, not silent — ``HookExecutor.__init__`` logs a WARNING
+    # naming the event and the unimplemented type, because a hook that
+    # loads and never runs is otherwise indistinguishable from one that
+    # ran and said nothing.
     # No default: SettingsFile.save uses ``exclude_defaults=True`` and
     # the emitted settings.json must always carry an explicit ``type``.
     type: str
@@ -115,6 +123,29 @@ class HookDefinition(BaseModel):
     # ``async_rewake`` — loader accepts both via
     # :meth:`from_wire`.
     async_rewake: bool = False
+
+    #: Where the organisation's group policy shipped this hook from, or
+    #: ``""`` for a hook of the developer's own (user, project, their
+    #: plugins). Private, so no settings file can claim or disclaim it:
+    #: only the loader sets it, through :meth:`mark_from_group`, for the
+    #: group's hooks file and a group-installed plugin's hooks. Read by
+    #: :class:`~ember_code.core.hooks.group_hook_gate.GroupHookGate`.
+    _group_source: str = PrivateAttr(default="")
+
+    @property
+    def from_group(self) -> bool:
+        """Whether the organisation's group policy shipped this hook."""
+        return bool(self._group_source)
+
+    @property
+    def group_source(self) -> str:
+        """The file the group's hook was read from (``""`` if not a group hook)."""
+        return self._group_source
+
+    def mark_from_group(self, source: Path | str) -> HookDefinition:
+        """Record that the group policy shipped this hook, from ``source``."""
+        self._group_source = str(source) or "group policy"
+        return self
 
     def matches(self, target: str) -> bool:
         """Whether this hook fires for ``target``.

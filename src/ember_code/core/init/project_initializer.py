@@ -26,6 +26,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from ember_code.core.config.secret_scan import scan_project_config
 from ember_code.core.dir_migration import migrate_project
 from ember_code.core.init.checksum_store import ChecksumStore
+from ember_code.core.init.gitignore import IgniGitignore
 from ember_code.core.init.home_migrator import HomeConfigMigrator
 from ember_code.core.init.hook_provisioner import HookProvisioner
 from ember_code.core.init.json_file import JsonFile
@@ -125,6 +126,10 @@ class ProjectInitializer(BaseModel):
             self._write_project_settings()
             project_marker.touch()
 
+        # Every run, so the list stays current as igni learns new runtime
+        # files; it rewrites only its own block.
+        self._write_gitignore()
+
         # Sync built-in agents/skills — checksum-based so user edits
         # are preserved.
         warnings = self._update_built_in_files()
@@ -179,6 +184,17 @@ class ProjectInitializer(BaseModel):
         """
         path = self.project_dir / CONFIG_DIR / "settings.local.json"
 
+        # Not in a folder nobody has trusted. Its permissions are ignored
+        # there (``ProjectJsonFragmentTier``), so the starter igni wrote on
+        # the first run was the cause of a warning on every run after it —
+        # printed twice per ``igni -m``, about a file the person never
+        # wrote. Found on a fresh clone; a new user's first folder is an
+        # untrusted one.
+        from ember_code.core.workspace_trust import WorkspaceTrust
+
+        if not WorkspaceTrust.shared().is_trusted(self.project_dir):
+            return
+
         # Peek at the raw JSON first — we only touch the file if
         # ``permissions`` is absent, matching the pre-refactor
         # semantics that leave user-written files alone. Deliberate
@@ -191,6 +207,20 @@ class ProjectInitializer(BaseModel):
         settings = SettingsFile.load(path)
         settings.permissions = self.config.default_permissions.model_copy(deep=True)
         settings.save(path)
+
+    def _write_gitignore(self) -> None:
+        """Keep ``.igni/.gitignore``'s block of personal and runtime files current.
+
+        Not in a folder nobody has trusted, for the reason
+        :meth:`_write_project_settings` gives: igni should not add files to a
+        repository the person has not said they work in. Written on the first
+        run after the folder is trusted.
+        """
+        from ember_code.core.workspace_trust import WorkspaceTrust
+
+        if not WorkspaceTrust.shared().is_trusted(self.project_dir):
+            return
+        IgniGitignore(self.project_dir / CONFIG_DIR).ensure()
 
     # ── Checksum-based update (agents / skills) ───────────────────
 

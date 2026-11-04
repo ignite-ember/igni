@@ -39,6 +39,7 @@ from ember_code.backend.cmd_plugin.routers import (
     PluginsToggleRouter,
 )
 from ember_code.backend.command_result import CommandResult
+from ember_code.core.plugins.source_policy import PluginSourcePolicy
 
 if TYPE_CHECKING:
     from ember_code.backend.command_handler import CommandHandler
@@ -57,7 +58,10 @@ class _BaseSlashCommand:
         # avoids the previous ``session.settings.storage.data_dir``
         # three-level Demeter chain.
         data_dir = session.plugin_data_dir
-        gateway = PluginBackendGateway(data_dir=data_dir)
+        gateway = PluginBackendGateway(
+            data_dir=data_dir,
+            source_policy=PluginSourcePolicy.from_settings(session.settings),
+        )
         return SlashCommandContext(session=session, plugin_data_dir=data_dir, gateway=gateway)
 
 

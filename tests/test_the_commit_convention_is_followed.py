@@ -41,16 +41,45 @@ _DEPTH = 40
 #: parser that cannot read its own source of truth.
 _TRAILER = re.compile(r"^`?Co-Authored-By:\s*(.+?)`?\s*$", re.M | re.I)
 
+#: The retired company trailer, in both spellings. The rule was written with
+#: ``igniteember.sh`` and the history carries ``ignite-ember.sh``; a check that
+#: knew only the rule's own typo would pass over every real occurrence.
+_RETIRED = re.compile(r"ignite-?ember\.sh", re.I)
+
+
+#: Where Rule 5 stops naming accepted trailers and starts explaining itself.
+#: The retired trailer is quoted below this line, in prose about why it went,
+#: and reading it as accepted would make the check vacuous.
+_EXPLANATION = "**What this rule said before"
+
+
+def _rule_five() -> str:
+    return _STANDARDS.read_text().split("### Rule 5")[1].split("\n### ")[0]
+
 
 def _documented_trailer() -> str:
-    """The one trailer Rule 5 names, read from the document."""
-    section = _STANDARDS.read_text().split("### Rule 5")[1].split("\n### ")[0]
-    found = _TRAILER.findall(section)
+    """The model-attribution trailer — the one an author writes."""
+    return _accepted_trailers()[0]
+
+
+def _accepted_trailers() -> list[str]:
+    """Every trailer Rule 5 accepts, read from the document, in order.
+
+    There are two and they arrive by different routes. The first is written by
+    whoever makes the commit and names the model that assisted. The second is
+    appended by GitHub on every squash merge, naming the author of the branch
+    being squashed — nobody types it and it cannot be declined while squash
+    merges are in use.
+
+    Only the part *above* the explanation counts. The retired trailer is quoted
+    further down, inside the paragraph about why it was retired, and counting it
+    as accepted would turn the check below into a check of nothing.
+    """
+    accepted = _rule_five().split(_EXPLANATION)[0]
+    found = [t.strip("`").strip() for t in _TRAILER.findall(accepted)]
 
     assert found, "Rule 5 no longer names a Co-Authored-By trailer at all"
-    # The section quotes the accepted trailer first and the retired one
-    # inside the explanation, so the first match is the live one.
-    return found[0].strip("`").strip()
+    return found
 
 
 def _is_shallow() -> bool:
@@ -150,6 +179,31 @@ class TestTheRuleIsReadable:
             "assertion is the place to say so deliberately."
         )
 
+    def test_it_also_names_the_trailer_the_forge_adds(self):
+        """The second accepted trailer is not a convention anyone follows — it
+        is what GitHub writes on a squash merge. Before it was named here, the
+        rule disagreed with every merge commit on main, and the only reason
+        that was survivable is that the check never ran."""
+        accepted = _accepted_trailers()
+
+        assert len(accepted) == 2, accepted
+        assert _address(accepted[0]) != _address(accepted[1])
+
+    def test_the_placeholder_address_is_admitted_to_be_one(self):
+        """``dev@example.com`` is whatever ``git config user.email`` happens to
+        say, not an address that reaches anybody. Naming it without saying so
+        would read as a deliberate choice to the next person."""
+        section = _rule_five()
+
+        assert "placeholder" in section
+        assert "user.email" in section
+
+    def test_the_explanation_marker_is_still_there(self):
+        """The accepted trailers are the ones above this marker. If the heading
+        is reworded, the retired trailer quoted below it silently becomes
+        accepted — so the split point is asserted, not assumed."""
+        assert _EXPLANATION in _rule_five()
+
     def test_the_document_records_why_it_changed(self):
         """Without the reason, the obvious tidy-up is to put the old rule
         back — it reads like somebody simply stopped following it."""
@@ -186,17 +240,17 @@ def _address(trailer: str) -> str:
 
 
 class TestTheHistoryFollowsIt:
-    def test_every_co_authored_commit_names_the_documented_author(self):
-        expected = _address(_documented_trailer())
+    def test_every_co_authored_commit_names_a_documented_author(self):
+        expected = {_address(t) for t in _accepted_trailers()}
         offenders = []
         for sha, body in _history():
             for found in _TRAILER.findall(body):
-                if _address(found) != expected:
+                if _address(found) not in expected:
                     offenders.append(f"{sha}: {found.strip()!r}")
 
         assert not offenders, (
             f"these commits carry a Co-Authored-By that Rule 5 does not name "
-            f"(expected the address {expected!r}): {offenders}"
+            f"(accepted addresses: {sorted(expected)}): {offenders}"
         )
 
     def test_the_comparison_is_on_the_address(self):
@@ -254,7 +308,7 @@ class TestTheHistoryFollowsIt:
             f"{sha}: {found.strip()!r}"
             for sha, body in _history()
             for found in _TRAILER.findall(body)
-            if "igniteember.sh" in found
+            if _RETIRED.search(found)
         ]
 
         assert not offenders, offenders
@@ -264,11 +318,17 @@ class TestTheHistoryFollowsIt:
         the trailer it exists to reject, as it would appear in a real
         commit body."""
         body = "Some change\n\nCo-Authored-By: Ignite Ember <noreply@igniteember.sh>\n"
-        found = [t for t in _TRAILER.findall(body) if "igniteember.sh" in t]
+        found = [t for t in _TRAILER.findall(body) if _RETIRED.search(t)]
 
         assert found, "the narrowed check no longer recognises the retired trailer"
 
+        # The hyphenated spelling is the one the history actually holds — the
+        # rule's own typo is quoted in CODE_STANDARDS.md. Matching only the typo
+        # would have been a check that could never fire on a real commit.
+        hyphenated = "Some change\n\nCo-Authored-By: Ignite Ember <noreply@ignite-ember.sh>\n"
+        assert [t for t in _TRAILER.findall(hyphenated) if _RETIRED.search(t)]
+
         prose = "It said `Co-Authored-By: Ignite Ember <noreply@igniteember.sh>` and was wrong.\n"
-        assert not [t for t in _TRAILER.findall(prose) if "igniteember.sh" in t], (
+        assert not [t for t in _TRAILER.findall(prose) if _RETIRED.search(t)], (
             "the check still fires on prose that merely mentions the address"
         )

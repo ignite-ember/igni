@@ -82,6 +82,17 @@ class TeamStreamHandler(BaseStreamHandler[TeamStreamState]):
             card_id=card_id,
         )
 
+    def _latch_run_ids(self, event: Any) -> None:
+        """Latch the *team's* run, not a member's.
+
+        The team's stream starts with its members' events when the team
+        itself streams no lifecycle events, and latching the first id
+        seen took a member's run for the team's: the team's answer read
+        back was that member's, and a continued pause found no run.
+        """
+        if isinstance(event, team_events.BaseTeamRunEvent):
+            super()._latch_run_ids(event)
+
     # ── Dispatch ───────────────────────────────────────────────────
     async def _handle(self, event: Any) -> Any:
         """Return a follow-up async iterator on pause+resume, else
@@ -96,8 +107,15 @@ class TeamStreamHandler(BaseStreamHandler[TeamStreamState]):
         if isinstance(event, agent_events.RunStartedEvent):
             self._on_agent_run_started(event)
             return None
-        if isinstance(event, agent_events.RunPausedEvent):
+        if isinstance(event, team_events.RunPausedEvent):
+            # The team's own pause: its run id is what Agno continues,
+            # and its requirements name the member that asked.
             return await self._on_run_paused(event)
+        if isinstance(event, agent_events.RunPausedEvent):
+            # A member's pause, relayed: the team pauses with it next.
+            # Continuing the member's run id through the team found no
+            # run, and the approval led nowhere.
+            return None
         if isinstance(event, team_events.TaskCreatedEvent):
             self._on_task_created(event)
             return None
@@ -226,7 +244,7 @@ class TeamStreamHandler(BaseStreamHandler[TeamStreamState]):
             member = getattr(req, "member_agent_name", None)
             req_path = self._base_path + [member] if member else self._base_path
             req_id = await self._hitl_coordinator.push_requirement(
-                req, run_id=run_id, agent_path=req_path
+                req, run_id=run_id, agent_path=req_path, session_id=session_id or ""
             )
             req_ids.append(req_id)
         pause_line = (
@@ -397,4 +415,39 @@ class TeamStreamHandler(BaseStreamHandler[TeamStreamState]):
                 agent_path=ev_path,
                 text=preview,
             )
+        )
+
+
+class ResumedTeamStreamHandler(TeamStreamHandler):
+    """A team's paused run, continued after a restart with the decisions.
+
+    Agno keeps the team's run: members that finished keep their results
+    in it, and only the paused members are continued before the team
+    leader goes on (``backend/cold_spawn_resume.py``).
+    """
+
+    def __init__(
+        self,
+        team: Any,
+        *,
+        run_id: str,
+        session_id: str,
+        requirements: list[Any],
+        **kwargs: Any,
+    ) -> None:
+        super().__init__(team, "", **kwargs)
+        self._resume_run_id = run_id
+        self._resume_session_id = session_id
+        self._requirements = requirements
+        # The team's run, known up front: the continued stream starts
+        # with the members' events, whose run ids are theirs.
+        self.state.current_run_id = run_id
+        self.state.current_session_id = session_id
+
+    def _first_stream(self) -> Any:
+        return self._runnable.acontinue_run(
+            run_id=self._resume_run_id,
+            session_id=self._resume_session_id,
+            requirements=self._requirements,
+            stream=True,
         )

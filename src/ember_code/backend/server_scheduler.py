@@ -20,7 +20,6 @@ gives shutdown paths a composable teardown seam.
 
 from __future__ import annotations
 
-import asyncio
 import logging
 from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING
@@ -29,8 +28,10 @@ from ember_code.backend.schemas_scheduler import (
     TaskCompletedPayload,
     TaskCreatedPayload,
 )
+from ember_code.core.activity import background
 from ember_code.core.hooks.events import HookEvent
 from ember_code.core.scheduler.models import ScheduledTask, TaskStatus
+from ember_code.core.scheduler.prompt import wrap_scheduled_prompt
 from ember_code.core.scheduler.runner import SchedulerRunner
 from ember_code.core.scheduler.store import TaskStore
 from ember_code.core.utils.response import extract_response_text
@@ -89,9 +90,24 @@ class SchedulerController:
     # ── Per-task RPCs ─────────────────────────────────────────────
 
     async def execute(self, description: str) -> str:
-        """Run one scheduled task through the agent. Returns result text."""
+        """Run one scheduled task through the agent. Returns result text.
+
+        The description is wrapped before it reaches the model. Passed raw it
+        is indistinguishable from a message somebody just typed, so the agent
+        could answer it by asking a clarifying question — and a scheduled run
+        has nobody to answer. Wrapping here rather than in
+        :class:`SchedulerRunner` covers both callers: the poller and the
+        "run it now" RPC. Both are a stored task firing, not a live turn.
+        """
+        from ember_code.core.config.group_policy import GroupPolicyGate
+
+        refusal = GroupPolicyGate.reason()
+        if refusal:
+            # Raised, not returned: a returned string would be recorded as
+            # the task's successful result.
+            raise RuntimeError(refusal)
         team = self._session.main_team
-        response = await team.arun(description, stream=False)
+        response = await team.arun(wrap_scheduled_prompt(description), stream=False)
         return extract_response_text(response)
 
     async def cancel(self, task_id: str) -> msg.Info:
@@ -160,7 +176,7 @@ class SchedulerController:
         if runner is None:
             return
         try:
-            runner.stop()
+            await runner.aclose()
         finally:
             self._runner = None
 
@@ -209,11 +225,13 @@ class SchedulerController:
                 task_id=task_id,
                 description=description,
             )
-            asyncio.create_task(
+            background.start(
                 self._hook_executor.execute(
                     event=HookEvent.TASK_CREATED.value,
                     payload=payload.model_dump(),
-                )
+                ),
+                holder="hook",
+                reason=HookEvent.TASK_CREATED.value,
             )
 
         def on_completed(
@@ -241,11 +259,13 @@ class SchedulerController:
                     else SchedulerEventType.ERROR.value
                 ),
             )
-            asyncio.create_task(
+            background.start(
                 self._hook_executor.execute(
                     event=HookEvent.TASK_COMPLETED.value,
                     payload=payload.model_dump(),
-                )
+                ),
+                holder="hook",
+                reason=HookEvent.TASK_COMPLETED.value,
             )
 
 

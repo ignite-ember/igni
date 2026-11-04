@@ -39,7 +39,7 @@ class GitClient:
         instead of a cryptic FileNotFoundError when git isn't on PATH."""
         try:
             subprocess.run(
-                ["git", "--version"],
+                ["git", "--version"],  # noqa: S607 — git from PATH, as the user runs it
                 check=True,
                 capture_output=True,
                 timeout=5,
@@ -99,6 +99,15 @@ class GitClient:
         result = self._run(["git", "rev-parse", "HEAD"], cwd=repo)
         return result.stdout.strip()
 
+    def remote_url(self, repo: Path) -> str | None:
+        """The ``origin`` URL *repo* fetches from, or ``None``. Local: reads
+        the repository's config, contacts nothing."""
+        try:
+            result = self._run(["git", "config", "--get", "remote.origin.url"], cwd=repo)
+        except GitError:
+            return None
+        return result.stdout.strip() or None
+
     def head_branch(self, repo: Path) -> str:
         """Return the default branch name reported by ``origin/HEAD``.
 
@@ -125,7 +134,7 @@ class GitClient:
         cwd: Path | None = None,
     ) -> subprocess.CompletedProcess:
         try:
-            result = subprocess.run(
+            result = subprocess.run(  # noqa: S603 — git with an argv list, no shell; URLs pass PluginSourcePolicy first
                 args,
                 cwd=str(cwd) if cwd else None,
                 capture_output=True,

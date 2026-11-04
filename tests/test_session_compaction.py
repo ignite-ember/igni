@@ -36,8 +36,6 @@ def _bare_session(*, agno_session=None, hook_result=None):
     session.main_team = SimpleNamespace()
     session.main_team.aget_session = AsyncMock(return_value=agno_session)
     session.main_team.asave_session = AsyncMock()
-    session.main_team.model = SimpleNamespace()
-    session.main_team.model.count_tokens = MagicMock(return_value=100)
     # Compaction now goes through the public rebuild seam.
     session.rebuild_main_team = MagicMock()
     session.hook_executor = SimpleNamespace()
@@ -61,13 +59,15 @@ class TestCompactIfNeeded:
     async def test_at_80_percent_triggers_compact(self):
         # Right at threshold — the ``usage < 0.8`` guard should
         # let 80% through as a trigger.
-        s = _bare_session(agno_session=None)
+        s = _bare_session(agno_session=SimpleNamespace(runs=[SimpleNamespace()], summary=None))
         coord = CompactionCoordinator(s)
+        # A summary has to land for the pass to complete: since the
+        # conversation is only dropped when something replaces it,
+        # ``compact_if_needed`` reports True on the cleared history,
+        # not on the trigger alone.
+        coord._fallback.summarise = AsyncMock(return_value="a recap")
         # 80% of 10_000 = 8000
         result = await coord.compact_if_needed(input_tokens=8000, context_window=10_000)
-        # ``compact()`` returned early ("Session not found") but
-        # ``compact_if_needed`` still returns True since the
-        # trigger fired.
         assert result is True
 
     @pytest.mark.asyncio
@@ -92,8 +92,12 @@ class TestCompactIfNeeded:
     async def test_fires_post_compact_hook_on_success(self):
         # PostCompact fires so plugins can react even when the
         # compaction is auto-triggered.
-        s = _bare_session(agno_session=SimpleNamespace(runs=[], summary=None))
+        s = _bare_session(agno_session=SimpleNamespace(runs=[SimpleNamespace()], summary=None))
         coord = CompactionCoordinator(s)
+        # PostCompact is the "history was cleared" signal, so it only
+        # fires on a pass that actually cleared it — give the pass a
+        # summary to trade the runs for.
+        coord._fallback.summarise = AsyncMock(return_value="a recap")
         await coord.compact_if_needed(input_tokens=9000, context_window=10_000)
         events = [c.kwargs.get("event") for c in s.hook_executor.execute.call_args_list]
         assert "PreCompact" in events
@@ -144,33 +148,37 @@ class TestContextBreakdown:
     async def test_decomposes_total_into_runs_plus_floor(self):
         # The invariant that /ctx relies on: total == runs + floor.
         # ``floor`` is what /compact can't shrink (system prompt,
-        # tool schemas, project rules).
+        # tool schemas, project rules). ``total`` is the server's own
+        # count at the last answer; ``runs`` is the turns' length.
+        user = _message("user", "x" * 400)
+        answer = _message("assistant", "y" * 400, input_tokens=450, output_tokens=100)
         agno = SimpleNamespace()
-        agno.runs = [SimpleNamespace(messages=[MagicMock(), MagicMock()])]
-        agno.get_messages = MagicMock(return_value=[MagicMock() for _ in range(5)])
+        agno.runs = [SimpleNamespace(messages=[user, answer])]
+        agno.get_messages = MagicMock(return_value=[_message("system", "s" * 40), user, answer])
         s = _bare_session(agno_session=agno)
         coord = CompactionCoordinator(s)
-        # Model reports different counts for the two calls (total
-        # messages vs. runs-only messages).
-        s.main_team.model.count_tokens = MagicMock(side_effect=[500, 200])
         result = await coord.context_breakdown()
-        assert result.total == 500
-        assert result.runs == 200
-        assert result.floor == 300  # 500 - 200
+        assert result.total == 550  # 450 read + 100 written, as the server counted
+        assert result.runs == 200  # 800 characters / 4
+        assert result.floor == 350
 
     @pytest.mark.asyncio
     async def test_floor_never_negative(self):
-        # If tokenizer bugs make ``runs`` > ``total``, floor
-        # should clamp to 0 rather than go negative (the /ctx
-        # panel renders a negative pill oddly).
+        # The turns' estimate can exceed a small measured total; runs is
+        # capped at the total so the floor lands at 0, never negative.
+        answer = _message("assistant", "y" * 4000, input_tokens=10, output_tokens=0)
         agno = SimpleNamespace()
-        agno.runs = [SimpleNamespace(messages=[MagicMock()])]
-        agno.get_messages = MagicMock(return_value=[MagicMock()])
+        agno.runs = [SimpleNamespace(messages=[answer])]
+        agno.get_messages = MagicMock(return_value=[answer])
         s = _bare_session(agno_session=agno)
-        s.main_team.model.count_tokens = MagicMock(side_effect=[10, 20])
         coord = CompactionCoordinator(s)
         result = await coord.context_breakdown()
         assert result.floor == 0
+
+
+def _message(role: str, content: str, *, input_tokens: int = 0, output_tokens: int = 0):
+    metrics = SimpleNamespace(input_tokens=input_tokens, output_tokens=output_tokens)
+    return SimpleNamespace(role=role, content=content, metrics=metrics, tool_calls=None)
 
 
 class TestContextBreakdownFromTotals:

@@ -35,11 +35,9 @@ from ember_code.backend.plan_snapshot_builder import PlanSnapshotBuilder
 from ember_code.backend.plugin_controller import PluginController
 from ember_code.backend.run_controller import RunController
 from ember_code.backend.server_auth import AuthController
-from ember_code.backend.server_codeindex import CodeIndexController
 from ember_code.backend.server_context import ContextController
 from ember_code.backend.server_files import FilesController
 from ember_code.backend.server_history import ChatHistoryRebuilder
-from ember_code.backend.server_knowledge import KnowledgeController
 from ember_code.backend.server_lifecycle import LifecycleController
 from ember_code.backend.server_loop import LoopController
 from ember_code.backend.server_mcp import McpController
@@ -77,11 +75,9 @@ class Controllers:
         hitl: HitlController,
         context: ContextController,
         auth: AuthController,
-        knowledge: KnowledgeController,
         files: FilesController,
         search: SearchController,
         panels: PanelsController,
-        codeindex: CodeIndexController,
         loop: LoopController,
         processes: ProcessesController,
         sessions: SessionsController,
@@ -100,11 +96,9 @@ class Controllers:
         self.hitl = hitl
         self.context = context
         self.auth = auth
-        self.knowledge = knowledge
         self.files = files
         self.search = search
         self.panels = panels
-        self.codeindex = codeindex
         self.loop = loop
         self.processes = processes
         self.sessions = sessions
@@ -144,11 +138,9 @@ class ControllerRegistry:
         """Full production wiring — every controller built eagerly."""
         # ── Foundation controllers (session-only deps) ──────────────
         mcp = McpController(session)
-        knowledge = KnowledgeController(session)
         files = FilesController(session)
         search = SearchController(session)
         panels = PanelsController(session)
-        codeindex = CodeIndexController(session)
         processes = ProcessesController()
         rehydrate = RehydrateController(session)
         plan_snapshots = PlanSnapshotBuilder(session)
@@ -227,11 +219,9 @@ class ControllerRegistry:
             hitl=hitl,
             context=context,
             auth=auth,
-            knowledge=knowledge,
             files=files,
             search=search,
             panels=panels,
-            codeindex=codeindex,
             loop=loop,
             processes=processes,
             sessions=sessions,

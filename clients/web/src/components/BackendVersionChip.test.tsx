@@ -3,16 +3,15 @@
  * Component tests for ``BackendVersionChip``.
  *
  * The chip has three visual states + a "render nothing" fallback,
- * and it reads its inputs from two sources (URL query params for
- * Tauri/JetBrains, ``<meta>`` tags for VSCode). What we pin:
+ * and it reads its inputs from the URL query params the Tauri shell
+ * sets. What we pin:
  *
- *   • No source → renders nothing (Tauri without params, dev
- *     browser, VSCode before ``buildHtml`` embedded the tags).
+ *   • No params → renders nothing (Tauri without params, dev
+ *     browser).
  *   • Matching versions + managed venv → neutral ``tone-ok`` chip.
  *   • Dev-override active → ``tone-warn``.
  *   • Mismatched versions → ``tone-danger``.
- *   • URL params take precedence over ``<meta>`` fallback.
- *   • Meta tags alone (VSCode's delivery path) work.
+ *   • ``<meta>`` tags alone render nothing.
  *
  * The subprocess probe ``__version__`` returns "unknown" when it
  * fails — the chip renders "<probe failed>" instead of a version
@@ -145,10 +144,9 @@ describe("BackendVersionChip — tone", () => {
 });
 
 describe("BackendVersionChip — input sources", () => {
-  it("reads from <meta> tags when URL params are absent (VSCode path)", () => {
-    // VSCode webview delivers HTML wholesale under a strict CSP;
-    // query-param-based URL handling isn't reliable there. The
-    // extension embeds ``<meta>`` tags instead. Same UX outcome.
+  it("ignores <meta> tags: the URL is the only source", () => {
+    // The meta-tag path belonged to the VS Code webview, which igni no
+    // longer ships. A page carrying the tags and no params shows nothing.
     withMetas(
       {
         "ember-expected-cli": "0.8.3",
@@ -156,30 +154,9 @@ describe("BackendVersionChip — input sources", () => {
         "ember-backend-source": "managed_venv",
       },
       () => {
-        render(<BackendVersionChip />);
-        expect(screen.getByText("v0.8.3")).toBeTruthy();
+        const { container } = render(<BackendVersionChip />);
+        expect(container.innerHTML).toBe("");
       },
     );
-  });
-
-  it("prefers URL params over <meta> tags when both are present", () => {
-    // Belt-and-suspenders — a host that embeds both shouldn't
-    // get confusing behaviour. URL param wins because it's the
-    // canonical delivery channel for JB / Tauri, and picking
-    // one deterministic order keeps the render pinnable.
-    withSearch("?expected_cli=0.8.3&actual_cli=0.8.3&backend_source=managed_venv", () => {
-      withMetas(
-        {
-          "ember-expected-cli": "9.9.9",
-          "ember-actual-cli": "0.3.8",
-          "ember-backend-source": "dev_override",
-        },
-        () => {
-          render(<BackendVersionChip />);
-          // URL says v0.8.3, so v0.8.3 is what we render.
-          expect(screen.getByText("v0.8.3")).toBeTruthy();
-        },
-      );
-    });
   });
 });

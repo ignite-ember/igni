@@ -18,6 +18,7 @@ import logging
 import os
 import shlex
 import subprocess
+from typing import Any
 from urllib.parse import urlparse
 
 from pydantic import BaseModel, ConfigDict
@@ -27,13 +28,25 @@ from ember_code.core.paths import DEFAULT_DATA_DIR
 logger = logging.getLogger(__name__)
 
 # Sentinel value on ``ModelRegistryEntry.api_key`` that means "resolve
-# to the stored Ember Cloud access token at call time". Kept as a
+# to the stored igni server access token at call time". Kept as a
 # named constant so the same magic string doesn't get spelled twice
 # (previously duplicated between ``resolve_api_key`` and the
 # cloud-discovery construction path in ``cloud_models.py``).
-CLOUD_TOKEN_SENTINEL = "cloud_token"
+CLOUD_TOKEN_SENTINEL = "cloud_token"  # noqa: S105 — a sentinel value, not a secret
 
-# Production Ember Cloud gateway hostname — used by the migration
+
+class ResolvedApiKey(BaseModel):
+    """An entry's key, and whether it is igni server's token."""
+
+    model_config = ConfigDict(frozen=True)
+
+    value: str | None
+    #: igni server's token: it changes, so a client reads it when it sends
+    #: (:class:`~ember_code.core.auth.http_auth.CloudTokenAuth`).
+    cloud: bool = False
+
+
+# Production igni server gateway hostname — used by the migration
 # tier to identify rows that WE own and should replace with the
 # latest shipping defaults. Kept as a module-level constant next to
 # ``CLOUD_TOKEN_SENTINEL`` for consistency with the file's other
@@ -45,9 +58,10 @@ class ModelRegistryEntry(BaseModel):
     """One entry in ``settings.models.registry``.
 
     Everything the registry needs to know about a specific model
-    lives here. Providers other than ``openai_like`` (currently only
+    lives here. Providers other than ``openai_like`` (``anthropic``,
     ``gemini``) use a subset of these fields — the extras are
-    ignored during kwarg construction on the provider side.
+    ignored during kwarg construction on the provider side. The last
+    three below are the ``anthropic`` provider's own.
     """
 
     # Allow arbitrary extra keys so we tolerate cloud-server payload
@@ -66,6 +80,14 @@ class ModelRegistryEntry(BaseModel):
     timeout: int = 60
     vision: bool = False
     context_window: int | None = None
+    #: Sent as the Messages API's ``thinking`` object, unchanged — for
+    #: example ``{"type": "adaptive"}``. ``anthropic`` only.
+    thinking: dict[str, Any] | None = None
+    #: ``output_config.effort`` (``low`` .. ``max``). ``anthropic`` only.
+    effort: str | None = None
+    #: ``cache_control`` on the system prompt and the tool list, so a
+    #: turn re-reads them from Anthropic's prompt cache. ``anthropic`` only.
+    prompt_caching: bool = True
 
     # ── Context-window hint ────────────────────────────────────────
 
@@ -84,13 +106,17 @@ class ModelRegistryEntry(BaseModel):
     # ── API-key resolution ─────────────────────────────────────────
 
     def resolve_api_key(self, cloud_token: str | None = None) -> str | None:
+        """The key :meth:`resolve_key` finds."""
+        return self.resolve_key(cloud_token).value
+
+    def resolve_key(self, cloud_token: str | None = None) -> ResolvedApiKey:
         """Resolve the API key using the four-tier fallback:
 
         1. Literal ``api_key`` on the entry — sentinel ``"cloud_token"``
            is replaced with the injected cloud token.
         2. Environment variable named by ``api_key_env``.
         3. Shell command specified by ``api_key_cmd``.
-        4. Ember Cloud token fallback for URLs pointing at the cloud
+        4. igni server token fallback for URLs pointing at the cloud
            gateway (previously a duplicate check inside
            ``ModelRegistry._resolve_api_key``).
 
@@ -102,17 +128,17 @@ class ModelRegistryEntry(BaseModel):
         # Literal value on the entry — honor the cloud_token sentinel.
         if self.api_key is not None:
             if self.api_key == CLOUD_TOKEN_SENTINEL:
-                return cloud_token
-            return self.api_key
+                return ResolvedApiKey(value=cloud_token, cloud=True)
+            return ResolvedApiKey(value=self.api_key)
         env_key = self._api_key_from_env()
         if env_key:
-            return env_key
+            return ResolvedApiKey(value=env_key)
         cmd_key = self._api_key_from_cmd()
         if cmd_key:
-            return cmd_key
+            return ResolvedApiKey(value=cmd_key)
         if self.matches_cloud_gateway():
-            return cloud_token
-        return None
+            return ResolvedApiKey(value=cloud_token, cloud=True)
+        return ResolvedApiKey(value=None)
 
     def why_no_api_key(self) -> str:
         """One sentence naming what was tried and what to do.
@@ -143,7 +169,8 @@ class ModelRegistryEntry(BaseModel):
             # twelve placeholders the .igni rename left behind.
             f"Add `api_key` for it in {DEFAULT_DATA_DIR}/config.yaml — or `api_key_env` / "
             "`api_key_cmd` in the project's config, which name a secret rather "
-            "than containing one and are safe to commit."
+            "than containing one and are safe to commit (both are used once you "
+            "trust the folder)."
         )
 
     def _api_key_from_env(self) -> str | None:
@@ -157,7 +184,7 @@ class ModelRegistryEntry(BaseModel):
         # Bounded timeout so a hung ``api_key_cmd`` (e.g. a keychain
         # prompt that never returns) can't wedge session bring-up.
         try:
-            result = subprocess.run(
+            result = subprocess.run(  # noqa: S603 — the user's own key command; from a project only once trusted (merge_plan)
                 shlex.split(self.api_key_cmd),
                 capture_output=True,
                 text=True,
@@ -172,7 +199,7 @@ class ModelRegistryEntry(BaseModel):
     # ── Cloud-gateway detection ────────────────────────────────────
 
     def matches_cloud_gateway(self) -> bool:
-        """True when this entry's URL points at the Ember Cloud
+        """True when this entry's URL points at the igni server
         gateway. Combined with ``api_key == 'cloud_token'`` this is
         the routing signal that the entry expects the stored login
         credentials rather than a per-entry key.
@@ -206,8 +233,31 @@ class ModelRegistryEntry(BaseModel):
             # programming bug and should propagate.
             return False
 
+    @staticmethod
+    def same_origin(url: str | None, server_url: str | None) -> bool:
+        """True when ``url`` and ``server_url`` share scheme, host and port.
+
+        The test for where igni server's token may go (B28): only to the
+        origin of the configured ``api_url``. A path, a query or a
+        substring match (``https://evil.test/ignite-ember.sh``) is not the
+        same server.
+        """
+        if not url or not server_url:
+            return False
+        try:
+            a, b = urlparse(url), urlparse(server_url)
+            ports = (a.port, b.port)
+        except (ValueError, TypeError):
+            return False
+        if not a.hostname or not b.hostname or a.scheme.lower() != b.scheme.lower():
+            return False
+        default = {"https": 443, "http": 80}.get(a.scheme.lower())
+        return a.hostname.lower() == b.hostname.lower() and (ports[0] or default) == (
+            ports[1] or default
+        )
+
     def needs_cloud_token(self) -> bool:
-        """True when the entry expects the stored Ember Cloud token
+        """True when the entry expects the stored igni server token
         — either via the ``cloud_token`` sentinel on ``api_key`` OR
         via the URL matching the cloud gateway with no explicit
         credentials of its own."""
@@ -227,10 +277,10 @@ class ModelRegistryEntry(BaseModel):
     ) -> ModelRegistryEntry:
         """Build the canonical entry shape for a cloud-discovered model.
 
-        All cloud entries route through ember-server's chat proxy
+        All cloud entries route through igni server's chat proxy
         (``{api_url}/v1``) — never at the upstream provider — and
         rely on the :data:`CLOUD_TOKEN_SENTINEL` on ``api_key`` so
-        :meth:`resolve_api_key` swaps in the stored Ember Cloud
+        :meth:`resolve_api_key` swaps in the stored igni server
         access token at call time.
 
         The ``source='cloud'`` tag rides in via ``model_config`` extras

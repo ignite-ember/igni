@@ -57,6 +57,16 @@ _DEFAULT_TOOL_NAMES: Mapping[str, str] = MappingProxyType(
         "grep_count": "Grep",
         "glob_files": "Glob",
         "list_files": "LS",
+        # ``web_search`` / ``search_news`` are what ``WebSearchToolSpec``
+        # registers; the ``duckduckgo_*`` spellings are what Agno's toolkit
+        # was called before the rename. ``FriendlyToolNameResolver`` inverts
+        # this map, so while it carried only the old names a rule reading
+        # ``deny: ["WebSearch"]`` resolved to two functions nothing registers
+        # and denied nothing — measured: the same rule returned ALLOW for
+        # ``web_search`` and DENY for ``duckduckgo_search``. The old names stay
+        # so a config written against them keeps working.
+        "web_search": "WebSearch",
+        "search_news": "WebSearch",
         "duckduckgo_search": "WebSearch",
         "duckduckgo_news": "WebSearch",
         "fetch_url": "WebFetch",

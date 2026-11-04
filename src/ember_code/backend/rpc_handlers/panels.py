@@ -42,6 +42,14 @@ class PanelRpcHandler(RpcHandler):
         limit = int(args.get("limit", 50))
         return await self._ctx.file_completion.complete(query, limit)
 
+    @rpc(RpcMethod.READ_FILE)
+    def read_file(self, args: dict) -> Any:
+        return self._ctx.backend.read_file(args["path"])
+
+    @rpc(RpcMethod.SEARCH_CODE)
+    def search_code(self, args: dict) -> Any:
+        return self._ctx.backend.search_code(args["query"])
+
     @rpc(RpcMethod.RUN_SHELL)
     async def run_shell(self, args: dict) -> RunShellResult:
         """``$``-prefix shell mode. Captured (non-interactive) by
@@ -83,7 +91,10 @@ class PanelRpcHandler(RpcHandler):
 
     @rpc(RpcMethod.PROMOTE_EPHEMERAL_AGENT)
     def promote_ephemeral_agent(self, args: dict) -> PromoteEphemeralResult:
-        return self._ctx.backend.promote_ephemeral_agent(args["name"])
+        # ``target``: "project" (the default) or "personal".
+        return self._ctx.backend.promote_ephemeral_agent(
+            args["name"], str(args.get("target") or "project")
+        )
 
     @rpc(RpcMethod.DISCARD_EPHEMERAL_AGENT)
     def discard_ephemeral_agent(self, args: dict) -> DiscardEphemeralResult:

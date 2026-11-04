@@ -22,6 +22,11 @@ tauri-plugin-notification = "2"
 tauri-plugin-updater = "2"
 serde_json = "1"
 serde = { version = "1", features = ["derive"] }
+# Verifying the organisation's signed group pack (``src/group_pack.rs``):
+# RS256 and SHA-256 from ``ring``, base64url from ``base64``. Both were
+# already in the build through rustls/ureq, so neither adds a crate.
+ring = "0.17"
+base64 = "0.22"
 
 # ── Bootstrap runtime (see ``src/runtime.rs``) ─────────────────────
 # Sync HTTP client — ``ureq`` pulls in a fraction of what ``reqwest``

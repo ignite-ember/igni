@@ -35,6 +35,7 @@ from ember_code.core.plugins.models import (
     MarketplaceInfo,
     MarketplacePluginInfo,
 )
+from ember_code.core.plugins.source_policy import PluginSourcePolicy
 from ember_code.protocol import messages as msg
 
 if TYPE_CHECKING:
@@ -75,8 +76,15 @@ class MarketplaceController:
             )
         return out
 
+    def _policy(self) -> PluginSourcePolicy:
+        """Read fresh from the session's settings, like ``data_dir``."""
+        return PluginSourcePolicy.from_settings(self._session.settings)
+
     def add(self, url: str) -> msg.Info:
         """Register a new marketplace by URL and cache its catalog."""
+        policy = self._policy()
+        if not policy.allows(url):
+            return msg.Info(text=policy.refusal(url))
         try:
             entry = _plugin_marketplaces.add_marketplace(
                 url, data_dir=self._session.settings.storage.data_dir
@@ -109,6 +117,12 @@ class MarketplaceController:
         """
         data_dir = self._session.settings.storage.data_dir
         if name:
+            registered = _plugin_marketplaces.load_registry(data_dir=data_dir).find(name)
+            policy = self._policy()
+            if registered is not None and not policy.allows(registered.url):
+                return msg.Info(
+                    text=f"Refresh skipped for '{name}': {policy.refusal(registered.url)}"
+                )
             try:
                 entry = _plugin_marketplaces.refresh_marketplace(name, data_dir=data_dir)
             except Exception as e:  # noqa: BLE001
@@ -137,9 +151,13 @@ class MarketplaceController:
         """
         data_dir = self._session.settings.storage.data_dir
         registry = _plugin_marketplaces.load_registry(data_dir=data_dir)
+        policy = self._policy()
         ok: list[str] = []
         failed: list[MarketplaceRefreshFailure] = []
         for m in registry.marketplaces:
+            if not policy.allows(m.url):
+                failed.append(MarketplaceRefreshFailure(name=m.name, reason=policy.refusal(m.url)))
+                continue
             try:
                 _plugin_marketplaces.refresh_marketplace(m.name, data_dir=data_dir)
                 ok.append(m.name)

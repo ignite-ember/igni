@@ -19,9 +19,9 @@ import pytest
 import yaml
 
 from ember_code.backend.server import BackendServer
-from ember_code.core.code_index.paths import state_db_path
 from ember_code.core.config.settings import Settings
 from ember_code.core.config.user_config_store import UserConfigStore
+from ember_code.core.data_paths import state_db_path
 from ember_code.core.paths import CONFIG_DIR
 from ember_code.core.session.session_preferences import SessionPreferencesStore
 

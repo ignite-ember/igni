@@ -23,16 +23,17 @@ export function FirstRunSetup({ onLogin }: { onLogin: () => void }) {
       <p className="welcome-setup-lead">One step first: igni needs a model to run.</p>
       <div className="welcome-setup-actions">
         <button className="btn btn-primary" onClick={onLogin}>
-          Log in to igni Cloud
+          Sign in to your igni server
         </button>
       </div>
-      {/* The path is `.ember`, not `.igni` — the product name in prose
-          and the directory on disk are not the same string, and a note
-          that sends someone to edit a file nothing reads is worse than
-          no note. */}
+      {/* `~/.igni`: the directory the backend reads (`core/paths.py`,
+          CONFIG_DIR). This said `~/.ember`, which `dir_migration` moves
+          away on first start, so it sent people to a file nothing reads.
+          And "igni Cloud" is gone: Ignite Ember hosts nothing, and the
+          models come from the organisation's own igni server. */}
       <p className="welcome-setup-note">
-        Logging in discovers hosted models for you. To bring your own, add an entry to{" "}
-        <code>models.registry</code> in <code>~/.ember/config.yaml</code>.
+        Signing in finds the models your organisation&apos;s igni server routes to. To bring your
+        own, add an entry to <code>models.registry</code> in <code>~/.igni/config.yaml</code>.
       </p>
     </div>
   );

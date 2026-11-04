@@ -78,7 +78,26 @@ class McpCommand:
         return CommandResult.for_action(CommandAction.MCP)
 
 
+class ExtensionsCommand:
+    """``/extensions`` — open the installed-extensions panel.
+
+    The only place the host shows what is installed, what state each
+    one is in, and the form for its ``contributes.settings``. That
+    shape has travelled on ``list_extensions`` since settings were
+    added and nothing drew it, so a declared setting could be
+    validated, stored and never reached.
+    """
+
+    def open_panel(self) -> CommandResult:
+        return CommandResult.for_action(CommandAction.EXTENSIONS)
+
+
 # ── Public shims ─────────────────────────────────────────────────
+
+
+async def cmd_extensions(_handler: CommandHandler, _args: str) -> CommandResult:
+    """Two-line shim for :class:`ExtensionsCommand`."""
+    return ExtensionsCommand().open_panel()
 
 
 async def cmd_bug(_handler: CommandHandler, _args: str) -> CommandResult:

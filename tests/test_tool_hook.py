@@ -18,7 +18,10 @@ class TestToolEventHookPassthrough:
         result = await hook(
             name="read_file", func=lambda path="x": f"content of {path}", args={"path": "foo.py"}
         )
-        assert result == "content of foo.py"
+        # read_file output is external content, so it is wrapped as untrusted
+        # (prompt-injection defense) — but it passes through otherwise unchanged.
+        assert "content of foo.py" in result
+        assert result.startswith("<untrusted_tool_output nonce=")
 
     @pytest.mark.asyncio
     async def test_propagates_exception(self):
@@ -67,7 +70,7 @@ class TestPreToolUse:
 class TestPostToolUse:
     @pytest.mark.asyncio
     async def test_fires_for_matching(self):
-        outfile = Path(tempfile.mktemp(suffix=".json"))
+        outfile = Path(tempfile.mkdtemp()) / "out.json"
         hooks = {
             "PostToolUse": [
                 HookDefinition(
@@ -94,7 +97,7 @@ class TestPostToolUse:
 class TestPostToolUseFailure:
     @pytest.mark.asyncio
     async def test_fires_on_error(self):
-        outfile = Path(tempfile.mktemp(suffix=".json"))
+        outfile = Path(tempfile.mkdtemp()) / "out.json"
         hooks = {"PostToolUseFailure": [HookDefinition(type="command", command=f"cat > {outfile}")]}
         hook = ToolEventHook(HookExecutor(hooks), session_id="s1")
 

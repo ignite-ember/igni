@@ -3,7 +3,7 @@
 Extracted from :mod:`ember_code.backend.command_handler` — the
 old ``_cmd_hooks`` inline body built the "## Hooks" markdown
 list procedurally. Now a Pydantic view model with
-``.to_command_result()`` — mirrors the :mod:`schemas_codeindex`
+``.to_command_result()`` — mirrors the :mod:`schemas_context`
 pattern.
 """
 

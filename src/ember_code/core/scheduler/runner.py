@@ -6,10 +6,13 @@ configurable. Each task has a timeout to prevent runaway executions.
 """
 
 import asyncio
+import contextlib
 import logging
 from collections.abc import Callable, Coroutine
+from datetime import UTC, datetime
 from typing import Any
 
+from ember_code.core.activity import ActivityRegistry, BusyKind, background
 from ember_code.core.scheduler.models import ScheduledTask, TaskStatus
 from ember_code.core.scheduler.store import TaskStore
 
@@ -64,14 +67,20 @@ class SchedulerRunner:
         self._semaphore = asyncio.Semaphore(max(1, max_concurrent))
         self._running = False
         self._poll_task: asyncio.Task | None = None
+        #: Set while the poll loop sleeps between checks — the only point
+        #: where cancelling it interrupts nothing.
+        self._poll_idle = False
+        self._poked: asyncio.Event | None = None
         self._active_tasks: set[asyncio.Task] = set()
+        self._wake_holder = f"scheduler:{id(self):x}"
+        self._next_due: datetime | None = None
 
     def start(self) -> None:
         """Start the background polling loop."""
         if self._running:
             return
         self._running = True
-        self._poll_task = asyncio.create_task(self._poll_loop())
+        self._poll_task = background.daemon(self._poll_loop(), name="scheduler-poll")
         logger.info(
             "Scheduler started (poll every %.0fs, timeout %.0fs, max concurrent %d)",
             self._poll_interval,
@@ -79,40 +88,120 @@ class SchedulerRunner:
             self._semaphore._value,
         )
 
-    def stop(self) -> None:
-        """Stop the polling loop and cancel active task executions."""
+    def stop(self) -> asyncio.Task | None:
+        """Stop the polling loop and cancel active task executions.
+
+        A loop asleep between checks is cancelled. One in the middle of a
+        check is not: it is told to stop and finishes the check first.
+        Cancelled inside a database call, SQLAlchemy's shielded close of
+        the aiosqlite connection can wait on a worker that will never
+        answer, and the event loop then cannot close — the backend's
+        shutdown hung there. Returns the poll task, for :meth:`aclose`.
+        """
         self._running = False
-        if self._poll_task:
-            self._poll_task.cancel()
-            self._poll_task = None
+        task, self._poll_task = self._poll_task, None
+        if task is not None:
+            if self._poll_idle:
+                task.cancel()
+            elif self._poked is not None:
+                self._poked.set()
         for t in self._active_tasks:
             t.cancel()
         self._active_tasks.clear()
+        ActivityRegistry.shared().wake(self._wake_holder, None)
         logger.info("Scheduler stopped")
+        return task
+
+    #: How long :meth:`aclose` waits for a check in flight to finish.
+    CLOSE_TIMEOUT_SECONDS = 10.0
+
+    async def aclose(self) -> None:
+        """:meth:`stop`, then wait for the poll loop to be gone."""
+        task = self.stop()
+        if task is None or task.done():
+            return
+        _done, pending = await asyncio.wait({task}, timeout=self.CLOSE_TIMEOUT_SECONDS)
+        if pending:
+            logger.warning("Scheduler check did not finish in time; cancelling it")
+            task.cancel()
 
     @property
     def is_running(self) -> bool:
         return self._running
 
     async def _poll_loop(self) -> None:
-        while self._running:
-            try:
-                await self._check_and_spawn()
-            except Exception:
-                logger.exception("Scheduler poll error")
-            await asyncio.sleep(self._poll_interval)
+        poked = self._poked = asyncio.Event()
+        loop = asyncio.get_running_loop()
+
+        def poke() -> None:
+            loop.call_soon_threadsafe(poked.set)
+
+        registry = ActivityRegistry.shared()
+        registry.on_rearm(poke)
+        try:
+            while self._running:
+                try:
+                    await self._check_and_spawn()
+                except Exception:
+                    logger.exception("Scheduler poll error")
+                if not self._running:
+                    break
+                self._poll_idle = True
+                try:
+                    with contextlib.suppress(TimeoutError):
+                        await asyncio.wait_for(poked.wait(), self._next_delay())
+                finally:
+                    self._poll_idle = False
+                poked.clear()
+        finally:
+            registry.off_rearm(poke)
+
+    #: How long the loop sleeps with nothing pending, unless poked: a task
+    #: added in this process pokes it (``TaskStore.add``), and so does a
+    #: restore (``ActivityRegistry.rearm``). Waking every ``poll_interval``
+    #: with nothing to do would only dirty an idle process's memory.
+    IDLE_POLL_SECONDS = 300.0
+
+    def _next_delay(self) -> float:
+        """Until the next task is due by the wall clock, at most ``poll_interval``."""
+        if self._next_due is None:
+            return max(self._poll_interval, self.IDLE_POLL_SECONDS)
+        until = (self._next_due - datetime.now(UTC)).total_seconds()
+        return min(self._poll_interval, max(0.0, until))
 
     async def _check_and_spawn(self) -> None:
         """Find due tasks and spawn them, respecting the concurrency limit."""
         due_tasks = await self._store.get_due_tasks()
+        await self._publish_wake()
         for task in due_tasks:
             # Mark as running so the next poll doesn't pick it up again
             await self._store.update_status(task.id, TaskStatus.running)
             logger.info("Spawning scheduled task %s: %s", task.id, task.description)
 
-            bg = asyncio.create_task(self._run_with_semaphore(task.id, task.description))
+            bg = background.start(
+                self._run_with_semaphore(task.id, task.description),
+                holder=f"scheduled-task:{task.id}",
+                reason=task.description[:80],
+                kind=BusyKind.SCHEDULED_TASK,
+            )
             self._active_tasks.add(bg)
             bg.add_done_callback(self._active_tasks.discard)
+
+    async def _publish_wake(self) -> None:
+        """Tell the activity registry when the next task is due.
+
+        So a process that is suspended while nothing runs is woken for
+        it (``core/activity``). Times are stored as local wall-clock
+        times; the wake is in UTC.
+        """
+        try:
+            due = await self._store.next_pending_at()
+        except Exception:
+            logger.debug("could not read the next scheduled task", exc_info=True)
+            return
+        at = due.astimezone(UTC) if due is not None else None
+        self._next_due = at
+        ActivityRegistry.shared().wake(self._wake_holder, at, "a scheduled task")
 
     async def _run_with_semaphore(self, task_id: str, description: str) -> None:
         """Acquire the semaphore, then execute the task."""
@@ -128,27 +217,42 @@ class SchedulerRunner:
         if self._on_task_started:
             self._on_task_started(task_id, description)
 
+        # ``unless_cancelled`` on every terminal write: a cancel issued
+        # while the task was running used to be overwritten here, so the
+        # user was told the recurring schedule had stopped and the next
+        # occurrence was created anyway.
         try:
             result = await asyncio.wait_for(
                 self._execute_fn(description),
                 timeout=self._task_timeout,
             )
-            await self._store.update_status(task_id, TaskStatus.completed, result=result)
+            succeeded, detail = True, str(result)
+            written = await self._store.update_status(
+                task_id, TaskStatus.completed, result=result, unless_cancelled=True
+            )
             logger.info("Task %s completed", task_id)
-            if self._on_task_completed:
-                self._on_task_completed(task_id, description, True, str(result))
         except asyncio.TimeoutError:
-            error_msg = f"Task timed out after {self._task_timeout:.0f}s"
-            await self._store.update_status(task_id, TaskStatus.failed, error=error_msg)
+            succeeded, detail = False, f"Task timed out after {self._task_timeout:.0f}s"
+            written = await self._store.update_status(
+                task_id, TaskStatus.failed, error=detail, unless_cancelled=True
+            )
             logger.error("Task %s timed out after %.0fs", task_id, self._task_timeout)
-            if self._on_task_completed:
-                self._on_task_completed(task_id, description, False, error_msg)
         except Exception as e:
-            error_msg = str(e)
-            await self._store.update_status(task_id, TaskStatus.failed, error=error_msg)
-            logger.error("Task %s failed: %s", task_id, error_msg)
-            if self._on_task_completed:
-                self._on_task_completed(task_id, description, False, error_msg)
+            succeeded, detail = False, str(e)
+            written = await self._store.update_status(
+                task_id, TaskStatus.failed, error=detail, unless_cancelled=True
+            )
+            logger.error("Task %s failed: %s", task_id, detail)
+
+        if written is False:
+            # The terminal write lost to a cancel. Neither notifying a
+            # completion nor rescheduling is honest here — the user was
+            # told the schedule had stopped.
+            logger.info("Task %s was cancelled while running — not rescheduling", task_id)
+            return
+
+        if self._on_task_completed:
+            self._on_task_completed(task_id, description, succeeded, detail)
 
         # Reschedule recurring tasks (even after failure — the schedule continues)
         await self._reschedule_if_recurring(task_id)
@@ -158,12 +262,20 @@ class SchedulerRunner:
         task = await self._store.get(task_id)
         if not task or not task.recurrence:
             return
+        if task.status == TaskStatus.cancelled:
+            logger.info("Task %s cancelled — recurrence stopped", task_id)
+            return
 
         recurrence = task.recurrence_obj
         if recurrence is None:
             logger.warning("Could not compute next occurrence for task %s", task_id)
             return
-        next_at = recurrence.next_after(task.scheduled_at)
+        # ``not_before=now`` collapses the occurrences that elapsed while
+        # igni was closed. Anchoring purely on ``scheduled_at`` meant a
+        # weekend offline with an hourly task came back as ~48 immediately
+        # due occurrences, each replayed as a full unattended agent turn
+        # with the main toolset. One catch-up run, then back on phase.
+        next_at = recurrence.next_after(task.scheduled_at, not_before=datetime.now())
 
         next_task = ScheduledTask.new(
             description=task.description,

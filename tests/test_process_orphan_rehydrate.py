@@ -41,6 +41,7 @@ from pathlib import Path
 import pytest
 
 from ember_code.backend.server import BackendServer
+from ember_code.core.db.database import Database
 from ember_code.core.tools import process_store as ps_mod
 from ember_code.core.tools.orphan_process import OrphanProcess
 from ember_code.core.tools.orphan_rehydrator import (
@@ -211,12 +212,12 @@ class TestRehydrateOrphanProcesses:
         )
 
         # Patch the resolver so rehydrate uses our tmp DB.
-        original_resolver = ps_mod._resolve_db_path
-        ps_mod._resolve_db_path = lambda *_, **__: tmp_path / "state.db"
+        original_resolver = ps_mod._resolve_database
+        ps_mod._resolve_database = lambda *_, **__: Database(tmp_path / "state.db")
         try:
             count = await rehydrate_orphan_processes(project_dir=tmp_path)
         finally:
-            ps_mod._resolve_db_path = original_resolver
+            ps_mod._resolve_database = original_resolver
 
         assert count == 1
         mp = supervisors.default().registry.get(os.getpid())
@@ -239,12 +240,12 @@ class TestRehydrateOrphanProcesses:
             BackgroundProcessRow(pid=dead_pid, cmd="ghost", pgid=dead_pid, started_at=0)
         )
 
-        original_resolver = ps_mod._resolve_db_path
-        ps_mod._resolve_db_path = lambda *_, **__: tmp_path / "state.db"
+        original_resolver = ps_mod._resolve_database
+        ps_mod._resolve_database = lambda *_, **__: Database(tmp_path / "state.db")
         try:
             count = await rehydrate_orphan_processes(project_dir=tmp_path)
         finally:
-            ps_mod._resolve_db_path = original_resolver
+            ps_mod._resolve_database = original_resolver
 
         assert count == 1, "the finished process was not surfaced"
         entry = supervisors.default().registry.get(dead_pid)
@@ -259,12 +260,12 @@ class TestRehydrateOrphanProcesses:
         supervisors.default().registry.remove(dead_pid)
 
     async def test_empty_db_is_noop(self, tmp_path: Path) -> None:
-        original_resolver = ps_mod._resolve_db_path
-        ps_mod._resolve_db_path = lambda *_, **__: tmp_path / "state.db"
+        original_resolver = ps_mod._resolve_database
+        ps_mod._resolve_database = lambda *_, **__: Database(tmp_path / "state.db")
         try:
             count = await rehydrate_orphan_processes(project_dir=tmp_path)
         finally:
-            ps_mod._resolve_db_path = original_resolver
+            ps_mod._resolve_database = original_resolver
 
         assert count == 0
 
@@ -394,16 +395,16 @@ class TestOrphanRehydratorRun:
         # returns ``(None, RehydrateResult(ok=False, reason=...))`` so
         # the caller can surface the store-init failure instead of
         # silently falling back to "return 0".
-        original_resolver = ps_mod._resolve_db_path
+        original_resolver = ps_mod._resolve_database
 
-        def _broken_resolver(*_: object, **__: object) -> Path:
+        def _broken_resolver(*_: object, **__: object) -> Database:
             raise RuntimeError("resolver broke")
 
-        ps_mod._resolve_db_path = _broken_resolver  # type: ignore[assignment]
+        ps_mod._resolve_database = _broken_resolver  # type: ignore[assignment]
         try:
             rehydrator, failure = build_rehydrator(supervisors.default(), tmp_path)
         finally:
-            ps_mod._resolve_db_path = original_resolver
+            ps_mod._resolve_database = original_resolver
 
         assert rehydrator is None
         assert failure is not None

@@ -11,12 +11,12 @@ from __future__ import annotations
 
 from ember_code.backend.rpc_handlers.auth import AuthRpcHandler
 from ember_code.backend.rpc_handlers.base import RpcHandler, RpcHandlerContext, rpc
-from ember_code.backend.rpc_handlers.codeindex import CodeIndexRpcHandler
+from ember_code.backend.rpc_handlers.extensions import ExtensionsRpcHandler
 from ember_code.backend.rpc_handlers.hooks import HooksRpcHandler
-from ember_code.backend.rpc_handlers.knowledge import KnowledgeRpcHandler
 from ember_code.backend.rpc_handlers.loop import LoopRpcHandler
 from ember_code.backend.rpc_handlers.mcp import McpRpcHandler
 from ember_code.backend.rpc_handlers.models import ModelsRpcHandler
+from ember_code.backend.rpc_handlers.notifications import NotificationsRpcHandler
 from ember_code.backend.rpc_handlers.panels import PanelRpcHandler
 from ember_code.backend.rpc_handlers.plan import PlanRpcHandler
 from ember_code.backend.rpc_handlers.plugins import PluginsRpcHandler
@@ -29,16 +29,17 @@ from ember_code.backend.rpc_handlers.session import SessionRpcHandler
 from ember_code.backend.rpc_handlers.session_history import SessionHistoryRpcHandler
 from ember_code.backend.rpc_handlers.skills import SkillsRpcHandler
 from ember_code.backend.rpc_handlers.workflows import WorkflowsRpcHandler
+from ember_code.backend.rpc_handlers.workspace_trust import WorkspaceTrustRpcHandler
 
 __all__ = [
     "POOL_LEVEL_RPCS",
     "AuthRpcHandler",
-    "CodeIndexRpcHandler",
+    "ExtensionsRpcHandler",
     "HooksRpcHandler",
-    "KnowledgeRpcHandler",
     "LoopRpcHandler",
     "McpRpcHandler",
     "ModelsRpcHandler",
+    "NotificationsRpcHandler",
     "PanelRpcHandler",
     "PlanRpcHandler",
     "PluginsRpcHandler",
@@ -50,5 +51,6 @@ __all__ = [
     "SessionRpcHandler",
     "SkillsRpcHandler",
     "WorkflowsRpcHandler",
+    "WorkspaceTrustRpcHandler",
     "rpc",
 ]

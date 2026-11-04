@@ -30,15 +30,8 @@ from ember_code.core.config.schemas.permissions import PermissionsConfig
 
 
 def _decide(perms: PermissionsConfig, tool: str, args: dict) -> str:
-    """Mirror what ``ToolHookFactory.permission_evaluator`` builds."""
-    cat_deny, cat_ask, cat_allow = perms.category_rules()
-    evaluator = PermissionEvaluator.from_strings(
-        mode=perms.mode,
-        deny=[*perms.deny, *cat_deny],
-        ask=[*perms.ask, *cat_ask],
-        allow=[*perms.allow, *cat_allow],
-    )
-    return evaluator.evaluate(tool, args).name
+    """What ``ToolHookFactory.permission_evaluator`` builds decides."""
+    return PermissionEvaluator.from_permissions(perms).evaluate(tool, args).name
 
 
 class TestALevelThatDiffersFromTheDefaultTakesEffect:
@@ -109,20 +102,16 @@ def test_every_mapped_category_is_a_real_field(category: str):
 
 
 class TestReadOnlyIsAWall:
-    """``--read-only`` denies the shell, and the denial explains itself.
+    """``--read-only`` reads, and refuses what writes, and the refusal explains itself.
 
-    The wall is the chosen trade: igni reads files through
-    ``run_shell_command``, so denying it costs the agent its view of the working
-    tree. Leaving the shell open would leave ``>``, ``sed -i`` and
-    ``git checkout`` able to write, making the flag an honour system rather than
-    the guarantee people reach for it to get.
-
-    The assertions below would both have passed vacuously before the categories
-    were wired — the setting existed and nothing read it — which is why the
-    behavioural check matters more than the config one.
+    It used to deny the shell outright, which cost the agent its view of the
+    working tree (igni reads files through ``run_shell_command``). Now a
+    command built only from the read-only allow-list runs and any other is
+    refused rather than asked — ``>``, ``sed -i`` and ``git checkout`` stay
+    shut. The rest is in tests/test_read_only_reads_and_refuses_the_rest.py.
     """
 
-    def test_the_shell_is_actually_denied(self):
+    def test_reads_run_and_writes_are_denied(self):
         from ember_code.cli.options import CliOptions
         from ember_code.core.config.models import CliOverrides
         from ember_code.core.config.settings import load_settings
@@ -130,38 +119,95 @@ class TestReadOnlyIsAWall:
         payload = CliOverrides.from_options(CliOptions(read_only=True)).to_settings_payload()
         perms = load_settings(cli_overrides=payload).permissions
 
-        assert _decide(perms, "run_shell_command", {"command": "cat setup.py"}) == "DENY"
+        assert _decide(perms, "run_shell_command", {"command": "cat setup.py"}) == "ALLOW"
+        assert _decide(perms, "run_shell_command", {"command": "git checkout -- ."}) == "DENY"
+        assert _decide(perms, "run_shell_command", {"command": "echo x > a.py"}) == "DENY"
         assert _decide(perms, "edit_file", {"file_path": "a.py"}) == "DENY"
 
-    def test_the_graph_stays_reachable(self):
-        """The mode is only useful if something can still read the codebase.
+    def test_an_extension_s_read_only_tool_stays_reachable(self):
+        """The mode is only useful if something can still read.
 
-        ``codeindex_cypher`` is read-only by construction — its own guard
-        rejects every write — so it is the intended way to explore in this mode
-        and must not be swept up by the shell deny.
+        An extension tool whose manifest says it changes nothing runs:
+        ``--read-only`` runs reads. igni does not know which
+        extension it is, only what the tool says it is.
         """
         from ember_code.cli.options import CliOptions
         from ember_code.core.config.models import CliOverrides
         from ember_code.core.config.settings import load_settings
+        from ember_code.core.mcp.hints import ToolHints, ToolHintsRegistry
 
         payload = CliOverrides.from_options(CliOptions(read_only=True)).to_settings_payload()
         perms = load_settings(cli_overrides=payload).permissions
+        registry = ToolHintsRegistry.shared()
+        registry.declare(
+            "ext:acme.index",
+            {
+                "mcp_ext:acme.index_query": ToolHints(
+                    read_only=True, destructive=False, idempotent=True, open_world=False
+                ),
+                "mcp_ext:acme.index_rebuild": ToolHints(
+                    read_only=False, destructive=True, idempotent=True, open_world=False
+                ),
+            },
+        )
+        try:
+            assert _decide(perms, "mcp_ext:acme.index_query", {"q": "x"}) == "ALLOW"
+            assert _decide(perms, "mcp_ext:acme.index_rebuild", {}) == "DENY"
+        finally:
+            registry.forget("ext:acme.index")
 
-        assert _decide(perms, "codeindex_cypher", {"cypher": "MATCH (n) RETURN n"}) != "DENY"
-
-    def test_a_denied_shell_call_names_the_alternative(self):
+    def test_a_denied_shell_call_names_the_way_forward(self):
         """Otherwise the agent's first move in a read-only session is a refusal
         with no stated way forward, and a model given no alternative retries the
-        same call in a new costume."""
+        same call in a new costume. It names no extension: igni does not know
+        which tools an installed extension gives the session."""
         from ember_code.core.hooks.permission_pipeline import _denial_message
 
         message = _denial_message("run_shell_command")
 
-        assert "codeindex_cypher" in message
+        assert "another of your tools" in message
         assert "rather than retrying" in message
+        assert "index" not in message
 
     def test_an_ordinary_denial_stays_terse(self):
         """Only the case that strands the model gets the extra paragraph."""
         from ember_code.core.hooks.permission_pipeline import _denial_message
 
         assert _denial_message("edit_file") == "Blocked: permission policy denied 'edit_file'."
+
+
+class TestTheUnreadCategoriesAreDocumentedAsUnread:
+    """``file_read`` and ``shell_restricted`` are accepted and read by nothing.
+
+    CONFIGURATION.md and SECURITY.md said ``shell_restricted: allow`` let
+    read-only commands (rg, find, tree) run. It never did: the default mode asks
+    for ``cat`` like any other command. The code is right: a read that never
+    asks, beside ``web_fetch``, is how a file leaves the machine, and plan mode
+    is where read-only commands run unasked. So the docs say what the code does.
+    """
+
+    UNREAD = ("file_read", "shell_restricted")
+
+    def test_they_map_to_no_tool(self):
+        for category in self.UNREAD:
+            assert category not in PermissionsConfig.CATEGORY_FUNCTIONS
+
+    def test_a_read_only_command_still_asks_in_the_default_mode(self):
+        perms = PermissionsConfig(shell_restricted="allow")
+
+        # DEFER: no rule decides it, so the call goes to the person.
+        assert _decide(perms, "run_shell_command", {"command": "cat README.md"}) == "DEFER"
+
+    @pytest.mark.parametrize("doc", ["docs/CONFIGURATION.md", "docs/SECURITY.md"])
+    def test_every_documented_line_says_it_has_no_effect(self, doc: str):
+        from pathlib import Path
+
+        text = (Path(__file__).resolve().parent.parent / doc).read_text()
+        lines = [
+            line
+            for line in text.splitlines()
+            if any(line.strip().startswith(f"{c}:") for c in self.UNREAD)
+        ]
+        assert lines, f"{doc} no longer lists them; drop this test"
+        for line in lines:
+            assert "no effect" in line, f"{doc}: {line.strip()!r} reads as if it did something"

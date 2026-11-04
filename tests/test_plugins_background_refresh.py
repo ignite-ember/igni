@@ -19,10 +19,13 @@ reads (``settings.storage.data_dir``). Real ``load_registry`` /
 from __future__ import annotations
 
 import asyncio
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
+from ember_code.core.plugins.models import MarketplaceCatalog, MarketplaceEntry
 from ember_code.core.session.core import Session
+from ember_code.core.session.startup.marketplace import MarketplaceWarmupPhase
 
 # Async tests pick up the asyncio mark via pytest-asyncio's auto mode.
 # Module-level mark would also (incorrectly) tag
@@ -57,8 +60,10 @@ async def test_refresh_calls_refresh_marketplace_for_each_entry(
     update past install time."""
     fake_registry = MagicMock()
     e1 = MagicMock()
+    e1.fetched_within.return_value = False  # stale: refreshed
     e1.name = "m1"
     e2 = MagicMock()
+    e2.fetched_within.return_value = False  # stale: refreshed
     e2.name = "m2"
     fake_registry.marketplaces = [e1, e2]
 
@@ -92,8 +97,10 @@ async def test_refresh_continues_past_failures(tmp_path: Path) -> None:
     silently break refresh for everything after it."""
     fake_registry = MagicMock()
     good = MagicMock()
+    good.fetched_within.return_value = False  # stale: refreshed
     good.name = "good"
     bad = MagicMock()
+    bad.fetched_within.return_value = False  # stale: refreshed
     bad.name = "bad"
     fake_registry.marketplaces = [bad, good]
 
@@ -172,6 +179,7 @@ async def test_refresh_passes_data_dir_through(tmp_path: Path) -> None:
     data_dir, not just the first."""
     fake_registry = MagicMock()
     e = MagicMock()
+    e.fetched_within.return_value = False  # stale: refreshed
     e.name = "m1"
     fake_registry.marketplaces = [e]
     expected_data_dir = str(tmp_path / "ember")
@@ -202,3 +210,30 @@ async def test_refresh_passes_data_dir_through(tmp_path: Path) -> None:
     # refresh_marketplace got the right data_dir as a kwarg.
     refresh_call = mock_refresh.call_args
     assert refresh_call.kwargs["data_dir"] == expected_data_dir
+
+
+async def test_a_catalog_fetched_recently_is_not_fetched_again(tmp_path: Path) -> None:
+    """A refresh clones the marketplace's repository: once per
+    ``REFRESH_EVERY_SECONDS`` is enough, not once per session start."""
+    fresh, stale = MagicMock(), MagicMock()
+    fresh.name, stale.name = "fresh", "stale"
+    fresh.fetched_within.return_value = True
+    stale.fetched_within.return_value = False
+    registry = MagicMock()
+    registry.marketplaces = [fresh, stale]
+    phase = MarketplaceWarmupPhase(_make_session_stub(tmp_path))
+    with patch(
+        "ember_code.core.plugins.marketplaces.refresh_marketplace", return_value=None
+    ) as refresh:
+        await phase._refresh_registered(registry, tmp_path)
+    assert [c.args[0] for c in refresh.call_args_list] == ["stale"]
+    fresh.fetched_within.assert_called_once_with(MarketplaceWarmupPhase.REFRESH_EVERY_SECONDS)
+
+
+def test_an_entry_knows_how_long_ago_it_was_fetched() -> None:
+    entry = MarketplaceEntry(name="m", url="u")
+    assert not entry.fetched_within(3600), "never fetched"
+    entry.mark_fetched(MarketplaceCatalog(name="m"))
+    assert entry.fetched_within(3600)
+    later = datetime.now(UTC) + timedelta(hours=2)
+    assert not entry.fetched_within(3600, now=later)

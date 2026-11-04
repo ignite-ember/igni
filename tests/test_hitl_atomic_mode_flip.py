@@ -67,7 +67,9 @@ def _fake_session() -> MagicMock:
         return_value=SimpleNamespace(should_continue=False, message="")
     )
     # Sub-agent HITL — none in this test.
-    session.sub_agent_hitl = SimpleNamespace(resolve=lambda *_: False)
+    session.sub_agent_hitl = SimpleNamespace(
+        resolve=lambda *_: False, take_ready_restored=lambda: []
+    )
     return session
 
 

@@ -134,7 +134,7 @@ Plus `test_permission_eval.py::test_scoped_deny_survives_bypass_permissions` + `
 
 ## MCP (row 38) ✅ VERIFIED
 
-**38. MCP server integration** — 66 tests across `tests/test_mcp_*.py`: `mcp_approval` (14, HITL gate on MCP tool calls), `mcp_client` (13, lifecycle + reconnect), `mcp_config` (19, `.mcp.json` schema + multi-server), `mcp_policy` (15, deny/ask/allow per server + per tool), `mcp_transport` (5, stdio vs HTTP).
+**38. MCP server integration** — 66 tests across `tests/test_mcp_*.py`: `mcp_approval` (14, HITL gate on MCP tool calls), `mcp_client` (13, lifecycle + reconnect), `mcp_config` (19, `.mcp.json` schema + multi-server), `mcp_policy` (15, deny/ask/allow per server + per tool), `test_an_mcp_server_is_connected_filtered_and_asked_for_more.py` (a real stdio server: tool filter, persistence, resources/prompts/annotations, the connect gates).
 
 ---
 

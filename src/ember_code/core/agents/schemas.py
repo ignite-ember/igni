@@ -22,13 +22,13 @@ Splits five concerns off of the old ``core/pool.py``:
   keyword surface.
 * :class:`LoadReport` + :class:`LoadError` — typed Result over the
   old "print to stderr and swallow" pattern.
-* :class:`AgentBuildContext` — the six shared-state params
-  (settings, base_dir, mcp_clients, knowledge_mgr, db, broadcast)
+* :class:`AgentBuildContext` — the five shared-state params
+  (settings, base_dir, mcp_clients, db, broadcast)
   bundled once so :class:`AgentBuilder` takes one construction
-  param instead of six.
+  param instead of five.
 * Typed :class:`typing.Protocol` s — replaces ``Any`` on the public
   API surface (audit AP5). Keeps runtime imports cheap (the real
-  Agno / KnowledgeManager / etc types stay behind
+  Agno types stay behind
   ``TYPE_CHECKING``).
 """
 
@@ -39,6 +39,8 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal, Protocol, runtime_checkable
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
+
+from ember_code.core.agno_telemetry import AgnoTelemetry
 
 if TYPE_CHECKING:
     pass
@@ -51,6 +53,7 @@ class AgentPriority(IntEnum):
     Claude sources by +1::
 
         10  ephemeral agents created at runtime
+         6  an extension's <agent>.<variant>.md, while it runs
          5  <project>/.igni/agents/          (project, native)
          4  <project>/.igni/agents.local/    (project personal)
          3  <project>/.claude/agents/         (project, cross-tool)
@@ -62,6 +65,11 @@ class AgentPriority(IntEnum):
     project declares. It used to sit at the top; the project now
     outranks it, so a repository that ships its own version of an agent
     gets that version.
+
+    An extension's override sits above all of them: the agents it
+    replaces are written for the capability it adds, and while it runs
+    the plain version would be told about tools and an index that it
+    does not use. It applies only while the extension is live.
     """
 
     USER_CLAUDE = 0
@@ -70,6 +78,7 @@ class AgentPriority(IntEnum):
     PROJECT_CLAUDE = 3
     PROJECT_LOCAL = 4
     PROJECT_EMBER = 5
+    EXTENSION_OVERRIDE = 6
     EPHEMERAL = 10
 
 
@@ -284,14 +293,6 @@ class Broadcast(Protocol):
 
 
 @runtime_checkable
-class KnowledgeManager(Protocol):
-    """The session-level knowledge manager wrapper. Only used to
-    dispatch through to :class:`KnowledgeTools`; we don't call its
-    methods directly here."""
-
-    ...
-
-
 @runtime_checkable
 class DbHandle(Protocol):
     """Opaque Agno ``AsyncBaseDb`` handle. Threaded through so
@@ -332,6 +333,7 @@ class AgentConstructorArgs(BaseModel):
     reasoning: bool = False
     reasoning_min_steps: int | None = None
     reasoning_max_steps: int | None = None
+    tool_hooks: list[Any] | None = None
 
     def to_agno_kwargs(self) -> dict[str, Any]:
         """Emit the kwargs Agno actually expects.
@@ -350,9 +352,13 @@ class AgentConstructorArgs(BaseModel):
             "markdown": self.markdown,
             "num_history_runs": self.num_history_runs,
             "retries": self.retries,
+            # Agno's run telemetry to os-api.agno.com (core/agno_telemetry.py).
+            "telemetry": AgnoTelemetry.CONSTRUCTOR_VALUE,
         }
         if self.db is not None:
             kwargs["db"] = self.db
+        if self.tool_hooks:
+            kwargs["tool_hooks"] = self.tool_hooks
         if self.reasoning:
             kwargs["reasoning"] = True
             kwargs["reasoning_min_steps"] = self.reasoning_min_steps
@@ -382,14 +388,8 @@ class AgentBuildContext(BaseModel):
     settings: Any
     base_dir: str | None = None
     mcp_clients: dict[str, Any] | None = None
-    knowledge_mgr: Any | None = None
     db: Any | None = None
     broadcast: Any | None = None
-    #: Resolves the session's ``CodeIndex`` when a specialist first queries it.
-    #: Without this a spawned agent's ``CodeIndexTools`` self-builds an index
-    #: with no Neo4j runtime, so ``codeindex_cypher`` answers ``no_backend`` —
-    #: which is what the ``data-architect`` hit on every delegated query.
-    code_index_provider: Any | None = None
 
 
 __all__ = [
@@ -401,7 +401,6 @@ __all__ = [
     "AgentPriority",
     "Broadcast",
     "DbHandle",
-    "KnowledgeManager",
     "LoadError",
     "LoadReport",
     "McpClient",

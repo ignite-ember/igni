@@ -1,14 +1,13 @@
 """Session-startup coordinator.
 
-Thin composer — owns one instance of each of the four warmup
+Thin composer — owns one instance of each of the warmup
 phases and exposes the same public method names Session /
 backend already call. Every method is a one-line delegate so
 the file stays a single-concern composition point rather than a
 300-line implementation.
 
 The phases themselves live in sibling modules
-(:mod:`~.knowledge`, :mod:`~.codeindex`, :mod:`~.marketplace`,
-:mod:`~.mcp`); each is a subclass of
+(:mod:`~.marketplace`, :mod:`~.mcp`); each is a subclass of
 :class:`~.base.SessionStartupPhase` so shared loop-scheduling
 and log-swallowing behaviour lives in one place.
 """
@@ -18,8 +17,6 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from ember_code.core.session.schemas import McpInitResult
-from ember_code.core.session.startup.codeindex import CodeIndexWarmupPhase
-from ember_code.core.session.startup.knowledge import KnowledgeWarmupPhase
 from ember_code.core.session.startup.marketplace import MarketplaceWarmupPhase
 from ember_code.core.session.startup.mcp import McpInitPhase
 
@@ -42,8 +39,6 @@ class SessionStartupCoordinator:
 
     def __init__(self, session: Session) -> None:
         self._session = session
-        self.knowledge = KnowledgeWarmupPhase(session)
-        self.codeindex = CodeIndexWarmupPhase(session)
         self.marketplace = MarketplaceWarmupPhase(session)
         self.mcp = McpInitPhase(session)
 
@@ -60,19 +55,7 @@ class SessionStartupCoordinator:
     def mcp_initialized(self, value: bool) -> None:
         self.mcp.initialized = value
 
-    # ── Knowledge / CodeIndex / marketplace warmups ───────────
-
-    def start_knowledge_background(self) -> None:
-        """See :meth:`KnowledgeWarmupPhase.start_background`."""
-        self.knowledge.start_background()
-
-    async def ensure_knowledge_started(self) -> None:
-        """See :meth:`KnowledgeWarmupPhase.ensure_started`."""
-        await self.knowledge.ensure_started()
-
-    def start_codeindex_background(self) -> None:
-        """See :meth:`CodeIndexWarmupPhase.start_background`."""
-        self.codeindex.start_background()
+    # ── Marketplace warmup ───────────────────────────────────
 
     def start_marketplace_refresh_background(self) -> None:
         """See :meth:`MarketplaceWarmupPhase.start_background`."""

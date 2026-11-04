@@ -12,6 +12,7 @@ from __future__ import annotations
 import logging
 from collections.abc import Callable
 
+from ember_code.core.hooks.group_hook_gate import GroupHookGate
 from ember_code.core.hooks.handlers.base import HookHandler
 from ember_code.core.hooks.handlers.command import CommandHookHandler
 from ember_code.core.hooks.handlers.http import HttpHookHandler
@@ -26,6 +27,7 @@ from ember_code.core.hooks.schemas import (
     HookResult,
     HookType,
 )
+from ember_code.core.network_policy import NetworkPolicy
 
 logger = logging.getLogger(__name__)
 
@@ -35,7 +37,8 @@ class HookHandlerRegistry:
 
     Constructor takes the dependencies needed by the concrete
     handlers (``mcp_resolver`` for :class:`McpToolHookHandler`,
-    ``rewake_callback`` for :class:`CommandHookHandler`) and
+    ``rewake_callback`` for :class:`CommandHookHandler`,
+    ``network_policy`` for :class:`HttpHookHandler`) and
     assembles the four instances explicitly. The internal
     ``_handlers`` map is instance state so tests can register a
     fake handler on an alternate registry without patching the
@@ -47,10 +50,16 @@ class HookHandlerRegistry:
         *,
         mcp_resolver: MCPResolver | None = None,
         rewake_callback: Callable[[str], None] | None = None,
+        network_policy: NetworkPolicy | None = None,
+        group_gate: GroupHookGate | None = None,
     ):
+        #: Asked before any hook the organisation's group policy shipped is
+        #: handed to its handler (``hooks.group``). A registry built without
+        #: one runs no group hook — see :meth:`GroupHookGate.unwired`.
+        self._group_gate = group_gate if group_gate is not None else GroupHookGate.unwired()
         handlers: list[HookHandler] = [
             CommandHookHandler(rewake_callback=rewake_callback),
-            HttpHookHandler(),
+            HttpHookHandler(network_policy=network_policy),
             PromptHookHandler(),
             McpToolHookHandler(resolver=mcp_resolver),
         ]
@@ -74,6 +83,13 @@ class HookHandlerRegistry:
         """
         return hook_type in self._handlers
 
+    def known_types(self) -> list[str]:
+        """Every type that has a handler — what a settings file may
+        legally say. Used to name the alternatives when a hook
+        declares a type nothing implements.
+        """
+        return [str(t) for t in self._handlers]
+
     async def run(
         self,
         hook: HookDefinition,
@@ -84,9 +100,16 @@ class HookHandlerRegistry:
 
         Returns ``None`` for unknown types (silent skip — parity
         with the pre-refactor debug-log-and-continue).
+
+        Every hook reaches its handler through here, so this is where a
+        group-policy hook is checked against ``hooks.group``: a refused one
+        returns ``None`` too — skipped, the way a hook that failed is
+        (hooks fail open), and never spawned.
         """
         handler = self._handlers.get(hook.type)  # type: ignore[call-overload,arg-type]  # HookType literal narrowing lives at registration time
         if handler is None:
             logger.debug("Unknown hook type %r — skipping", hook.type)
+            return None
+        if not await self._group_gate.permits(hook, event):
             return None
         return await handler.run(hook, event, payload)

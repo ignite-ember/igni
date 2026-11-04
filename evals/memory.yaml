@@ -1,0 +1,108 @@
+agent: main
+description: |
+  Memory discipline.
+
+  ``update_user_memory(task)`` — surfaced by Agno's LearningMachine
+  when ``user_memory`` is configured in AGENTIC mode. The agent calls
+  it when it learns something durable about the *user* (preferences,
+  role, project conventions). NOT for tasks, greetings, or one-off Q&A.
+
+  A failure here looks like memory churn (saving every "hi"). What the
+  agent volunteers to put in the project's documents is the Artifacts
+  extension's, and so are its evals.
+
+cases:
+
+# ── update_user_memory: positive — durable user fact ──────────────
+- name: memory_saves_role_and_context
+  input: |
+    Quick context — I'm a senior backend engineer at Stripe, mostly
+    working on the payments API. Useful to know for next time.
+  expected_tool_calls:
+    - update_user_memory
+  judge_guidelines: |
+    Pass if the agent calls ``update_user_memory`` with a task that
+    captures the user's role / employer / domain. Fail if it merely
+    acknowledges ("got it!") without saving, or saves something
+    too vague ("user is technical").
+
+- name: memory_saves_durable_preference
+  input: |
+    Heads up — in this codebase we always use tabs, never spaces.
+    Please remember that.
+  expected_tool_calls:
+    - update_user_memory
+  judge_guidelines: |
+    Pass if the agent persists the "tabs not spaces" rule via
+    ``update_user_memory``, or hands it to an extension that keeps
+    project documents. What matters is that the rule actually gets
+    persisted somewhere durable. Fail if the agent merely
+    acknowledges ("got it, tabs only") without persisting it.
+
+- name: memory_saves_response_style
+  input: |
+    By the way — please give me concise responses. No long
+    explanations unless I ask. Apply this for the rest of our chats.
+  expected_tool_calls:
+    - update_user_memory
+  judge_guidelines: |
+    Pass if the agent calls ``update_user_memory`` capturing the
+    "concise responses" preference. Fail if it just says "sure!"
+    without persisting the preference.
+
+# ── update_user_memory: negative — must NOT save ──────────────────
+- name: memory_no_save_for_greeting
+  input: |
+    Hi there!
+  unexpected_tool_calls:
+    - update_user_memory
+  judge_guidelines: |
+    Pass if the agent greets back without saving anything. Fail if
+    it calls ``update_user_memory`` for a one-word hello — that's
+    memory churn.
+
+- name: memory_no_save_for_trivia_question
+  input: |
+    What's 14 * 23?
+  unexpected_tool_calls:
+    - update_user_memory
+  judge_guidelines: |
+    Pass if the agent answers 322 with no memory tool call.
+    Arithmetic Q&A is not a fact about the user.
+
+- name: memory_no_save_for_one_shot_task
+  input: |
+    Run pytest -q and tell me if anything fails.
+  unexpected_tool_calls:
+    - update_user_memory
+  judge_guidelines: |
+    Pass if the agent runs the tests without saving "user wants
+    pytest run" — that's a task instruction, not a durable fact
+    about the user.
+
+- name: memory_no_save_for_ephemeral_state
+  input: |
+    I'm tired today, let's keep this simple.
+  unexpected_tool_calls:
+    - update_user_memory
+  judge_guidelines: |
+    Pass if the agent acknowledges tone but doesn't persist
+    "user is tired" — that's transient, not durable. Acceptable
+    bonus: the agent saves "user prefers simple/short responses"
+    if it interprets the tone as a preference, but persisting
+    "tired" itself is a fail.
+
+# ── update_user_memory: multi-turn recall ────────────────────────
+- name: memory_recalled_across_turns
+  prior_messages:
+    - "Quick fact about me — I always use uv for Python package management. Save that."
+  input: |
+    What's the right way to add the ``requests`` library to this
+    project?
+  judge_guidelines: |
+    Pass if the agent's answer references uv (e.g. ``uv add
+    requests``). The prior turn established the user's package
+    manager and asked the agent to save it; the recall turn is
+    where we see whether the saved memory actually informs the
+    response. Fail if the answer recommends pip / poetry / etc.,
+    ignoring the saved preference.

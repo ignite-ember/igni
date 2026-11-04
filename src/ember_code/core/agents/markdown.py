@@ -16,7 +16,8 @@ from typing import ClassVar
 import yaml
 
 from ember_code.core.agents.schemas import AgentDefinition
-from ember_code.core.prompts import inject_codeindex_schema
+from ember_code.core.prompts import expand_anchors
+from ember_code.core.prompts.document import PromptDocument
 
 
 class AgentMarkdownFile:
@@ -33,8 +34,14 @@ class AgentMarkdownFile:
         r"^---\s*\n(.*?)\n---\s*\n?(.*)", re.DOTALL
     )
 
-    def __init__(self, path: Path) -> None:
+    def __init__(self, path: Path, content: str | None = None) -> None:
+        """
+        Args:
+            content: The file's text when it is already in hand — an
+                agent an extension has composed — so nothing is read.
+        """
         self.path = path
+        self._content = content
         self._frontmatter: dict | None = None
         self._body: str | None = None
         self._parse_ok: bool | None = None
@@ -46,7 +53,7 @@ class AgentMarkdownFile:
         if self._parse_ok is not None:
             return
         try:
-            content = self.path.read_text()
+            content = self._read()
         except (OSError, UnicodeDecodeError):
             self._parse_ok = False
             return
@@ -65,6 +72,9 @@ class AgentMarkdownFile:
         self._frontmatter = fm
         self._body = match.group(2).strip()
         self._parse_ok = True
+
+    def _read(self) -> str:
+        return self._content if self._content is not None else self.path.read_text()
 
     def raw_frontmatter_keys(self) -> set[str]:
         """Top-level YAML frontmatter keys, or empty on any failure.
@@ -88,7 +98,7 @@ class AgentMarkdownFile:
             # Distinguish "no frontmatter at all" vs "YAML broken":
             # re-read once, don't cache, and give a specific message.
             try:
-                content = self.path.read_text()
+                content = self._read()
             except (OSError, UnicodeDecodeError) as exc:
                 raise ValueError(f"Cannot read {self.path}: {exc}") from exc
             if not self.FRONTMATTER_RE.match(content):
@@ -98,10 +108,12 @@ class AgentMarkdownFile:
         assert self._frontmatter is not None  # narrowed by _parse_ok
         assert self._body is not None
         fm = self._frontmatter
-        # The CodeIndex-aware variants carry a placeholder where the graph schema
-        # belongs; it is substituted here so there is one description of the
-        # graph rather than one per prompt. See ``prompts.inject_codeindex_schema``.
-        body = inject_codeindex_schema(self._body)
+        # An agent an extension ships may carry an anchor its extension
+        # fills (a schema it describes, say), substituted
+        # here so there is one description rather than one per prompt.
+        # Its section markers name the parts an extension can change;
+        # the model reads none of them.
+        body = expand_anchors(PromptDocument.unmarked(self._body))
 
         if "name" not in fm:
             raise ValueError(f"Agent definition missing 'name' in {self.path}")

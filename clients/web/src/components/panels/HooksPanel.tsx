@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type { IgniClient } from "../../protocol/client";
 import { Drawer } from "./Drawer";
-import { Skeleton } from "../Skeleton";
+import { Skeleton } from "@ignite-ember/ui-react";
 import { host } from "../../lib/host";
 
 // ── Types ────────────────────────────────────────────────────────
@@ -198,8 +198,8 @@ function HookRow({ hook }: { hook: HookEntry }) {
   );
 
   // Webhook URLs aren't files — open externally if at all. Script
-  // commands go through the host bridge: native IDE in VSCode /
-  // JetBrains / Tauri, preview modal in plain web.
+  // commands go through the host bridge: the OS in Tauri,
+  // preview modal in plain web.
   if (isWebhook) {
     return <div className="hooks-row">{Inner}</div>;
   }

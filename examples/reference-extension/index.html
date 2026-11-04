@@ -1,0 +1,15 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Compliance</title>
+    <!-- Bundled, never linked from igni's origin: this page runs under
+         its own origin with `default-src 'self'`, so a cross-origin
+         stylesheet is refused. That refusal is deliberate. -->
+    <link rel="stylesheet" href="./igni-ui.css" />
+  </head>
+  <body class="igni-root">
+    <div id="root"></div>
+    <script type="module" src="./panel.js"></script>
+  </body>
+</html>

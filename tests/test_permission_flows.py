@@ -39,14 +39,13 @@ class TestPermissionCheckLevels:
         level = perms.check("Bash", "run_shell_command", {"args": ["ls"]})
         assert level in ("ask", "allow")
 
-    def test_web_fetch_is_allowed_by_default(self):
-        """This used to assert ``Read``/``read_file``. Reading is a
-        shell command now — ``Read`` left the registry, so the level it
-        returns is the "ask" fallback, and asserting "allow" for it
-        would be asserting a grant for a tool nothing can call."""
+    def test_web_fetch_asks_by_default(self):
+        """A fetch the model decides on leaves the customer's network, so
+        it waits for a person's yes unless the config allows the web
+        (CRA secure-by-default). It was allowed without asking."""
         perms = ToolPermissions()
         level = perms.check("WebFetch", "fetch_url", {"url": "https://x.test"})
-        assert level == "allow"
+        assert level == "ask"
 
 
 # ── Permission rule persistence ──────────────────────────────────
@@ -231,13 +230,19 @@ class TestBackendHITLResolution:
             server._hitl_tracer = HITLTracer(enabled=False)
 
             req = MagicMock()
+            req.tool_execution.tool_name = "run_shell_command"
             server._hitl_store.register("r1", PendingRequirement(req=req, run_id="run-1"))
 
             results = []
             async for proto in server.resolve_hitl("r1", "reject"):
                 results.append(proto)
 
-            req.reject.assert_called_once_with(note="User denied")
+            # The model reads the note as the tool's result. It is the trained
+            # refusal shape, naming the tool — never the bare "User denied",
+            # which the fine-tuning corpus does not contain once.
+            req.reject.assert_called_once_with(
+                note="Blocked: the person declined 'run_shell_command'."
+            )
 
     @pytest.mark.asyncio
     async def test_resolve_unknown_requirement_returns_error(self):

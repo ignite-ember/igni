@@ -52,13 +52,25 @@ class ToolEventHookFactory:
         project_dir: Path,
         hook_executor_ref: Callable[[], HookExecutor],
         session_id_ref: Callable[[], str],
+        permission_evaluator: PermissionEvaluator | None = None,
     ) -> None:
         self._settings = settings
         self._rules_index = rules_index
         self._project_dir = project_dir
         self._hook_executor_ref = hook_executor_ref
         self._session_id_ref = session_id_ref
-        self._permission_evaluator: PermissionEvaluator | None = None
+        # Seed for the paths that replace the whole factory (plugin
+        # hot-reload rebuilds it to pick up the new hook executor).
+        # Without this the replacement starts with an empty cache and
+        # rebuilds the evaluator from ``settings.permissions.mode`` —
+        # silently dropping a user out of plan mode, i.e. out of "do not
+        # touch my tree", because they installed a plugin.
+        self._permission_evaluator: PermissionEvaluator | None = permission_evaluator
+        #: Bypass mode's last check; set by the session once it can ask.
+        self.bypass_guard: Any = None
+        #: The session's in-run approval channel, for a call the evaluator
+        #: wants asked about that was built without an approval pause.
+        self.ask_person: Any = None
 
     @property
     def permission_evaluator(self) -> PermissionEvaluator:
@@ -70,23 +82,13 @@ class ToolEventHookFactory:
         needing to know when the evaluator was constructed.
         """
         if self._permission_evaluator is None:
-            perms = self._settings.permissions
-            # The per-category levels (``file_write``, ``shell_execute``, …) are
-            # appended behind the explicit lists. They are documented in
-            # SECURITY.md as igni's permission model and were read by nothing:
-            # their only consumer, ``PermissionGuard``, was never constructed.
-            # Appended rather than merged, so an explicit rule is never
-            # dropped. Note that ordering does NOT create an exception: the
-            # evaluator runs deny before allow and treats deny as its safety
-            # floor, so a category set to ``deny`` cannot be reopened by a
-            # specific allow. Verified, not assumed — see
-            # tests/test_permission_categories_are_live.py.
-            cat_deny, cat_ask, cat_allow = perms.category_rules()
-            self._permission_evaluator = PermissionEvaluator.from_strings(
-                mode=perms.mode,
-                deny=[*perms.deny, *cat_deny],
-                ask=[*perms.ask, *cat_ask],
-                allow=[*perms.allow, *cat_allow],
+            # Built from the ``permissions`` block: the explicit lists, the
+            # per-category levels behind them (documented in SECURITY.md as
+            # igni's permission model, and read by nothing until they were
+            # wired here — see tests/test_permission_categories_are_live.py),
+            # and ``--read-only``.
+            self._permission_evaluator = PermissionEvaluator.from_permissions(
+                self._settings.permissions
             )
         return self._permission_evaluator
 
@@ -106,6 +108,8 @@ class ToolEventHookFactory:
             rules_index=self._rules_index,
             project_dir=self._project_dir,
             permission_evaluator=self.permission_evaluator,
+            bypass_guard=self.bypass_guard,
+            ask_person=self.ask_person,
         )
 
     def evaluator_for_session(self, session: Any) -> PermissionEvaluator:

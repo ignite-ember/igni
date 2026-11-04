@@ -32,7 +32,10 @@ class FakeWebSocket {
   onerror: (() => void) | null = null;
   closeCalls = 0;
 
-  constructor(public url: string) {
+  constructor(
+    public url: string,
+    public protocols?: string[],
+  ) {
     FakeWebSocket.instances.push(this);
   }
 
@@ -77,6 +80,24 @@ afterEach(() => {
 });
 
 const latest = () => FakeWebSocket.instances[FakeWebSocket.instances.length - 1];
+
+describe("the per-launch token", () => {
+  it("is offered on every connect, the reconnects included", () => {
+    const client = new IgniClient("ws://test", "tok");
+    client.connect();
+    expect(latest().protocols).toEqual(["igni.v1", "igni-token.tok"]);
+    latest().fail();
+    vi.advanceTimersByTime(500);
+    expect(FakeWebSocket.instances).toHaveLength(2);
+    expect(latest().protocols).toEqual(["igni.v1", "igni-token.tok"]);
+  });
+
+  it("without one, no subprotocol is offered", () => {
+    const client = new IgniClient("ws://test");
+    client.connect();
+    expect(latest().protocols).toBeUndefined();
+  });
+});
 
 describe("backoff schedule", () => {
   it("retries after 500ms on an abnormal close", () => {

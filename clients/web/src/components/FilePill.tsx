@@ -71,11 +71,8 @@ export function FilePill({ path }: { path: string }) {
             className="file-pill-menu-item"
             onClick={() => {
               setMenuOpen(false);
-              // Route through the host bridge — VSCode opens it in an
-              // editor tab via showTextDocument, JetBrains via
-              // FileEditorManager, Tauri via the OS shell. The old
-              // ``vscode://file${path}`` URL was broken (missing slash
-              // after "file") AND only worked in VSCode anyway.
+              // Route through the host bridge — Tauri opens it via
+              // the OS shell, a browser tab in the preview.
               void host.openFile(path);
             }}
           >

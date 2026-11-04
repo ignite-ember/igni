@@ -44,7 +44,10 @@ class HttpFetcherConfig(BaseModel):
 
     ``max_html_chars`` is the fallback truncation limit used by
     :meth:`HttpFetcher.fetch_text` when the Agno caller does not
-    override ``max_length`` on :meth:`WebTools.fetch_url`.
+    override ``max_length`` on :meth:`WebTools.fetch_url` — which it
+    now really is; for a while the field was documented as that and
+    read by nothing, the live limit being a literal default on
+    ``fetch_url``.
     ``max_json_chars`` is the JSON-specific limit used by
     :meth:`HttpFetcher.fetch_json_text` (matches the previous
     ``_MAX_JSON_CHARS`` value verbatim).

@@ -88,9 +88,10 @@ class SessionRun(ABC):
 
     # ── Shared turn pipeline ─────────────────────────────────────
 
-    async def _run_turn(self, text: str) -> None:
+    async def _run_turn(self, text: str) -> bool:
         """Resolve file mentions / references, run the model, print
-        the response + run stats.
+        the response + run stats. ``False`` when the turn failed — the
+        failure has been printed as an error, not as a reply.
 
         Single source of truth for the turn pipeline. Previously
         duplicated verbatim between ``runner.py`` and
@@ -111,6 +112,15 @@ class SessionRun(ABC):
         start_time = time.monotonic()
         response = await session.handle_message(message)
         elapsed = time.monotonic() - start_time
+        # A failed turn was printed as an error already; its text is not a
+        # reply. Typed check, as in ``_emit_pending_plan``: a loosely held
+        # session (a test double) offers a truthy non-string here.
+        failure = session.last_turn_failure
+        if isinstance(failure, str) and failure:
+            display.print_run_stats(
+                RunStats(elapsed_seconds=elapsed, model=session.settings.models.default)
+            )
+            return False
         if response and response.strip():
             display.print_response(response)
         else:
@@ -139,6 +149,7 @@ class SessionRun(ABC):
                 model=session.settings.models.default,
             )
         )
+        return True
 
     # ── Entry point (subclass-defined shape) ─────────────────────
 

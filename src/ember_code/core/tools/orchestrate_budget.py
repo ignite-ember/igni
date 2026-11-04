@@ -66,6 +66,27 @@ class SpawnBudget:
             self._count += count
             return None
 
+    def release(self, count: int = 1) -> None:
+        """Hand ``count`` reserved slots back.
+
+        The reservation has to happen before the sub-runnable is
+        built — the cap is there to stop work starting, so it is
+        checked first. A build that then fails started no work, and
+        keeping its slot makes the budget a count of *attempts*
+        rather than of agents. Naming an agent that does not exist
+        is the model's documented failure mode on this tool (DPO-4:
+        79/79 rejected sides named a phantom ``researcher``), and
+        ``AgentPool.get`` rejects it with ``KeyError`` — so twenty
+        typos silently retired a session's entire 20-agent budget
+        without a single sub-agent having run, with nothing in the
+        refusal to suggest why.
+
+        Floors at zero so a double release cannot mint slots that
+        were never reserved.
+        """
+        with self._lock:
+            self._count = max(0, self._count - count)
+
     def reset(self) -> None:
         """Drop the counter to zero. Called on session teardown."""
         with self._lock:

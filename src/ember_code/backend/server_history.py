@@ -219,7 +219,9 @@ class ChatHistoryRebuilder:
                 turn_out = VisualizationTurn(
                     spec_id=payload.spec_id,
                     spec=spec,
-                    source_agent="visualizer",
+                    source_agent=payload.source or "visualizer",
+                    title=payload.title,
+                    extension_id=payload.source,
                     run_id=rid,
                     seq=ev.seq,
                 )

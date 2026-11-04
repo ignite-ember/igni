@@ -91,4 +91,27 @@ describe("the visual baselines' environment is pinned", () => {
       .join("\n");
     expect(steps).not.toContain("playwright install");
   });
+
+  it("the baseline script runs one worker with longer timeouts", () => {
+    // T18. Under amd64 emulation on an arm64 Mac every page is several
+    // times slower, and with a worker per core the run timed out: tests
+    // at 20 s and screenshot assertions at 5 s, starved by each other.
+    // One worker, and the timeouts scaled through the config, so the
+    // emulated run waits as long as it needs and CI keeps its own.
+    const runs = script.match(/npx playwright test [^\n']*/g) ?? [];
+    expect(runs.length, "found no playwright run in the script").toBe(2);
+    for (const run of runs) expect(run).toContain("--workers=1");
+    const factor = /-e IGNI_E2E_TIMEOUT_FACTOR=(\d+)/.exec(script);
+    expect(factor, "the script does not lengthen the timeouts").not.toBeNull();
+    expect(Number(factor![1])).toBeGreaterThanOrEqual(4);
+  });
+
+  it("CI's timeouts are unchanged: the factor defaults to 1", () => {
+    const config = readFileSync(join(CLIENT, "playwright.config.ts"), "utf8");
+    expect(config).toMatch(/process\.env\.IGNI_E2E_TIMEOUT_FACTOR \?\? 1\b/);
+    expect(config).toContain("timeout: 20_000 * TIMEOUT_FACTOR");
+    expect(config).toContain("timeout: 5_000 * TIMEOUT_FACTOR");
+    expect(config).toContain("timeout: 60_000 * TIMEOUT_FACTOR");
+    expect(workflow).not.toContain("IGNI_E2E_TIMEOUT_FACTOR");
+  });
 });

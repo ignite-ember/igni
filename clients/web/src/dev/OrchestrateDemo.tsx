@@ -4,7 +4,7 @@
  * Reachable at ``?demo=team`` (see main.tsx). Renders the same
  * components the live chat would, but driven by hardcoded mock data
  * instead of a running BE. Lets us iterate on the visual without
- * rebuilding the JetBrains plugin or running through a real
+ * rebuilding the desktop app or running through a real
  * ``broadcast`` for every tweak.
  *
  * Two scenario kinds:
@@ -1241,7 +1241,7 @@ const SCENARIOS: Scenario[] = [
           "added 482 packages in 12s",
           "$ npm run dev",
           "",
-          "> @igni/web-ui@0.1.0 dev",
+          "> @ignite-ember/web-ui@0.1.0 dev",
           "> vite",
           "",
           "  VITE v6.4.3  ready in 129 ms",
@@ -1367,11 +1367,8 @@ const SCENARIOS: Scenario[] = [
           "  authorize -- yes --> ci[run ci.yml]",
           "  authorize -- no --> stop[abort]",
           "  ci --> pypi[publish PyPI]",
-          "  pypi --> jb[build JetBrains]",
-          "  pypi --> vsc[build VSCode]",
           "  pypi --> tauri[build Tauri matrix]",
-          "  jb --> rel[github release]",
-          "  vsc --> rel",
+          "  pypi --> rel[github release]",
           "  tauri --> uj[updater latest.json]",
           "  uj --> rel",
           "```",
@@ -1470,9 +1467,7 @@ const SCENARIOS: Scenario[] = [
           "  root((igni))",
           "    Clients",
           "      Tauri desktop",
-          "      VSCode extension",
-          "      JetBrains plugin",
-          "      Shared web UI",
+          "      Web client",
           "    Backend",
           "      Agno runtime",
           "      MCP",

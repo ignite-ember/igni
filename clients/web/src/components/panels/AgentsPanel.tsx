@@ -111,10 +111,10 @@ export function AgentsPanel({
     void refresh();
   }, [refresh]);
 
-  const act = async (name: string, method: string) => {
+  const act = async (name: string, method: string, extra: Record<string, string> = {}) => {
     setBusy(name);
     try {
-      await client.rpc(method, { name });
+      await client.rpc(method, { name, ...extra });
       await refresh();
     } finally {
       setBusy("");
@@ -154,11 +154,23 @@ export function AgentsPanel({
                 <div style={{ display: "flex", gap: 6 }} onClick={(e) => e.stopPropagation()}>
                   <button
                     className="btn btn-sm"
-                    title="Keep this generated agent permanently"
+                    title="Keep it for the project: .igni/agents/, committed and shared with the team"
                     disabled={busy === a.name}
-                    onClick={() => void act(a.name || "", "promote_ephemeral_agent")}
+                    onClick={() =>
+                      void act(a.name || "", "promote_ephemeral_agent", { target: "project" })
+                    }
                   >
                     Keep
+                  </button>
+                  <button
+                    className="btn btn-sm"
+                    title="Keep it for yourself: .igni/agents.local/, not in git"
+                    disabled={busy === a.name}
+                    onClick={() =>
+                      void act(a.name || "", "promote_ephemeral_agent", { target: "personal" })
+                    }
+                  >
+                    Keep for me
                   </button>
                   <button
                     className="btn btn-sm btn-danger"

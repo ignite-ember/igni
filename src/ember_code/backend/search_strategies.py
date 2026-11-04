@@ -109,7 +109,7 @@ class RgSearchStrategy(SearchStrategy):
             str(project_root),
         ]
         try:
-            proc = subprocess.run(
+            proc = subprocess.run(  # noqa: S603 — rg with an argv list, no shell
                 cmd,
                 capture_output=True,
                 text=True,

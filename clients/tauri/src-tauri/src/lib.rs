@@ -5,9 +5,25 @@
 //! opens the shared web UI (clients/web) pointed at that port via the
 //! `?ws=` query param. The backend self-terminates if this process dies
 //! (IGNI_PARENT_PID watchdog), and we also kill it on window close.
+//!
+//! The backend's WebSocket is reachable by every web page and local
+//! process, so each launch makes a secret ([`new_ws_token`]): the
+//! backend gets it in its environment (``IGNI_WS_TOKEN``, never argv,
+//! where ``ps`` shows it) and the webview in the URL fragment
+//! (``#igni_ws_token=…``: never sent to any server, kept across
+//! reloads). The web client offers it as the WebSocket subprotocol
+//! ``igni-token.<token>``; the backend refuses connections without it
+//! (``src/ember_code/transport/ws_auth.py``).
 
 mod discovery;
 mod runtime;
+mod desktop_settings;
+mod group_pack;
+mod update_policy;
+
+#[cfg(test)]
+use desktop_settings::{configured_update_endpoint_in, update_checks_disabled_in};
+use update_policy::{UpdatePolicy, UpdateSource};
 
 use std::io::{BufRead, BufReader};
 use std::process::{Child, Command, Stdio};
@@ -31,6 +47,11 @@ struct BackendHandle(Mutex<Option<Child>>);
 #[derive(Clone)]
 struct BackendConn {
     port: u16,
+    /// The secret the backend requires of every WebSocket connection;
+    /// ``None`` only for a backend that requires none (one an IDE
+    /// plugin or a developer started, or ``IGNI_DEV_NO_WS_TOKEN=1`` in
+    /// a debug build).
+    ws_token: Option<String>,
     expected_cli: String,
     actual_cli: String,
     source: &'static str,
@@ -78,7 +99,48 @@ fn app_url(conn: &BackendConn, project_dir: Option<&str>) -> String {
     if let Some(dir) = project_dir {
         url.push_str(&format!("&dir={}", percent_encode(dir)));
     }
+    // The fragment, not the query: it never reaches a server or a
+    // request log, and it survives the webview reloading.
+    if let Some(token) = &conn.ws_token {
+        url.push_str(&format!("#igni_ws_token={}", percent_encode(token)));
+    }
     url
+}
+
+/// The environment variable the backend reads its token from.
+const WS_TOKEN_ENV: &str = "IGNI_WS_TOKEN";
+/// Development only: start the backend without a token.
+const DEV_NO_WS_TOKEN_ENV: &str = "IGNI_DEV_NO_WS_TOKEN";
+
+/// A fresh per-launch secret: 32 random bytes, base64url, no padding
+/// (43 characters, all valid in a WebSocket subprotocol token).
+fn new_ws_token() -> Result<String, String> {
+    use base64::Engine as _;
+    use ring::rand::SecureRandom as _;
+    let mut bytes = [0u8; 32];
+    ring::rand::SystemRandom::new()
+        .fill(&mut bytes)
+        .map_err(|_| "no secure random source for the WebSocket token".to_string())?;
+    Ok(base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(bytes))
+}
+
+/// ``IGNI_DEV_NO_WS_TOKEN=1``, honoured in debug builds only: a release
+/// build always protects its backend, whatever the environment says.
+fn ws_token_disabled_for_dev(value: Option<&str>) -> bool {
+    cfg!(debug_assertions) && value.map(str::trim) == Some("1")
+}
+
+/// The token for a backend this shell is about to spawn, or ``None``
+/// when a developer turned it off.
+fn ws_token_for_spawn() -> Result<Option<String>, String> {
+    if ws_token_disabled_for_dev(std::env::var(DEV_NO_WS_TOKEN_ENV).ok().as_deref()) {
+        eprintln!(
+            "WARNING: {DEV_NO_WS_TOKEN_ENV}=1 — the igni backend's WebSocket accepts \
+             connections without a token. Any local process can drive it. Development only."
+        );
+        return Ok(None);
+    }
+    new_ws_token().map(Some)
 }
 
 /// Compile-time platform tag injected into the init script so the
@@ -295,6 +357,7 @@ const STDERR_TAIL_LINES: usize = 40;
 
 fn spawn_backend(
     project_dir: &str,
+    ws_token: Option<&str>,
     progress: &(dyn Fn(&str) + Sync),
 ) -> Result<(Child, u16, BackendVersionInfo), String> {
     progress("Preparing the igni backend…");
@@ -328,6 +391,19 @@ fn spawn_backend(
     .stderr(Stdio::piped());
     for (k, v) in &install.env {
         cmd.env(k, v);
+    }
+    // After ``install.env``, so nothing there can override it. The
+    // environment, not argv: ``ps`` shows every process's argv.
+    match ws_token {
+        Some(token) => {
+            cmd.env(WS_TOKEN_ENV, token);
+            // An ``IGNI_DEV_NO_WS_TOKEN`` this app inherited must not
+            // switch the backend's check off behind our back.
+            cmd.env_remove(DEV_NO_WS_TOKEN_ENV);
+        }
+        None => {
+            cmd.env_remove(WS_TOKEN_ENV);
+        }
     }
     let mut child = cmd.spawn().map_err(|e| {
         format!("failed to spawn backend via `{}`: {e}", install.python.display())
@@ -636,170 +712,60 @@ fn build_menu(app: &tauri::AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
         .build()
 }
 
+/// An updater pointed at `endpoint`, or at the compiled one when `None`.
+///
+/// A configured endpoint that will not parse as a URL, or that the
+/// plugin rejects, is an error rather than a silent fallback: an
+/// operator who set a mirror and got the vendor's host anyway has been
+/// quietly overruled, which is the failure DEC-11 exists to prevent.
+///
+/// **Signature verification is unchanged, and that is the whole reason
+/// a mirror is safe.** The public key lives in `tauri.conf.json` and is
+/// not configurable, so a mirror can serve a different *version* but
+/// cannot serve a different *build*. The plugin also refuses a
+/// non-HTTPS endpoint, so `http://` fails at the builder rather than
+/// mid-download.
+fn updater_for(app: &AppHandle, endpoint: Option<&str>) -> Result<tauri_plugin_updater::Updater, String> {
+    use tauri_plugin_updater::UpdaterExt;
+
+    let Some(endpoint) = endpoint else {
+        return app.updater().map_err(|e| e.to_string());
+    };
+
+    let url = tauri::Url::parse(endpoint)
+        .map_err(|e| format!("update_endpoint is not a valid URL ({endpoint}): {e}"))?;
+
+    app.updater_builder()
+        .endpoints(vec![url])
+        .map_err(|e| format!("update_endpoint was refused ({endpoint}): {e}"))?
+        .build()
+        .map_err(|e| e.to_string())
+}
+
+/// The updater this install may use, or why it may use none.
+/// See `update_policy` for what decides it.
+fn permitted_updater(app: &AppHandle) -> Result<Option<tauri_plugin_updater::Updater>, String> {
+    match UpdatePolicy::load().source() {
+        UpdateSource::Off(_) => Ok(None),
+        UpdateSource::Compiled => updater_for(app, None).map(Some),
+        UpdateSource::Mirror(mirror) => updater_for(app, Some(&mirror)).map(Some),
+    }
+}
+
 /// Check the Tauri updater channel for a newer release and return
 /// a payload shaped like the Python BE's ``check_for_update`` RPC,
 /// so the existing ``.update-banner`` React component can render
 /// the result with no client-side branching.
 ///
-/// Returns ``available=false`` (with empty fields) if no update is
-/// pending or if the check fails — silent best-effort, same
-/// behavior as the BE's existing check.
-/// Whether the user has turned update checks off.
-///
-/// `update_check_ttl: 0` in `~/.igni/config.yaml` is the documented
-/// off switch, and the setting's own comment calls the PyPI check "the
-/// only unconfigured outbound request an ordinary run makes". That was
-/// not true in the desktop app: this command went straight to the
-/// updater plugin, so an install that had explicitly disabled update
-/// checks still contacted github.com on **every launch** — the silent
-/// startup check in `App.tsx` calls it on connect. F126.
-///
-/// Read here rather than asked of the backend because this is the
-/// command that makes the request. A check that consults a policy one
-/// process away can be reached without consulting it; a check that
-/// reads the file it is about cannot.
-///
-/// Parsed by hand rather than with a YAML crate. One integer at a known
-/// key is not worth a dependency in a binary that ships to customers,
-/// and the failure mode is chosen deliberately: anything unparseable
-/// leaves checks **enabled**, because silently disabling updates on a
-/// malformed config would leave a machine on an old build with nothing
-/// said.
-fn update_checks_disabled() -> bool {
-    let Some(home) = dirs::home_dir() else {
-        return false;
-    };
-    match std::fs::read_to_string(home.join(".igni/config.yaml")) {
-        Ok(text) => update_checks_disabled_in(&text),
-        // No config at all is the default, and the default is on.
-        Err(_) => false,
-    }
-}
-
-/// The decision, over the text — so it is testable without owning
-/// `$HOME`. Mutating the environment in a Rust test is `unsafe` and
-/// races every other thread in the binary, which is a poor trade for
-/// covering one `read_to_string`.
-fn update_checks_disabled_in(text: &str) -> bool {
-    for line in text.lines() {
-        // No trimming: `strip_prefix` on the raw line is what anchors
-        // this to the top level. An indented `update_check_ttl` belongs
-        // to whatever section contains it, and reading it as the
-        // top-level setting would let an unrelated block switch off the
-        // app's updates.
-        //
-        // There was an explicit whitespace guard here as well. A
-        // revert-check removing it still passed, because it could not
-        // fail — `strip_prefix` had already rejected the indented line.
-        // Dead code that reads as defence, which is worse than no code.
-        let Some(value) = line.strip_prefix("update_check_ttl:") else {
-            continue;
-        };
-        let value = value.split('#').next().unwrap_or("").trim();
-        if let Ok(ttl) = value.parse::<i64>() {
-            return ttl <= 0;
-        }
-        // Present but unreadable — see the caller's note: enabled, so a
-        // malformed config never silently strands a machine on an old
-        // build.
-        return false;
-    }
-    false
-}
-
-/// Where this install looks for releases.
-///
-/// DEC-11. `tauri.conf.json` names
-/// `github.com/ignite-ember/igni/releases`, which is the one outbound
-/// host a default install has — and it sits awkwardly beside DP-5's
-/// claim that nothing leaves the customer's cloud. Worse, an air-gapped
-/// customer could not update at all: `update_check_ttl: 0` turns the
-/// check off, and there was nothing to turn it *towards*.
-///
-/// So `update_endpoint` in `~/.igni/config.yaml` replaces the compiled
-/// default. A customer mirrors releases and points the app at their own
-/// host.
-///
-/// **Signature verification is unchanged, and that is the whole reason
-/// this is safe.** The public key lives in `tauri.conf.json` and is not
-/// configurable here, so a mirror can serve a different *version* but
-/// cannot serve a different *build* — an artefact it signed itself
-/// fails `minisign-verify` before anything is installed. Pointing at a
-/// hostile mirror costs you updates, not integrity.
-///
-/// The plugin additionally refuses a non-HTTPS endpoint unless the app
-/// was built with `dangerous_insecure_transport_protocol`, which this
-/// one is not. So `http://` fails, and it fails at the builder rather
-/// than mid-download.
-///
-/// Same hand-parse as `update_checks_disabled_in`, for the same
-/// reasons, with the same top-level anchoring — an indented
-/// `update_endpoint` belongs to whatever contains it, and reading it as
-/// the app's release source would let an unrelated config block choose
-/// where the binary comes from.
-fn configured_update_endpoint() -> Option<String> {
-    let home = dirs::home_dir()?;
-    let text = std::fs::read_to_string(home.join(".igni/config.yaml")).ok()?;
-    configured_update_endpoint_in(&text)
-}
-
-/// The decision, over the text, so it is testable without owning
-/// `$HOME`.
-fn configured_update_endpoint_in(text: &str) -> Option<String> {
-    for line in text.lines() {
-        let Some(value) = line.strip_prefix("update_endpoint:") else {
-            continue;
-        };
-        // No `#` splitting here, unlike the TTL: a URL may legitimately
-        // contain a fragment, and eating everything after the first
-        // `#` would silently truncate one. A trailing YAML comment on
-        // this key is worth losing to keep that true.
-        let value = value.trim().trim_matches('"').trim_matches('\'');
-        if value.is_empty() {
-            // Present and blank means "use the compiled default",
-            // which is a different statement from absent and reads
-            // the same — deliberately, since both are "I have not
-            // chosen a mirror".
-            return None;
-        }
-        return Some(value.to_string());
-    }
-    None
-}
-
-/// An updater pointed at whatever this install is configured to use.
-///
-/// Falls back to the compiled endpoint when nothing is set, so the
-/// default path is unchanged. A configured endpoint that will not parse
-/// as a URL, or that the plugin rejects, is an error rather than a
-/// silent fallback: an operator who set a mirror and got the vendor's
-/// host anyway has been quietly overruled, which is the failure DEC-11
-/// exists to prevent.
-fn updater_for(app: &AppHandle) -> Result<tauri_plugin_updater::Updater, String> {
-    use tauri_plugin_updater::UpdaterExt;
-
-    let Some(endpoint) = configured_update_endpoint() else {
-        return app.updater().map_err(|e| e.to_string());
-    };
-
-    let url = tauri::Url::parse(&endpoint).map_err(|e| {
-        format!("update_endpoint in ~/.igni/config.yaml is not a valid URL ({endpoint}): {e}")
-    })?;
-
-    app.updater_builder()
-        .endpoints(vec![url])
-        .map_err(|e| {
-            format!("update_endpoint in ~/.igni/config.yaml was refused ({endpoint}): {e}")
-        })?
-        .build()
-        .map_err(|e| e.to_string())
-}
-
+/// Makes no request at all when `update_check_ttl: 0` is set, or when
+/// the install is air-gapped and names no mirror — the silent startup
+/// check in `App.tsx` calls this on every connect, and before F126 it
+/// contacted github.com regardless.
 #[tauri::command]
 async fn ember_check_update(app: AppHandle) -> Result<serde_json::Value, String> {
     let current_version = env!("CARGO_PKG_VERSION").to_string();
 
-    if update_checks_disabled() {
+    let Some(updater) = permitted_updater(&app)? else {
         // Not an error: the caller asked whether an update exists and
         // the honest answer for a deployment that has opted out is
         // "nothing to install", with no request made.
@@ -809,8 +775,7 @@ async fn ember_check_update(app: AppHandle) -> Result<serde_json::Value, String>
             "latest_version": current_version,
             "checks_disabled": true,
         }));
-    }
-    let updater = updater_for(&app)?;
+    };
     match updater.check().await {
         Ok(Some(update)) => Ok(serde_json::json!({
             "available": true,
@@ -834,11 +799,11 @@ async fn ember_install_update(app: AppHandle) -> Result<(), String> {
     // The same gate. Installing is a bigger outbound request than
     // checking, and a caller that reached this without a check — the
     // banner persisted across a config change, say — must not make it.
-    if update_checks_disabled() {
-        return Err("update checks are disabled in ~/.igni/config.yaml (update_check_ttl: 0)".to_string());
-    }
-
-    let updater = updater_for(&app)?;
+    let updater = match UpdatePolicy::load().source() {
+        UpdateSource::Off(reason) => return Err(reason),
+        UpdateSource::Compiled => updater_for(&app, None)?,
+        UpdateSource::Mirror(mirror) => updater_for(&app, Some(&mirror))?,
+    };
     let update = updater
         .check()
         .await
@@ -892,8 +857,7 @@ fn set_app_title(
 /// Build a triage dump — plugin version, pinned vs installed
 /// ``ignite-ember`` versions, interpreter path, dev-override env
 /// state, marker contents — and pop it in a native message dialog.
-/// One-click bug-report triage: same purpose as the JetBrains
-/// plugin's ``DoctorAction``.
+/// One-click bug-report triage.
 ///
 /// Runs on a background thread because the version probe spawns
 /// a subprocess; blocking the main thread would freeze the app.
@@ -1354,15 +1318,23 @@ fn bootstrap_and_open(app: &AppHandle, project_dir: &str) -> Result<(), String> 
     // spawn path, so the ``RunEvent::Exit`` handler has nothing to
     // kill when we attached, and a backend the plugins own survives
     // this app quitting.
-    let (port, version_info) = match discovery::discover(project_dir, runtime::IGNITE_EMBER_VERSION)
+    let (port, ws_token, version_info) =
+        match discovery::discover(project_dir, runtime::IGNITE_EMBER_VERSION)
     {
-        discovery::Decision::Attach { port, wire_version } => {
+        discovery::Decision::Attach {
+            port,
+            wire_version,
+            ws_token,
+        } => {
             progress("Connecting to the running igni backend…");
             // Skips the whole Python bootstrap — no interpreter
             // resolution, no model prefetch — so this path is near
             // instant on a warm project.
+            // The token that backend's launcher gave it, read from
+            // its owner-only lockfile; ``None`` when it requires none.
             (
                 port,
+                ws_token,
                 BackendVersionInfo {
                     actual: Some(wire_version),
                     expected: runtime::IGNITE_EMBER_VERSION.to_string(),
@@ -1373,8 +1345,7 @@ fn bootstrap_and_open(app: &AppHandle, project_dir: &str) -> Result<(), String> 
         discovery::Decision::Refuse { running } => {
             // Mixing traffic across wire versions corrupts state, and
             // spawning alongside it is the duplicate we're removing —
-            // so this is a dead end the user has to resolve. Mirrors
-            // what the VSCode extension tells them.
+            // so this is a dead end the user has to resolve.
             return Err(format!(
                 "Another igni backend is running for this project on version {running}, \
                  but this app is {}. Close the other client (or restart it on the \
@@ -1383,9 +1354,11 @@ fn bootstrap_and_open(app: &AppHandle, project_dir: &str) -> Result<(), String> 
             ));
         }
         discovery::Decision::Spawn => {
-            let (child, port, version_info) = spawn_backend(project_dir, &progress)?;
+            let ws_token = ws_token_for_spawn()?;
+            let (child, port, version_info) =
+                spawn_backend(project_dir, ws_token.as_deref(), &progress)?;
             track_backend(app, child);
-            (port, version_info)
+            (port, ws_token, version_info)
         }
     };
 
@@ -1402,10 +1375,10 @@ fn bootstrap_and_open(app: &AppHandle, project_dir: &str) -> Result<(), String> 
     // Publish the connection before navigating, so a New Window
     // opened the moment the first one paints already has somewhere to
     // point. Version params feed the shared bundle's
-    // ``BackendVersionChip`` — same shape the JetBrains plugin uses,
-    // one component, three surfaces.
+    // ``BackendVersionChip``.
     let conn = BackendConn {
         port,
+        ws_token,
         expected_cli: version_info.expected.clone(),
         actual_cli: version_info
             .actual
@@ -1700,8 +1673,7 @@ pub fn run() {
             // dock icon while uv downloads. The bootstrap runs on a
             // background thread; progress events update the page;
             // when the BE is ready we navigate the same window to
-            // the real UI. Same pattern as the JetBrains tool-
-            // window placeholder.
+            // the real UI.
             build_app_window(&app.handle().clone(), "main", "loading.html", "igni")?;
 
             // Bootstrap kicks off on a background thread so the
@@ -1728,9 +1700,9 @@ pub fn run() {
         // ``main`` webview; the FE picks them up via
         // ``window.addEventListener('ember-menu', e => …)`` and
         // routes them through the existing host-bridge dispatcher
-        // (same handler as the JetBrains ``ember-host`` events,
-        // just on a separate channel because Tauri's emit format
-        // and JCEF's CustomEvent shape don't line up cleanly).
+        // (the ``ember-host`` dispatcher, reached through a separate
+        // channel because Tauri's emit format is not a DOM
+        // CustomEvent).
         .on_menu_event(|app, event| match event.id().as_ref() {
             "new_window" => {
                 open_new_window(app);
@@ -1873,9 +1845,14 @@ mod tests {
         let source = include_str!("lib.rs");
 
         for name in ["ember_check_update", "ember_install_update"] {
+            let body = body_of(source, name);
             assert!(
-                body_of(source, name).contains("update_checks_disabled()"),
-                "{name} no longer consults the off switch"
+                body.contains("permitted_updater(") || body.contains("UpdatePolicy::load()"),
+                "{name} no longer consults the update policy"
+            );
+            assert!(
+                !body.contains("updater_for(&app)") && !body.contains("app.updater()"),
+                "{name} builds an updater without consulting the policy"
             );
         }
     }
@@ -1998,6 +1975,7 @@ mod tests {
     fn conn() -> BackendConn {
         BackendConn {
             port: 51234,
+            ws_token: None,
             expected_cli: "1.0.3".to_string(),
             actual_cli: "1.0.3".to_string(),
             source: "managed_venv",
@@ -2023,6 +2001,40 @@ mod tests {
         assert!(url.contains("&host=tauri"));
         assert!(url.contains("&expected_cli=1.0.3"));
         assert!(url.contains("&backend_source=managed_venv"));
+    }
+
+    #[test]
+    fn the_ws_token_rides_in_the_fragment_not_the_query() {
+        // The fragment is never sent to a server, so it reaches no
+        // request log; it comes after every query param, a new
+        // window's ``dir`` included.
+        let mut c = conn();
+        c.ws_token = Some("abc-_123".to_string());
+        let url = app_url(&c, Some("/Users/dev/repo"));
+        let (query, fragment) = url.split_once('#').expect("a fragment");
+        assert!(!query.contains("abc-_123"), "token leaked into the query: {url}");
+        assert_eq!(fragment, "igni_ws_token=abc-_123");
+        assert!(query.contains("&dir=%2FUsers%2Fdev%2Frepo"));
+        // No token, no fragment.
+        assert!(!app_url(&conn(), None).contains('#'));
+    }
+
+    #[test]
+    fn each_launch_gets_a_fresh_urlsafe_token() {
+        let a = new_ws_token().unwrap();
+        let b = new_ws_token().unwrap();
+        assert_ne!(a, b);
+        // 32 bytes, base64url without padding.
+        assert_eq!(a.len(), 43);
+        assert!(a.bytes().all(|c| c.is_ascii_alphanumeric() || c == b'-' || c == b'_'));
+    }
+
+    #[test]
+    fn the_dev_switch_only_works_in_debug_builds() {
+        assert_eq!(ws_token_disabled_for_dev(Some("1")), cfg!(debug_assertions));
+        assert!(!ws_token_disabled_for_dev(Some("0")));
+        assert!(!ws_token_disabled_for_dev(Some("yes")));
+        assert!(!ws_token_disabled_for_dev(None));
     }
 
     #[test]

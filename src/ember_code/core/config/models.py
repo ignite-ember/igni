@@ -22,6 +22,7 @@ if TYPE_CHECKING:
     from ember_code.cli.options import CliOptions
 
 from ember_code.core.auth.credentials import CloudCredentials
+from ember_code.core.auth.http_auth import CloudTokenAuth
 from ember_code.core.config.context_window import (
     DEFAULT_CONTEXT_WINDOW,
     ContextWindowResolver,
@@ -33,6 +34,7 @@ from ember_code.core.config.null_model import NoModelConfigured
 from ember_code.core.config.permission_eval import PermissionMode
 from ember_code.core.config.provider_builders import ProviderClientBuilder
 from ember_code.core.config.provider_catalog import ProviderCatalog
+from ember_code.core.config.schemas.orchestration import GroupHookMode
 from ember_code.core.config.settings import Settings
 
 logger = logging.getLogger(__name__)
@@ -60,11 +62,28 @@ class PermissionOverrides(BaseModel):
     ``mode`` is typed via :class:`PermissionMode` (the same enum the
     :class:`PermissionEvaluator` reads) so the strictest-wins policy
     is enforced by the type layer rather than free-form strings.
-    The legacy per-category ``file_write`` / ``shell_execute`` / ...
-    fields are kept for third-party code that reads
-    ``Settings.permissions.file_write`` etc.; new code should look
-    at ``mode`` instead. Marked TODO(v0.10) for removal — the
-    ``PermissionGuard`` that used them is dead code today.
+
+    The per-category fields — ``file_write``, ``shell_execute``,
+    ``git_push``, ``git_destructive``, ``web_search``, ``web_fetch``
+    — are not legacy and are not inert. They travel through
+    :meth:`to_payload` into ``Settings.permissions``, where
+    :meth:`PermissionsConfig.category_rules
+    <ember_code.core.config.schemas.permissions.PermissionsConfig.category_rules>`
+    turns every level that differs from its schema default into
+    ``deny``/``ask``/``allow`` rule strings, and
+    ``ToolHookFactory.permission_evaluator``
+    (:mod:`ember_code.core.session.tool_hook_factory`) appends those
+    behind the explicit lists when it builds the live
+    :class:`PermissionEvaluator`. ``backend/schemas_config.py`` reads
+    ``file_write`` / ``shell_execute`` a second time, for the
+    ``/config`` summary.
+
+    So they carry the half of each flag that ``mode`` alone cannot
+    express. ``--no-web`` is the starkest case: it sets no mode at all,
+    so those two web fields are the entire flag. ``--read-only`` is the
+    other way round: its ``PermissionMode.PLAN`` is what the person sees
+    and what ``exit_plan_mode`` talks about, and ``read_only`` is the
+    guarantee — held by the evaluator, so it survives a mode switch.
     """
 
     mode: PermissionMode | None = None
@@ -74,6 +93,7 @@ class PermissionOverrides(BaseModel):
     git_destructive: str | None = None
     web_search: str | None = None
     web_fetch: str | None = None
+    read_only: bool | None = None
 
     def to_payload(self) -> dict[str, Any]:
         """Dict shape :meth:`SettingsLoader.merge_cli` still expects.
@@ -94,6 +114,8 @@ class PermissionOverrides(BaseModel):
             value = getattr(self, name)
             if value is not None:
                 payload[name] = value
+        if self.read_only:
+            payload["read_only"] = True
         return payload
 
 
@@ -112,6 +134,10 @@ class CliOverrides(BaseModel):
     show_reasoning: bool | None = None
     show_tool_calls: bool | None = None
     permissions: PermissionOverrides = Field(default_factory=PermissionOverrides)
+    #: ``hooks.group`` from the command line: ``--strict`` asks before a
+    #: group-policy hook runs. Combined with the user's own setting by
+    #: ``DeveloperOnlyTier`` — strictest wins.
+    hooks_group: GroupHookMode | None = None
 
     @classmethod
     def from_options(cls, opts: CliOptions) -> CliOverrides:
@@ -145,31 +171,26 @@ class CliOverrides(BaseModel):
         if opts.read_only:
             perms.mode = PermissionMode.PLAN
             perms.file_write = "deny"
-            # The shell is denied too, and this is a deliberate trade rather
-            # than an oversight. Until the per-category levels were honoured
-            # this line did nothing; now it bites, and it bites hard: igni reads
-            # a file through ``run_shell_command``, so denying the shell denies
-            # reading the working tree.
-            #
-            # Kept anyway, because the alternative is a flag that cannot keep
-            # its promise. Leaving the shell open means ``>``, ``sed -i`` and
-            # ``git checkout`` all still write, so ``--read-only`` would be an
-            # honour system rather than a guarantee — and the point of the flag
-            # is to be the thing you reach for when you want the guarantee.
-            #
-            # What survives is analysis that does not go through the shell:
-            # ``codeindex_cypher`` over the graph, the notebook readers, and web
-            # search/fetch. That is a real working mode when the index is
-            # populated, and close to nothing when it is not, which is why the
-            # denial message below names the alternatives instead of leaving the
-            # model to discover them by failing.
-            perms.shell_execute = "deny"
+            # Plan-mode reads, with no questions. The shell stays open for the
+            # commands on the read-only allow-list (``cat``, ``ls``, ``rg``,
+            # ``git log``, …) — igni reads files through the shell, so denying
+            # it outright, as this flag used to, left a read-only agent unable
+            # to read. Reading the web is reading too (search, GET fetches).
+            # Every other shell command is refused, not asked, and so are an
+            # extension's tools that change something: ``read_only`` is checked
+            # by the evaluator before the mode, and survives a mode switch. See
+            # tests/test_read_only_reads_and_refuses_the_rest.py.
+            perms.read_only = True
         if opts.strict:
             perms.mode = PermissionMode.DONT_ASK
             perms.file_write = "deny"
             perms.shell_execute = "deny"
             perms.git_push = "deny"
             perms.git_destructive = "deny"
+            # The agent's denies do not reach the hooks a group ships, which
+            # run ``bash -c`` outside the permission system; ``--strict``
+            # asks before one runs (and, headless, refuses it).
+            overrides.hooks_group = "ask"
         if opts.no_web:
             perms.web_search = "deny"
             perms.web_fetch = "deny"
@@ -187,6 +208,7 @@ class CliOverrides(BaseModel):
             or self.show_routing is not None
             or self.show_reasoning is not None
             or self.show_tool_calls is not None
+            or self.hooks_group is not None
         ):
             return False
         return not self.permissions.to_payload()
@@ -213,6 +235,8 @@ class CliOverrides(BaseModel):
         perms_payload = self.permissions.to_payload()
         if perms_payload:
             payload["permissions"] = perms_payload
+        if self.hooks_group is not None:
+            payload["hooks"] = {"group": self.hooks_group}
         return payload
 
     def as_merge_dict(self) -> dict[str, Any]:
@@ -259,12 +283,17 @@ class ModelRegistry:
         # ``get_model`` call.
         self._credentials = CloudCredentials(settings.auth.credentials_file)
         self._cloud_token = self._credentials.access_token
+        # What a model client for igni server's gateway sends: the token
+        # at each request, which the one above is not for long.
+        self._cloud_auth = CloudTokenAuth(settings.auth.credentials_file)
         self._cloud_server_url = settings.api_url if self._cloud_token else None
 
         # Context-window resolver reuses the registry's already-derived
         # cloud token so ``/models/{id}`` fetches against the Ember
         # gateway don't re-read credentials from disk.
-        self.context_windows = ContextWindowResolver(cloud_token=self._cloud_token)
+        self.context_windows = ContextWindowResolver(
+            cloud_token=self._cloud_token, server_url=settings.api_url
+        )
 
     # ── Public: model resolution ──────────────────────────────────
 
@@ -322,11 +351,38 @@ class ModelRegistry:
             available = ", ".join(sorted(self._catalog.available_providers())) or "(none)"
             raise ValueError(f"Unknown provider {entry.provider!r}. Available: {available}.")
 
-        return builder.build(
+        # igni server's token goes only to igni server (B28). A model entry
+        # names its own ``url``, and a repository's ``.igni/config.yaml``
+        # can add one, so ``api_key: cloud_token`` with a ``url`` of the
+        # repository's choosing handed the signed-in person's token to that
+        # host. The token now travels only to the origin of ``api_url``,
+        # which only user, group or managed settings may set — whoever
+        # wrote the entry, trusted folder or not: no legitimate entry
+        # needs igni server's token anywhere else.
+        if ModelRegistryEntry.same_origin(builder.endpoint_for(entry), self.settings.api_url):
+            cloud_token, cloud_auth = self._cloud_token, self._cloud_auth
+        else:
+            cloud_token, cloud_auth = None, None
+            if self._cloud_token and entry.needs_cloud_token():
+                logger.warning(
+                    "Model %r asks for the igni server token, but it sends to %s, "
+                    "not to your igni server (api_url %s); the token is not sent.",
+                    resolved_name,
+                    builder.endpoint_for(entry) or f"{entry.provider}'s default endpoint",
+                    self.settings.api_url or "not set",
+                )
+        model = builder.build(
             entry,
-            cloud_token=self._cloud_token,
+            cloud_token=cloud_token,
             llm_logger=self._llm_logger,
+            cloud_auth=cloud_auth,
         )
+        # Transient failures are retried here, per model call, where Agno
+        # asks whether the error is worth retrying; the agents and the team
+        # get ``retries=0`` (B31, ``reply_ending.ReplyCutRetries``).
+        if hasattr(model, "retries"):
+            model.retries = self.settings.models.retries
+        return model
 
     def get_context_window(self, name: str | None = None) -> int:
         """Get the context window size for a model.

@@ -142,11 +142,10 @@ export function SessionChip({ sessionId }: { sessionId: string }) {
   );
 }
 
-/** Backend-version chip for the JetBrains plugin — renders only when
- *  the plugin injects ``expected_cli`` + ``actual_cli`` + ``backend_source``
- *  query params into the JCEF page URL. In every other host (Tauri,
- *  VSCode webview, plain browser) the params are absent and this
- *  component paints nothing.
+/** Backend-version chip for the desktop app — renders only when the
+ *  Tauri shell puts ``expected_cli`` + ``actual_cli`` + ``backend_source``
+ *  query params on the page URL. In a plain browser the params are
+ *  absent and this component paints nothing.
  *
  *  Three visual states:
  *
@@ -155,13 +154,13 @@ export function SessionChip({ sessionId }: { sessionId: string }) {
  *   * ``dev``      — running through IGNI_DEV_BACKEND override.
  *                    Amber chip; hover text names the env var.
  *   * ``mismatch`` — actual != expected. Red chip; tooltip suggests
- *                    Tools → igni → Diagnose Backend.
+ *                    Diagnose Backend.
  *
  *  The chip is a passive display — it doesn't need RPC roundtripping
- *  or dependency on the running BE, because the plugin embeds the
+ *  or dependency on the running BE, because the shell embeds the
  *  values it *already* resolved at bootstrap. If we can't render this
  *  because the BE is down, that's exactly when the chip is useful:
- *  a bootstrap failure often leaves the plugin sitting on a stale
+ *  a bootstrap failure often leaves the shell sitting on a stale
  *  interpreter, and the chip is the fastest way for the reader to
  *  see it.
  */
@@ -203,16 +202,9 @@ interface BackendVersionInfo {
   source: string;
 }
 
-/** Parse the version-info the host embedded on the current page.
- *
- *  Two delivery mechanisms, checked in order:
- *
- *   1. URL query params (``?expected_cli=…&actual_cli=…&backend_source=…``)
- *      — used by the JetBrains JCEF panel and the Tauri WKWebView,
- *      both of which control the top-level URL directly.
- *   2. ``<meta>`` tags of the same name — used by the VSCode
- *      webview, which delivers HTML wholesale and can't rely on
- *      query params under the default CSP.
+/** Parse the version-info the host embedded on the current page:
+ *  URL query params (``?expected_cli=…&actual_cli=…&backend_source=…``),
+ *  which the Tauri shell sets on the top-level URL.
  *
  *  Kept as a plain function (not a hook) so it runs once at mount
  *  — the values don't change over the tool-window / panel lifetime.
@@ -220,16 +212,9 @@ interface BackendVersionInfo {
 function readBackendVersionParams(): BackendVersionInfo | null {
   if (typeof window === "undefined") return null;
   const params = new URLSearchParams(window.location.search);
-  const meta = (name: string): string | null => {
-    if (typeof document === "undefined") return null;
-    const el = document.querySelector(
-      `meta[name="${name}"]`,
-    ) as HTMLMetaElement | null;
-    return el?.content?.trim() || null;
-  };
-  const expected = params.get("expected_cli") ?? meta("ember-expected-cli");
-  const actual = params.get("actual_cli") ?? meta("ember-actual-cli");
-  const source = params.get("backend_source") ?? meta("ember-backend-source");
+  const expected = params.get("expected_cli");
+  const actual = params.get("actual_cli");
+  const source = params.get("backend_source");
   // All three must be present. Absence = "no host embedded them,
   // don't render the chip".
   if (!expected || !actual || !source) return null;
@@ -238,7 +223,14 @@ function readBackendVersionParams(): BackendVersionInfo | null {
 
 /** Context meter: a slim bar that fills as the conversation grows,
  *  color-graded (calm → warning → danger). The numeric readout sits
- *  next to it so the user can read both at a glance. */
+ *  next to it so the user can read both at a glance.
+ *
+ *  **Every number is checked before it is formatted.** The types say
+ *  they are numbers; they come off a status message from the
+ *  backend, where a field can be absent, and ``undefined`` has no
+ *  ``toLocaleString``. There is no error boundary above this, so one
+ *  status update without a token count did not degrade the meter —
+ *  it unmounted the application and left a blank window. */
 export function CtxMeter({
   tokens,
   max,
@@ -248,15 +240,17 @@ export function CtxMeter({
   max: number;
   pct: number;
 }) {
-  const safe = Math.min(100, Math.max(0, pct));
+  const used = Number.isFinite(tokens) ? tokens : 0;
+  const ceiling = Number.isFinite(max) ? max : 0;
+  const safe = Math.min(100, Math.max(0, Number.isFinite(pct) ? pct : 0));
   const tone = safe >= 85 ? "danger" : safe >= 60 ? "warn" : "ok";
   return (
     <span
       className={`ctx-meter tone-${tone}`}
       title={
-        max
-          ? `${tokens.toLocaleString()} of ${max.toLocaleString()} tokens used`
-          : `${tokens.toLocaleString()} tokens`
+        ceiling
+          ? `${used.toLocaleString()} of ${ceiling.toLocaleString()} tokens used`
+          : `${used.toLocaleString()} tokens`
       }
     >
       <span className="ctx-meter-label">ctx</span>
@@ -264,7 +258,7 @@ export function CtxMeter({
         <span className="ctx-meter-fill" style={{ width: `${safe}%` }} />
       </span>
       <span className="ctx-meter-text">
-        {fmtTokens(tokens)} <span className="ctx-meter-pct">· {safe}%</span>
+        {fmtTokens(used)} <span className="ctx-meter-pct">· {safe}%</span>
       </span>
     </span>
   );

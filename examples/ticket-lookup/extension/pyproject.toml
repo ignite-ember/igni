@@ -1,0 +1,15 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "acme-tickets-extension"
+version = "0.2.0"
+requires-python = ">=3.12"
+dependencies = ["igni-extension"]
+
+[project.scripts]
+acme-tickets-extension = "acme_tickets_extension:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/acme_tickets_extension"]

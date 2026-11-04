@@ -9,7 +9,7 @@ shape violated Rule 6 (dispatch dict of free functions) and Rule 1
 ``isinstance`` chains).
 
 Same naming + purpose pattern as the sibling
-:mod:`schemas_codeindex` / :mod:`schemas_history` /
+:mod:`schemas_context` / :mod:`schemas_history` /
 :mod:`schemas_run` modules already in ``backend/``.
 
 Model layout:

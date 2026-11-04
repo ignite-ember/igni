@@ -19,11 +19,11 @@ dicts on the boundary).
 
 from __future__ import annotations
 
-import asyncio
 import logging
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from pathlib import Path
 
+from ember_code.core.activity import background
 from ember_code.core.mcp.client import MCPClientManager
 from ember_code.core.mcp.config import MCPConfigLoader
 from ember_code.core.plugins import PluginLoader
@@ -54,8 +54,8 @@ class PluginReloadOrchestrator:
         skill_pool_ref: Callable[[], object],
         agent_pool_ref: Callable[[], object],
         hooks_map_ref: Callable[[], dict],
-        disconnect_removed_mcps: Callable[[set[str]], object],
-        auto_connect_mcps: Callable[[set[str]], object],
+        disconnect_removed_mcps: Callable[[set[str]], Awaitable[None]],
+        auto_connect_mcps: Callable[[set[str]], Awaitable[None]],
     ) -> None:
         self._project_dir = project_dir
         self._mcp_manager = mcp_manager
@@ -151,8 +151,11 @@ class PluginReloadOrchestrator:
 
         if removed_mcp_names:
             try:
-                loop = asyncio.get_running_loop()
-                loop.create_task(self._disconnect_removed_mcps(removed_mcp_names))
+                background.start(
+                    self._disconnect_removed_mcps(removed_mcp_names),
+                    holder="plugin-reload",
+                    reason="disconnecting removed MCP servers",
+                )
             except RuntimeError:
                 logger.debug(
                     "No running loop — skipping MCP disconnect for: %s",
@@ -161,8 +164,11 @@ class PluginReloadOrchestrator:
 
         if added_mcp_names:
             try:
-                loop = asyncio.get_running_loop()
-                loop.create_task(self._auto_connect_mcps(added_mcp_names))
+                background.start(
+                    self._auto_connect_mcps(added_mcp_names),
+                    holder="plugin-reload",
+                    reason="connecting added MCP servers",
+                )
             except RuntimeError:
                 logger.debug(
                     "Skipping MCP auto-connect (no running loop); use /mcp connect to start: %s",

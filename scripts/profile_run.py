@@ -61,7 +61,7 @@ async def _ensure_cloud_models(settings) -> None:
     token = CloudCredentials(settings.auth.credentials_file).access_token
     if not token:
         raise RuntimeError(
-            "No cloud token found. Run `/login` in ember-code to authenticate first."
+            "No cloud token found. Run `/login` in igni to authenticate first."
         )
     client = CloudModelCatalogClient(settings.api_url, token)
     loop = asyncio.get_event_loop()
@@ -315,7 +315,7 @@ def _argparser() -> argparse.ArgumentParser:
     p.add_argument(
         "--project",
         default=".",
-        help="Project directory to use as ember-code's working dir.",
+        help="Project directory to use as igni's working dir.",
     )
     p.add_argument(
         "--prompt",

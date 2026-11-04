@@ -158,7 +158,7 @@ class AgnoResponseAdapter:
                         m2.tool_calls = kept if kept else None
                         cleaned.append(m2)
                         continue
-                    except Exception:
+                    except Exception:  # noqa: S110 — the message is kept unchanged below
                         pass
             cleaned.append(m)
         return cleaned

@@ -42,10 +42,8 @@ def _make_session():
     session.settings.guardrails.pii_detection = False
     session.settings.guardrails.prompt_injection = False
     session.settings.guardrails.moderation = False
-    session.settings.knowledge.enabled = False
     session.settings.orchestration.max_total_agents = 20
     session.settings.orchestration.max_nesting_depth = 3
-    session.knowledge_mgr.share_enabled.return_value = False
     session.memory_mgr.get_memories = AsyncMock(return_value=[])
     session.mcp_manager.list_servers.return_value = []
     session.mcp_manager.list_connected.return_value = []
@@ -143,25 +141,3 @@ class TestDispatch:
         assert result is True
         mock_open.assert_called_once()
         assert "github" in mock_open.call_args[0][0]
-
-
-class TestExtraCommands:
-    @pytest.mark.asyncio
-    async def test_sync_knowledge_not_enabled(self):
-        session = _make_session()
-        session.knowledge_mgr.share_enabled.return_value = False
-        result = await dispatch(session, "/sync-knowledge")
-        assert result is True
-        assert "not enabled" in session.display.print_info.call_args[0][0].lower()
-
-    @pytest.mark.asyncio
-    async def test_sync_knowledge_runs_bidirectional(self):
-        from ember_code.core.knowledge.models import KnowledgeSyncResult
-
-        session = _make_session()
-        session.knowledge_mgr.share_enabled.return_value = True
-        r = KnowledgeSyncResult(direction="file_to_db", summary="Loaded 3 entries")
-        session.knowledge_mgr.sync_bidirectional = AsyncMock(return_value=[r])
-        result = await dispatch(session, "/sync-knowledge")
-        assert result is True
-        session.knowledge_mgr.sync_bidirectional.assert_called_once()

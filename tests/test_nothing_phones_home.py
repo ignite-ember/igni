@@ -1,6 +1,6 @@
 """The air-gap claim, defended on the half that runs on developer machines.
 
-DP-5 in ember-server's `docs/COMPLIANCE_TRACKER.md`. The server has its
+DP-5 in igni__server's `docs/COMPLIANCE_TRACKER.md`. The server has its
 own copy of this rule; this one matters more, because the CLI runs on a
 developer's workstation with their source code open in front of it.
 
@@ -28,23 +28,42 @@ _SRC = _ROOT / "src/ember_code"
 _ALLOWED_HOSTS: dict[str, str] = {
     # ── The customer's own deployment, or a provider they connected ──
     "github.com": "the provider, for release links and clone URLs",
+    # Contacted only for a model entry that names `provider: anthropic`
+    # and no `url`: the customer chose Anthropic's API for that model.
+    # With a `url` the request goes there instead, and the builder never
+    # lets the SDK take an endpoint or a credential from the machine
+    # (`tests/test_anthropic_provider.py` runs a turn under the guard).
+    "api.anthropic.com": "the anthropic provider's default endpoint, for a model "
+    "entry that selects it without a `url`",
     # 127.0.0.1 rather than `localhost`: the callback server binds the
     # literal address, and `localhost` resolves to ::1 first on a
     # dual-stack machine — a connection refused on the one step of a
     # login the user cannot retry. F124.
     "127.0.0.1": "the sign-in callback listener, on this machine",
     "placeholder.invalid": "RFC 2606, a deliberately unroutable stand-in",
-    # ── One-time bootstrap downloads ─────────────────────────────────
-    #
-    # Not telemetry: nothing about the customer goes out, and they run
-    # once at install. They do mean an air-gapped machine cannot bootstrap
-    # unaided, which self-hosting.md §7 covers as a packaging gap rather
-    # than a privacy one.
-    "api.adoptium.net": "JDK download, for the JetBrains plugin bootstrap",
-    "dist.neo4j.org": "Neo4j download, for the local code index",
+    "tauri.localhost": "not contacted: the desktop webview's Origin, which the "
+    "backend's WebSocket accepts (transport/ws_auth.py)",
+    # The one-time Neo4j and JDK downloads left with the local code
+    # index: the CodeIndex extension makes them, and declares both hosts
+    # in its manifest's `permissions.egress`.
     # ── The vendor's own hosts ───────────────────────────────────────
     "docs.ignite-ember.sh": "a documentation link in a generated config template",
-    # `ignite-ember.sh` and `api.ignite-ember.sh` used to be here, and
+    # A JSON Schema `$id`, written into the manifest `igni ext init`
+    # scaffolds. Identifiers, not addresses: nothing dereferences it,
+    # and an editor that does is resolving a schema the author asked
+    # it to, on their machine, about their own file. The schema it
+    # names ships in the repository at
+    # docs/extension-manifest.schema.json, and is published at that
+    # address so an editor that does resolve it finds it.
+    "ignite-ember.sh": "the $schema identifier in a scaffolded extension manifest "
+    "(cli/ext_scaffold.py) — nothing in igni requests it",
+    # What `igni ext init --service` writes for the author to run: the
+    # service's own development URLs, and the test's base URL under the
+    # reserved `.test` TLD (RFC 2606). Text in a file, not requests.
+    "localhost": "the development URLs in the README `igni ext init --service` writes",
+    "tickets.test": "RFC 2606 base URL in the tests `igni ext init --service` writes",
+    # `api.ignite-ember.sh` used to be here, and so did `ignite-ember.sh`
+    # as an API host (it is back above only as a schema identifier), and
     # the second carried a paragraph beginning "OPEN QUESTION, not a
     # settled answer": `api_url` defaulted to the vendor, so a CLI
     # nobody configured talked to infrastructure that should not exist,
@@ -78,6 +97,9 @@ _ALLOWED_HOSTS: dict[str, str] = {
     ),
 }
 
+#: Packages whose purpose is to send data to a vendor: error reporting,
+#: product analytics, APM agents, and the LLM-observability SDKs whose
+#: default destination is their maker's cloud. None may be in the tree.
 _TELEMETRY_PACKAGES = (
     "sentry-sdk",
     "posthog",
@@ -85,6 +107,7 @@ _TELEMETRY_PACKAGES = (
     "segment-analytics-python",
     "analytics-python",
     "datadog",
+    "datadog-api-client",
     "ddtrace",
     "bugsnag",
     "rollbar",
@@ -92,9 +115,55 @@ _TELEMETRY_PACKAGES = (
     "newrelic",
     "elastic-apm",
     "scout-apm",
-    "opentelemetry-exporter-otlp",
     "honeycomb-beeline",
+    "honeycomb-opentelemetry",
+    "azure-monitor-opentelemetry",
+    "azure-monitor-opentelemetry-exporter",
+    "opentelemetry-exporter-gcp-trace",
+    "aws-xray-sdk",
+    "logfire",
+    "langfuse",
+    "langsmith",
+    "arize-otel",
+    "arize-phoenix-otel",
+    "agentops",
+    "openlit",
+    "traceloop-sdk",
+    "wandb",
+    "weave",
+    "lunary",
+    "opik",
+    "braintrust",
 )
+
+#: Hosts that may never be named in the source, whatever the reason given:
+#: Agno's own servers. Agno posts every run to ``os-api.agno.com`` unless
+#: ``AGNO_TELEMETRY`` says otherwise (``core/agno_telemetry.py``), and its
+#: AgentOS control plane is ``os.agno.com``. igni contacts neither, and
+#: ``test_no_run_reaches_an_agno_host.py`` watches the sockets for it.
+_NEVER_NAMED_SUFFIXES = ("agno.com",)
+
+#: The OTLP exporters, allowed by name and for one reason each. They used to
+#: be on the list above, and an exporter is a means of sending data; these
+#: ones send only where the customer says:
+#:
+#: * there is **no default endpoint** — with none configured nothing is
+#:   exported and no provider is built;
+#: * the endpoint is **customer-configured** — only the managed-settings
+#:   file, the group policy and the ``OTEL_*`` environment may set it, never
+#:   a user's or a repository's config;
+#: * under **air-gapped** mode it must be **inside the network**, or nothing
+#:   is exported.
+#:
+#: ``test_telemetry_goes_only_to_the_customers_collector.py`` proves each of
+#: the three; the test below checks those tests are still there.
+_OTLP_EXPORTERS: dict[str, str] = {
+    "opentelemetry-exporter-otlp-proto-http": "the customer's collector, over OTLP/HTTP",
+    "opentelemetry-exporter-otlp-proto-grpc": "the customer's collector, over OTLP/gRPC",
+    "opentelemetry-exporter-otlp-proto-common": "the encoding both exporters share",
+    "opentelemetry-exporter-otlp-common": "the encoding both exporters share",
+    "opentelemetry-exporter-http-transport": "the HTTP exporter's transport",
+}
 
 _HOST_IN_URL = re.compile(r"https?://([A-Za-z0-9._%-]+)")
 
@@ -176,6 +245,31 @@ def test_no_telemetry_package_is_installed():
     assert re.search(r'^name = "httpx"$', lock, re.M), "the lock format changed"
 
 
+def test_no_agno_host_is_named_or_allow_listed():
+    named = [h for h in _hosts_named() if h.lower().endswith(_NEVER_NAMED_SUFFIXES)]
+    listed = [h for h in _ALLOWED_HOSTS if h.lower().endswith(_NEVER_NAMED_SUFFIXES)]
+
+    assert not named, f"igni's source names Agno's servers: {named}"
+    assert not listed, f"Agno's servers are on the allow-list: {listed}"
+
+
+def test_every_exporter_in_the_tree_is_one_the_customer_points():
+    """An OTLP exporter is allowed, a vendor's is not, and the allowance
+    rests on three properties that each have a test."""
+    lock = (_ROOT / "uv.lock").read_text()
+    exporters = re.findall(r'^name = "(opentelemetry-exporter-[^"]+)"$', lock, re.M)
+    unexplained = sorted(set(exporters) - set(_OTLP_EXPORTERS))
+
+    assert not unexplained, f"OpenTelemetry exporters with no reason to be here: {unexplained}"
+    proofs = (_ROOT / "tests/test_telemetry_goes_only_to_the_customers_collector.py").read_text()
+    for proof in (
+        "def test_with_no_endpoint_nothing_is_set_up",
+        "def test_a_user_or_project_config_cannot_name_the_collector",
+        "def test_an_external_collector_is_refused_when_air_gapped",
+    ):
+        assert proof in proofs, f"the reason the OTLP exporters are allowed lost its test: {proof}"
+
+
 def test_the_update_check_can_be_turned_off():
     """It was the only unconditional outbound request on an ordinary run,
     and `update_check_ttl` changed only its frequency. An air-gapped
@@ -208,3 +302,132 @@ def test_the_update_check_can_be_turned_off():
     # that mistake.
     assert calls == [], calls
     assert result.available is False
+
+
+def test_an_unconfigured_session_start_clones_no_marketplace(tmp_path):
+    """No outbound call by default, air-gapped or not.
+
+    Every session start of an install nobody configured used to register
+    Anthropic's plugin marketplace: a `git clone` from github.com. It is
+    opt-in now (`plugins.default_marketplace: true`), and this runs the
+    real session-start phase on default settings with git refusing to
+    start, so a clone anywhere in it fails the test.
+    """
+    import asyncio
+    import subprocess
+    from unittest.mock import patch
+
+    from ember_code.core.config.schemas import StorageConfig
+    from ember_code.core.config.settings import Settings
+    from ember_code.core.session.core import Session
+    from ember_code.core.session.startup.marketplace import MarketplaceWarmupPhase
+
+    started: list[list[str]] = []
+
+    def no_git(args, **kwargs) -> subprocess.CompletedProcess:
+        started.append(list(args))
+        raise AssertionError(f"git was started at session start: {args}")
+
+    settings = Settings(storage=StorageConfig(data_dir=str(tmp_path / "data")))
+    assert settings.air_gapped is False
+    session = Session.__new__(Session)
+    session.settings = settings
+    with patch("ember_code.core.plugins.git.subprocess.run", no_git):
+        asyncio.run(MarketplaceWarmupPhase(session)._refresh_all())
+
+    assert started == []
+
+
+def test_the_default_marketplace_is_registered_only_on_request(tmp_path):
+    from ember_code.core.config.schemas import PluginsConfig
+    from ember_code.core.config.settings import Settings
+    from ember_code.core.plugins.marketplace_store import DEFAULT_MARKETPLACES
+    from ember_code.core.plugins.source_policy import PluginSourcePolicy
+
+    [(_name, official)] = DEFAULT_MARKETPLACES
+    assert PluginSourcePolicy.from_settings(Settings()).marketplaces_to_register() == []
+    opted_in = Settings(plugins=PluginsConfig(default_marketplace=True))
+    assert PluginSourcePolicy.from_settings(opted_in).marketplaces_to_register() == [official]
+    opted_in.air_gapped = True
+    assert PluginSourcePolicy.from_settings(opted_in).marketplaces_to_register() == []
+
+
+def test_the_web_asks_before_it_leaves_the_network(tmp_path):
+    """WebSearch (DuckDuckGo) and WebFetch went out the moment the model
+    called them: both defaulted to "allow". A request out of the customer's
+    network now needs a person's yes unless the config says otherwise."""
+    from ember_code.core.config.schemas.permissions import PermissionsConfig
+    from ember_code.core.config.settings import Settings
+    from ember_code.core.config.tool_permissions import ToolPermissions
+
+    defaults = Settings().permissions
+    assert (defaults.web_search, defaults.web_fetch) == ("ask", "ask")
+    asked = ToolPermissions(project_dir=tmp_path, settings_permissions=defaults)
+    assert asked.needs_confirmation("WebSearch")
+    assert asked.needs_confirmation("WebFetch")
+
+    opted_in = PermissionsConfig(web_search="allow", web_fetch="allow")
+    allowed = ToolPermissions(project_dir=tmp_path, settings_permissions=opted_in)
+    assert not allowed.needs_confirmation("WebSearch")
+    assert not allowed.needs_confirmation("WebFetch")
+
+
+def test_bypass_lets_the_web_through_unasked(tmp_path):
+    """C2: the web asks in the normal modes, and Bypass (``--auto-approve``,
+    ``/bypass``) still means "do not ask me". A search or fetch runs unasked
+    there, at registry time (no Agno pause is built) and at run time (a pause
+    from a toolkit built before ``/bypass`` is confirmed by the evaluator).
+
+    What Bypass keeps: an explicit ``deny`` wins over it, and its guard still
+    turns a fetch carrying what looks like a secret back into a prompt."""
+    import ember_code.cli as cli_module
+    from ember_code.cli.options import CliOptions
+    from ember_code.core.config.permission_eval import (
+        PermissionDecision,
+        PermissionEvaluator,
+        PermissionMode,
+    )
+    from ember_code.core.config.tool_permissions import ToolPermissions
+    from ember_code.core.hooks.bypass_guard import READ_ONLY_TOOLS
+    from ember_code.core.hooks.bypass_rules import flag_url
+
+    perms = cli_module.load_settings_from_options(CliOptions(auto_approve=True)).permissions
+    assert perms.mode == "bypassPermissions"
+    # The defaults still say ask; Bypass is what lets them through.
+    assert (perms.web_search, perms.web_fetch) == ("ask", "ask")
+
+    registry = ToolPermissions(project_dir=tmp_path, settings_permissions=perms)
+    assert not registry.needs_confirmation("WebSearch")
+    assert not registry.needs_confirmation("WebFetch")
+
+    cat_deny, cat_ask, cat_allow = perms.category_rules()
+    evaluator = PermissionEvaluator.from_strings(
+        mode=perms.mode,
+        deny=[*perms.deny, *cat_deny],
+        ask=[*perms.ask, *cat_ask, "WebSearch", "WebFetch"],
+        allow=[*perms.allow, *cat_allow],
+    )
+    for tool, args in (
+        ("web_search", {"query": "igni"}),
+        ("fetch_url", {"url": "https://example.test/"}),
+        ("fetch_json", {"url": "https://example.test/x.json"}),
+    ):
+        assert evaluator.evaluate(tool, args) is PermissionDecision.ALLOW, tool
+
+    # A /bypass flipped mid-session reaches the same answer.
+    flipped = PermissionEvaluator.from_strings(mode=PermissionMode.DEFAULT, ask=["WebFetch"])
+    flipped.set_mode(PermissionMode.BYPASS_PERMISSIONS)
+    assert flipped.evaluate("fetch_url", {"url": "https://example.test/"}) is (
+        PermissionDecision.ALLOW
+    )
+
+    # The hard blocks Bypass keeps.
+    denied = PermissionEvaluator.from_strings(
+        mode=PermissionMode.BYPASS_PERMISSIONS, deny=["WebFetch"]
+    )
+    assert denied.evaluate("fetch_url", {"url": "https://example.test/"}) is (
+        PermissionDecision.DENY
+    )
+    assert "web_search" in READ_ONLY_TOOLS
+    assert flag_url("https://example.test/") is None
+    assert flag_url("https://example.test/?token=abc") is not None

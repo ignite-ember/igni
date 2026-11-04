@@ -1,11 +1,12 @@
 """System-prompt assembly stage.
 
-Owns the base system prompt loaded from ``core/prompts/``: picks
-the CodeIndex variant when available, substitutes the ``{{AGENT_
-CATALOG}}`` placeholder from the agent pool's catalog, appends the
-per-commit Project Map (best-effort — missing map is non-fatal),
-and tacks on the skill-descriptions block when skills are
-configured to auto-trigger.
+Owns the base system prompt loaded from ``core/prompts/``: composes it
+with what extensions do to it — an override, edits on top
+(:mod:`ember_code.core.prompts.contributions`) — substitutes the
+``{{AGENT_CATALOG}}`` placeholder from the agent pool's catalog,
+resolves the capability-conditional spans in the markdown, and tacks
+on the skill-descriptions block when skills are configured to
+auto-trigger.
 
 The output is a single string handed to
 :class:`InstructionsBuilder` as the first entry of the
@@ -15,12 +16,14 @@ The output is a single string handed to
 from __future__ import annotations
 
 import logging
+import re
 from collections.abc import Callable
 from pathlib import Path
-from typing import Any
+from typing import Any, ClassVar
 
-from ember_code.core.code_index.manifest import Manifest
-from ember_code.core.code_index.project_map import ProjectMap
+from ember_code.core.prompts.contributions import PromptContributions, prompt_contributions
+from ember_code.core.prompts.document import PromptKind
+from ember_code.core.prompts.fragments import fragments
 
 logger = logging.getLogger(__name__)
 
@@ -34,76 +37,139 @@ class PromptBuilder:
     named phases.
     """
 
+    #: Capability-conditional spans in the prompt markdown. ``only``
+    #: survives when the capability is present, ``absent`` when it is
+    #: not; the markers themselves never reach the model. Add a name
+    #: here and a matching entry in :meth:`_capabilities` to make a new
+    #: capability switchable. What extensions provide is not in this
+    #: list: an extension says what it adds by editing the prompt.
+    _CONDITIONALS: ClassVar[tuple[str, ...]] = ("user-memory",)
+
     def __init__(
         self,
         *,
         project_dir: Path,
         settings: Any,
-        codeindex_available: bool,
         agent_catalog: str,
         skill_descriptions: str,
         prompt_loader: Callable[[str], str],
+        contributions: PromptContributions | None = None,
+        user_memory_available: bool = True,
     ) -> None:
         self._project_dir = project_dir
         self._settings = settings
-        self._codeindex_available = codeindex_available
+        self._contributions = contributions if contributions is not None else prompt_contributions
+        self._user_memory_available = user_memory_available
         self._agent_catalog = agent_catalog
         self._skill_descriptions = skill_descriptions
         self._prompt_loader = prompt_loader
 
-    def load_base(self) -> str:
-        """Pick + load the base template.
+    def compose(self) -> str:
+        """igni's prompt, or an extension's override of it, with every edit applied.
 
-        When CodeIndex is available we load
-        ``main_agent.codeindex.md`` — a wholly CodeIndex-first
-        variant with the tool reference inline and read-before-
-        edit / search guidance re-framed around the index. The
-        ``{{CODEINDEX_TOOLS}}`` placeholder only exists in the
-        plain variant; for the codeindex variant the replacement
-        is a no-op.
+        ``{{PERSISTING}}`` is pulled in first, so its sections are the
+        prompt's sections — an override that keeps it keeps them too.
         """
-        name = "main_agent.codeindex" if self._codeindex_available else "main_agent"
-        return self._prompt_loader(name)
+        composition = self._contributions.compose(
+            PromptKind.MAIN.value,
+            self._prompt_loader("main_agent"),
+            prepare=self.include_sections,
+        )
+        assert composition is not None  # igni always has a main prompt
+        return fragments.expand(composition.document.render())
+
+    def include_sections(self, prompt: str) -> str:
+        """``{{PERSISTING}}``: a block kept in its own file, part of this prompt."""
+        return prompt.replace("{{PERSISTING}}", self._load_section("persisting"))
 
     def substitute_placeholders(self, prompt: str) -> str:
-        """Substitute ``{{AGENT_CATALOG}}`` + ``{{CODEINDEX_TOOLS}}``."""
-        catalog = self._agent_catalog or "(no agents loaded)"
-        prompt = prompt.replace("{{AGENT_CATALOG}}", catalog)
-        prompt = prompt.replace("{{CODEINDEX_TOOLS}}", "")
-        return prompt
+        """Substitute ``{{AGENT_CATALOG}}``."""
+        return prompt.replace("{{AGENT_CATALOG}}", self._agent_catalog or "(no agents loaded)")
 
-    def append_project_map(self, prompt: str) -> str:
-        """Append the per-commit Project Map (best-effort).
+    def _load_section(self, stem: str) -> str:
+        """A prose section kept beside the prompt rather than inside it.
 
-        Auto-generated by ``apply_delta``; gives the agent a
-        factual overview (taxonomy, tables, cached-resource
-        wrappers, vocabulary glossary, entry points) before it
-        issues a single tool call. Missing map is non-fatal — the
-        prompt still works without it.
+        Used where a block is long enough that inlining it buries the
+        document's structure. The spans inside it are resolved by
+        :meth:`resolve_conditionals` along with everything else, so a
+        section file is a formatting choice and never a second
+        mechanism.
         """
-        if not self._codeindex_available:
-            return prompt
         try:
-            manifest = Manifest(
-                project=self._project_dir,
-                data_dir=self._settings.storage.data_dir,
-            )
-            head_sha = manifest.load().head
-            if not head_sha:
-                return prompt
-            map_md = ProjectMap(
-                self._project_dir,
-                head_sha,
-                data_dir=self._settings.storage.data_dir,
-            ).load()
-            if map_md:
-                return prompt + "\n\n## Project Map\n\n" + map_md
-        except (FileNotFoundError, PermissionError, OSError, ValueError) as exc:
-            # Missing / unreadable manifest / bad JSON — project map
-            # is optional, degrade silently. Anything else (AttributeError,
-            # TypeError, etc.) is a programming bug and should surface.
-            logger.debug("project-map append failed: %s", exc)
-        return prompt
+            return self._prompt_loader(stem).strip()
+        except (FileNotFoundError, OSError):
+            logger.warning("prompt section %r missing; omitting", stem)
+            return ""
+
+    def resolve_conditionals(self, prompt: str) -> str:
+        """Keep the spans that match this session and drop the rest.
+
+        A capability that can be absent needs both branches written and
+        exactly one of them shown. ``<!-- user-memory:only -->``
+        survives when the session can keep facts about the user,
+        ``<!-- user-memory:absent -->`` when it cannot, and the markers
+        themselves never reach the model.
+
+        Spans live in the markdown rather than in separate per-state
+        files because the guidance is interleaved with guidance that
+        stays either way. Splitting by state duplicates everything
+        shared: the two halves of this section were briefly separate
+        files and measured 49% identical, with the common paragraphs
+        already drifting apart in wording after a single edit.
+
+        The failure being prevented is specific and has shipped twice.
+        ``knowledge_add`` / ``knowledge_search`` were taught across ~30
+        unconditional lines while the toolkit was attached only when an
+        index existed: 7,459 system prompts taught them, 0 manifests
+        carried them, 0 calls were ever made. Then it happened again under
+        the name the next subsystem introduced.
+
+        A missing capability is not only a deletion. The ``absent``
+        branch says what to do with a project convention when there is
+        nowhere to file one, which is what keeps the prompt coherent
+        rather than merely shorter.
+
+        Unbalanced markers raise. A prompt that silently loses a
+        section is the failure this method exists to prevent.
+        """
+        available = self._capabilities()
+        for name in available:
+            keep, drop = ("only", "absent") if available[name] else ("absent", "only")
+            for branch in (keep, drop):
+                open_tag = f"<!-- {name}:{branch} -->"
+                close_tag = f"<!-- /{name}:{branch} -->"
+                opened, closed = prompt.count(open_tag), prompt.count(close_tag)
+                if opened != closed:
+                    raise ValueError(
+                        f"unbalanced {name}:{branch} markers in the prompt "
+                        f"({opened} open, {closed} close)"
+                    )
+                if branch == keep:
+                    prompt = prompt.replace(open_tag, "").replace(close_tag, "")
+                else:
+                    prompt = re.sub(
+                        re.escape(open_tag) + ".*?" + re.escape(close_tag),
+                        "",
+                        prompt,
+                        flags=re.DOTALL,
+                    )
+        # Dropping a block span leaves the blank lines that surrounded it.
+        return re.sub(r"\n{3,}", "\n\n", prompt).strip()
+
+    def _capabilities(self) -> dict[str, bool]:
+        """What this session has, keyed by conditional name.
+
+        One entry per name in :attr:`_CONDITIONALS`; adding a capability
+        is a line here and a pair of markers in the markdown.
+        """
+        return {
+            # agno attaches ``update_user_memory`` only when the session
+            # has a LearningMachine *and* ``learning.user_memory`` is on,
+            # so ``learning.enabled=false``, ``user_memory=false`` and any
+            # session built without a db were all told to call a tool that
+            # was not in their manifest.
+            "user-memory": self._user_memory_available,
+        }
 
     def append_skills(self, prompt: str) -> str:
         """Append skill descriptions when auto-trigger is on.
@@ -141,9 +207,14 @@ class PromptBuilder:
         )
 
     def render(self) -> str:
-        """Compose the full prompt through the four phases."""
-        prompt = self.load_base()
+        """Compose the full prompt.
+
+        Extensions shape it first, so an override or an added section
+        may use ``{{AGENT_CATALOG}}`` and the conditionals as igni's own
+        text does; conditionals resolve last, over all of it.
+        """
+        prompt = self.compose()
         prompt = self.substitute_placeholders(prompt)
-        prompt = self.append_project_map(prompt)
+        prompt = self.resolve_conditionals(prompt)
         prompt = self.append_skills(prompt)
         return prompt

@@ -230,6 +230,23 @@ describe("CtxMeter", () => {
     expect(container.querySelector(".tone-danger")).toBeTruthy();
   });
 
+  it("survives a status message with no token count", () => {
+    // No error boundary sits above this in the app, so a field that
+    // arrives absent does not degrade the meter — it unmounts the
+    // whole window and leaves a blank page. The types promise
+    // numbers; the wire does not.
+    const { container } = render(
+      <CtxMeter
+        tokens={undefined as unknown as number}
+        max={undefined as unknown as number}
+        pct={undefined as unknown as number}
+      />,
+    );
+    const fill = container.querySelector(".ctx-meter-fill") as HTMLElement | null;
+    expect(container.querySelector(".ctx-meter")).toBeTruthy();
+    expect(fill?.style.width).toBe("0%");
+  });
+
   it("clamps pct above 100 to 100% fill width", () => {
     // The pct comes from `tokens / max` which can momentarily
     // exceed 100 if the BE's token-count lags the conversation

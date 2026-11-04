@@ -30,8 +30,8 @@ class TaskStatus(str, Enum):
         """Rich-markup icon for TUI rendering.
 
         Named ``terminal_icon`` (not ``icon``) because the value is
-        Rich markup that is TUI-specific — VSCode/JetBrains frontends
-        must map from the enum on their own side.  Adding a new
+        Rich markup that is TUI-specific — GUI frontends must map
+        from the enum on their own side.  Adding a new
         :class:`TaskStatus` member without extending this property
         will raise :class:`KeyError` at render time, which is the
         desired fail-loud behaviour (versus the old ``.get(..., "?")``
@@ -56,9 +56,13 @@ _TERMINAL_ICONS: dict["TaskStatus", str] = {
 class ScheduledTask(BaseModel):
     """A task scheduled for deferred execution.
 
-    For recurring tasks, ``recurrence`` holds the repeat pattern (e.g.
-    "every 1 hours", "daily", "weekly"). After completion, the runner
-    creates the next occurrence automatically.
+    For recurring tasks, ``recurrence`` holds the repeat pattern in the
+    canonical ``every N <minutes|hours|days|weeks>`` form ("every 1
+    hours", "every 1 days", "every 7 days") — that is the only form the
+    field validator below accepts. User-facing phrases ("daily",
+    "weekly") are not valid here; run them through
+    :meth:`Recurrence.parse` and persist ``.canonical()``. After
+    completion, the runner creates the next occurrence automatically.
     """
 
     id: str

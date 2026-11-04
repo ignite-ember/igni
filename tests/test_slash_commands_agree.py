@@ -50,22 +50,9 @@ def _backend_commands() -> set[str]:
     per-project and per-user; the built-ins are the part a shipped
     frontend can reasonably know about.
     """
-    # ``core.session`` first, deliberately.
-    # ``builtin_command_registry`` cannot be imported before it:
-    # importing the registry runs ``cmd_context`` → ``schemas_context``,
-    # which rebuilds a pydantic model at import time, which pulls in
-    # ``core.session`` — whose package ``__init__`` drags the whole
-    # interactive stack back round to ``command_handler``, which then
-    # asks the half-initialised registry for ``BUILTIN_REGISTRY``.
-    #
-    # So the module works only when something else has already
-    # imported the cycle in a friendly order — an ordering contract
-    # nobody wrote down and nothing enforces. ``core.session``,
-    # ``backend.app`` and ``backend.server`` all work as the first
-    # import; the registry and ``command_handler`` do not. Worth
-    # untangling; not here, where it would be a large change riding on
-    # a test.
-    import ember_code.core.session  # noqa: F401 — see above
+    # The registry imports nothing behind its entries, so it can be the
+    # first import: the cycle through ``cmd_context`` that once made it
+    # depend on ``core.session`` being imported first is gone.
     from ember_code.backend.builtin_command_registry import BUILTIN_REGISTRY
 
     return {f"/{name.lstrip('/')}" for name in BUILTIN_REGISTRY.names()}

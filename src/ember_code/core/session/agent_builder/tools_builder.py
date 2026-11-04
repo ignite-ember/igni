@@ -24,15 +24,12 @@ from ember_code.core.agents import AgentPool
 from ember_code.core.config.settings import Settings
 from ember_code.core.config.tool_permissions import ToolPermissions
 from ember_code.core.hooks.executor import HookExecutor
-from ember_code.core.knowledge.index import KnowledgeIndex
 from ember_code.core.lsp import LspServerManager
 from ember_code.core.mcp.client import MCPClientManager
 from ember_code.core.monitors import MonitorManager
 from ember_code.core.plugins import PluginLoader
-from ember_code.core.session.knowledge_ops import SessionKnowledgeManager
 from ember_code.core.skills.loader import SkillPool
 from ember_code.core.sub_agent_hitl import SubAgentHITLCoordinator
-from ember_code.core.tools.knowledge import KnowledgeTools
 from ember_code.core.tools.loop import LoopTools
 from ember_code.core.tools.loop_progress import LoopProgressTool
 from ember_code.core.tools.lsp import LspTools
@@ -74,8 +71,6 @@ class ToolsBuilder:
         mcp_manager: MCPClientManager,
         lsp_manager: LspServerManager | None,
         monitor_manager: MonitorManager | None,
-        knowledge: KnowledgeIndex | None,
-        knowledge_mgr: SessionKnowledgeManager,
         skill_pool: SkillPool,
         pool: AgentPool,
         hook_executor: HookExecutor,
@@ -97,8 +92,6 @@ class ToolsBuilder:
         self._mcp_manager = mcp_manager
         self._lsp_manager = lsp_manager
         self._monitor_manager = monitor_manager
-        self._knowledge = knowledge
-        self._knowledge_mgr = knowledge_mgr
         self._skill_pool = skill_pool
         self._pool = pool
         self._hook_executor = hook_executor
@@ -130,10 +123,6 @@ class ToolsBuilder:
                 cloud_token=self._cloud_token,
                 cloud_server_url=self._cloud_server_url,
                 broadcast=self._broadcast,
-                # Late-bound on purpose: ``attach_codeindex_neo4j`` replaces
-                # ``session.code_index`` after this registry is built, and the
-                # toolkit must see the replacement.
-                code_index_provider=lambda: getattr(self._session, "code_index", None),
             )
         return self._registry
 
@@ -161,12 +150,6 @@ class ToolsBuilder:
         """Optional Agno ReasoningTools — enabled by settings."""
         rt = self._reasoning_factory(self._settings)
         return [rt] if rt else []
-
-    def knowledge(self) -> list[Any]:
-        """Chroma-backed knowledge query tools when configured."""
-        if self._knowledge is None:
-            return []
-        return [KnowledgeTools(self._knowledge_mgr)]
 
     def loop(self) -> list[Any]:
         """/loop-driven iteration control + per-iter scratchpad."""
@@ -238,7 +221,6 @@ class ToolsBuilder:
         tools.extend(self.core_tools())
         tools.extend(self.orchestrate())
         tools.extend(self.reasoning())
-        tools.extend(self.knowledge())
         tools.extend(self.loop())
         tools.extend(self.todo())
         tools.extend(self.plan())

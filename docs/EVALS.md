@@ -117,7 +117,13 @@ cases:
 
     # Maps to Agno's AccuracyEval — LLM judge scores the output
     expected_output: "The function was renamed from processData to process_data"
-    accuracy_threshold: 7            # 0-10 scale, default 7
+    accuracy_threshold: 7            # 0-10 scale, default from evals.accuracy_threshold
+
+    # Wall-clock budget for this case (agent run + all assertions).
+    # Omit to use evals.timeout_per_case. On overrun the case fails with
+    # "case_timeout: exceeded Ns" and the suite continues.
+    case_timeout: 240
+
     judge_guidelines: |
       The agent should have made a targeted edit, not rewritten the file.
       Check that only the function name changed, not the rest of the file.
@@ -594,12 +600,21 @@ evals:
   judge_model: MiniMax-M2.7           # model for AccuracyEval judge
   num_iterations: 3                    # default AccuracyEval iterations
   accuracy_threshold: 7                # default passing score (0-10)
-  timeout_per_case: 30                 # seconds per test case
-  max_tool_calls: 20                   # safety limit per case
-  parallel: 3                          # concurrent eval cases
-  db: ~/.igni/evals.db           # Agno SqliteDb for result persistence
-  fail_on_regression: false            # set to true in CI
+  timeout_per_case: 600                # default seconds per case; 0 disables
 ```
+
+These four are the whole `evals:` block — there is no `max_tool_calls`,
+`parallel`, `db`, or `fail_on_regression` key (an earlier revision of this
+page listed them; they were never implemented and unknown keys are ignored).
+
+Each field is a *default* that an individual case may override in its YAML:
+
+| Config key | Per-case override | Effect |
+|---|---|---|
+| `judge_model` | — | Model `AccuracyEval` uses as judge. |
+| `num_iterations` | `num_iterations:` | How many judge runs are averaged. |
+| `accuracy_threshold` | `accuracy_threshold:` | Minimum average judge score to pass. |
+| `timeout_per_case` | `case_timeout:` | Wall-clock budget for the agent run **and** all assertions. On overrun the case is recorded as failed with `case_timeout: exceeded Ns` — the rest of the suite still runs. |
 
 ---
 

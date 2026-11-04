@@ -2,7 +2,7 @@
  * Headless scroll sandbox for the chat list.
  *
  * Reachable at ``?demo=chat-scroll`` (see main.tsx). Mirrors the
- * real App's Virtuoso wiring — same ``followOutput="auto"`` policy,
+ * real App's Virtuoso wiring — same ``followOutput`` policy (``useChatFollow``),
  * same ``atBottomStateChange`` hook — minus the BE coupling. Used
  * by Playwright (``e2e/chat-scroll.spec.ts``) to pin the behavior
  * that a new item appended while the user is at the bottom keeps
@@ -21,7 +21,10 @@
 import { useRef, useState } from "react";
 import { Virtuoso, type VirtuosoHandle } from "react-virtuoso";
 
+import { useChatFollow } from "../chat/followOutput";
+
 const SEED_COUNT = 60;
+const AT_BOTTOM_THRESHOLD = 50;
 const SEED_ITEMS = Array.from({ length: SEED_COUNT }, (_, i) => ({
   id: i + 1,
   text: `seed message #${i + 1}`,
@@ -31,6 +34,7 @@ export function ChatScrollDemo() {
   const [items, setItems] = useState(SEED_ITEMS);
   const [atBottom, setAtBottom] = useState(false);
   const virtuoso = useRef<VirtuosoHandle>(null);
+  const follow = useChatFollow(items.length, AT_BOTTOM_THRESHOLD, setAtBottom);
 
   const append = () => {
     setItems((prev) => [
@@ -109,7 +113,10 @@ export function ChatScrollDemo() {
           ref={virtuoso}
           data={items}
           computeItemKey={(_idx, item) => item.id}
-          followOutput="auto"
+          // "auto" once Virtuoso and the page agree; see ``chat/followOutput``.
+          followOutput={follow.followOutput}
+          totalListHeightChanged={follow.totalListHeightChanged}
+          scrollerRef={follow.scrollerRef}
           // Default ``atBottomThreshold`` is 4px which is too
           // tight in practice — Virtuoso frequently misses the
           // "at bottom" transition by a sub-pixel after a layout
@@ -117,8 +124,8 @@ export function ChatScrollDemo() {
           // ``followOutput="auto"`` then bails on the follow
           // because its sample reads false. 50px is generous
           // without papering over a real "scrolled up" intent.
-          atBottomThreshold={50}
-          atBottomStateChange={setAtBottom}
+          atBottomThreshold={AT_BOTTOM_THRESHOLD}
+          atBottomStateChange={follow.atBottomStateChange}
           itemContent={(_idx, item) => (
             <div
               data-testid={`row-${item.id}`}

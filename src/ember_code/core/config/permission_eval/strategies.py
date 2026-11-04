@@ -22,6 +22,7 @@ from ember_code.core.config.permission_eval.schemas import (
     PermissionDecision,
     PermissionMode,
 )
+from ember_code.core.mcp.hints import ToolHints
 
 
 class PermissionModeStrategy:
@@ -49,7 +50,32 @@ class PermissionModeStrategy:
         """Step 4 of the pipeline for this mode. Returns
         :attr:`PermissionDecision.DEFER` when the mode has nothing to
         say — the pipeline then continues to step 5 (allow) and
-        step 6 (defer / dontAsk deny)."""
+        step 6 (defer / dontAsk deny).
+
+        An extension's tool is decided by what it says it is
+        (:meth:`hinted_step`); igni's own by name (:meth:`named_step`).
+        """
+        hints = catalog.hints(tool_name)
+        if hints is not None:
+            return self.hinted_step(hints)
+        return self.named_step(tool_name, tool_args, catalog)
+
+    def named_step(
+        self,
+        tool_name: str,
+        tool_args: dict[str, Any],
+        catalog: ToolCategoryCatalog,
+    ) -> PermissionDecision:
+        """This mode's decision on one of igni's own tools."""
+        return PermissionDecision.DEFER
+
+    def hinted_step(self, hints: ToolHints) -> PermissionDecision:
+        """This mode's decision on an extension's tool, from its hints.
+
+        ``DEFER`` here means what it means for igni's own tools: rules
+        decide, and then a tool that is not read-only pauses for the
+        person (the installer marks it so) while a read-only one runs.
+        """
         return PermissionDecision.DEFER
 
     def deny_reason(
@@ -63,11 +89,38 @@ class PermissionModeStrategy:
         deny didn't come from this mode."""
         return None
 
+    def prompts_user(self) -> bool:
+        """Can a decision this mode leaves open still reach a human?
+
+        ``False`` only for :class:`DontAskMode`. The pipeline reads this
+        in two places, and both were the same hole: an ASK that nobody
+        will ever answer is not a pause, it is an unsupervised run. Step
+        4 used to hand back ASK from a matching ``ask`` rule even under
+        ``dontAsk``, and :class:`PermissionEvaluatorStage` turns ASK into
+        "continue" — so marking a dangerous tool ``ask``, the intuitive
+        way to say "be careful with this", converted it from denied
+        (step 6) to auto-executed under ``--strict``.
+        """
+        return True
+
+    def ask_rules_bind_allows(self) -> bool:
+        """Does a matching ``ask`` rule outrank this mode's own ALLOW?
+
+        The pipeline runs the mode step before the ask list so that
+        ``/bypass`` and ``acceptEdits`` really do stop asking — that is
+        what a person choosing an automatic mode wants. Plan mode is not
+        an automatic mode: it must never run unasked what ``default``
+        would have asked about, so for it the ask list (and
+        ``safety.require_confirmation``, which arrives as ask rules) is
+        checked before the mode's ALLOW stands.
+        """
+        return False
+
     def dont_ask_fallback(self) -> bool:
         """Does this mode treat the final step-6 fall-through as a
-        DENY (rather than DEFER)? Only :class:`DontAskMode` returns
-        ``True`` — headless mode has no user to prompt."""
-        return False
+        DENY (rather than DEFER)? True exactly when the mode cannot
+        prompt — headless mode has no user to ask."""
+        return not self.prompts_user()
 
     @classmethod
     def for_mode(cls, mode: PermissionMode) -> PermissionModeStrategy:
@@ -92,8 +145,17 @@ class DontAskMode(PermissionModeStrategy):
 
     mode = PermissionMode.DONT_ASK
 
-    def dont_ask_fallback(self) -> bool:
-        return True
+    def prompts_user(self) -> bool:
+        return False
+
+    def hinted_step(self, hints: ToolHints) -> PermissionDecision:
+        """A read of the extension's own data runs; anything else needs an allow rule.
+
+        It changes nothing and reaches nothing outside, so there is
+        nothing a person would have been asked about. A read that
+        reaches outside is denied like igni's web tools are here.
+        """
+        return PermissionDecision.ALLOW if hints.is_local_read else PermissionDecision.DEFER
 
     def deny_reason(
         self,
@@ -110,7 +172,7 @@ class AcceptEditsMode(PermissionModeStrategy):
 
     mode = PermissionMode.ACCEPT_EDITS
 
-    def mode_step(
+    def named_step(
         self,
         tool_name: str,
         tool_args: dict[str, Any],
@@ -119,6 +181,15 @@ class AcceptEditsMode(PermissionModeStrategy):
         if catalog.is_edit(tool_name):
             return PermissionDecision.ALLOW
         return PermissionDecision.DEFER
+
+    def hinted_step(self, hints: ToolHints) -> PermissionDecision:
+        """A contained write is this mode's "edit": it runs.
+
+        One that can destroy something, or that reaches outside its own
+        system, is asked about — accepting edits is not accepting
+        deletions or messages to somebody else.
+        """
+        return PermissionDecision.ALLOW if hints.is_contained_write else PermissionDecision.DEFER
 
 
 class BypassPermissionsMode(PermissionModeStrategy):
@@ -134,12 +205,17 @@ class BypassPermissionsMode(PermissionModeStrategy):
         tool_args: dict[str, Any],
         catalog: ToolCategoryCatalog,
     ) -> PermissionDecision:
+        """Everything, an extension's tools included. Bypass's last
+        check still sees each call that is not a local read."""
         return PermissionDecision.ALLOW
 
 
 class PlanMode(PermissionModeStrategy):
     """``plan`` — blocks file mutations + mutating shell commands,
-    auto-allows reads, defers unknown tools to the user."""
+    runs read-only shell from an allow-list and the read tools, asks
+    about any other shell command, defers unknown tools to the user.
+    Never looser than ``default``: an ask rule that matches still asks.
+    """
 
     mode = PermissionMode.PLAN
 
@@ -153,7 +229,20 @@ class PlanMode(PermissionModeStrategy):
         "are fine. Use exit_plan_mode(plan) when ready to execute."
     )
 
-    def mode_step(
+    _CHANGE_REASON = (
+        "plan mode runs only tools that change nothing, and this one says "
+        "it is not read-only. Use exit_plan_mode(plan) when you're ready "
+        "for the user to approve execution."
+    )
+
+    def ask_rules_bind_allows(self) -> bool:
+        return True
+
+    def hinted_step(self, hints: ToolHints) -> PermissionDecision:
+        """Reads run — in plan mode the point is to look. Anything else waits for the plan."""
+        return PermissionDecision.ALLOW if hints.read_only else PermissionDecision.DENY
+
+    def named_step(
         self,
         tool_name: str,
         tool_args: dict[str, Any],
@@ -162,12 +251,19 @@ class PlanMode(PermissionModeStrategy):
         if catalog.is_edit(tool_name):
             return PermissionDecision.DENY
         if catalog.is_shell(tool_name):
-            # Shell commands may or may not mutate. Block the
-            # obvious writers (sed -i, > redirect, rm, mv, cp, ...)
-            # and let read-only shell calls through.
+            # Three outcomes. The obvious writers (sed -i, > redirect,
+            # rm, mv, cp, ...) are denied, with a reason that points at
+            # exit_plan_mode. A command built only from the read-only
+            # allow-list runs. Everything else — git push, terraform
+            # apply, kubectl delete, curl -o, anything the regex has
+            # never heard of — is put to the person. The allow-list,
+            # not the regex, is the boundary: a command nobody
+            # anticipated is asked about, not run.
             if catalog.bash_mutates(tool_args):
                 return PermissionDecision.DENY
-            return PermissionDecision.ALLOW
+            if catalog.bash_read_only(tool_args):
+                return PermissionDecision.ALLOW
+            return PermissionDecision.ASK
         if catalog.is_read(tool_name):
             return PermissionDecision.ALLOW
         # Custom / unknown tool — fall through to step 5/6 so the
@@ -180,6 +276,9 @@ class PlanMode(PermissionModeStrategy):
         tool_args: dict[str, Any],
         catalog: ToolCategoryCatalog,
     ) -> str | None:
+        hints = catalog.hints(tool_name)
+        if hints is not None:
+            return None if hints.read_only else self._CHANGE_REASON
         if catalog.is_edit(tool_name):
             return self._EDIT_REASON
         if catalog.is_shell(tool_name):

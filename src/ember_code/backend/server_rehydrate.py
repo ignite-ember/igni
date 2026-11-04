@@ -32,6 +32,7 @@ from typing import TYPE_CHECKING
 from ember_code.backend.agno_history_plan_scanner import AgnoHistoryPlanScanner
 from ember_code.backend.schemas_lifecycle import RehydrateOutcome
 from ember_code.core.session.event_log_schema import SessionEvent
+from ember_code.core.session.queued_messages import DurableMessageQueue
 from ember_code.core.tools.orphan_rehydrator import build_rehydrator
 from ember_code.core.tools.plan import PlanDecisionsBlob
 from ember_code.core.tools.process_supervisor_locator import supervisors
@@ -72,6 +73,20 @@ class RehydrateController:
         ]
         self._session.restore_event_log(parsed)
         return RehydrateOutcome(ok=True, step="event_log")
+
+    async def queued_messages(self, queue: DurableMessageQueue | None) -> RehydrateOutcome:
+        """Offer again what a run took and the conversation never recorded.
+
+        The previous backend died between a run draining a queued message
+        and the session being saved; the message goes back in the queue.
+        One the conversation holds is dropped instead — delivered once.
+        """
+        if queue is None:
+            return RehydrateOutcome(ok=True, step="queued_messages", reason="no queue")
+        again = await queue.recover(self._session.db)
+        return RehydrateOutcome(
+            ok=True, step="queued_messages", reason=f"{again} offered again" if again else ""
+        )
 
     async def orphan_processes(self) -> RehydrateOutcome:
         """Re-adopt every backgrounded shell process that survived the

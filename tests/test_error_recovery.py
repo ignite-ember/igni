@@ -73,6 +73,12 @@ class TestBackendRunMessageErrors:
             server._pending_store.arecord_received = AsyncMock(return_value="mid-1")
             server._pending_store.amark_completed = AsyncMock()
             server._pending_store.adiscard = AsyncMock()
+            # The run loop now stamps a streamed failure interrupted, so the FE
+            # can offer Retry/Discard on it — before that, the only thing that
+            # stamped anything was the `except` branch, which the HITL mux made
+            # unreachable. This stub predates the call and a bare MagicMock is
+            # not awaitable.
+            server._pending_store.amark_interrupted = AsyncMock()
             server._periodic_checkpoint = AsyncMock()
             _wire_backend_runs(server)
 
@@ -110,6 +116,12 @@ class TestBackendRunMessageErrors:
             server._pending_store.arecord_received = AsyncMock(return_value="mid-1")
             server._pending_store.amark_completed = AsyncMock()
             server._pending_store.adiscard = AsyncMock()
+            # The run loop now stamps a streamed failure interrupted, so the FE
+            # can offer Retry/Discard on it — before that, the only thing that
+            # stamped anything was the `except` branch, which the HITL mux made
+            # unreachable. This stub predates the call and a bare MagicMock is
+            # not awaitable.
+            server._pending_store.amark_interrupted = AsyncMock()
             server._periodic_checkpoint = AsyncMock()
             _wire_backend_runs(server)
 

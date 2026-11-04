@@ -79,7 +79,7 @@ Nothing is hardcoded. The Orchestrator is a reasoning-enabled meta-agent that re
 
 This means the system adapts to new agents automatically. Drop a `database.md` into the agents folder — the Orchestrator can start including it in teams immediately, without any code changes.
 
-When no existing agent fits a task, the Orchestrator can **generate an ephemeral agent** on the fly — writing a new `.md` file to `.igni/agents.ephemeral/` with a task-specific system prompt and tools. Ephemeral agents are session-scoped and auto-cleaned, but can be promoted to permanent agents by the user.
+When no existing agent fits a task, the Orchestrator can **generate an ephemeral agent** on the fly — writing a new `.md` file to `.igni/agents.tmp/` with a task-specific system prompt and tools. Ephemeral agents are session-scoped and auto-cleaned, but can be promoted by the user — to `.igni/agents/` (shared through git) or `.igni/agents.local/` (personal); see [AGENTS.md](AGENTS.md#the-lifecycle-create-promote-discard).
 
 ### 2. Agents as Data, Not Code
 
@@ -197,7 +197,7 @@ Startup
     ├── Scan ~/.igni/agents/              (global)
     ├── Scan ~/.igni/skills/              (global)
     │
-    ├── Scan .igni/agents.local/          (project, gitignored)
+    ├── Scan .igni/agents.local/          (project, personal; .igni/.gitignore)
     ├── Scan .igni/agents/                (project)
     ├── Scan .igni/skills.local/          (project, gitignored)
     ├── Scan .igni/skills/                (project)
@@ -247,25 +247,12 @@ igni includes a built-in vector knowledge base powered by ChromaDB and a custom 
 
 A custom Agno `Embedder` that calls the igni server's `/v1/embeddings` endpoint, proxying to a text2vec-transformers model (384 dimensions). This keeps embedding generation server-side — no local GPU required.
 
-### KnowledgeManager
+### Documents
 
-Creates an Agno `Knowledge` instance backed by ChromaDB. Manages document ingestion, search, and status. All data models are Pydantic: `KnowledgeAddResult`, `KnowledgeSearchResponse`, `KnowledgeFilter`, `KnowledgeStatus`.
-
-```yaml
-# .igni/config.yaml
-knowledge:
-  enabled: true
-  collection_name: "my_project"
-```
-
-There is no `embedder` key. This example carried one, naming a cloud
-embedder that does not exist either, and `KnowledgeConfig` has no such
-field — embeddings are local
-(all-MiniLM-L6-v2, see `src/ember_code/core/code_index/embedder.py`) and
-not selectable. The real fields are `enabled`, `collection_name`,
-`auto_sync`, `max_results`, `share` and `share_file`.
-
-Add content via `/knowledge add <url|path|text>`, search with `/knowledge search <query>`. Agents can search the knowledge base automatically during execution.
+The document store is the Artifacts extension (igni__artifacts), not part
+of the host: its tools reach its own agents over MCP, and the prompt's
+document sections are switched on by what it declares while it runs
+(`core/prompts/conditionals.py`).
 
 ## Learning & Reasoning
 

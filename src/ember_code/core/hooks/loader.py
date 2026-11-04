@@ -61,6 +61,11 @@ class _SettingsPathDiscovery:
         #: policy cache. Last, so the group's declarations layer on top.
         self._group_dir = group_dir
 
+    @property
+    def group_file(self) -> Path | None:
+        """The file the organisation's hooks are read from, if any."""
+        return self._group_dir / "settings.json" if self._group_dir is not None else None
+
     def discover(self) -> list[Path]:
         """Return the ordered list of settings-file paths to try.
 
@@ -69,25 +74,39 @@ class _SettingsPathDiscovery:
         path list stable across runs (useful for logging /
         debugging).
         """
+        # A folder's own hooks (``.igni`` and ``.claude``) are shell commands
+        # it brings with it; they load only once the folder is trusted
+        # (``core/workspace_trust``).
+        from ember_code.core.workspace_trust import WorkspaceTrust
+
+        trusted = WorkspaceTrust.shared().is_trusted(self._project_dir, what="hooks")
         home_ember = Path.home() / CONFIG_DIR
         paths: list[Path] = [
             home_ember / "settings.json",
             home_ember / "settings.local.json",
-            self._project_dir / CONFIG_DIR / "settings.json",
-            self._project_dir / CONFIG_DIR / "settings.local.json",
         ]
+        if trusted:
+            paths += [
+                self._project_dir / CONFIG_DIR / "settings.json",
+                self._project_dir / CONFIG_DIR / "settings.local.json",
+            ]
         if self._cross_tool_support:
             home_claude = Path.home() / ".claude"
             paths.extend(
                 [
                     home_claude / "settings.json",
                     home_claude / "settings.local.json",
-                    self._project_dir / ".claude" / "settings.json",
-                    self._project_dir / ".claude" / "settings.local.json",
                 ]
             )
-        if self._group_dir is not None:
-            paths.append(self._group_dir / "settings.json")
+            if trusted:
+                paths.extend(
+                    [
+                        self._project_dir / ".claude" / "settings.json",
+                        self._project_dir / ".claude" / "settings.local.json",
+                    ]
+                )
+        if self.group_file is not None:
+            paths.append(self.group_file)
         return paths
 
 
@@ -187,6 +206,7 @@ class HookLoader:
         """
         registry = HookRegistry.from_empty()
         warnings: list[HookLoadWarning] = []
+        group_file = self._discovery.group_file
         for path in self._discovery.discover():
             hooks_block, read_warnings = self._reader.read(path)
             warnings.extend(read_warnings)
@@ -197,6 +217,8 @@ class HookLoader:
                     hooks_block,
                     source=path,
                     strategy=MergeStrategy.APPEND,
+                    # The group's hooks run only as ``hooks.group`` allows.
+                    from_group=path == group_file,
                 )
             )
         return HookLoadResult(registry=registry, warnings=warnings)
@@ -205,6 +227,8 @@ class HookLoader:
         self,
         plugin_dir: Path,
         registry: HookRegistry,
+        *,
+        from_group: bool = False,
     ) -> HookLoadResult:
         """Merge ``<plugin_dir>/hooks/hooks.json`` into *registry*.
 
@@ -218,6 +242,10 @@ class HookLoader:
         :meth:`HookLoadResult.merge` it with the settings-load
         result). Failures (missing, malformed, OSError) surface
         as warnings on the result — no ``sys.stderr`` fallout.
+
+        ``from_group`` is for a plugin the organisation's group policy
+        installed: its hooks are the group's, and run only as
+        ``hooks.group`` allows.
         """
         path = plugin_dir / "hooks" / "hooks.json"
         if not path.is_file():
@@ -252,6 +280,6 @@ class HookLoader:
                 ],
             )
         warnings = registry.merge_from_dict(
-            hooks_block, source=path, strategy=MergeStrategy.PREPEND
+            hooks_block, source=path, strategy=MergeStrategy.PREPEND, from_group=from_group
         )
         return HookLoadResult(registry=registry, warnings=warnings)

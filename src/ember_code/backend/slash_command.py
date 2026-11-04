@@ -2,10 +2,16 @@
 
 Every OOP-refactored ``cmd_*`` package (starting with
 :mod:`ember_code.backend.cmd_plugin`) exposes one or more
-:class:`SlashCommand` instances. The :class:`BuiltinCommandRegistry`
-accepts both this shape and the older bare-async-callable shape
-during the transition — see :func:`_normalize_entry` in the
-registry.
+:class:`SlashCommand` instances, and types its exported tuple
+against this Protocol so a command that drifts from the shape fails
+type-check at its own module rather than at some future dispatch.
+
+:class:`BuiltinCommandRegistry` does **not** consume this shape yet —
+it still stores the bare-async-callable ``(handler, args) ->
+CommandResult`` form only (``BuiltinHandler``), which each ``cmd_*``
+package provides as a thin shim over its command objects. This
+docstring used to point at a ``_normalize_entry`` in the registry
+that accepted both shapes; no such function was ever written.
 
 Kept in its own module (not inside the registry file) so any
 ``cmd_*.py`` package can implement the protocol without importing

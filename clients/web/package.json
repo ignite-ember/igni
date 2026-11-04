@@ -1,8 +1,8 @@
 {
-  "name": "@igni/web-ui",
+  "name": "@ignite-ember/web-ui",
   "private": true,
   "version": "0.1.0",
-  "description": "Shared igni chat UI — hosted by the Tauri app, VSCode webview, and JetBrains JCEF panel",
+  "description": "Shared igni chat UI — the web client, and the UI the Tauri desktop app hosts",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -19,7 +19,7 @@
     "@json-render/core": "^0.19.0",
     "@json-render/react": "^0.19.0",
     "highlight.js": "^11.11.1",
-    "mermaid": "^11.15.0",
+    "mermaid": "^11.17.2",
     "partial-json": "^0.1.7",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
@@ -30,7 +30,7 @@
     "rehype-sanitize": "^6.0.0",
     "remark-gfm": "^4.0.1",
     "tsx": "^4.23.0",
-    "zod": "^4.4.3"
+    "zod": "^4.6.7"
   },
   "devDependencies": {
     "@axe-core/playwright": "^4.13.0",

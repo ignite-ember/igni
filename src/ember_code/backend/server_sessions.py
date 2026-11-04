@@ -26,6 +26,7 @@ from typing import TYPE_CHECKING
 from ember_code.backend.chat_history_searcher import ChatHistorySearcher
 from ember_code.backend.schemas_history import ChatHistoryEntry, ChatSearchHit
 from ember_code.backend.schemas_sessions import AutoNameResult
+from ember_code.core.session.schemas import PersistResult
 from ember_code.protocol import messages as msg
 
 if TYPE_CHECKING:
@@ -60,7 +61,7 @@ class SessionsController:
         raw = await self._session.persistence.list_sessions(limit=None)
         return msg.SessionListResult(sessions=raw)
 
-    async def maybe_auto_name_session(self) -> AutoNameResult:
+    async def maybe_auto_name_session(self, *, model_busy: bool = False) -> AutoNameResult:
         """Auto-generate a name for the current session if it has none.
 
         Returns a typed :class:`AutoNameResult` — the dispatcher
@@ -71,20 +72,28 @@ class SessionsController:
         Sanitisation (stripping model-emitted markdown wrappers
         like ``**Title**`` / ``# Title`` / ``"Title"``) lives inside
         :meth:`SessionPersistence.auto_name` — callers of this
-        method never see the raw wrapped form.
+        method never see the raw wrapped form. ``model_busy`` (a run
+        is in progress) titles the session without asking the model.
         """
         persistence = self._session.persistence
         try:
             existing = await persistence.get_name()
             if existing:
                 return AutoNameResult(ok=False, name=existing, reason="already_named")
-            name = await persistence.auto_name(self._session.main_team)
+            name = await persistence.auto_name(self._session.main_team.model, model_busy=model_busy)
         except Exception as exc:
             logger.debug("session auto-name failed: %s", exc)
             return AutoNameResult(ok=False, name="", reason="error")
         if not name:
             return AutoNameResult(ok=False, name="", reason="no_name_produced")
         return AutoNameResult(ok=True, name=name, reason="generated")
+
+    async def title(self, name: str) -> PersistResult:
+        """Name this session now — before its first run, too — so no auto-name replaces it."""
+        result = await self._session.persistence.title(name)
+        if result.ok:
+            self._session.session_named = True
+        return result
 
     async def switch_session(self, session_id: str) -> msg.Info:
         """Switch to a different session.

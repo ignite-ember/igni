@@ -21,6 +21,8 @@ import logging
 from collections.abc import Coroutine
 from typing import Any
 
+from ember_code.core.activity import background
+
 logger = logging.getLogger(__name__)
 
 
@@ -57,4 +59,4 @@ class AsyncFireAndForget:
         except RuntimeError:
             coro.close()
             return None
-        return asyncio.ensure_future(coro)
+        return background.start(coro, holder="fire-and-forget", reason="a deferred write")

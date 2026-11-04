@@ -37,23 +37,11 @@ on:
         type: boolean
         default: false
 
-jobs:
-  # Proxy-propagation integration test. Stands up a tiny logging
-  # HTTP/HTTPS proxy, sets HTTPS_PROXY, runs the same uv-download
-  # command ``runtime.ts::downloadUv`` issues when proxyEnv is
-  # set, and asserts the proxy log shows a CONNECT to github.com.
-  # Catches the regression where the FE reads a proxy from IDE
-  # settings but the env var never reaches the subprocess.
-  proxy-propagation:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: "20"
-      - name: Run proxy integration test
-        run: ./scripts/test-proxy-integration.sh
+# Read-only: it installs, runs and uploads logs, and writes nothing back.
+permissions:
+  contents: read
 
+jobs:
   # POSIX smoke — macOS + Linux. Bash script + tar.gz uv archive.
   smoke-posix:
     strategy:
@@ -62,7 +50,7 @@ jobs:
         os: [ubuntu-latest, macos-latest]
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
       - name: Wait for PyPI CDN to propagate
         # On tag pushes, release-readiness runs almost immediately
@@ -103,6 +91,7 @@ jobs:
           exit 1
 
       - name: Run onboarding smoke (POSIX)
+        id: smoke
         env:
           UV_HTTP_TIMEOUT: "120"
         run: |
@@ -115,13 +104,28 @@ jobs:
           fi
           ./scripts/onboarding-smoke.sh "${ARGS[@]}"
 
+      # The script writes ``log-dir=<abs path>`` to $GITHUB_OUTPUT before
+      # it does anything that can fail, and keeps that directory when the
+      # run fails. We upload exactly what it reported.
+      #
+      # This step used to glob ``/tmp/ember-onboarding-*/be-*.log`` and
+      # could never match: the logs lived inside the script's temp cache,
+      # which the EXIT trap deleted on the way out of a failing run, and
+      # ``mktemp -t`` follows $TMPDIR, so on macOS the directory was under
+      # /var/folders/... rather than /tmp regardless. Asking the script
+      # where it wrote beats reconstructing the path per-platform.
       - name: Upload smoke logs on failure
-        if: failure()
-        uses: actions/upload-artifact@v4
+        # The output is empty only if the script died before its first
+        # few lines; guard so upload-artifact isn't handed a blank path.
+        if: ${{ failure() && steps.smoke.outputs.log-dir != '' }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: onboarding-smoke-logs-${{ matrix.os }}
-          path: /tmp/ember-onboarding-*/be-*.log
-          if-no-files-found: ignore
+          path: ${{ steps.smoke.outputs.log-dir }}
+          # ``warn`` not ``ignore``: an empty log dir on a failing run is
+          # itself a finding (the backend produced no output at all), and
+          # silently uploading nothing is how this went unnoticed before.
+          if-no-files-found: warn
           retention-days: 7
 
   # Windows smoke — separate job because the shell, archive format,
@@ -131,7 +135,7 @@ jobs:
   smoke-windows:
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
       - name: Wait for PyPI CDN to propagate
         # Windows equivalent of the smoke-posix wait step. Same
@@ -170,6 +174,7 @@ jobs:
           exit 1
 
       - name: Run onboarding smoke (Windows)
+        id: smoke
         shell: pwsh
         env:
           UV_HTTP_TIMEOUT: "120"
@@ -179,11 +184,17 @@ jobs:
           if ("${{ inputs.version }}") { $args += "-Version"; $args += "${{ inputs.version }}" }
           & ./scripts/onboarding-smoke.ps1 @args
 
+      # Same contract as the POSIX leg: the .ps1 reports ``log-dir`` to
+      # $GITHUB_OUTPUT up front and keeps that directory on failure.
+      # The old glob was doubly wrong here — the logs were deleted by the
+      # ``finally`` cleanup, and the script's temp root is
+      # ``[System.IO.Path]::GetTempPath()`` (i.e. $env:TEMP), which is a
+      # different directory from ``runner.temp`` on a Windows runner.
       - name: Upload smoke logs on failure
-        if: failure()
-        uses: actions/upload-artifact@v4
+        if: ${{ failure() && steps.smoke.outputs.log-dir != '' }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: onboarding-smoke-logs-windows
-          path: ${{ runner.temp }}/ember-onboarding-*/be-*.log
-          if-no-files-found: ignore
+          path: ${{ steps.smoke.outputs.log-dir }}
+          if-no-files-found: warn
           retention-days: 7

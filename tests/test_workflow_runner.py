@@ -160,8 +160,9 @@ async def test_resolve_unknown_returns_none(tmp_path: Path) -> None:
 
 
 async def test_user_layer_shadows_team_layer(tmp_path: Path) -> None:
-    """A workflow with the same name in both layers is resolved to
-    the user-layer copy. ``list_workflows`` returns one entry
+    """A workflow with the same name in ``.claude/workflows`` (the
+    deprecated fallback) and ``.igni/workflows`` resolves to the
+    ``.igni`` copy. ``list_workflows`` returns one entry
     per name (no duplicates). The path field reports the
     user-layer location.
     """

@@ -61,13 +61,23 @@ from ember_code.core.tools.tool_result import LLMResultBuffer
 # moved to :mod:`process_registry` in the OOP split, but callers
 # that ``from ember_code.core.tools.process_supervisor import
 # ProcessRegistry`` should keep working.
-__all__ = ["DEFAULT_FINISHED_PROCESS_TTL_SECONDS", "ProcessRegistry", "ProcessSupervisor"]
+__all__ = [
+    "DEFAULT_FINISHED_PROCESS_TTL_SECONDS",
+    "NO_OUTPUT_PLACEHOLDER",
+    "ProcessRegistry",
+    "ProcessSupervisor",
+]
 
 if TYPE_CHECKING:
     from ember_code.core.tools.managed_process import ManagedProcess
     from ember_code.core.tools.process_log import ProcessLogStore
 
 logger = logging.getLogger(__name__)
+
+#: Stand-in for a command that succeeded without writing a byte. Returned
+#: instead of ``""`` because an empty tool result is indistinguishable
+#: from a tool that failed to run at all.
+NO_OUTPUT_PLACEHOLDER = "(no output)"
 
 
 class ProcessSupervisor:
@@ -86,6 +96,14 @@ class ProcessSupervisor:
     build a fresh one (or call :meth:`reset`) so state doesn't
     leak across the suite.
     """
+
+    #: How to see more of a finished foreground command's cut output.
+    #: Its registry entry is gone once it has reported, so
+    #: ``read_process_output`` cannot reach it: run it again, narrower.
+    FINISHED_SEE_MORE = (
+        "To see the rest, run the command again narrowed to what you need "
+        "(grep -n PATTERN, sed -n 'START,ENDp', head -n N) or with a larger tail."
+    )
 
     def __init__(
         self,
@@ -239,7 +257,9 @@ class ProcessSupervisor:
             # Promoted from foreground — announce as background so
             # the watcher picks up the row.
             self.registry.announce_start(mp)
-            output = mp.read(tail=tail)
+            output = mp.read_tail(tail).render(
+                f"read_process_output({pid}, tail=N) reads further back."
+            )
             return self._result_buffer.truncate(
                 f"Command still running after {timeout}s — backgrounded as PID {pid}.\n"
                 f"Use read_process_output({pid}) to check output.\n"
@@ -250,13 +270,19 @@ class ProcessSupervisor:
         # Command finished — wait briefly for the reader task to
         # capture any trailing output buffered after proc.wait().
         await mp.wait_for_reader(timeout=2.0)
-        output = mp.read(tail=tail)
+        output = mp.read_tail(tail).render(self.FINISHED_SEE_MORE)
         rc = proc.returncode
         self.registry.remove(pid)
 
+        # ``mkdir -p``, ``cd``, ``true`` and friends succeed silently, and
+        # the empty string is not a tool result — Agno hands the model a
+        # blank turn, which reads as "the tool did nothing" and invites a
+        # pointless retry. Say that it ran and printed nothing.
         if rc != 0:
-            return self._result_buffer.truncate(f"Command exited with code {rc}:\n{output}")
-        return self._result_buffer.truncate(output)
+            return self._result_buffer.truncate(
+                f"Command exited with code {rc}:\n{output or NO_OUTPUT_PLACEHOLDER}"
+            )
+        return self._result_buffer.truncate(output or NO_OUTPUT_PLACEHOLDER)
 
     # ── Test / shutdown helpers ─────────────────────────────────
 

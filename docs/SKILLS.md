@@ -287,7 +287,6 @@ igni ships with built-in skills in `<install>/skills/`:
 | Skill | Description |
 |---|---|
 | `/commit` | Create a well-formatted git commit with conventional message |
-| `/resolve-issues [base-branch]` | Fix issues CodeIndex flagged on files changed in your branch |
 | `/explain [path]` | Deep-dive explanation of a file or module using CodeIndex |
 | `/simplify` | Review changed code for reuse, quality, and efficiency |
 | `/update-docs` | Update documentation to reflect code changes |
@@ -306,7 +305,7 @@ Override any built-in skill by creating a skill with the same name in `.igni/ski
 name: resolve-issues
 description: This skill should be used when the user asks to "resolve issues", "fix what CodeIndex flagged", "fix the issues in my branch", or otherwise wants CodeIndex-detected issues on their recent changes to be applied. Pulls issues from CodeIndex (no GitHub/GitLab API).
 argument-hint: [base-branch]
-allowed-tools: Read, Edit, Bash, CodeIndex
+allowed-tools: Read, Edit, Bash
 ---
 
 Resolve issues CodeIndex has already flagged on the files changed in the current branch.

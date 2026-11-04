@@ -19,13 +19,22 @@ test("watcher panel shows live background processes", async ({
   liveWsUrl,
 }) => {
   // ── 1. Spawn a couple of background processes via a raw WS
-  // connection BEFORE the FE mounts. The seed RPC
-  // (``list_background_processes``) should pick them up so the
-  // panel opens with rows already populated.
+  // connection. The seed RPC (``list_background_processes``) should
+  // pick them up so the panel opens with rows already populated.
+  //
+  // From a page on the dev server, not from ``about:blank``: since
+  // bb5c7674 the backend refuses a browser handshake whose Origin is
+  // not one of igni's own (``null`` included) with a 403, and this
+  // ``onopen`` then never fired — the spec hung for its whole timeout.
+  // ``onerror`` rejects now, so a refusal fails here and says so.
+  await page.goto("/");
   await page.evaluate(
     async ({ wsUrl }) => {
       const ws = new WebSocket(wsUrl);
-      await new Promise<void>((resolve) => (ws.onopen = () => resolve()));
+      await new Promise<void>((resolve, reject) => {
+        ws.onopen = () => resolve();
+        ws.onerror = () => reject(new Error(`WebSocket to ${wsUrl} was refused`));
+      });
       // Drain the Welcome.
       await new Promise<void>((resolve) => {
         ws.onmessage = (ev) => {

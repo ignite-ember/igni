@@ -26,9 +26,13 @@ import os
 import time
 from pathlib import Path
 
+from ember_code.core.layer import Layers
 from ember_code.core.paths import DEFAULT_DATA_DIR
 
 logger = logging.getLogger(__name__)
+
+#: Where the trace goes in the cloud (standard output, ``core/logs.py``).
+TRACE_LOGGER = logging.getLogger("ember_code.hitl_trace")
 
 # Path resolution happens at import time — no I/O until ``.trace()``
 # fires (which calls ``mkdir(parents=True, exist_ok=True)``).
@@ -71,10 +75,14 @@ class HITLTracer:
         """
         if not self._enabled:
             return
+        if not Layers.current().log_files():
+            # No hitl_trace.log where the layer keeps no log files: a record.
+            TRACE_LOGGER.info(text)
+            return
         try:
             self._path.parent.mkdir(parents=True, exist_ok=True)
             with open(self._path, "a") as f:
                 f.write(f"{time.strftime('%H:%M:%S')} pid={os.getpid()} {text}\n")
-        except Exception:
+        except Exception:  # noqa: S110 — a debug trace; its failure must not reach the run
             # Best-effort — never let a trace-write failure surface.
             pass

@@ -9,14 +9,16 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from sqlalchemy import DateTime, String, Text
+from sqlalchemy import DateTime, Index, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from ember_code.core.db.base import Base
+from ember_code.core.db.scope import ScopedColumns
 
 
-class ScheduledTaskModel(Base):
+class ScheduledTaskModel(ScopedColumns, Base):
     __tablename__ = "scheduler_tasks"
+    __table_args__ = (Index("ix_scheduler_tasks_scope", "org", "producer", "project"),)
 
     id: Mapped[str] = mapped_column(String, primary_key=True)
     description: Mapped[str] = mapped_column(Text, nullable=False)

@@ -44,6 +44,7 @@ compat surface.
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Literal
 
 from ember_code.core.paths import DEFAULT_DATA_DIR
 from ember_code.core.plugins.git import GitClient
@@ -141,9 +142,10 @@ class _MarketplaceModuleAdapter:
         *,
         data_dir: str | Path = DEFAULT_DATA_DIR,
         git_client: GitClient | None = None,
+        added_by: Literal["user", "default"] = "user",
     ) -> MarketplaceEntry:
         """See :meth:`MarketplaceRegistryStore.add`."""
-        return self._store(data_dir, git_client).add(url)
+        return self._store(data_dir, git_client).add(url, added_by=added_by)
 
     def remove_marketplace(self, name: str, *, data_dir: str | Path = DEFAULT_DATA_DIR) -> bool:
         """See :meth:`MarketplaceRegistryStore.remove`."""

@@ -5,7 +5,7 @@ import { useEffect, useState } from "react";
  * frame rate from a ``requestAnimationFrame`` loop.
  *
  * Present-time verification of the Tauri ``macos-fps`` plugin,
- * the JCEF windowed-mode experiment, and any other pipeline change
+ * and any other pipeline change
  * that claims to affect frame delivery. The number moves in real
  * time so a user can scroll / type / trigger animations and watch
  * the readout track — no need to open a Web Inspector or run a
@@ -69,14 +69,7 @@ function writeFpsVisible(v: boolean) {
 }
 
 // Hidden by default. Toggled by:
-//  - ``Ctrl/Cmd + Alt + Shift + F`` in surfaces where the web
-//    view actually receives the ``keydown`` (Tauri, plain
-//    browser, VSCode webview).
-//  - ``window.__igni_toggleFps()`` (a global installed on the
-//    ``window`` object at mount time) from IntelliJ's action
-//    system in the JB plugin, where JCEF swallows the
-//    keystroke before the DOM ever sees it. See
-//    ``ToggleFpsCounterAction`` in the JB plugin.
+//  - ``Ctrl/Cmd + Alt + Shift + F`` (Tauri, plain browser).
 // State persists in ``localStorage`` per-origin.
 export function FPSCounterOverlay() {
   const [visible, setVisible] = useState<boolean>(() => readFpsVisible());
@@ -102,17 +95,11 @@ export function FPSCounterOverlay() {
 
     const onCustomEvent = () => toggle();
 
-    // Install the global entrypoint so JB's ``AnAction`` can
-    // reach us via ``JBCefBrowser.cefBrowser.executeJavaScript``.
-    const w = window as unknown as { __igni_toggleFps?: () => void };
-    w.__igni_toggleFps = toggle;
-
     window.addEventListener("keydown", onKey, { capture: true });
     window.addEventListener(FPS_TOGGLE_EVENT, onCustomEvent);
     return () => {
       window.removeEventListener("keydown", onKey, { capture: true });
       window.removeEventListener(FPS_TOGGLE_EVENT, onCustomEvent);
-      if (w.__igni_toggleFps === toggle) delete w.__igni_toggleFps;
     };
   }, []);
 

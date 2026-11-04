@@ -75,9 +75,9 @@ export function GroupIndicator({ client }: { client: IgniClient }) {
 
   return (
     <div className="group-pill-wrap">
-      <button className={`codeindex-pill tone-${badge.tone}`} title={badge.detail} disabled>
-        <span className="codeindex-dot" />
-        Group <span className="codeindex-label">{badge.label}</span>
+      <button className={`status-pill tone-${badge.tone}`} title={badge.detail} disabled>
+        <span className="status-dot" />
+        Group <span className="status-label">{badge.label}</span>
       </button>
     </div>
   );

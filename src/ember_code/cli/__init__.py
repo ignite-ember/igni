@@ -2,9 +2,8 @@
 
 Non-interactive command surface. The Textual TUI was removed in
 v0.9.7 — interactive chat now lives in the React clients
-(``clients/web``, ``clients/tauri``, ``clients/vscode``,
-``clients/jetbrains``), which speak to the backend server started
-via ``python -m ember_code.backend --socket <path>``.
+(``clients/web``, ``clients/tauri``), which speak to the backend
+server started via ``python -m ember_code.backend --socket <path>``.
 
 Supported modes:
 
@@ -39,29 +38,41 @@ import os
 import sys
 import threading as stdlib_threading
 import traceback
+from pathlib import Path
 from typing import Any
 
 import click
 
 from ember_code import __version__
+from ember_code.cli.ext import ext
 from ember_code.cli.invocation import (
     CliInvocation,
     load_settings_from_options,
 )
+from ember_code.cli.login import login
+from ember_code.cli.migrate import migrate
 from ember_code.cli.options import CliOptions
+from ember_code.cli.trust import trust_command
+from ember_code.core import air_gap
 from ember_code.core import session as _session_module
+from ember_code.core.agno_telemetry import AgnoTelemetry
+from ember_code.core.observability import OtelRuntime
 from ember_code.core.paths import DEFAULT_DATA_DIR
 
 logger = stdlib_logging.getLogger(__name__)
 
 
-# A plain command, not a group. This was ``@click.group`` with zero
-# commands registered — nothing anywhere calls ``add_command`` and nothing
-# is decorated with ``@cli.command`` — so Click put ``[COMMAND] [ARGS]...``
-# in the usage line advertising something that did not exist. Every
-# natural first move after reading ``--help`` (``igni help``,
-# ``igni login``, ``igni chat``) produced a usage error instead.
-@click.command()
+# A group that runs without one.
+#
+# This was ``@click.group`` with zero commands registered, which put
+# ``[COMMAND] [ARGS]...`` in the usage line advertising something that
+# did not exist — every natural first move after ``--help`` produced a
+# usage error — so it became a plain command. It is a group again now
+# that there is a command to put in it, and ``invoke_without_command``
+# keeps the old behaviour exactly: ``igni`` and ``igni -m "…"`` still
+# start a session, because the subcommands are words and this command
+# takes no positional argument for one to be mistaken for.
+@click.group(invoke_without_command=True)
 @click.version_option(version=__version__, prog_name="igni")
 @click.option("--model", default=None, help="Model to use")
 @click.option("--verbose", is_flag=True, help="Show routing and reasoning")
@@ -71,7 +82,16 @@ logger = stdlib_logging.getLogger(__name__)
     "--continue", "-c", "continue_session", is_flag=True, help="Resume the most recent session"
 )
 @click.option("--session-id", default=None, help="Resume a specific session by ID")
-@click.option("--read-only", is_flag=True, help="No file modifications")
+@click.option(
+    "--read-only",
+    is_flag=True,
+    help=(
+        "Read files and the web, never change anything: read-only shell "
+        "commands (cat, ls, rg, git log, …), web search and URL fetches run "
+        "without asking; edits, any other shell command, and extension tools "
+        "that change something are refused, not asked"
+    ),
+)
 @click.option("--accept-edits", is_flag=True, help="Auto-approve file edits")
 @click.option("--auto-approve", is_flag=True, help="Auto-approve everything")
 @click.option(
@@ -85,9 +105,13 @@ logger = stdlib_logging.getLogger(__name__)
     is_flag=True,
     # Two things this is NOT, both of which the help text used to imply.
     #
-    # It is not "deny all dangerous operations": hooks run shell commands on a
-    # separate path that no permission gates, so a group-supplied hook still
-    # executes here. See tests/test_hooks_are_outside_the_permission_ratchet.py.
+    # It is not "deny all dangerous operations" on its own: hooks run shell
+    # commands on a separate path the agent's permissions do not gate. What
+    # ``--strict`` does for hooks is ``hooks.group: ask`` — a hook the
+    # organisation's group policy ships runs only once the person says yes,
+    # and in a headless run, where nobody can, it does not run. The
+    # developer's own hooks run as they always do. See
+    # tests/test_group_hooks_are_the_developers_call.py.
     #
     # And it is not "deny the dangerous ones, keep the safe ones". ``--strict``
     # selects ``dontAsk``, whose whole point is never to prompt, so anything
@@ -102,8 +126,18 @@ logger = stdlib_logging.getLogger(__name__)
     # states the real behaviour instead of implying a gentler one.
     help=(
         "Headless deny-by-default for the agent's own tool use: anything without "
-        "an explicit allow rule is denied, including reads (hooks are unaffected). "
-        "Pair with permissions.allow to opt tools back in"
+        "an explicit allow rule is denied, including reads. Pair with "
+        "permissions.allow to opt tools back in. Hooks your organisation's group "
+        "policy ships run only once you approve them (hooks.group: ask), and not "
+        "at all in a headless run; your own hooks are unaffected"
+    ),
+)
+@click.option(
+    "--trust",
+    is_flag=True,
+    help=(
+        "Trust this folder for this run: its tools, hooks, workflows, language "
+        "servers and settings load (if your organisation's policy allows it)"
     ),
 )
 @click.option("--worktree", is_flag=True, help="Run in an isolated git worktree")
@@ -128,14 +162,49 @@ def cli(ctx: click.Context, **_params: object) -> None:
     # The note itself is worth keeping: Click forces a
     # decorator-per-option surface here, so all the logic lives on the
     # invocation object and this callback stays small.
+    # A subcommand handles itself. Falling through would start an
+    # interactive session *and* run it.
+    if ctx.invoked_subcommand is not None:
+        return
+
     options = CliOptions.model_validate(ctx.params)
-    settings = load_settings_from_options(options)
+    from ember_code.core.config.group_policy import GroupPolicyUnavailable
+
+    try:
+        settings = load_settings_from_options(options)
+    except GroupPolicyUnavailable as exc:
+        # ``group_policy.required`` and no verified pack: no session, and
+        # the message says what to do. ``igni login`` still works — it is a
+        # subcommand, handled above.
+        raise click.ClickException(str(exc)) from exc
+    # Workspace trust: the folder's config, tools, hooks and the rest wait for
+    # it (``core/workspace_trust``). Settled after the first load, which read
+    # the organisation's policy, and settings reload with the folder's config
+    # once it is trusted. Only for a run that starts a session.
+    folder = Path.cwd()
+    if options.message or options.pipe:
+        from ember_code.cli.trust import SessionTrust
+
+        became_trusted = SessionTrust(
+            folder, pipe=options.pipe, trust_flag=options.trust, quiet=options.quiet
+        ).settle()
+        if became_trusted:
+            settings = load_settings_from_options(options)
+
+    # A ``-m`` or pipe run starts igni's decisions service itself, and that
+    # process reads no settings: it inherits the air-gap decision instead.
+    air_gap.export_to(os.environ, settings.air_gapped)
+    # Agno's own run telemetry stays off when air-gapped; traces go to the
+    # organisation's collector, if it named one (``core/observability``).
+    AgnoTelemetry.enforce(os.environ, air_gapped=settings.air_gapped)
+    OtelRuntime.start(settings)
 
     invocation = CliInvocation(options, settings, ctx)
     invocation.enable_debug_logging()
 
     invocation.resolve_resume_id()
     invocation.setup_worktree()
+    _carry_trust_into_worktree(folder, invocation.project_dir)
     invocation.resolve_additional_dirs()
     invocation.store_context()
 
@@ -149,6 +218,18 @@ def cli(ctx: click.Context, **_params: object) -> None:
     # No message + no subcommand → point users at the React clients.
     invocation.echo_help_pointer()
     invocation.cleanup_worktree()
+
+
+def _carry_trust_into_worktree(folder: Path, worktree: Path | None) -> None:
+    """``--worktree`` runs in a new folder of the same repository: trusted for
+    this run when the folder it was made from is (and policy allows it)."""
+    if worktree is None or worktree == folder:
+        return
+    from ember_code.core.workspace_trust import WorkspaceTrust
+
+    service = WorkspaceTrust.shared()
+    if service.is_trusted(folder):
+        service.grant_for_run(worktree)
 
 
 #: How long the drain below waits for leftover tasks before giving up on them.
@@ -268,3 +349,10 @@ __all__ = ["cli"]
 
 if __name__ == "__main__":
     cli()
+
+
+# Registered after the callback so the module reads top to bottom.
+cli.add_command(ext)
+cli.add_command(login)
+cli.add_command(migrate)
+cli.add_command(trust_command)

@@ -24,7 +24,7 @@ Result-shape ``NormalizeResult`` is used internally; the legacy
 from __future__ import annotations
 
 import logging
-from collections.abc import Callable, Mapping
+from collections.abc import Mapping
 from functools import cached_property
 from pathlib import Path
 from typing import Any, ClassVar
@@ -33,7 +33,6 @@ from agno.tools import Toolkit
 from agno.tools.file import FileTools
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-from ember_code.core.tools.codeindex import CodeIndexTools
 from ember_code.core.tools.edit import EmberEditTools, FileEditNotifier
 from ember_code.core.tools.notebook import NotebookTools
 from ember_code.core.tools.schedule import ScheduleTools
@@ -76,10 +75,6 @@ class ToolBuildContext(BaseModel):
     # :data:`ember_code.core.tools.edit.default_file_edit_notifier`,
     # the module-level default the backend also wires to by default.
     file_edit_notifier: FileEditNotifier | None = None
-    # Resolves the session's ``CodeIndex`` on first query. A callable, not the
-    # index, because the session swaps in a Neo4j-backed one after the team is
-    # built — see ``CodeIndexTools.index_provider``.
-    code_index_provider: Callable[[], Any] | None = None
 
 
 class NormalizeResult(BaseModel):
@@ -172,8 +167,7 @@ class ToolSpec(BaseModel):
     # When ``False``, this spec is available via the registry (e.g. main
     # agent gets it via ``resolve``) but NOT via ephemeral-agent
     # ``.md``-frontmatter ``tools:`` lists. Preserves the historical
-    # ``VALID_EPHEMERAL_TOOL_NAMES`` set — ``CodeIndex`` and
-    # ``Visualize`` are built-ins added by the main agent, not
+    # ``VALID_EPHEMERAL_TOOL_NAMES`` set — ``Visualize`` is a built-in added by the main agent, not
     # requestable by user-authored ephemeral agents.
     ephemeral_visible: bool = True
 
@@ -395,38 +389,6 @@ class NotebookSpec(ToolSpec):
     toolkit_cls: type[Toolkit] = NotebookTools
 
 
-class CodeIndexSpec(ToolSpec):
-    name: str = "CodeIndex"
-    # CodeIndex is not exposed to ephemeral agents by function-name
-    # aliasing today — it's a registry-level name only.
-    agno_function_names: tuple[str, ...] = ()
-    # The four search/item/references/commits functions were collapsed into a
-    # single Cypher entry point; these names outlived them. Agno matches
-    # ``requires_confirmation_tools`` against the toolkit's real functions and
-    # warns on a miss, so the gate had been dead — CodeIndex ran unconfirmed
-    # whatever the level said.
-    confirm_function_names: tuple[str, ...] = ("codeindex_cypher",)
-    toolkit_cls: type[Toolkit] = CodeIndexTools
-    base_dir_kwarg: str | None = "project_dir"
-
-    def _build_kwargs(self, context: ToolBuildContext, confirm: bool) -> dict[str, Any]:
-        """Hand the toolkit the session's index provider.
-
-        Without it the toolkit self-builds a ``CodeIndex`` with no ``runtime=``,
-        so ``client_for`` returns ``None`` and every query answers
-        ``no_backend``. Nothing passed ``index=`` anywhere in the codebase, so
-        that was the behaviour on every path, not just the headless one.
-        """
-        kwargs = super()._build_kwargs(context, confirm)
-        if context.code_index_provider is not None:
-            kwargs["index_provider"] = context.code_index_provider
-        return kwargs
-
-    # Not reachable via ephemeral ``tools:`` frontmatter — matches the
-    # historical ``VALID_EPHEMERAL_TOOL_NAMES`` which excluded it.
-    ephemeral_visible: bool = False
-
-
 class VisualizeSpec(ToolSpec):
     """Visualize tool. Overrides :meth:`build` to inject the
     registry-owned broadcast callable (proper subclass polymorphism,
@@ -469,12 +431,10 @@ class ToolSpecCatalog:
     invalidated on register.
     """
 
-    # Registry names the resolver skips silently — they're pseudo-tools
-    # handled elsewhere in the agent builder (Orchestrate ->
-    # ``OrchestrateTools``, Knowledge -> ``KnowledgeTools``) rather than
-    # by the built-in registry. Kept on the catalog so ``resolve``
-    # doesn't need a magic-string check.
-    RESERVED_NON_TOOL_NAMES: ClassVar[frozenset[str]] = frozenset({"Orchestrate", "Knowledge"})
+    # Registry names the resolver skips silently — pseudo-tools
+    # handled elsewhere in the agent builder rather than by the
+    # built-in registry. ``Orchestrate`` -> ``OrchestrateTools``.
+    RESERVED_NON_TOOL_NAMES: ClassVar[frozenset[str]] = frozenset({"Orchestrate"})
 
     def __init__(self, specs: list[ToolSpec]) -> None:
         self._specs: list[ToolSpec] = list(specs)
@@ -525,8 +485,8 @@ class ToolSpecCatalog:
         """Every ephemeral-visible registry name plus every alias — the
         set an ephemeral-agent ``tools:`` list may draw from.
 
-        Specs with ``ephemeral_visible=False`` (currently ``CodeIndex``
-        and ``Visualize``) are excluded — those are wired by the main
+        Specs with ``ephemeral_visible=False`` (currently ``Visualize``)
+        are excluded — those are wired by the main
         agent path, not by user-authored ephemeral ``.md`` files.
         """
         names: set[str] = set()
@@ -555,9 +515,20 @@ class ToolSpecCatalog:
 
     @property
     def registry_names_with_aliases(self) -> list[str]:
-        """Sorted registry names including every alias — matches the
-        old ``sorted(_factories.keys())`` behaviour."""
-        return sorted(self.by_name.keys())
+        """Every name an agent definition may legitimately declare.
+
+        Specs, their aliases, and the pseudo-tool names in
+        :data:`RESERVED_NON_TOOL_NAMES`. The pseudo-tools are attached
+        by the agent builder rather than resolved here, but declaring
+        one is still correct and worth doing: a definition's ``tools:``
+        list is the manifest its traces are attributed by, and a grant
+        the manifest does not mention is exactly the drift that had to
+        be repaired across 1,370 captured specialist traces.
+
+        Declaring does not grant. The builder decides what an agent
+        gets; this list decides what it may honestly claim.
+        """
+        return sorted(set(self.by_name) | self.RESERVED_NON_TOOL_NAMES)
 
     def register(self, spec: ToolSpec) -> None:
         """Add a spec at runtime. Invalidates derived caches."""
@@ -587,8 +558,16 @@ class ToolSpecCatalog:
 
     @classmethod
     def default(cls) -> ToolSpecCatalog:
-        """Build the built-in catalog (order matches the old
-        ``_factories`` dict insertion order for stability)."""
+        """The tools igni has, and only those.
+
+        No capability's tools are here. A capability arrives as an
+        extension, and an extension's tools reach the agent over MCP
+        rather than through this catalog — so the base cannot name
+        them, and this list is what remains when it stops trying.
+
+        Order is the old ``_factories`` dict insertion order, which
+        several tests and the resolver's output depend on.
+        """
         return cls(
             [
                 WriteFileSpec(),
@@ -598,7 +577,6 @@ class ToolSpecCatalog:
                 WebFetchSpec(),
                 ScheduleSpec(),
                 NotebookSpec(),
-                CodeIndexSpec(),
                 VisualizeSpec(),
             ]
         )

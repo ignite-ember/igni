@@ -57,8 +57,7 @@ def test_auto_approve_confirms_nothing_in_the_whole_catalog() -> None:
     """The bug this replaces: ``--auto-approve`` set four *category*
     fields, ``CategoryToToolMap`` knew three categories, and anything
     outside them kept the ``"ask"`` default with no flag able to flip it.
-    ``CodeIndex`` and ``NotebookEdit`` are both in the main agent's
-    toolkit and both were gated.
+    ``NotebookEdit`` is in the main agent's toolkit and was gated.
 
     Asserted over the entire catalog on purpose: a per-tool assertion
     would pass again the next time a tool is added outside the map.
@@ -70,46 +69,16 @@ def test_auto_approve_confirms_nothing_in_the_whole_catalog() -> None:
     assert gated == []
 
 
-@pytest.mark.parametrize("tool", ["CodeIndex", "NotebookEdit"])
-def test_the_two_tools_the_category_map_missed(tool: str) -> None:
+def test_the_tool_the_category_map_missed() -> None:
     """Named explicitly so a regression points at the original defect
     instead of at a catalog-wide count."""
-    assert _auto_approve_permissions().needs_confirmation(tool) is False
+    assert _auto_approve_permissions().needs_confirmation("NotebookEdit") is False
 
 
 def test_notebook_edit_still_asks_by_default() -> None:
     """The bypass fix is scoped to the mode: a write tool with no flag
     set must still ask."""
     assert ToolPermissions().needs_confirmation("NotebookEdit") is True
-
-
-def test_codeindex_is_a_read_tool_by_default() -> None:
-    """CodeIndex fell through to the ``"ask"`` fallback purely because it
-    was absent from the defaults table, not by intent — its one function
-    is read-only Cypher behind ``assert_read_only_cypher``. It now sits
-    with Grep, so it no longer needs a flag to be usable at all.
-    """
-    permissions = ToolPermissions()
-    assert permissions.get_level("CodeIndex") == "allow"
-    assert permissions.needs_confirmation("CodeIndex") is False
-
-
-def test_the_codeindex_confirmation_gate_names_a_real_function() -> None:
-    """Agno matches ``requires_confirmation_tools`` against the toolkit's
-    actual functions and only *warns* on a miss, so four stale names left
-    the gate silently dead. Verified against the live toolkit rather than
-    a hardcoded list so the next rename fails here.
-    """
-    from ember_code.core.tools.codeindex.tool import CodeIndexTools
-    from ember_code.core.tools.tool_spec import CodeIndexSpec
-
-    real = {
-        name
-        for name in dir(CodeIndexTools)
-        if name.startswith("codeindex_") and callable(getattr(CodeIndexTools, name))
-    }
-    stale = set(CodeIndexSpec().confirm_function_names) - real
-    assert stale == set(), f"gate names functions the toolkit does not have: {stale}"
 
 
 def test_bypass_mode_does_not_rewrite_levels() -> None:
@@ -160,10 +129,9 @@ def test_agent_builder_passes_settings_permissions_to_the_registry() -> None:
         settings: Any
         base_dir: str | None = None
         mcp_clients: dict[str, Any] | None = None
-        knowledge_mgr: Any = None
+        artifact_mgr: Any = None
         db: Any = None
         broadcast: Any = None
-        code_index_provider: Any = None
 
     @dataclass
     class StubDefinition:
@@ -197,7 +165,7 @@ def test_paused_run_raises_instead_of_being_returned_as_the_answer() -> None:
     from ember_code.core.session.message_handler import SessionMessageHandler
 
     class PausedToolCall:
-        tool_name = "codeindex_search"
+        tool_name = "web_search"
         is_paused = True
 
     class PausedResponse:
@@ -207,7 +175,7 @@ def test_paused_run_raises_instead_of_being_returned_as_the_answer() -> None:
 
     with pytest.raises(RuntimeError) as excinfo:
         SessionMessageHandler._reject_paused_run(PausedResponse())
-    assert "codeindex_search" in str(excinfo.value)
+    assert "web_search" in str(excinfo.value)
 
 
 def test_a_normal_run_is_left_alone() -> None:
@@ -239,7 +207,7 @@ def test_database_startup_does_not_seize_the_root_logger() -> None:
     captured, real_stderr = io.StringIO(), sys.stderr
     try:
         sys.stderr = captured
-        Database(db_path=os.path.join(tempfile.mkdtemp(), "startup.db"))
+        Database(os.path.join(tempfile.mkdtemp(), "startup.db"))
         surviving = list(logging.root.handlers)
     finally:
         sys.stderr = real_stderr
@@ -402,212 +370,3 @@ def test_the_body_logger_does_not_propagate_either() -> None:
     finally:
         logger.handlers[:] = previous_handlers
         logger.propagate = previous_propagate
-
-
-# ── 7. CodeIndex actually has a backend behind it ───────────────────
-
-
-def test_the_toolkit_uses_the_sessions_index_not_a_self_built_one() -> None:
-    """``CodeIndexTools`` self-builds a ``CodeIndex`` when given nothing,
-    and a self-built one has no ``runtime=`` — so ``client_for`` returns
-    None and every query answers ``no_backend``. Nothing in the codebase
-    passed ``index=``, which made that the behaviour on every path, not
-    only the headless one. Verified live afterwards: 4,845 Item nodes.
-    """
-    from ember_code.core.tools.registry import ToolRegistry
-
-    sentinel = object()
-    registry = ToolRegistry(base_dir="/tmp", code_index_provider=lambda: sentinel)
-    (toolkit,) = registry.resolve(["CodeIndex"])
-    assert toolkit._services.index is sentinel
-
-
-def test_the_index_is_resolved_lazily_not_at_construction() -> None:
-    """The provider is a callable rather than the index itself because
-    ``attach_codeindex_neo4j`` *replaces* ``session.code_index`` after the
-    team — and therefore this toolkit — is built. Capturing the object
-    would pin the runtime-less startup index.
-    """
-    from ember_code.core.tools.registry import ToolRegistry
-
-    calls: list[int] = []
-    current = [object()]
-
-    def provider() -> object:
-        calls.append(1)
-        return current[0]
-
-    registry = ToolRegistry(base_dir="/tmp", code_index_provider=provider)
-    (toolkit,) = registry.resolve(["CodeIndex"])
-    assert calls == [], "provider was called at build time; the swap would be missed"
-
-    replacement = object()
-    current[0] = replacement  # what attach_codeindex_neo4j does
-    assert toolkit._services.index is replacement
-
-
-def test_single_message_run_releases_only_what_it_took() -> None:
-    """``stop_all`` ignores refcounts and kills every active pair, which
-    is correct at backend shutdown and wrong for one CLI run — a backend
-    or second CLI on the same pair would lose its server. Release must be
-    the matching ``stop_for_commit``.
-    """
-    import asyncio
-
-    from ember_code.core.session.single_message_run import SingleMessageRun
-
-    class Runtime:
-        def __init__(self) -> None:
-            self.released: list[tuple[str, str]] = []
-            self.stopped_all = False
-
-        async def stop_for_commit(self, project: str, sha: str) -> bool:
-            self.released.append((project, sha))
-            return True
-
-        async def stop_all(self) -> None:
-            self.stopped_all = True
-
-    run = SingleMessageRun.__new__(SingleMessageRun)
-    run._started_commit = ("proj-hash", "deadbeef")
-    runtime = Runtime()
-    asyncio.run(run._release_neo4j(runtime))
-
-    assert runtime.released == [("proj-hash", "deadbeef")]
-    assert runtime.stopped_all is False
-
-
-def test_nothing_is_released_when_nothing_was_started() -> None:
-    import asyncio
-
-    from ember_code.core.session.single_message_run import SingleMessageRun
-
-    class Runtime:
-        async def stop_for_commit(self, *_: str) -> bool:  # pragma: no cover
-            raise AssertionError("released a commit this run never started")
-
-        async def stop_all(self) -> None:  # pragma: no cover
-            raise AssertionError("stop_all is never correct here")
-
-    run = SingleMessageRun.__new__(SingleMessageRun)
-    asyncio.run(run._release_neo4j(Runtime()))  # no _started_commit set
-    asyncio.run(run._release_neo4j(None))
-
-
-def test_keep_alive_leaves_the_pair_running() -> None:
-    """Batch callers running many single-shot sessions over one repo can
-    opt out of the release: a cold Neo4j start measured 44s end-to-end
-    against 5-8s attaching to a warm server, so releasing between every
-    session costs hours across a large campaign."""
-    import asyncio
-
-    from ember_code.core.session.single_message_run import SingleMessageRun
-
-    class Runtime:
-        async def stop_for_commit(self, *_: str) -> bool:  # pragma: no cover
-            raise AssertionError("released despite IGNI_NEO4J_KEEP_ALIVE")
-
-        async def stop_all(self) -> None:  # pragma: no cover
-            raise AssertionError("stop_all is never correct here")
-
-    run = SingleMessageRun.__new__(SingleMessageRun)
-    run._started_commit = ("proj", "sha")
-
-    monkey = pytest.MonkeyPatch()
-    try:
-        monkey.setenv("IGNI_NEO4J_KEEP_ALIVE", "1")
-        asyncio.run(run._release_neo4j(Runtime()))
-    finally:
-        monkey.undo()
-
-
-def test_head_commit_is_noted_without_acquiring() -> None:
-    """``_client_for`` already calls ``start_for_commit`` on first query
-    and caches per sha, so acquiring here too made two acquires against
-    one release — ``stop_for_commit`` then reported "still attached by 1
-    other BE(s)" and the server outlived every run."""
-    import asyncio
-
-    from ember_code.core.session.single_message_run import SingleMessageRun
-
-    class Index:
-        project_id = "proj"
-
-        def has_commit(self, _sha: str) -> bool:
-            return True
-
-    class Sync:
-        def current_sha(self) -> str:
-            return "sha123"
-
-    class Runtime:
-        async def start_for_commit(self, *_: str) -> None:  # pragma: no cover
-            raise AssertionError("acquired eagerly; the lazy acquire already counts")
-
-    class Session:
-        code_index = Index()
-        code_index_sync = Sync()
-
-    run = SingleMessageRun.__new__(SingleMessageRun)
-    run._session = Session()
-    asyncio.run(run._note_head_commit())
-    assert run._started_commit == ("proj", "sha123")
-
-
-# ── 8. An abbreviated commit must not become a second, empty store ──
-
-
-def _index_with_commits(*commits: str):
-    """A CodeIndex stub exposing just the manifest surface
-    ``_resolve_indexed_commit`` reads."""
-    from ember_code.core.code_index.index import CodeIndex
-
-    class Manifest:
-        def load(self) -> Any:
-            return type("M", (), {"commits": list(commits)})()
-
-    index = CodeIndex.__new__(CodeIndex)
-    index.manifest = Manifest()
-    return index
-
-
-FULL_SHA = "84a9f3b9a4f3244b8c8e818f557d64c7b964fb25"
-
-
-def test_abbreviated_commit_resolves_to_the_indexed_one() -> None:
-    """Agents pass the short sha they saw in conversation. Because
-    ``(project, commit)`` is a *store identity* rather than a lookup, the
-    abbreviation used to spawn a second Neo4j on an empty store: the
-    query returned zero rows and the agent reported the index as empty.
-    Observed live — two servers for one project, one keyed by the 40-char
-    sha and one by 7 chars.
-    """
-    index = _index_with_commits(FULL_SHA)
-    assert index._resolve_indexed_commit("84a9f3b") == FULL_SHA
-    assert index._resolve_indexed_commit(FULL_SHA) == FULL_SHA
-
-
-def test_an_unindexed_commit_is_refused_not_invented() -> None:
-    """A silent empty graph is worse than an error: a corpus built on it
-    teaches that the index has no data. ``cypher_service`` turns this into
-    a ``client_for_failed`` the agent can act on."""
-    index = _index_with_commits(FULL_SHA)
-    with pytest.raises(ValueError, match="not indexed"):
-        index._resolve_indexed_commit("deadbeef")
-
-
-def test_an_empty_commit_falls_back_to_head_not_the_resolver() -> None:
-    """``client_for``'s ``sha or self.head()`` means an empty string never
-    reaches the resolver — worth pinning, because a ``<project>-`` directory
-    with no sha exists on disk, so *some* path did once open an empty commit.
-    Not this one."""
-    index = _index_with_commits(FULL_SHA)
-    # "" matches every commit as a prefix, so reaching the resolver with it
-    # would silently pick an arbitrary store rather than raising.
-    assert index._resolve_indexed_commit("") == FULL_SHA
-
-
-def test_an_ambiguous_prefix_is_refused() -> None:
-    index = _index_with_commits("abc111" + "0" * 34, "abc222" + "0" * 34)
-    with pytest.raises(ValueError, match="ambiguous"):
-        index._resolve_indexed_commit("abc")

@@ -71,6 +71,7 @@
     "hitl_request": [
       "agent_path",
       "details",
+      "details_pending",
       "event_seq",
       "friendly_name",
       "id",
@@ -152,6 +153,14 @@
       "session_id",
       "type"
     ],
+    "requirement_details": [
+      "details",
+      "event_seq",
+      "id",
+      "requirement_id",
+      "session_id",
+      "type"
+    ],
     "requirement_resolved": [
       "event_seq",
       "id",
@@ -161,6 +170,7 @@
     ],
     "rpc_request": [
       "args",
+      "caller",
       "event_seq",
       "id",
       "method",
@@ -258,6 +268,8 @@
     ],
     "status_update": [
       "cloud_connected",
+      "cloud_email",
+      "cloud_name",
       "cloud_org",
       "context_tokens",
       "event_seq",
@@ -327,6 +339,7 @@
       "has_markup",
       "id",
       "is_error",
+      "is_rejected",
       "parent_run_id",
       "run_id",
       "session_id",
@@ -374,8 +387,10 @@
     "user_message_received": [
       "client_id",
       "event_seq",
+      "extension_id",
       "id",
       "queued",
+      "service_client_id",
       "session_id",
       "text",
       "type"
@@ -403,6 +418,20 @@
       "tools",
       "unknown_tools"
     ],
+    "floor_notification": [
+      "actor",
+      "body",
+      "created_at",
+      "id",
+      "kind",
+      "org_id",
+      "org_name",
+      "origin",
+      "read",
+      "source",
+      "target",
+      "title"
+    ],
     "loop_status": [
       "active",
       "announced_total",
@@ -421,7 +450,21 @@
       "resources",
       "tool_descriptions",
       "tool_names",
+      "tools_disabled",
       "transport"
+    ],
+    "notification_counts": [
+      "by_source",
+      "unread"
+    ],
+    "notification_target": [
+      "page",
+      "params"
+    ],
+    "notifications_list": [
+      "counts",
+      "notifications",
+      "server_error"
     ],
     "pending_message": [
       "content",

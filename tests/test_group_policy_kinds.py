@@ -522,7 +522,6 @@ class TestBeingMovedToAnotherGroup:
         first = AgentDefinitionLoader(
             settings=settings,
             project_dir=project,
-            codeindex_available=False,
             group_dir=cache.agents_dir,
         ).load()
         assert set(first.entries) == {"eng-agent"}
@@ -531,7 +530,6 @@ class TestBeingMovedToAnotherGroup:
         second = AgentDefinitionLoader(
             settings=settings,
             project_dir=project,
-            codeindex_available=False,
             group_dir=cache.agents_dir,
         ).load()
         assert set(second.entries) == {"legal-agent"}

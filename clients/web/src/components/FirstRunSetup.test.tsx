@@ -18,7 +18,7 @@ describe("FirstRunSetup", () => {
     const onLogin = vi.fn();
     render(<FirstRunSetup onLogin={onLogin} />);
 
-    fireEvent.click(screen.getByRole("button", { name: /log in to igni cloud/i }));
+    fireEvent.click(screen.getByRole("button", { name: /sign in to your igni server/i }));
 
     expect(onLogin).toHaveBeenCalledTimes(1);
   });
@@ -36,8 +36,10 @@ describe("FirstRunSetup", () => {
     const { container } = render(<FirstRunSetup onLogin={() => {}} />);
 
     // Asserted literally because it is a path on disk, not a product
-    // name: `.ember` is what the backend creates and reads.
-    expect(container.textContent).toContain("~/.ember/config.yaml");
+    // name: `.igni` is what the backend creates and reads (`.ember` is the
+    // legacy directory it migrates away from).
+    expect(container.textContent).toContain("~/.igni/config.yaml");
+    expect(container.textContent).not.toContain("igni Cloud");
     expect(container.textContent).toContain("models.registry");
   });
 });

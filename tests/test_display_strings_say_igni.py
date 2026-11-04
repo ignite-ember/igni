@@ -8,7 +8,8 @@ people: **display strings in the client shells.**
 It exists because the one-by-one fix did not hold. F49 in the production
 review found "Ember" in both of the VS Code extension's right-click menu
 entries and fixed those two. Four months later the same sweep found seven
-more, in places nobody had thought to look:
+more, in places nobody had thought to look (the VS Code extension has since
+been dropped):
 
     clients/web/src/components/panels/LoginPanel.tsx   "Log in to Ember Cloud"   ← a dialog title
     clients/web/src/components/Composer.tsx            "/login → Log in to Ember Cloud"
@@ -50,8 +51,6 @@ _ROOT = pathlib.Path(__file__).resolve().parent.parent
 # Directories whose strings a user can see.
 _CLIENT_TREES = [
     ("clients/web/src", (".ts", ".tsx")),
-    ("clients/vscode/src", (".ts",)),
-    ("clients/jetbrains/src", (".kt",)),
 ]
 
 # Identifier tokens that legitimately contain "Ember". Matched as the whole
@@ -69,15 +68,7 @@ _ALLOWED_TOKENS = frozenset(
         "EmberSpec",
         "EmberEditTools",
         "EmberShellTools",
-        "EmberRuntime",
-        "EmberBackendService",
         "EmberToolCall",
-        # Real build artifacts named in a developer-facing `error()`: the
-        # generated resource file and the gradle task that writes it. Renaming
-        # those to satisfy a rule about display text would be the tail wagging
-        # the dog, and the message has to name them accurately to be useful.
-        "ember-version",
-        "generateEmberVersion",
     }
 )
 

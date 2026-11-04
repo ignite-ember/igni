@@ -18,55 +18,61 @@ This module fills that gap with a tiny separate table managed by us:
 * On crash / kill / network drop, the row stays ``pending`` and
   the next ``--continue`` boot surfaces it to the agent.
 
-The table lives in the same project-local ``state.db`` Agno uses,
-so no new file or migration system is needed. ``CREATE TABLE IF
-NOT EXISTS`` runs at first use; existing databases pick up the
-table on next launch.
+The table lives in the project's database (the desktop's ``state.db``,
+the same file Agno uses) and is created by the alembic migrations like
+every other igni table; every query is filtered by the database's
+:class:`~ember_code.core.db.scope.StorageScope`.
 """
 
 from __future__ import annotations
 
 import asyncio
-import contextlib
 import logging
-import sqlite3
 import uuid
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Final, Literal
 
-from ember_code.core.session._sqlite_utils import connect_kv
+from sqlalchemy import ColumnElement, Index, Integer, String, Text, delete, select, update
+from sqlalchemy.orm import Mapped, mapped_column
+
+from ember_code.core.db.base import Base
+from ember_code.core.db.database import Database
+from ember_code.core.db.scope import ScopedColumns
 
 logger = logging.getLogger(__name__)
 
 
-# Schema kept simple on purpose — single table, no joins, no
-# foreign keys. The session_id matches whatever Agno uses so callers
-# can correlate without an extra lookup.
-_SCHEMA = """
-CREATE TABLE IF NOT EXISTS ember_received_messages (
-    message_id TEXT PRIMARY KEY,
-    session_id TEXT NOT NULL,
-    text TEXT NOT NULL,
-    received_at INTEGER NOT NULL,
-    status TEXT NOT NULL DEFAULT 'pending',
-    completed_at INTEGER
-);
-CREATE INDEX IF NOT EXISTS idx_ember_received_messages_session_status
-    ON ember_received_messages(session_id, status);
-"""
+class ReceivedMessageModel(ScopedColumns, Base):
+    """One user message, from receipt until its run completes.
 
-# Three ``ALTER TABLE`` statements that bring an older DB up to the
-# explicit-interrupted-run schema. Each is idempotent — SQLite raises
-# ``OperationalError: duplicate column name`` when the column already
-# exists; we swallow that error so re-running the migration is a no-op.
-# See :meth:`PendingMessageStore._migrate_existing`.
-_INTERRUPTED_SCHEMA_MIGRATIONS: Final[tuple[str, ...]] = (
-    "ALTER TABLE ember_received_messages ADD COLUMN interrupted_at INTEGER",
-    "ALTER TABLE ember_received_messages ADD COLUMN interrupted_reason TEXT",
-    "ALTER TABLE ember_received_messages ADD COLUMN last_error TEXT",
-)
+    Single table, no joins, no foreign keys. ``session_id`` matches
+    whatever Agno uses so callers can correlate without a lookup.
+    """
+
+    __tablename__ = "ember_received_messages"
+    __table_args__ = (
+        Index(
+            "ix_ember_received_messages_session_status",
+            "org",
+            "producer",
+            "project",
+            "session_id",
+            "status",
+        ),
+    )
+
+    message_id: Mapped[str] = mapped_column(String, primary_key=True)
+    session_id: Mapped[str] = mapped_column(String, nullable=False)
+    text: Mapped[str] = mapped_column(Text, nullable=False)
+    received_at: Mapped[int] = mapped_column(Integer, nullable=False)
+    status: Mapped[str] = mapped_column(String, nullable=False, server_default="pending")
+    completed_at: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    interrupted_at: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    interrupted_reason: Mapped[str | None] = mapped_column(String, nullable=True)
+    last_error: Mapped[str | None] = mapped_column(Text, nullable=True)
+
 
 # Wire / storage literals for the ``interrupted_reason`` column.
 # Kept narrow on purpose — the FE renders these as banner labels
@@ -108,44 +114,27 @@ class InterruptedMessage:
 
 
 class PendingMessageStore:
-    """SQLite-backed log of in-flight user messages.
+    """Log of in-flight user messages, in the project's database.
 
-    Methods are sync — SQLite writes are local and small (one row,
-    well under a millisecond). They're invoked from async code via
-    ``asyncio.to_thread`` so the event loop stays free for the
-    streaming work.
+    Methods are sync — the writes are small (one row). They're invoked
+    from async code via ``asyncio.to_thread`` so the event loop stays
+    free for the streaming work.
     """
 
-    def __init__(self, db_path: Path) -> None:
-        self._db_path = db_path
-        self._db_path.parent.mkdir(parents=True, exist_ok=True)
-        # Create the table eagerly so the first write doesn't race
-        # multiple call sites trying to create it simultaneously.
-        # Also run the interrupted-run migration so an older DB
-        # picks up the new columns on next launch — no separate
-        # alembic step required.
-        with contextlib.closing(self._connect()) as conn, conn:
-            conn.executescript(_SCHEMA)
-            self._migrate_existing(conn)
+    #: Rows returned by the list queries — even if the process crashed
+    #: several times in a row, the next run is not flooded with stale
+    #: prompts.
+    LIST_LIMIT = 5
 
-    def _migrate_existing(self, conn: sqlite3.Connection) -> None:
-        """Bring an older DB up to the explicit-interrupted-run schema.
+    def __init__(self, db: Database | str | Path) -> None:
+        self._db = Database.of(db)
 
-        SQLite's ``ALTER TABLE ... ADD COLUMN`` is not idempotent —
-        re-running it raises ``duplicate column name``. We swallow
-        that one error so the migration can be re-run safely on
-        every startup; any other error propagates so genuine
-        corruption is visible.
-        """
-        for stmt in _INTERRUPTED_SCHEMA_MIGRATIONS:
-            try:
-                conn.execute(stmt)
-            except sqlite3.OperationalError as exc:
-                if "duplicate column" not in str(exc):
-                    raise
+    @staticmethod
+    def _now() -> int:
+        return int(datetime.now(timezone.utc).timestamp())
 
-    def _connect(self) -> sqlite3.Connection:
-        return connect_kv(self._db_path)
+    def _mine(self) -> ColumnElement[bool]:
+        return self._db.scope.where(ReceivedMessageModel)
 
     def record_received(self, session_id: str, text: str) -> str:
         """Persist a freshly-received user message; return its id.
@@ -156,13 +145,16 @@ class PendingMessageStore:
         be surfaced on the next ``--continue`` boot.
         """
         msg_id = str(uuid.uuid4())
-        ts = int(datetime.now(timezone.utc).timestamp())
-        with contextlib.closing(self._connect()) as conn, conn:
-            conn.execute(
-                "INSERT INTO ember_received_messages "
-                "(message_id, session_id, text, received_at, status) "
-                "VALUES (?, ?, ?, ?, 'pending')",
-                (msg_id, session_id, text, ts),
+        with self._db.sync_session() as session, session.begin():
+            session.add(
+                ReceivedMessageModel(
+                    **self._db.scope.stamp(),
+                    message_id=msg_id,
+                    session_id=session_id,
+                    text=text,
+                    received_at=self._now(),
+                    status="pending",
+                )
             )
         return msg_id
 
@@ -175,14 +167,12 @@ class PendingMessageStore:
         which is a much better failure mode than crashing the run
         that just completed successfully.
         """
-        ts = int(datetime.now(timezone.utc).timestamp())
         try:
-            with contextlib.closing(self._connect()) as conn, conn:
-                conn.execute(
-                    "UPDATE ember_received_messages "
-                    "SET status='completed', completed_at=? "
-                    "WHERE message_id=?",
-                    (ts, message_id),
+            with self._db.sync_session() as session, session.begin():
+                session.execute(
+                    update(ReceivedMessageModel)
+                    .where(self._mine(), ReceivedMessageModel.message_id == message_id)
+                    .values(status="completed", completed_at=self._now())
                 )
         except Exception as exc:
             logger.debug("mark_completed failed for %s: %s", message_id, exc)
@@ -190,26 +180,26 @@ class PendingMessageStore:
     def list_pending(self, session_id: str) -> list[PendingMessage]:
         """Return every still-pending message for the session.
 
-        Sorted oldest first so callers can recap in submission
-        order. Limited to a few rows defensively — even if the
-        process crashed multiple times in succession we don't want
-        to flood the next agent invocation with stale prompts.
+        Sorted oldest first so callers can recap in submission order,
+        at most :attr:`LIST_LIMIT` of them.
         """
-        with contextlib.closing(self._connect()) as conn:
-            rows = conn.execute(
-                "SELECT message_id, session_id, text, received_at "
-                "FROM ember_received_messages "
-                "WHERE session_id=? AND status='pending' "
-                "ORDER BY received_at ASC "
-                "LIMIT 5",
-                (session_id,),
-            ).fetchall()
+        with self._db.sync_session() as session:
+            rows = session.scalars(
+                select(ReceivedMessageModel)
+                .where(
+                    self._mine(),
+                    ReceivedMessageModel.session_id == session_id,
+                    ReceivedMessageModel.status == "pending",
+                )
+                .order_by(ReceivedMessageModel.received_at.asc())
+                .limit(self.LIST_LIMIT)
+            ).all()
         return [
             PendingMessage(
-                message_id=r["message_id"],
-                session_id=r["session_id"],
-                text=r["text"],
-                received_at=r["received_at"],
+                message_id=r.message_id,
+                session_id=r.session_id,
+                text=r.text,
+                received_at=r.received_at,
             )
             for r in rows
         ]
@@ -222,10 +212,11 @@ class PendingMessageStore:
         again on the next boot too.
         """
         try:
-            with contextlib.closing(self._connect()) as conn, conn:
-                conn.execute(
-                    "DELETE FROM ember_received_messages WHERE message_id=?",
-                    (message_id,),
+            with self._db.sync_session() as session, session.begin():
+                session.execute(
+                    delete(ReceivedMessageModel).where(
+                        self._mine(), ReceivedMessageModel.message_id == message_id
+                    )
                 )
         except Exception as exc:
             logger.debug("discard failed for %s: %s", message_id, exc)
@@ -245,7 +236,7 @@ class PendingMessageStore:
 
         Idempotent on ``status='completed'``: if the row was already
         marked completed (rare race: cancel arrived after natural
-        completion), the ``AND status='pending'`` guard turns the
+        completion), the ``status='pending'`` guard turns the
         UPDATE into a no-op so we never resurrect a completed run
         as "interrupted".
 
@@ -256,14 +247,20 @@ class PendingMessageStore:
         """
         if reason not in INTERRUPTED_REASONS:
             raise ValueError(f"unknown interrupted_reason: {reason!r}")
-        ts = int(datetime.now(timezone.utc).timestamp())
         try:
-            with contextlib.closing(self._connect()) as conn, conn:
-                conn.execute(
-                    "UPDATE ember_received_messages "
-                    "SET interrupted_at=?, interrupted_reason=?, last_error=? "
-                    "WHERE message_id=? AND status='pending'",
-                    (ts, reason, last_error, message_id),
+            with self._db.sync_session() as session, session.begin():
+                session.execute(
+                    update(ReceivedMessageModel)
+                    .where(
+                        self._mine(),
+                        ReceivedMessageModel.message_id == message_id,
+                        ReceivedMessageModel.status == "pending",
+                    )
+                    .values(
+                        interrupted_at=self._now(),
+                        interrupted_reason=reason,
+                        last_error=last_error,
+                    )
                 )
         except Exception as exc:
             logger.debug("mark_interrupted failed for %s: %s", message_id, exc)
@@ -275,31 +272,30 @@ class PendingMessageStore:
         ``status = 'pending'``. Used by ``get_interrupted_runs`` so the
         FE can render banners on history restore / app restart.
 
-        Sorted oldest first; limited to 5 rows defensively (the FE
-        doesn't need more than a handful of banners on screen at
-        once — if a user has more than 5 interrupted runs queued,
-        surfacing the most recent N is plenty).
+        Sorted oldest first; at most :attr:`LIST_LIMIT` rows (the FE
+        doesn't need more than a handful of banners on screen at once).
         """
-        with contextlib.closing(self._connect()) as conn:
-            rows = conn.execute(
-                "SELECT message_id, session_id, text, received_at, "
-                "interrupted_at, interrupted_reason, last_error "
-                "FROM ember_received_messages "
-                "WHERE session_id=? AND status='pending' "
-                "AND interrupted_at IS NOT NULL "
-                "ORDER BY interrupted_at ASC "
-                "LIMIT 5",
-                (session_id,),
-            ).fetchall()
+        with self._db.sync_session() as session:
+            rows = session.scalars(
+                select(ReceivedMessageModel)
+                .where(
+                    self._mine(),
+                    ReceivedMessageModel.session_id == session_id,
+                    ReceivedMessageModel.status == "pending",
+                    ReceivedMessageModel.interrupted_at.is_not(None),
+                )
+                .order_by(ReceivedMessageModel.interrupted_at.asc())
+                .limit(self.LIST_LIMIT)
+            ).all()
         return [
             InterruptedMessage(
-                message_id=r["message_id"],
-                session_id=r["session_id"],
-                text=r["text"],
-                received_at=r["received_at"],
-                interrupted_at=r["interrupted_at"],
-                interrupted_reason=r["interrupted_reason"],
-                last_error=r["last_error"],
+                message_id=r.message_id,
+                session_id=r.session_id,
+                text=r.text,
+                received_at=r.received_at,
+                interrupted_at=r.interrupted_at or 0,
+                interrupted_reason=r.interrupted_reason,  # type: ignore[arg-type]
+                last_error=r.last_error,
             )
             for r in rows
         ]
@@ -316,12 +312,15 @@ class PendingMessageStore:
         must remain queryable.
         """
         try:
-            with contextlib.closing(self._connect()) as conn, conn:
-                cur = conn.execute(
-                    "DELETE FROM ember_received_messages WHERE session_id=? AND status='pending'",
-                    (session_id,),
+            with self._db.sync_session() as session, session.begin():
+                result = session.execute(
+                    delete(ReceivedMessageModel).where(
+                        self._mine(),
+                        ReceivedMessageModel.session_id == session_id,
+                        ReceivedMessageModel.status == "pending",
+                    )
                 )
-                return cur.rowcount
+                return int(result.rowcount or 0)  # type: ignore[attr-defined]
         except Exception as exc:
             logger.debug("discard_all_for_session failed for %s: %s", session_id, exc)
             return 0

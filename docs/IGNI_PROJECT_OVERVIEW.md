@@ -1,12 +1,14 @@
 # igni — Research Report
 
-**Scope:** What's actually shipped, who it's for, how `ember-server` relates, and how it compares to alternatives — verified against both repositories.
+**Scope:** What's actually shipped, who it's for, how `igni__server` relates, and how it compares to alternatives — verified against both repositories.
+
+> **Since this report:** CodeIndex and Artifacts are extensions, not part of igni. The local per-commit Neo4j graph, its embedder and `codeindex_cypher` are the CodeIndex extension's (`igni__code-index/extension`); igni runs no graph database and no embedder. Where this report places them in igni, read the extension. The VS Code and JetBrains plugins are dropped (D19): igni ships the desktop app, the web client and the CLI, so read the report's "four surfaces" as those.
 
 ---
 
 ## 1. Executive Summary
 
-**igni is a multi-agent AI coding assistant built on the Agno orchestration framework — released as v1.0.0 on 2026-07-30 (`git tag v1.0.0`).** Its core architectural differentiator is **CodeIndex** — a pre-built semantic + metadata index over the codebase produced by a separate backend (`ember-server`) and consumed locally as a per-commit **Neo4j graph + vector store** (BE-spawned, no Docker), so search runs on the user's machine and the server never holds a copy of the index. Self-published benchmarks put it at 82% directly-mergeable outputs vs Claude Code's 52% on a 12-case suite, but at ~33% slower wall time and 1/80th the per-run cost (driven by a smaller default model, MiniMax-M2.7, plus the pre-computed index). It holds extensive Claude Code parity (33/61 rows ✅, 1 explicit gap, 5 partials, 17 igni-only extras) and ships across four surfaces (Tauri desktop + VSCode + JetBrains + browser) from a single React bundle.
+**igni is a multi-agent AI coding assistant built on the Agno orchestration framework — released as v1.0.0 on 2026-07-30 (`git tag v1.0.0`).** Its core architectural differentiator is **CodeIndex** — a pre-built semantic + metadata index over the codebase produced by a separate backend (`igni__server`) and consumed locally as a per-commit **Neo4j graph + vector store** (BE-spawned, no Docker), so search runs on the user's machine and the server never holds a copy of the index. Self-published benchmarks put it at 82% directly-mergeable outputs vs Claude Code's 52% on a 12-case suite, but at ~33% slower wall time and 1/80th the per-run cost (driven by a smaller default model, MiniMax-M2.7, plus the pre-computed index). It holds extensive Claude Code parity (33/61 rows ✅, 1 explicit gap, 5 partials, 17 igni-only extras) and ships across four surfaces (Tauri desktop + VSCode + JetBrains + browser) from a single React bundle.
 
 ---
 
@@ -17,15 +19,15 @@
 | Capability | Evidence |
 |---|---|
 | **Multi-agent team orchestration** | Orchestrator dynamically assembles 5–13 specialist agents from `.md` files using five team modes (Single, Route, Coordinate, Broadcast, Tasks). Unlimited agent nesting depth (vs Claude Code's one-level cap). |
-| **Pre-built semantic CodeIndex** | Per-commit JSONL changeset pipeline from `ember-server` → GCS → local **Neo4j** graph+vector store (BE-spawned, one DB per commit, no Docker). The agent-facing surface is a single tool in ``core/tools/codeindex/tool.py`` — ``codeindex_cypher(cypher=..., confirm_raw_cypher=True, ...)`` — read-only Cypher over the graph store, with ``confirm_raw_cypher=True`` + ``project_hash`` scoping + ``$param`` allowlist enforced by the toolkit. The ``data-architect`` agent is the curated owner; other agents come through it. Index access is the toolkit's single seam — agents never touch the Neo4j driver directly. |
+| **Pre-built semantic CodeIndex** | Per-commit JSONL changeset pipeline from `igni__server` → GCS → local **Neo4j** graph+vector store (BE-spawned, one DB per commit, no Docker). The agent-facing surface is a single tool in ``core/tools/codeindex/tool.py`` — ``codeindex_cypher(cypher=..., confirm_raw_cypher=True, ...)`` — read-only Cypher over the graph store, with ``confirm_raw_cypher=True`` + ``project_hash`` scoping + ``$param`` allowlist enforced by the toolkit. The ``data-architect`` agent is the curated owner; other agents come through it. Index access is the toolkit's single seam — agents never touch the Neo4j driver directly. |
 | **Four shipping surfaces** | Tauri desktop (signed + notarized), VSCode (webview), JetBrains (JCEF), browser (Vite/React). All four surfaces load the same `clients/web` bundle. The earlier Textual TUI is no longer shipped. |
 | **Built-in specialist agents** | 10 base agents (architect, data-architect, docs, editor, explorer, qa, reviewer, security, simplifier, debugger) + 6 `.codeindex.md` variants that auto-activate when the repo has a built index. |
-| **Permission system** | 5 modes (`default`/`dontAsk`/`acceptEdits`/`bypassPermissions`/`plan`), 6-step evaluation pipeline, scope-prefixed deny rules that survive bypass mode (a `Bash(rm *)` deny holds even under `bypassPermissions`). |
+| **Permission system** | 5 modes (`default`/`dontAsk`/`acceptEdits`/`bypassPermissions`/`plan`), 6-step evaluation pipeline, scope-prefixed deny rules that survive bypass mode (a `Bash(rm *)` deny holds even under `bypassPermissions`). A mode set by managed settings or group policy is a floor no `/accept`, `/bypass` or flag can switch past, and `permissions.allow_bypass: false` (organisation tiers only) turns `bypassPermissions` off; with no policy every mode, fully automatic included, is available. |
 | **Hook system** | 18 of 30 Claude Code hook events, 4 of 5 handler types, all 3 execution modes (sync / `async` / `asyncRewake`). `permissionDecision` envelope on `PreToolUse` honored. |
 | **MCP client** | MCP client fully wired (consume external servers via `/mcp`). |
 | **Output styles** | `default` / `explanatory` / `learning` markdown-defined styles; `/output-style` slash command hot-patches the live team. |
-| **Plan mode** | Read-only sandbox plus user approval workflow; both `/plan` slash command and `enter_plan_mode(reason)` agent tool; agent cannot exit on its own (security invariant). |
-| **Knowledge base** | Local Neo4j (BE-spawned, per-commit DB) + EmberEmbedder (384d) with `/knowledge add/search/sync-knowledge`. Per-project `.igni/knowledge.yaml` file for git-shareable knowledge sharing. |
+| **Plan mode** | Read-only sandbox plus user approval workflow; both `/plan` slash command and `enter_plan_mode(reason)` agent tool; agent cannot exit on its own (security invariant). Shell runs unasked only from a read-only allow-list (`ls`, `cat`, `rg`, `git status`/`log`/`diff`, …); obvious writes are denied and every other command is asked about, and an ask rule still asks — plan mode is never looser than `default`. |
+| **Knowledge base** | Local Neo4j (BE-spawned, per-commit DB) + EmberEmbedder (384d) with `/knowledge add/search/sync-knowledge`. Per-project `.igni/artifacts.yaml` file for git-shareable knowledge sharing. |
 | **Auto-memory** | Per-project `~/.igni/projects/<slug>/memory/MEMORY.md` (200 lines / 25KB cap), with cross-tool fallback to `~/.claude/.../memory/MEMORY.md` — Claude Code users don't need to migrate their memory bank. |
 | **Scheduling, looping, forking** | `/schedule` (cron + one-shot), `/loop` (recurring), `/fork [name]` (clone history under new id). Claude Code now ships `/loop` and `/fork` and a `CronCreate`/`CronList`/`CronDelete` cron toolkit — igni's differentiator is the **explicit user-facing `/schedule` slash command + a `scheduler_tasks` SQLite table** that surfaces scheduled work as a first-class UI concept, rather than relying on the model picking up the agent-loop Tools. |
 | **In-session chat search** | SQLite-backed `search_chat` RPC + UI bar (BE 23 cases, FE 24 cases — snippet windowing, case-insensitive, scroll formatting). |
@@ -35,7 +37,7 @@
 | **Cross-tool compatibility** | Reads `CLAUDE.md`, `.claude/agents/*.md`, `.claude/skills/`, `.mcp.json` out of the box when `cross_tool_support` is enabled — explicit positioning for Claude Code refugees. |
 | **Org-level Groups (zero-install departmental rollout)** | Org admins curate per-department override packs — agents (markdown), MCPs (JSON), plugins (git-source or YAML), settings (deep-merged). The end-user CLI fetches the pack at login and materializes it to `~/.igni/group-policy/` at priority 4.5. No per-machine deployment needed; admins push, users receive on next fetch. See [Groups](#org-level-groups-and-overrides) for the full story. |
 
-Source: `README.md:1-251`, `QUICKSTART.md:1-483`, `CLAUDE_CODE_PARITY.md:13-66` (parity tally table), `docs/ARCHITECTURE.md:1-120`, `docs/CODEINDEX.md`, `docs/NEO4J_MIGRATION_DONE.md`, `pyproject.toml:38-67`. (Internal module is still `ember_code` and project-context file is still `igni.md` — preserved per the v0.7.0 rebrand for back-compat with existing installs.)
+Source: `README.md:1-251`, `QUICKSTART.md:1-483`, `CLAUDE_CODE_PARITY.md:13-66` (parity tally table), `docs/ARCHITECTURE.md:1-120`, `igni__code-index/docs/igni-integration.md`, `docs/NEO4J_MIGRATION_DONE.md`, `pyproject.toml:38-67`. (Internal module is still `ember_code` and project-context file is still `igni.md` — preserved per the v0.7.0 rebrand for back-compat with existing installs.)
 
 ### 2.2 Architecture shape
 
@@ -59,7 +61,7 @@ Source: `README.md:1-251`, `QUICKSTART.md:1-483`, `CLAUDE_CODE_PARITY.md:13-66` 
                 Local Neo4j (BE-spawned, per-commit DB)
 ```
 
-The local Neo4j instance (one BE-spawned DB per commit, no Docker) is the consumer endpoint of the producer/consumer split. `ember-server` writes JSONL; igni's consumer pulls over plain HTTPS and applies it. (`docs/ARCHITECTURE.md:1-67`, `docs/CODEINDEX.md`, `docs/NEO4J_MIGRATION_DONE.md`.)
+The local Neo4j instance (one BE-spawned DB per commit, no Docker) is the consumer endpoint of the producer/consumer split. `igni__server` writes JSONL; igni's consumer pulls over plain HTTPS and applies it. (`docs/ARCHITECTURE.md:1-67`, `igni__code-index/docs/igni-integration.md`, `docs/NEO4J_MIGRATION_DONE.md`.)
 
 ---
 
@@ -97,7 +99,7 @@ The rollout mechanic — packs published from the portal, fetched at login or su
 
 **Solo developer / OSS community path** — since the Textual TUI is no longer shipped, end users go straight to one of the four GUI surfaces: the **Tauri desktop app** (signed + notarized installer for macOS / Windows / Linux — CI-built from `clients/tauri`), the **VSCode extension** (one-command marketplace install; auto-bootstraps the Python backend on first activation), the **JetBrains plugin** (IntelliJ / PyCharm / WebStorm via the Marketplace, JCEF panel hosting the shared web UI), or the **browser bundle** (`clients/web` Vite/React served from any host). The backend comes embedded with each surface — there is no separate CLI mode. BYO model supported for any OpenAI-compatible API (OpenAI, Anthropic, Gemini, Groq, Ollama, OpenRouter per portal docs). The default hosted MiniMax-M2.7 model plus the in-session `/login` makes the first-run path zero-config. See `docs/CONFIGURATION.md`.
 
-**Team / enterprise path** — self-hostable `ember-server` (FastAPI + Postgres + Celery + Redis + GCS), GKE-deployed via Helm with three environments (dev/stage/prod) and WIF-based GitHub Actions deploys. Enterprise-grade controls: 5-tier settings precedence including platform-managed `/Library/Application Support/igni/managed-settings.yaml` (`/etc/igni/` on Linux, `%PROGRAMDATA%\igni\` on Windows — this said the directory kept its pre-rename name for back-compat, which was not true of the code: `paths.managed_policy_dir` has read `igni` on all three platforms, so an admin following the old text deployed policy where nothing looked for it, and managed policy is the one tier a user cannot override) that wins over CLI flags; 4-tier plugin scopes including `/etc/igni/` managed scope; scoped deny rules that survive bypass mode. Apache 2.0 license permits commercial use. Source: `ember-server/README.md:178-216`, `README.md:241-249`.
+**Team / enterprise path** — self-hostable `igni__server` (FastAPI + Postgres + Celery + Redis + GCS), GKE-deployed via Helm with three environments (dev/stage/prod) and WIF-based GitHub Actions deploys. Enterprise-grade controls: 5-tier settings precedence including platform-managed `/Library/Application Support/igni/managed-settings.yaml` (`/etc/igni/` on Linux, `%PROGRAMDATA%\igni\` on Windows — this said the directory kept its pre-rename name for back-compat, which was not true of the code: `paths.managed_policy_dir` has read `igni` on all three platforms, so an admin following the old text deployed policy where nothing looked for it, and managed policy is the one tier a user cannot override) that wins over CLI flags; 4-tier plugin scopes including `/etc/igni/` managed scope; scoped deny rules that survive bypass mode. Apache 2.0 license permits commercial use. Source: `igni__server/README.md:178-216`, `README.md:241-249`.
 
 ### Use cases the docs actively support
 
@@ -134,9 +136,9 @@ Each role ships as a Group in the portal — one pack, broadcast to the team, no
 
 This is the headline story for **admins who want a curated AI experience delivered to a department without touching any individual workstation**.
 
-- **Group as a unit of curation.** `ember-server`'s portal exposes group CRUD (`endpoints/portal/groups.py:33+` — `POST /groups`, `GET /groups`, `PATCH /groups/<id>`, plus `OrgGroupMemberList`, `OrgGroupOverrideList`, `OrgGroupPack`). An org admin creates a group ("Frontend Platform", "Security", "Data Platform"), assigns members, then attaches override entries to the group.
+- **Group as a unit of curation.** `igni__server`'s portal exposes group CRUD (`endpoints/portal/groups.py:33+` — `POST /groups`, `GET /groups`, `PATCH /groups/<id>`, plus `OrgGroupMemberList`, `OrgGroupOverrideList`, `OrgGroupPack`). An org admin creates a group ("Frontend Platform", "Security", "Data Platform"), assigns members, then attaches override entries to the group.
 - **Override kinds.** Each group's pack carries four kinds of overrides — `agents` (markdown), `mcps` (JSON), `plugins` (git-source URL or YAML), `settings` (JSON or YAML, deep-merged into the config). Each entry can be `enabled: True` (push in) or `enabled: False` (block). Schema: `core/config/group_policy.py:27-69` (`GroupPolicyOverrideEntry`) and `core/config/group_policy.py:72-119` (`GroupPolicyPack`).
-- **Client materialization.** At startup, the CLI fetches the pack for the authenticated user's groups and materializes each entry:
+- **Client materialization.** At startup, the CLI fetches the pack for the authenticated user's group (a person belongs to exactly one) and materializes each entry:
   - Agents → `~/.igni/group-policy/agents/<name>.md` (picked up by the agent loader at priority 4.5)
   - MCPs → `~/.igni/group-policy/mcps/<name>.json`
   - Plugins → installed via `PluginInstaller` into `<data_dir>/group-policy/plugins/` (priority 4.5 — between project-igni and managed-igni), so the plugin loader sees them naturally
@@ -152,7 +154,7 @@ This is the path most AI-coding products don't ship: **admin pushes → user rec
 
 ### Pricing & hosted models
 
-The portal exposes a Stripe-backed per-seat subscription across three tiers — `lite`, `pro`, `max` — with a volume-discount ladder. Authoritative source: `ember-server/app/api/base_v1/schema/portal/billing.py:135-200` (`PLAN_CATALOG` + `VOLUME_TIERS`).
+The portal exposes a Stripe-backed per-seat subscription across three tiers — `lite`, `pro`, `max` — with a volume-discount ladder. Authoritative source: `igni__server/app/api/base_v1/schema/portal/billing.py:135-200` (`PLAN_CATALOG` + `VOLUME_TIERS`).
 
 | Tier | Per-seat / mo | Parallel agents | Inference speed | CodeIndex repos / seat | Support |
 |---|---|---|---|---|---|
@@ -178,9 +180,9 @@ Beyond the org-wide CodeIndex pool (`code_index_repos_per_seat × seats`), extra
 
 ---
 
-## 4. How ember-server Fits In
+## 4. How igni__server Fits In
 
-`ember-server` is **the producer in a producer/consumer split**. It does not hold the searchable index — that lives in `ember-code` on the user's machine.
+`igni__server` is **the producer in a producer/consumer split**. It does not hold the searchable index — that lives in `igni` on the user's machine.
 
 ### Architecture
 
@@ -188,7 +190,7 @@ Beyond the org-wide CodeIndex pool (`code_index_repos_per_seat × seats`), extra
 GitHub/GitLab repo
       │  webhook (push, PR, comment)
       ▼
-┌─ ember-server (producer) ──────────────────────────────┐
+┌─ igni__server (producer) ──────────────────────────────┐
 │  POST /v1/webhooks/{github,gitlab}                      │
 │      │                                                  │
 │  Celery + gevent (100 concurrency) worker               │
@@ -206,7 +208,7 @@ GitHub/GitLab repo
 └──────────────────┬──────────────────────────────────────┘
                    │
                    ▼
-┌─ ember-code consumer ──────────────────────────────────┐
+┌─ igni consumer ────────────────────────────────────────┐
 │  ChangesetFetcher.pull_and_apply()                       │
 │      │ copy-on-write into per-commit local Neo4j DB     │
 │         (BE-spawned; one DB per commit; no Docker)       │
@@ -217,13 +219,13 @@ GitHub/GitLab repo
 
 ### Key properties
 
-- **Producer-only** — per `docs/CODEINDEX.md`, "the server is now a producer-only service: it generates summaries and ships changesets. It does **not** answer search/items/tree queries — those run entirely in the consumer."
-- **Wire-format stability** — JSONL is the integration point. Five op shapes — `commit` / `upsert_item` / `delete_item` / `upsert_reference` / `delete_reference` — content-addressed by UUID5(`path + content`) so unchanged items keep the same ID across commits and the consumer's copy-on-write index handles replays idempotently. Producer-side writer: `ember-server/app/services/jsonl_changeset/writer.py`. Consumer-side schema: `ember-code/core/code_index/delta.py` (`CODEINDEX.md:64-76`).
+- **Producer-only** — per `igni__code-index/docs/igni-integration.md`, "the server is now a producer-only service: it generates summaries and ships changesets. It does **not** answer search/items/tree queries — those run entirely in the consumer."
+- **Wire-format stability** — JSONL is the integration point. Five op shapes — `commit` / `upsert_item` / `delete_item` / `upsert_reference` / `delete_reference` — content-addressed by UUID5(`path + content`) so unchanged items keep the same ID across commits and the consumer's copy-on-write index handles replays idempotently. Producer-side writer: `igni__server/app/services/jsonl_changeset/writer.py`. Consumer-side schema: `igni/core/code_index/delta.py` (`igni__code-index/docs/igni-integration.md:64-76`).
 - **Consumer storage = per-commit Neo4j** — the consumer spins up a fresh Neo4j instance per commit (BE-spawned, no Docker). This replaces the earlier chroma+sqlite local-store approach. `docs/NEO4J_MIGRATION_DONE.md` is the working migration document; the migration is described as "done and remaining" — treat the post-migration contract as the source of truth, with chroma as the legacy fallback still potentially dual-running on older sessions.
 
 ### Self-host vs. hosted
 
-The CLI points at `api.ignite-ember.sh` by default. A self-hosted `ember-server` switches the CLI's `api_url` in `.igni/config.yaml`.
+The CLI points at `api.ignite-ember.sh` by default. A self-hosted `igni__server` switches the CLI's `api_url` in `.igni/config.yaml`.
 
 ---
 
@@ -238,7 +240,7 @@ The CLI points at `api.ignite-ember.sh` by default. A self-hosted `ember-server`
 | **Multi-agent teams** | Single agent loop | Dynamic team assembly (5 modes: Single/Route/Coordinate/Broadcast/Tasks) | igni-only |
 | **Agent nesting depth** | One level (sub-agents can't spawn sub-agents) | Unlimited | igni broader |
 | **Code intelligence** | Grep + file reads | CodeIndex semantic+metadata index + grep | igni broader |
-| **Pre-built code index** | None shipped | Per-commit JSONL → local Neo4j (BE-spawned, per-commit DB, no Docker) via ember-server | igni-only |
+| **Pre-built code index** | None shipped | Per-commit JSONL → local Neo4j (BE-spawned, per-commit DB, no Docker) via igni__server | igni-only |
 | **Knowledge base** | None | Local Neo4j + EmberEmbedder (384d), git-shareable | igni-only |
 | **Permission modes** | 6 (incl. TS-only `auto`) | 5 (CC's five; TS `auto` skipped) | ✅ parity |
 | **Hook events** | 30 | 18 of 30 (12 still missing) | ⚠ partial |
@@ -294,7 +296,7 @@ These are small, **specific, falsifiable** facts — which is exactly the kind o
 
 These are the competitive claims that *sounded* right but didn't survive:
 
-- **"Cursor offers semantic search and secure codebase indexing, directly competing with igni's CodeIndex."** Cursor doesn't publish a public per-commit graph+vector index equivalent to `ember-server`/GCS/local-Neo4j. Vote: **0-3** — unanimously refuted.
+- **"Cursor offers semantic search and secure codebase indexing, directly competing with igni's CodeIndex."** Cursor doesn't publish a public per-commit graph+vector index equivalent to `igni__server`/GCS/local-Neo4j. Vote: **0-3** — unanimously refuted.
 - **"Aider's repo map is a precomputed token-budgeted dependency graph persisted across sessions."** Aider's repo map is constructed per-conversation, not pre-built or persisted per-commit. Vote: **0-3** to **1-2** across claim variations.
 - **"Cline is multi-agent with coordinator/specialist coordination across SDK/CLI/IDE."** Only experimental multi-agent — no orchestrator-driven team-mode equivalent to igni's Agno-based five-mode team system. Vote: **1-2**.
 - **"Claude Code now offers Routines/scheduled/event-driven automation as a first-class product feature."** No "Routines" product feature at verification time. **Note:** Claude Code does ship `/loop` (since v2.1.196), `/fork` (since v2.1.212), and the `CronCreate`/`CronList`/`CronDelete` cron tools (per `https://code.claude.com/docs/en/scheduled-tasks`). So a softer claim of "broader scheduling/looping/forking parity between igni and Claude Code" stands now, even though the original Routines framing didn't. Vote on original Routines claim: **0-3**.
@@ -340,7 +342,7 @@ These are the competitive claims that *sounded* right but didn't survive:
 
 2. **The 2026-06-25 / 2026-06-26 shipping spree at v1.0.0 is "feature breadth before stabilizability" by any reasonable read.** The mid-2026 work landed all the v1.0-critical scaffolding: hooks, permissions, plugin primitives, CodeIndex producer/consumer split, Group-policy, the full UI rebadge. `CLAUDE_CODE_PARITY.md` itself notes multiple in-flight bugs being caught and fixed during the same period (`spawn_team` TypeError crash for every team-card; FilePill wrote the basename not full path to clipboard; `_format_edit_diff` start_line broken for live edits until the 2026-06-28 patch). v1.0.0 reflects surface completeness, not yet battle-tested stability across all edge cases.
 
-3. **CodeIndex without an index is a downgrade.** On a fresh project with no `ember-server` history, the agent's main advantage is missing. The "CodeIndex-first specialist agents" auto-switch only when a populated index exists. New users don't see the differentiator immediately.
+3. **CodeIndex without an index is a downgrade.** On a fresh project with no `igni__server` history, the agent's main advantage is missing. The "CodeIndex-first specialist agents" auto-switch only when a populated index exists. New users don't see the differentiator immediately.
 
 4. **One explicit Claude Code gap.** Plugin theme primitive is the single ❌ in the parity table (`CLAUDE_CODE_PARITY.md:47`). Plus 5 partials in agent-allowlist semantics and the deliberate non-registration of `Read`/`Grep`/`Glob` on the main team (forces model through Bash, sometimes wrong). For teams coming from CC workflows that lean on those tools, that's a friction point.
 
@@ -364,17 +366,17 @@ Selected key citations. Line numbers refer to the files as of the snapshot read.
 | Hook / permission / managed-policy parity scores | `CLAUDE_CODE_PARITY.md:13-66`, `## Tallies` line ~79 |
 | Cross-tool compat (`cross_tool_support`) | `CLAUDE_CODE_PARITY.md` rows 17, 18, 30 |
 | 12-case detailed breakdown | `docs/BENCHMARKS.md:69-87` |
-| CodeIndex architecture overview | `docs/CODEINDEX.md` |
-| ember-server 5-phase pipeline | `docs/CODEINDEX.md`, `ember-server/README.md:104-125` |
-| JSONL wire contract | `CODEINDEX.md:64-76` |
-| Tree-sitter 58 languages list | `docs/CODEINDEX.md:55-60` |
+| CodeIndex architecture overview | `igni__code-index/docs/igni-integration.md` |
+| igni__server 5-phase pipeline | `igni__code-index/docs/igni-integration.md`, `igni__server/README.md:104-125` |
+| JSONL wire contract | `igni__code-index/docs/igni-integration.md:64-76` |
+| Tree-sitter 58 languages list | `igni__code-index/docs/igni-integration.md:55-60` |
 | Orchestrator + 5 team modes + unlimited nesting | `docs/ARCHITECTURE.md:1-120` |
 | Tool surface (`Bash`/`Write`/`Edit`; `Read`/`Grep`/`Glob` not on main team by design) | `QUICKSTART.md:212-218`, `CLAUDE_CODE_PARITY.md` row 22 |
 | Apache 2.0 license | `pyproject.toml:9`, `README.md:241` |
 | Agno / Neo4j / textual dependency pins | `pyproject.toml:38-67` |
 | Knowledge-base / Neo4j + EmberEmbedder (384d) | `README.md:200-209`, `docs/ARCHITECTURE.md`, `docs/NEO4J_MIGRATION_DONE.md` |
-| Org-level Groups + zero-install rollout | `core/config/group_policy.py:27-119` (pack + entry schema), `core/config/group_policy.py:122+` (materialization), `core/config/settings_loader.py:246`, `core/config/merge_plan.py:250` (settings tier), `ember-server/app/api/base_v1/endpoints/portal/groups.py:33+` (group API) |
-| Pricing tiers + volume discounts | `ember-server/app/api/base_v1/schema/portal/billing.py:135-200` (`PLAN_CATALOG`, `VOLUME_TIER`), `ember-server/app/services/portal/billing_service.py:60+` |
+| Org-level Groups + zero-install rollout | `core/config/group_policy.py:27-119` (pack + entry schema), `core/config/group_policy.py:122+` (materialization), `core/config/settings_loader.py:246`, `core/config/merge_plan.py:250` (settings tier), `igni__server/app/api/base_v1/endpoints/portal/groups.py:33+` (group API) |
+| Pricing tiers + volume discounts | `igni__server/app/api/base_v1/schema/portal/billing.py:135-200` (`PLAN_CATALOG`, `VOLUME_TIER`), `igni__server/app/services/portal/billing_service.py:60+` |
 | Hosted model roster (MiniMax-M2.7 default; GLM/Kimi planned) | `README.md:46` |
 | `MiniMax-M2.7` default model positioning | `README.md:46`, `pyproject.toml` (model classifier topic) |
 | 13 base agents + 6 .codeindex.md variants | direct `ls agents/`; `QUICKSTART.md:178-196` |
@@ -391,12 +393,12 @@ Selected key citations. Line numbers refer to the files as of the snapshot read.
 | Plugin agent security envelope (force_isolation=worktree) | `CLAUDE_CODE_PARITY.md` row 37 |
 | Managed settings / managed CLAUDE.md / managed plugin scope | `CLAUDE_CODE_PARITY.md` rows 10, 11, 35 |
 | MEMORY.md 200-line / 25KB cap + cross-tool fallback | `CLAUDE_CODE_PARITY.md` row 18 |
-| Provider/CLI/dev/WIF/Helm deployment story | `ember-server/README.md:178-216` |
-| ember-server `producer-only` | `docs/CODEINDEX.md` final paragraph; `CODEINDEX.md:1-3` |
+| Provider/CLI/dev/WIF/Helm deployment story | `igni__server/README.md:178-216` |
+| igni__server `producer-only` | `igni__code-index/docs/igni-integration.md` final paragraph; `igni__code-index/docs/igni-integration.md:1-3` |
 | Neo4j migration (in flight) | `docs/NEO4J_MIGRATION_DONE.md` |
-| Self-host CLI config override | `ember-server/README.md:191-216` |
-| Three-environment branch-to-env mapping | `ember-server/README.md:184-188` |
-| `ember-iac` repo dependency for Helm charts | `ember-server/README.md:297-303` |
+| Self-host CLI config override | `igni__server/README.md:191-216` |
+| Three-environment branch-to-env mapping | `igni__server/README.md:184-188` |
+| `ember-iac` repo dependency for Helm charts | `igni__server/README.md:297-303` |
 
 ---
 
@@ -413,4 +415,4 @@ The **honest caveats** for a stakeholder weighing it:
 5. Self-hosting requires running two repos worth of infrastructure plus a GCS bucket.
 6. No head-to-head benchmark against Cursor/Aider/Cline/Continue/Cody exists, so comparison against those is structural, not empirical.
 
-If you want a **Claude Code alternative with a pre-built code index**, that's a real differentiator nobody else ships today, and `ember-server` + igni deliver it. If you want **empirical proof that igni beats Cursor or Aider**, that proof does not exist yet.
+If you want a **Claude Code alternative with a pre-built code index**, that's a real differentiator nobody else ships today, and `igni__server` + igni deliver it. If you want **empirical proof that igni beats Cursor or Aider**, that proof does not exist yet.

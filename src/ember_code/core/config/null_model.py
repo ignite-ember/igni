@@ -37,10 +37,21 @@ class NoModelConfigured(OpenAILike):
     chat rather than a network failure from the placeholder URL.
     """
 
+    # "igni Cloud" used to be the first suggestion here. There is no
+    # such service any more — the hosted deployment was shut down and
+    # igni is self-hosted — so naming it sent people looking for
+    # something that does not exist.
+    #
+    # `/login` survives the change because it was never cloud-specific:
+    # the catalogue client asks whichever server you are signed in to
+    # for `/v1/chat/models` (see `cloud_models.py`), which for a
+    # self-hoster is their own. It needs a client, though — there is no
+    # terminal chat UI — so the config file is given first, as it is the
+    # remedy a CLI user can actually reach.
     ERROR_MESSAGE = (
-        "No model configured. Run `/login` to discover hosted models from "
-        "igni Cloud, or add a model to `models.registry` in "
-        f"{DEFAULT_DATA_DIR}/config.yaml."
+        "No model configured. Add one to `models.registry` in "
+        f"{DEFAULT_DATA_DIR}/config.yaml, or run `/login` from a client "
+        "to discover the models your igni server offers."
     )
 
     def __init__(self):
@@ -52,7 +63,8 @@ class NoModelConfigured(OpenAILike):
 
     STALE_DEFAULT_MESSAGE = (
         "The configured default model {name!r} is not in `models.registry`. "
-        "Run `/login` to rediscover the models this deployment serves, or "
+        "Run `/login` from a client to rediscover the models your server "
+        "offers, or "
         f"pick one with `/model`. Set in {DEFAULT_DATA_DIR}/config.yaml."
     )
 

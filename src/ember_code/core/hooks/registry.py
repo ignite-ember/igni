@@ -134,6 +134,7 @@ class HookRegistry:
         *,
         source: Path,
         strategy: MergeStrategy,
+        from_group: bool = False,
     ) -> list[HookLoadWarning]:
         """Parse an ``{event: [hook, ...]}`` block and merge it in.
 
@@ -152,6 +153,10 @@ class HookRegistry:
         yield warnings and skip the entry rather than tanking the
         whole file — parity with the pre-refactor
         ``.get(default)`` tolerance.
+
+        ``from_group`` marks every hook as shipped by the organisation's
+        group policy (:meth:`HookDefinition.mark_from_group`), which is what
+        puts it behind ``hooks.group``.
         """
         warnings: list[HookLoadWarning] = []
         for event_name, hook_list in hooks_data.items():
@@ -185,6 +190,8 @@ class HookRegistry:
                         )
                     )
                     continue
+                if from_group:
+                    hook.mark_from_group(source)
                 if strategy is MergeStrategy.PREPEND:
                     self.prepend(event_name, hook)
                 else:

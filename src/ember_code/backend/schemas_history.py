@@ -101,6 +101,8 @@ class ToolTurn(_TimedTurn):
     args: str = ""
     content: str = ""
     is_error: bool = False
+    #: Kept from running — see ``ToolCompleted.is_rejected``.
+    is_rejected: bool = False
 
 
 class PlanTurn(_TimedTurn):
@@ -143,6 +145,11 @@ class VisualizationTurn(_RunOwned):
     spec_id: str = ""
     spec: dict[str, Any] = Field(default_factory=dict)
     source_agent: str = "visualizer"
+    #: The card's title — an extension's ``chat.append(view, title)``.
+    title: str = ""
+    #: The id of the extension that appended the card; empty for the
+    #: visualizer's. The client shows the extension's name.
+    extension_id: str = ""
     seq: int = 0
 
 
@@ -312,6 +319,10 @@ class VisualizationDeltaPayload(BaseModel):
 
     spec_id: str = ""
     spec_json: str = Field(default="", alias="json")
+    #: Set by an extension's ``chat.append``: the card's title, and the
+    #: extension's id as ``source``. The visualizer sends neither.
+    title: str = ""
+    source: str = ""
 
 
 class ChatHistoryEntry(BaseModel):

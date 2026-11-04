@@ -203,25 +203,22 @@ class TestFlagsBecomeSettings:
     def _settings(**kwargs: Any):
         return cli_module.load_settings_from_options(CliOptions(**kwargs))
 
-    def test_read_only_denies_writes_and_shell(self):
-        """Read-only is a wall, and the cost is stated rather than hidden.
+    def test_read_only_denies_writes_and_keeps_the_shell_for_reads(self):
+        """Read-only is plan-mode reads with no questions.
 
-        Denying ``shell_execute`` denies reading the working tree too — igni has
-        no read tool, so a file is read with ``run_shell_command "cat <path>"``.
-        That is the accepted trade: leaving the shell open means ``>``,
-        ``sed -i`` and ``git checkout`` all still write, which makes
-        ``--read-only`` an honour system rather than the guarantee it exists to
-        be. A flag reached for precisely when a guarantee is wanted should not
-        quietly be the weaker thing.
-
-        Until the per-category levels were honoured this assertion described a
-        setting nothing read, so it passed while the shell ran freely. It bites
-        now, which is the point.
+        It used to set ``shell_execute: deny`` too, which denied reading the
+        working tree — igni has no read tool, so a file is read with
+        ``run_shell_command "cat <path>"``. The guarantee now comes from
+        ``read_only``, which the evaluator checks before the mode: read-only
+        shell commands run, every other one is refused (see
+        tests/test_read_only_reads_and_refuses_the_rest.py).
         """
         settings = self._settings(read_only=True)
 
         assert settings.permissions.file_write == "deny"
-        assert settings.permissions.shell_execute == "deny"
+        assert settings.permissions.shell_execute != "deny"
+        assert settings.permissions.read_only is True
+        assert settings.permissions.mode == "plan"
 
     def test_auto_approve_allows_them(self):
         settings = self._settings(auto_approve=True)

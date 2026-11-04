@@ -3,41 +3,36 @@
 The plan-mode instructions used to be an 84-line embedded string
 inside ``build_main_agent``. That coupled prose editing to Python
 source edits and made the file a mixed-concern blob. The prose now
-lives in ``core/prompts/plan_mode.base.md`` (+ the CodeIndex
-variant extension), matching how ``main_agent.md`` is stored. The
-:class:`PlanModeNudge` model captures the branching condition
-(``codeindex_available``) as data and exposes ``.render()`` for the
-instructions builder.
+lives in ``core/prompts/plan_mode.base.md``, matching how
+``main_agent.md`` is stored, and :class:`PlanModeNudge` exposes
+``.render()`` for the instructions builder.
+
+It is the ``plan_mode`` prompt: an extension may override it, or edit
+it, as it may the main prompt (:mod:`ember_code.core.prompts.contributions`).
 """
 
 from __future__ import annotations
 
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict, Field
 
 from ember_code.core.prompts import load_prompt
+from ember_code.core.prompts.contributions import PromptContributions, prompt_contributions
+from ember_code.core.prompts.document import PromptKind
+from ember_code.core.prompts.fragments import fragments
 
 
 class PlanModeNudge(BaseModel):
     """Render the plan-mode instructions block appended to the main
-    agent's ``instructions`` list.
+    agent's ``instructions`` list, as extensions have shaped it."""
 
-    The base prose is always included. When ``codeindex_available``
-    is ``True``, the CodeIndex-specific extension is concatenated
-    after — nudging the model to lean on CodeIndex as the primary
-    research surface during plan mode, via the ``data-architect``
-    specialist that holds ``codeindex_cypher`` (the only agent-facing
-    CodeIndex tool). Loading both from co-located markdown files keeps the
-    prose out of the Python source and lets prompt authors iterate
-    without touching the builder.
-    """
+    model_config = ConfigDict(arbitrary_types_allowed=True)
 
-    codeindex_available: bool = False
+    contributions: PromptContributions = Field(default_factory=lambda: prompt_contributions)
 
     def render(self) -> str:
-        """Return the full plan-mode block (base + optional
-        CodeIndex extension) as a single string."""
-        base = load_prompt("plan_mode.base")
-        if not self.codeindex_available:
-            return base
-        extension = load_prompt("plan_mode.codeindex")
-        return f"{base}\n\n{extension}"
+        """Return the full plan-mode block as a single string."""
+        composition = self.contributions.compose(
+            PromptKind.PLAN_MODE.value, load_prompt("plan_mode.base")
+        )
+        assert composition is not None  # igni always has a plan-mode prompt
+        return fragments.expand(composition.document.render()).strip()

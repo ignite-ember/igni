@@ -8,7 +8,7 @@ as a Pydantic view model with a single ``.to_command_result()``
 render entry point.
 
 Same naming + purpose pattern as the sibling
-:mod:`schemas_codeindex` / :mod:`schemas_context` modules already
+:mod:`schemas_context` / :mod:`schemas_history` modules already
 in ``backend/``.
 
 Consumers:

@@ -22,6 +22,7 @@ from typing import Any
 from agno.run import agent as agent_events
 
 from ember_code.core.tools.orchestrate_events import (
+    VIS_SPEC_PREFIX,
     AgentCompletedEvent,
     AgentPausedEvent,
     ContentPreviewEvent,
@@ -161,7 +162,7 @@ class SubAgentStreamHandler(BaseStreamHandler[SubAgentStreamState]):
         req_ids: list[str] = []
         for req in reqs:
             req_id = await self._hitl_coordinator.push_requirement(
-                req, run_id=run_id, agent_path=self._path
+                req, run_id=run_id, agent_path=self._path, session_id=session_id or ""
             )
             req_ids.append(req_id)
         # One concise activity line per pause batch — the user has
@@ -228,12 +229,20 @@ class SubAgentStreamHandler(BaseStreamHandler[SubAgentStreamState]):
         delta so the FE can transition the card out of "streaming"
         mode, and log to the session event log so a reload replays
         it.
+
+        The spec also goes to the activity log, which is how it
+        reaches the agent that asked for it — see
+        :data:`VIS_SPEC_PREFIX`. One line per ``visualize`` call; a
+        visualizer that renders twice hands back both, and the caller
+        picks.
         """
         state = self.state
+        spec_json = json.dumps(spec)
+        self._log_line(f"{VIS_SPEC_PREFIX}{spec_json}")
         final_event = VisualizationDeltaEvent(
             agent_path=state.agent_path_id,
             spec_id=state.vis_spec_id,
-            spec_json=json.dumps(spec),
+            spec_json=spec_json,
             final=True,
         )
         final_payload = final_event.model_dump(by_alias=True)
@@ -374,4 +383,52 @@ class SubAgentStreamHandler(BaseStreamHandler[SubAgentStreamState]):
                 agent_path=self.state.agent_path_id,
                 text=preview,
             )
+        )
+
+
+class ResumedSubAgentStreamHandler(SubAgentStreamHandler):
+    """A sub-agent's paused run, continued instead of started.
+
+    Used after a restart (``backend/cold_spawn_resume.py``) for two kinds
+    of paused run: one Agno stored, paused for approvals the person has
+    now answered (continued by ``run_id``), and one rebuilt from a call
+    that was waiting on another agent (continued from ``run_response``
+    with that agent's answer as the call's result). Everything after the
+    first stream — another pause, the final answer — is the parent's, so
+    a continued run streams its progress and can be paused again like a
+    live one.
+    """
+
+    def __init__(
+        self,
+        agent: Any,
+        *,
+        run_id: str,
+        session_id: str,
+        requirements: list[Any],
+        run_response: Any = None,
+        **kwargs: Any,
+    ) -> None:
+        super().__init__(agent, "", **kwargs)
+        self._resume_run_id = run_id
+        self._resume_session_id = session_id
+        self._requirements = requirements
+        self._run_response = run_response
+        # The run id latches from the continued run's events, which
+        # registers it for cancellation like any other.
+        self.state.current_session_id = session_id
+
+    def _first_stream(self) -> Any:
+        if self._run_response is not None:
+            return self._runnable.acontinue_run(
+                run_response=self._run_response,
+                session_id=self._resume_session_id,
+                requirements=self._requirements,
+                stream=True,
+            )
+        return self._runnable.acontinue_run(
+            run_id=self._resume_run_id,
+            session_id=self._resume_session_id,
+            requirements=self._requirements,
+            stream=True,
         )

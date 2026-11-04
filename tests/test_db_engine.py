@@ -20,16 +20,24 @@ from pathlib import Path
 import pytest
 
 from ember_code.core.db.engine import (
-    _normalize_path,
-    async_url,
     dispose_all,
     get_async_engine,
     get_async_sessionmaker,
     get_engine,
     get_sessionmaker,
-    sync_url,
 )
+from ember_code.core.db.urls import DatabaseUrl, Dialect
 from ember_code.core.paths import DEFAULT_DATA_DIR
+
+_normalize_path = DatabaseUrl.normalize_path
+
+
+def sync_url(path):
+    return DatabaseUrl.for_file(path).sync
+
+
+def async_url(path):
+    return DatabaseUrl.for_file(path).async_
 
 
 @pytest.fixture(autouse=True)
@@ -108,6 +116,42 @@ class TestUrls:
         absolute = tmp_path / "state.db"
         # Make sure both produce the same URL.
         assert sync_url(absolute) == sync_url(str(absolute))
+
+
+class TestDatabaseUrls:
+    """``IGNI_DATABASE_URL`` spellings: one canonical URL per database."""
+
+    def test_every_postgres_spelling_is_psycopg(self):
+        for raw in (
+            "postgres://u:p@h:5432/db",
+            "postgresql://u:p@h:5432/db",
+            "postgresql+asyncpg://u:p@h:5432/db",
+            "postgresql+psycopg://u:p@h:5432/db",
+        ):
+            url = DatabaseUrl.parse(raw)
+            assert url.dialect is Dialect.POSTGRESQL
+            assert url.sync == "postgresql+psycopg://u:p@h:5432/db"
+            assert url.async_ == "postgresql+psycopg://u:p@h:5432/db"
+            assert url.file is None
+
+    def test_the_password_is_hidden_when_shown(self):
+        url = DatabaseUrl.parse("postgresql://u:secret@h/db")
+        assert "secret" not in str(url)
+        assert "secret" not in url.redacted
+
+    def test_a_sqlite_url_is_its_file(self, tmp_path):
+        url = DatabaseUrl.parse(f"sqlite:///{tmp_path}/nested/../state.db")
+        assert url == DatabaseUrl.for_file(tmp_path / "state.db")
+        assert url.file == (tmp_path / "state.db").resolve()
+
+    def test_a_path_and_a_url_for_one_file_are_one_key(self, tmp_path):
+        assert DatabaseUrl.of(tmp_path / "x.db") == DatabaseUrl.of(f"sqlite:///{tmp_path}/x.db")
+
+    def test_other_dialects_and_memory_are_refused(self):
+        with pytest.raises(ValueError):
+            DatabaseUrl.parse("mysql://u@h/db")
+        with pytest.raises(ValueError):
+            DatabaseUrl.parse("sqlite://")
 
 
 class TestEngineCacheIdentity:

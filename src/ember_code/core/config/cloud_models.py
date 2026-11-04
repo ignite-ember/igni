@@ -1,10 +1,10 @@
-"""Discover models available in the Ember Cloud key pool.
+"""Discover models available in the igni server's key pool.
 
 The operator adds AI keys on the portal (per-org overrides or the
 global pool); the server exposes the catalogue at
 ``GET /v1/chat/models`` as ``{"models": [{"id": "..."}, ...]}`` —
 just the model identifiers. The server intentionally does **not**
-return upstream provider URLs: the CLI talks to ember-server's
+return upstream provider URLs: the CLI talks to igni server's
 ``/chat/completions`` proxy, which routes to whichever
 ``(key, base_url)`` pair the pool picks. Leaking the upstream URL
 to the client would just expose routing internals.
@@ -35,6 +35,7 @@ from typing import Any
 import httpx
 from pydantic import BaseModel, ConfigDict, Field
 
+from ember_code.core.activity.http import busy_call
 from ember_code.core.config.endpoint import is_configured
 from ember_code.core.config.model_entry import ModelRegistryEntry
 
@@ -50,7 +51,7 @@ class CloudModelEntry(BaseModel):
     Only ``id`` is required. ``extra='allow'`` tolerates older
     server deploys that still emit a legacy ``base_url`` field —
     the client deliberately ignores it (routing always goes through
-    ember-server's chat proxy, never upstream directly).
+    igni server's chat proxy, never upstream directly).
     """
 
     model_config = ConfigDict(extra="allow", populate_by_name=True)
@@ -81,7 +82,7 @@ class FetchReason(str, enum.Enum):
     #: "tell me where your server is". Collapsing them would send
     #: somebody to a login flow with nothing to log in to.
     NO_SERVER = "no_server"
-    NO_TOKEN = "no_token"
+    NO_TOKEN = "no_token"  # noqa: S105 — a sentinel value, not a secret
     HTTP_ERROR = "http_error"
     DECODE_ERROR = "decode_error"
     BAD_SHAPE = "bad_shape"
@@ -122,7 +123,7 @@ class MergeResult(BaseModel):
 
 
 class CloudModelCatalogClient:
-    """Fetch and merge the Ember Cloud key-pool catalogue.
+    """Fetch and merge the igni server key-pool catalogue.
 
     Owns the two implicit subject arguments — ``api_url`` and the
     cloud token — as instance state so the fetch and merge steps
@@ -176,7 +177,10 @@ class CloudModelCatalogClient:
 
         url = f"{self._api_url.rstrip('/')}/v1/chat/models"
         try:
-            with httpx.Client(timeout=self.FETCH_TIMEOUT_SECONDS) as client:
+            with (
+                busy_call("model-catalog"),
+                httpx.Client(timeout=self.FETCH_TIMEOUT_SECONDS) as client,
+            ):
                 resp = client.get(
                     url,
                     headers={"Authorization": f"Bearer {self._cloud_token}"},
@@ -233,7 +237,7 @@ class CloudModelCatalogClient:
         re-fetching.
 
         Every entry is a :class:`ModelRegistryEntry` already wired to
-        route through ``{api_url}/v1`` (the Ember Cloud chat proxy)
+        route through ``{api_url}/v1`` (the igni server chat proxy)
         via :meth:`ModelRegistryEntry.from_cloud_discovery`. Same-name
         entries are skipped — user/project config always wins.
         """
@@ -248,7 +252,7 @@ class CloudModelCatalogClient:
 
     @property
     def _proxy_url(self) -> str:
-        """The ember-server chat proxy URL. Every cloud-discovered
+        """The igni server chat proxy URL. Every cloud-discovered
         entry is wired here — never at an upstream provider URL."""
         return f"{self._api_url.rstrip('/')}/v1"
 

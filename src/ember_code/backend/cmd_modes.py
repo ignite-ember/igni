@@ -22,8 +22,14 @@ All three commands accept the same arg vocabulary:
 
 * (empty) / ``toggle`` — flip target ↔ default.
 * ``on`` / ``enable`` / ``start`` — enter target.
-* ``off`` / ``disable`` / ``exit`` / ``stop`` — return to
-  default.
+* ``off`` / ``disable`` / ``exit`` / ``stop`` — return to the
+  mode the session started in (``default`` if it started in this
+  one).
+
+A switch looser than a mode the organisation's managed settings or
+group policy set, or into ``bypassPermissions`` when the policy says
+``allow_bypass: false``, is refused by ``Session.set_permission_mode``
+and reported as an error; the mode does not change.
 * ``status`` / ``show`` — report the current mode without
   changing it.
 
@@ -106,7 +112,10 @@ class ModeToggle(BaseModel):
         """
 
     def target_for(
-        self, normalized: str, current: PermissionMode
+        self,
+        normalized: str,
+        current: PermissionMode,
+        start: PermissionMode = PermissionMode.DEFAULT,
     ) -> tuple[PermissionMode | None, str]:
         """Map the user's arg to a target mode.
 
@@ -118,15 +127,22 @@ class ModeToggle(BaseModel):
         subclasses could refine it if a mode ever needed
         mode-specific verbs — today the vocabulary is uniform, so
         the base impl covers all three.
+
+        Leaving the mode returns to ``start``, the mode the session
+        began in — under an organisation's floor that is the floor, so
+        ``/accept off`` can never land somewhere the policy forbids.
+        When the session began in this very mode, "off" has to mean
+        somewhere else, and that is ``default``.
         """
+        back = PermissionMode.DEFAULT if start is self.target else start
         if normalized in _STATUS_TOKENS:
             return None, ""
         if normalized in _ON_TOKENS:
             return self.target, ""
         if normalized in _OFF_TOKENS:
-            return PermissionMode.DEFAULT, ""
+            return back, ""
         if normalized in _TOGGLE_TOKENS:
-            return (PermissionMode.DEFAULT if current is self.target else self.target), ""
+            return (back if current is self.target else self.target), ""
         return None, (
             f"Unknown {self.command_name} argument: {normalized!r}. "
             f"Use {self.command_name}, {self.command_name} on, "
@@ -261,12 +277,18 @@ class ModesCommand:
                 content=f"Permission mode: **{current.value}**",
             )
 
-        target, error = toggle.target_for(normalized, current)
+        target, error = toggle.target_for(
+            normalized, current, self._session.permission_starting_mode()
+        )
         if error:
             return CommandResult.error(error)
         assert target is not None  # status branch returned above
 
         status_line = self._session.set_permission_mode(target.value)
+        if status_line.startswith("Error"):
+            # Refused by the organisation's mode policy — nothing changed,
+            # so neither transition hook fires.
+            return CommandResult.error(status_line)
 
         if target is toggle.target:
             # Entering target mode — fire the transition-in hook,

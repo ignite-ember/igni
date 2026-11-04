@@ -6,14 +6,15 @@ in the refactored pipeline takes a :class:`HookFirer` and calls
 :meth:`HookFirer.fire` — no more scattered ``try/except`` blocks
 that inject ``session_id`` and swallow exceptions.
 
-Also owns the "should we even bother firing this event?" check —
-:meth:`HookExecutor.has_hooks_for` lets us short-circuit before
-we build a :class:`ToolHookEventPayload`. Cheap perf win for the
-common case (no PostToolUse subscribers, no PostToolUseFailure
-subscribers) plus a correctness win: the pipeline no longer
-caches ``_has_pre`` / ``_has_post`` / ``_has_fail`` at
-construction time, so a plugin that hot-reloads
-``HookExecutor.hooks`` gets picked up immediately.
+There is deliberately NO "does anything subscribe?" pre-check
+here. That gate lives inside :meth:`HookExecutor.execute`, which
+resolves the match set and returns early — see
+:meth:`HookFirer.fire` for why a caller-side one would be wrong.
+The cost of firing into the void is therefore one typed payload
+construction per event, which is the price of the pipeline
+reading the live hooks dict rather than a flag cached at
+construction time (a plugin hot-reloading ``HookExecutor.hooks``
+is picked up immediately).
 """
 
 from __future__ import annotations
@@ -31,8 +32,6 @@ logger = logging.getLogger(__name__)
 class HookFirer:
     """Shared wire path — ``fire(event, target, payload)``.
 
-    * Skips the actual ``executor.execute`` call when no hook is
-      subscribed to the event (typed via :meth:`HookExecutor.has_hooks_for`).
     * Injects ``session_id`` on the payload so callers construct
       typed payloads WITHOUT worrying about the field.
     * Swallows any exception raised by a hook (with a debug log)

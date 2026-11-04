@@ -25,10 +25,11 @@ from ember_code.backend.__main__ import _build_rpc_table
 from ember_code.backend.command_handler import CommandHandler
 from ember_code.backend.server import BackendServer
 from ember_code.core.config.permission_eval import PermissionEvaluator, PermissionMode
+from ember_code.core.prompts.contributions import EditOp, PromptEdit, prompt_contributions
 from ember_code.core.session.broadcast import BroadcastBus as _BroadcastBus
 from ember_code.core.session.core import Session
 from ember_code.core.tools.orchestrate import OrchestrateTools
-from ember_code.core.tools.plan import _MAX_PLAN_ATTEMPTS, PlanStore, PlanTool
+from ember_code.core.tools.plan import PlanStore, PlanTool
 from ember_code.core.tools.todo import TodoItem, TodoStore, TodoTools
 from ember_code.protocol.rpc import RpcMethod
 
@@ -80,9 +81,8 @@ class TestPlanTool:
     async def test_exit_plan_mode_records_plan(self):
         session = MagicMock()
         session.plan_store = PlanStore()
-        session._codeindex_available = False  # skip citation gate
         tool = PlanTool(session)
-        result = tool.exit_plan_mode("Run tests, then refactor.")
+        result = await tool.exit_plan_mode("Run tests, then refactor.")
         assert "Plan submitted" in result
         assert session.plan_store.latest == "Run tests, then refactor."
 
@@ -96,7 +96,7 @@ class TestPlanTool:
         session.plan_store = PlanStore()
         session.permission_evaluator = PermissionEvaluator.from_strings(mode="plan")
         tool = PlanTool(session)
-        tool.exit_plan_mode("plan body")
+        await tool.exit_plan_mode("plan body")
         assert session.permission_evaluator.mode is PermissionMode.PLAN
 
     @pytest.mark.asyncio
@@ -104,7 +104,7 @@ class TestPlanTool:
         session = MagicMock()
         session.plan_store = PlanStore()
         tool = PlanTool(session)
-        result = tool.exit_plan_mode("   ")
+        result = await tool.exit_plan_mode("   ")
         assert "Error" in result
         assert "empty" in result.lower()
         assert session.plan_store.latest == ""
@@ -116,9 +116,8 @@ class TestPlanTool:
         same turn, defeating the point of plan mode."""
         session = MagicMock()
         session.plan_store = PlanStore()
-        session._codeindex_available = False
         tool = PlanTool(session)
-        result = tool.exit_plan_mode("plan body")
+        result = await tool.exit_plan_mode("plan body")
         assert "stop" in result.lower() or "do not continue" in result.lower()
 
     @pytest.mark.asyncio
@@ -129,9 +128,8 @@ class TestPlanTool:
         session = MagicMock()
         session.plan_store = PlanStore()
         session.todo_store = TodoStore()
-        session._codeindex_available = False
         tool = PlanTool(session)
-        result = tool.exit_plan_mode(
+        result = await tool.exit_plan_mode(
             "## Refactor\n\nSteps inside.",
             tasks=[
                 {"content": "Step 1", "activeForm": "Doing step 1"},
@@ -154,7 +152,7 @@ class TestPlanTool:
         session.todo_store = TodoStore()
         session.todo_store.set([TodoItem("Pre-existing", "in_progress", "")])
         tool = PlanTool(session)
-        tool.exit_plan_mode("just prose, no enumerable steps")
+        await tool.exit_plan_mode("just prose, no enumerable steps")
         # Original todos untouched.
         assert len(session.todo_store.items) == 1
         assert session.todo_store.items[0].content == "Pre-existing"
@@ -172,7 +170,7 @@ class TestPlanTool:
         captured: list[tuple[str, dict]] = []
         session.register_broadcast_callback(lambda ch, p: captured.append((ch, p)))
         tool = PlanTool(session)
-        tool.exit_plan_mode(
+        await tool.exit_plan_mode(
             "plan",
             tasks=[{"content": "A"}, {"content": "B"}],
         )
@@ -194,9 +192,8 @@ class TestPlanTool:
         session = MagicMock()
         session.plan_store = PlanStore()
         session.todo_store = TodoStore()
-        session._codeindex_available = False
         tool = PlanTool(session)
-        result = tool.exit_plan_mode(
+        result = await tool.exit_plan_mode(
             "plan",
             tasks=[
                 {"content": "OK row"},
@@ -208,90 +205,58 @@ class TestPlanTool:
         assert len(session.todo_store.items) == 1
 
 
-class TestExitPlanModeValidation:
-    """Confidence-check gate (Path B enforcement). When
-    CodeIndex is available, plans without enough file citations
-    bounce back to the agent with specific feedback; bounded by
-    ``_MAX_PLAN_ATTEMPTS`` so we don't ping-pong forever."""
+@pytest.fixture
+def plan_mode_text():
+    """An extension adding to plan mode's prompt for the length of one test."""
+    prompt_contributions.set_owner(
+        "acme.code",
+        "Code",
+        edits=[
+            PromptEdit(
+                target="plan_mode",
+                op=EditOp.APPEND,
+                name="code_intelligence",
+                text="Research through the code index first.",
+            )
+        ],
+    )
+    yield
+    prompt_contributions.remove_owner("acme.code")
 
-    def _session_with_codeindex(self):
+
+@pytest.mark.usefixtures("plan_mode_text")
+class TestTheFloorJudgesNoPlan:
+    """igni records the plan it is given and the person judges it.
+
+    It used to reject a plan that cited fewer than two files, three
+    times at most, while an extension gave plan mode code intelligence.
+    That was the host knowing what an extension made possible; how
+    an extension changes plan mode is the extension's to say.
+    """
+
+    def _session(self):
         session = Session.__new__(Session)
         session.plan_store = PlanStore()
         session.todo_store = TodoStore()
         session.broadcast_bus = _BroadcastBus()
-        session._codeindex_available = True
-        session._plan_mode_attempt = 0
         session.permission_evaluator = PermissionEvaluator.from_strings(mode="default")
         session.main_team = None  # no spawn target, enter_plan_mode falls through
         return session
 
     @pytest.mark.asyncio
-    async def test_thin_plan_rejected_when_codeindex_available(self):
-        """A plan with NO file citations should bounce on the
-        first attempt when CodeIndex is available."""
-        session = self._session_with_codeindex()
+    async def test_a_plan_citing_no_files_is_submitted(self):
+        session = self._session()
         tool = PlanTool(session)
-        result = tool.exit_plan_mode("Refactor the auth thing. It will be great.")
-        assert "Plan rejected" in result
-        assert "research pass 1/3" in result
-        assert "codeindex_cypher" in result.lower()
-        # Plan store NOT mutated on rejection.
-        assert session.plan_store.latest == ""
-        # Attempt counter incremented.
-        assert session._plan_mode_attempt == 1
-
-    @pytest.mark.asyncio
-    async def test_grounded_plan_accepted(self):
-        """A plan that cites at least 2 specific file paths
-        passes the gate on the first try."""
-        session = self._session_with_codeindex()
-        tool = PlanTool(session)
-        result = tool.exit_plan_mode(
-            "## Refactor\n\n"
-            "Touch `src/ember_code/core/auth/middleware.py` and "
-            "`src/ember_code/backend/server.py` to swap session for JWT."
-        )
+        result = await tool.exit_plan_mode("Refactor the auth thing. It will be great.")
         assert "Plan submitted" in result
-        assert "Refactor" in session.plan_store.latest
-        # No attempt counter bump on acceptance.
-        assert session._plan_mode_attempt == 0
+        assert session.plan_store.latest == "Refactor the auth thing. It will be great."
 
     @pytest.mark.asyncio
-    async def test_validation_skipped_without_codeindex(self):
-        """When CodeIndex isn't available, the agent
-        legitimately can't do as deep a research pass — the
-        gate skips so the conversation keeps moving."""
-        session = self._session_with_codeindex()
-        session._codeindex_available = False  # override
+    async def test_entering_plan_mode_names_no_extension(self):
+        session = self._session()
         tool = PlanTool(session)
-        result = tool.exit_plan_mode("thin plan, no files cited.")
-        assert "Plan submitted" in result
-        assert session.plan_store.latest == "thin plan, no files cited."
-
-    @pytest.mark.asyncio
-    async def test_attempt_cap_accepts_thin_plan_eventually(self):
-        """After ``_MAX_PLAN_ATTEMPTS`` rejections the gate
-        gives up and accepts whatever came in — better to
-        surface a thin plan to the user (who can refine) than
-        infinite-loop the agent."""
-        session = self._session_with_codeindex()
-        session._plan_mode_attempt = _MAX_PLAN_ATTEMPTS - 1  # last allowed attempt
-        tool = PlanTool(session)
-        result = tool.exit_plan_mode("Still thin, no citations.")
-        # On the last attempt the gate accepts.
-        assert "Plan submitted" in result
-        assert session.plan_store.latest.startswith("Still thin")
-
-    @pytest.mark.asyncio
-    async def test_enter_plan_mode_resets_attempt_counter(self):
-        """A fresh ``enter_plan_mode`` starts the validation
-        loop clean — even if the previous plan-mode session
-        burned through all 3 attempts, the next gets all 3 back."""
-        session = self._session_with_codeindex()
-        session._plan_mode_attempt = 2  # near the cap
-        tool = PlanTool(session)
-        await tool.enter_plan_mode("new task")
-        assert session._plan_mode_attempt == 0
+        result = await tool.enter_plan_mode("new task")
+        assert "codeindex" not in result.lower().replace(" ", "")
 
 
 class TestEnterPlanModeSpawnsResearcher:
@@ -305,7 +270,6 @@ class TestEnterPlanModeSpawnsResearcher:
         session.todo_store = TodoStore()
         session.broadcast_bus = _BroadcastBus()
         session.permission_evaluator = PermissionEvaluator.from_strings(mode="default")
-        session._plan_mode_attempt = 0
         return session
 
     @pytest.mark.asyncio
@@ -490,7 +454,7 @@ class TestEnterPlanMode:
         session = self._session_with_real_set_mode()
         tool = PlanTool(session)
         await tool.enter_plan_mode("complex")
-        tool.exit_plan_mode("step 1, step 2")
+        await tool.exit_plan_mode("step 1, step 2")
         assert session.permission_evaluator.mode is PermissionMode.PLAN
 
 
@@ -908,7 +872,7 @@ class TestPlanModeLifecycle:
         assert session.permission_evaluator.mode is PermissionMode.PLAN
 
         tool = PlanTool(session)
-        tool.exit_plan_mode("1. Read spec\n2. Implement\n3. Test")
+        await tool.exit_plan_mode("1. Read spec\n2. Implement\n3. Test")
         # Plan stored, mode UNCHANGED (agent can't exit on its own).
         assert session.plan_store.latest == "1. Read spec\n2. Implement\n3. Test"
         assert session.permission_evaluator.mode is PermissionMode.PLAN

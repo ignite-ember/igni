@@ -1,0 +1,62 @@
+name: DCO
+
+# Every commit in a pull request must carry a `Signed-off-by:` line
+# (CONTRIBUTING.md, "Developer Certificate of Origin"). Adapted from igni
+# server's check; this repository is the public one, so it runs everywhere.
+#
+# Safe for pull requests from forks: it runs on `pull_request`, never
+# `pull_request_target`, so it gets a read-only token and no secrets, and
+# it only reads commit messages — it runs nothing from the pull request.
+on:
+  pull_request:
+    branches: ["**"]
+
+permissions:
+  contents: read
+
+jobs:
+  signed-off:
+    name: Every commit is signed off
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha }}
+
+      - name: Check Signed-off-by
+        env:
+          BASE: ${{ github.event.pull_request.base.sha }}
+          HEAD: ${{ github.event.pull_request.head.sha }}
+          # Commits that, with their ancestors, are not re-checked: history
+          # made before the check existed, one author's, unsigned. Every
+          # commit not reachable from one of them is checked.
+          #   ae595086 — feat/extensions, the last commit before the check.
+          #   91ad5d46 — tip of chore/supply-chain-evidence, branched off
+          #              before the check and merged into feat/extensions
+          #              (6466831e); its seven commits are unsigned.
+          # Space-separated. Add one only for already-pushed history that is
+          # merged rather than rewritten, never for new work.
+          SIGNED_OFF_FROM: >-
+            ae5950868eae46e406b88e4221e24fd1c785c9ac
+            91ad5d46dc8b23af116765165d86618cb768988d
+        run: |
+          set -- "${BASE}..${HEAD}"
+          for cutoff in ${SIGNED_OFF_FROM}; do
+            if git cat-file -e "${cutoff}^{commit}" 2>/dev/null; then
+              set -- "$@" "^${cutoff}"
+            fi
+          done
+          missing=0
+          for sha in $(git rev-list --no-merges "$@"); do
+            author="$(git log -1 --format='%an <%ae>' "${sha}")"
+            if ! git log -1 --format='%B' "${sha}" | grep -qiE '^Signed-off-by: .+ <.+>'; then
+              echo "::error::${sha} (${author}) has no Signed-off-by line"
+              missing=1
+            fi
+          done
+          if [ "${missing}" -ne 0 ]; then
+            echo "Sign off with 'git commit -s', or for a branch: git rebase --signoff ${BASE}"
+            exit 1
+          fi
+          echo "Every commit is signed off."

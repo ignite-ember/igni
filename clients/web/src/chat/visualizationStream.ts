@@ -23,6 +23,34 @@ export interface VisualizationDeltaEvent {
   /** ``true`` on the last delta of the stream so callers can trigger
    *  persistence exactly once. */
   final?: boolean;
+  /** The title an extension gave the card (``host.chat.append(view, title)``). */
+  title?: string;
+  /** The id of the extension that appended the card. Absent on the
+   *  visualizer's own cards. */
+  source?: string;
+}
+
+/** The ``visualization_delta`` an ``orchestrate_event`` push carries,
+ *  or null when the payload is some other orchestrate event. */
+export function visualizationDeltaFromPayload(
+  payload: unknown,
+): VisualizationDeltaEvent | null {
+  if (!payload || typeof payload !== "object") return null;
+  const p = payload as Record<string, unknown>;
+  if (
+    p.type !== "visualization_delta" ||
+    typeof p.spec_id !== "string" ||
+    typeof p.json !== "string"
+  ) {
+    return null;
+  }
+  return {
+    spec_id: p.spec_id,
+    json: p.json,
+    final: p.final === true,
+    title: typeof p.title === "string" ? p.title : undefined,
+    source: typeof p.source === "string" && p.source ? p.source : undefined,
+  };
 }
 
 /** Attempt to partial-parse the accumulated JSON into a Spec that
@@ -95,7 +123,10 @@ export function parsePartialSpec(json: string): Spec | null {
     safeElements[id] = children ? { ...el, children } : el;
   }
   if (!safeElements[root]) return null;
-  return { ...(partial as Record<string, unknown>), elements: safeElements } as Spec;
+  return {
+    ...(partial as Record<string, unknown>),
+    elements: safeElements,
+  } as Spec;
 }
 
 /** Fold one visualization_delta into the current items list.
@@ -115,16 +146,19 @@ export function applyVisualizationDelta(
     (it) => it.kind === "visualization" && it.specId === event.spec_id,
   );
   if (idx >= 0) {
-    const existing = items[idx] as Extract<
-      ChatItem,
-      { kind: "visualization" }
-    >;
+    const existing = items[idx] as Extract<ChatItem, { kind: "visualization" }>;
     const next = items.slice();
-    next[idx] = { ...existing, spec };
+    next[idx] = { ...existing, spec, title: event.title || existing.title };
     return next;
   }
   return [
     ...items,
-    visualizationItem(spec, "", "visualizer", event.spec_id),
+    visualizationItem(
+      spec,
+      event.title ?? "",
+      event.source ?? "visualizer",
+      event.spec_id,
+      event.source,
+    ),
   ];
 }

@@ -13,8 +13,9 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
 
+from ember_code.core.activity import background
 from ember_code.protocol.messages import Message
 from ember_code.transport.base import ListeningTransport, Transport
 
@@ -60,7 +61,7 @@ class CompositeTransport(Transport):
     async def wait_for_connection(self, timeout: float | None = 30.0) -> None:
         """Resolve when ANY child gets its first connection."""
         waiters = [
-            asyncio.ensure_future(t.wait_for_connection(timeout=None))
+            background.daemon(t.wait_for_connection(timeout=None), name="transport-wait")
             for t in self._listening_children()
         ]
         if not waiters:
@@ -76,7 +77,22 @@ class CompositeTransport(Transport):
         finally:
             # Start the merge pumps once something is listening.
             if not self._pumps:
-                self._pumps = [asyncio.create_task(self._pump(t)) for t in self._transports]
+                self._pumps = [
+                    background.daemon(self._pump(t), name="transport-pump")
+                    for t in self._transports
+                ]
+
+    @property
+    def client_count(self) -> int:
+        """Clients connected across every child that counts them."""
+        return sum(getattr(t, "client_count", 0) for t in self._transports)
+
+    def watch_connections(self, watcher: Callable[[str, str], None]) -> None:
+        """Forward to every child that reports its views coming and going."""
+        for t in self._transports:
+            watch = getattr(t, "watch_connections", None)
+            if watch is not None:
+                watch(watcher)
 
     async def send(self, message: Message) -> None:
         for t in self._transports:
@@ -87,7 +103,9 @@ class CompositeTransport(Transport):
         # Pumps normally start in wait_for_connection; make sure they
         # exist even if a caller skips straight to receive().
         if not self._pumps:
-            self._pumps = [asyncio.create_task(self._pump(t)) for t in self._transports]
+            self._pumps = [
+                background.daemon(self._pump(t), name="transport-pump") for t in self._transports
+            ]
         while not self._closed:
             msg = await self._inbox.get()
             if msg is None:

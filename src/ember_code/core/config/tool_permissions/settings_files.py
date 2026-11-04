@@ -34,7 +34,7 @@ from ember_code.core.config.tool_permissions.schemas import (
     LoadResult,
     PermissionLevel,
 )
-from ember_code.core.paths import CONFIG_DIR
+from ember_code.core.paths import home_config_dir, project_config_dir
 
 logger = logging.getLogger(__name__)
 
@@ -61,14 +61,36 @@ class SettingsFileLoader:
     def paths(self) -> list[Path]:
         """The ordered list of settings files this loader consults —
         exposed so tests can assert against the exact search order
-        without duplicating the constants."""
-        home_ember = Path.home() / CONFIG_DIR
-        return [
+        without duplicating the constants.
+
+        Through the legacy-aware helpers, not ``/ CONFIG_DIR``: the
+        settings merge plan resolves the very same four files that way
+        (``merge_plan.py`` builds its ``JsonFragmentTier``s off
+        ``home_config_dir()`` / ``project_config_dir()``), so hand-joining
+        the current name here made two readers of one file disagree. On a
+        project still holding ``.ember/`` — the pre-rename directory the
+        helpers fall back to — ``Settings`` read ``.ember/settings.json``
+        while this loader saw nothing, which silently dropped that file's
+        ``deny`` rules. A permission list that fails open is the worst
+        direction for this particular disagreement to fail in.
+        """
+        home_ember = home_config_dir()
+        paths = [
             home_ember / "settings.json",
             home_ember / "settings.local.json",
-            self._project_dir / CONFIG_DIR / "settings.json",
-            self._project_dir / CONFIG_DIR / "settings.local.json",
         ]
+        # A folder's own rules count only once it is trusted
+        # (``core/workspace_trust``): an untrusted repository could otherwise
+        # commit ``allow: [Bash]`` for whoever opens it.
+        from ember_code.core.workspace_trust import WorkspaceTrust
+
+        if WorkspaceTrust.shared().is_trusted(self._project_dir, what="permission rules"):
+            project_ember = project_config_dir(self._project_dir)
+            paths += [
+                project_ember / "settings.json",
+                project_ember / "settings.local.json",
+            ]
+        return paths
 
     def load_all(self) -> list[LoadResult]:
         """Load every file in :meth:`paths`, in priority order.
@@ -147,10 +169,17 @@ class SettingsFileWriter:
         home-local otherwise. Kept as a method (not a property) so
         the resolution appears at the call site — makes it easy to
         assert against in tests.
+
+        Same helpers as :meth:`SettingsFileLoader.paths`, and for a
+        sharper reason: writing to ``.igni/settings.local.json`` while an
+        unmigrated project keeps its rules in ``.ember/`` would *create*
+        the new directory, which is what ``project_config_dir`` prefers —
+        so the next load would read the one-rule file this writer just
+        made and stop seeing the old one entirely.
         """
         if self._project_dir:
-            return self._project_dir / CONFIG_DIR / "settings.local.json"
-        return Path.home() / CONFIG_DIR / "settings.local.json"
+            return project_config_dir(self._project_dir) / "settings.local.json"
+        return home_config_dir() / "settings.local.json"
 
     def save_rule(self, rule: str, level: PermissionLevel) -> Path:
         """Persist ``rule`` under the ``permissions.<level>`` list of

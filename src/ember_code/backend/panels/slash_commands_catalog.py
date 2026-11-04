@@ -1,10 +1,14 @@
 """Slash-commands catalog controller.
 
-Owns the merged builtin + markdown + user-invocable-skill slash
-command enumeration for SDK consumers (IDE plugins, completion
-UIs). Three private methods (:meth:`_builtin_entries`,
-:meth:`_markdown_entries`, :meth:`_skill_entries`) each build one
-source's typed sub-list; :meth:`entries` orchestrates them.
+Owns the merged builtin + markdown + skill + extension slash command
+enumeration for SDK consumers (IDE plugins, completion UIs). Four
+private methods each build one source's typed sub-list;
+:meth:`entries` orchestrates them.
+
+The extension source was the last to arrive, and until it did
+``contributes.commands`` was a manifest field nothing read: an
+extension could declare ``/compliance``, it never appeared in
+completion, and typing it got the skill fallback.
 """
 
 from __future__ import annotations
@@ -15,9 +19,14 @@ from typing import TYPE_CHECKING
 from ember_code.backend.command_handler import CommandHandler
 from ember_code.backend.schemas_panels import (
     BuiltinSlashCommand,
+    ExtensionSlashCommand,
     MarkdownSlashCommand,
     SkillSlashCommand,
     SlashCommandEntry,
+)
+from ember_code.core.contributed_commands import (
+    ContributedCommands,
+    contributed_commands,
 )
 from ember_code.core.utils.markdown_commands import discover_markdown_commands
 
@@ -30,8 +39,9 @@ logger = logging.getLogger(__name__)
 class SlashCommandsCatalog:
     """Merged builtin + markdown + user-invocable-skill catalog."""
 
-    def __init__(self, session: Session) -> None:
+    def __init__(self, session: Session, commands: ContributedCommands | None = None) -> None:
         self._session = session
+        self._commands = commands if commands is not None else contributed_commands
 
     def entries(self) -> list[SlashCommandEntry]:
         """All slash commands available in this session."""
@@ -39,6 +49,7 @@ class SlashCommandsCatalog:
         out.extend(self._builtin_entries())
         out.extend(self._markdown_entries())
         out.extend(self._skill_entries())
+        out.extend(self._extension_entries())
         return out
 
     def _builtin_entries(self) -> list[BuiltinSlashCommand]:
@@ -77,3 +88,14 @@ class SlashCommandsCatalog:
             for skill in skills
             if getattr(skill, "user_invocable", True)
         ]
+
+    def _extension_entries(self) -> list[ExtensionSlashCommand]:
+        """Commands contributed by installed extensions.
+
+        Only what is live. The registry holds a command while its
+        extension is READY and drops it otherwise, so a command in
+        this list is one that can actually answer — offering one that
+        cannot is worse than not offering it, because the user picks
+        it and then it fails.
+        """
+        return [ExtensionSlashCommand.from_contributed(command) for command in self._commands.all()]

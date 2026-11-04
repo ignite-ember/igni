@@ -10,7 +10,7 @@ Only the TUI's ``hitl_handler`` persisted, because it called
 ``save_permission_rule`` client-side before firing the resolve.
 
 The fix moved the persistence into ``resolve_hitl_batch`` so
-every client (web, VSCode, JetBrains, TUI) shares one code
+every client (web, desktop, TUI) shares one code
 path. Web + friends: no client change needed; the choice
 they already send is now honored. TUI: still calls
 ``save_permission_rule`` explicitly — that's idempotent
@@ -241,7 +241,11 @@ class TestFuncNameCanonicalization:
     def test_web_fetch_similar_uses_domain(self, tmp_path: Path) -> None:
         # "Allow similar" for a web fetch broadens to the domain.
         server = _make_server(tmp_path)
-        req = _requirement_for("web_fetch", {"url": "https://github.com/anthropics/claude-code"})
+        # ``fetch_url``, not ``web_fetch``: the latter is not a function
+        # any toolkit registers, so this assertion used to pass only
+        # because FUNC_TO_TOOL carried the same invented name. See
+        # tests/test_web_permission_names_are_real.py.
+        req = _requirement_for("fetch_url", {"url": "https://github.com/anthropics/claude-code"})
         server._maybe_persist_choice(SimpleNamespace(choice="similar"), req)
 
         saved = _load_saved_rules(tmp_path)

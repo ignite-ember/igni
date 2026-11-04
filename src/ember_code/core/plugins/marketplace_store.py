@@ -29,6 +29,7 @@ import logging
 import shutil
 import tempfile
 from pathlib import Path
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict
 
@@ -49,15 +50,14 @@ logger = logging.getLogger(__name__)
 # ── Default marketplaces ───────────────────────────────────────────
 
 
-# Marketplaces auto-registered on session start so users see plugins
-# the moment they open the panel — no ``/plugin marketplace add``
-# step required.
+# Marketplaces registered on session start when the install opts in
+# (``plugins.default_marketplace: true``), so a user who wants it sees
+# plugins the moment they open the panel without a ``/plugin
+# marketplace add`` step. Off by default: registering clones from
+# github.com, and igni makes no outbound call nobody asked for.
 #
 # Currently a single canonical entry: Anthropic's official directory
-# of ~200 Claude-Code plugins. Adding it on first run mirrors the
-# Claude Code CLI's own out-of-box behavior and gives our
-# Claude-Code-compatibility claim immediate concrete proof
-# (browse the panel, install something, watch it work).
+# of Claude-Code plugins.
 #
 # Each entry is ``(catalog_name, git_url)``. The ``catalog_name``
 # is what the user types after ``@`` (``@claude-plugins-official/foo``);
@@ -228,7 +228,7 @@ class MarketplaceRegistryStore:
 
     # ── High-level operations ──────────────────────────────────────
 
-    def add(self, url: str) -> MarketplaceEntry:
+    def add(self, url: str, *, added_by: Literal["user", "default"] = "user") -> MarketplaceEntry:
         """Register a marketplace by URL: probe, fetch catalog, persist.
 
         The marketplace's display name comes from its catalog (the
@@ -245,7 +245,7 @@ class MarketplaceRegistryStore:
         catalog = self._fetcher.fetch(url).unwrap()
 
         registry = self.load()
-        new_entry = MarketplaceEntry(name=catalog.name, url=url)
+        new_entry = MarketplaceEntry(name=catalog.name, url=url, added_by=added_by)
         new_entry.mark_fetched(catalog)
         effective = registry.add(new_entry)
         self.save(registry)

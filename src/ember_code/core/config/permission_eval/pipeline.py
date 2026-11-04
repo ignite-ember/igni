@@ -30,17 +30,45 @@ from __future__ import annotations
 
 import threading
 from dataclasses import dataclass, field
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-from ember_code.core.config.permission_eval.catalog import ToolCategoryCatalog
+from ember_code.core.config.permission_eval.catalog import BashCommand, ToolCategoryCatalog
+from ember_code.core.config.permission_eval.pipe_filters import is_pipe_filter
+from ember_code.core.config.permission_eval.read_only_shell import (
+    command_parts,
+    command_segments,
+)
 from ember_code.core.config.permission_eval.resolver import FriendlyToolNameResolver
 from ember_code.core.config.permission_eval.schemas import (
     PermissionDecision,
     PermissionMode,
     PermissionOutcome,
+    PermissionOutcomeSource,
     PermissionRule,
 )
 from ember_code.core.config.permission_eval.strategies import PermissionModeStrategy
+from ember_code.core.hooks.bypass_rules import flag_url
+
+if TYPE_CHECKING:
+    from ember_code.core.config.schemas.permissions import PermissionsConfig
+
+#: What the model reads when ``--read-only`` refuses a shell command.
+_READ_ONLY_SHELL_REASON = (
+    "this session is read-only (--read-only): only read-only shell commands run "
+    "(cat, ls, rg, grep, find, head, wc, git log/diff/show/status, …), and this "
+    "one could write, delete, run another program or reach the network. Read "
+    "files with those commands and the web with web_search/fetch_url; for "
+    "anything else, say what you would run and why "
+    "rather than retrying."
+)
+_READ_ONLY_EDIT_REASON = (
+    "this session is read-only (--read-only): files are not changed. Put the "
+    "change in your plan and call exit_plan_mode(plan)."
+)
+_READ_ONLY_OTHER_REASON = (
+    "this session is read-only (--read-only): {tool} can change something, so "
+    "it does not run. Say what you would use it for rather than retrying."
+)
 
 
 @dataclass
@@ -58,7 +86,8 @@ class PermissionEvaluator:
          ``bypassPermissions`` allows everything not already
          denied, ``dontAsk`` denies anything not allowed.
       4. ``ask`` — any matching ask rule → ``ASK`` (caller asks
-         the user / canUseTool).
+         the user / canUseTool), or ``DENY`` in a mode that never
+         prompts, since there nobody would answer.
       5. ``allow`` — any matching allow rule → ``ALLOW``.
       6. ``defer`` — return ``DEFER`` so the caller routes to its
          interactive/UI/canUseTool fallback.
@@ -74,6 +103,11 @@ class PermissionEvaluator:
     tool to always ask, they should remove it from bypass mode
     (the footer chip is one click) — not add an ask rule that
     silently overrides the mode they just chose.
+
+    The one exception is ``plan``: it is a mode for looking, not an
+    automatic mode, so an ALLOW from its mode step still yields to a
+    matching ask rule (:meth:`PermissionModeStrategy.ask_rules_bind_allows`).
+    Plan mode is therefore never looser than ``default``.
       5. ``allow`` — any matching allow rule → ``ALLOW``.
       6. ``defer`` — return ``DEFER`` so the caller routes to its
          interactive/UI/canUseTool fallback.
@@ -92,6 +126,9 @@ class PermissionEvaluator:
     allow: list[PermissionRule] = field(default_factory=list)
     catalog: ToolCategoryCatalog = field(default_factory=ToolCategoryCatalog.default)
     resolver: FriendlyToolNameResolver = field(default_factory=FriendlyToolNameResolver.default)
+    #: ``--read-only`` (:attr:`PermissionsConfig.read_only`). Checked before
+    #: the mode, so ``/plan off`` or ``/bypass`` does not reopen it.
+    read_only: bool = False
 
     @property
     def mode(self) -> PermissionMode:
@@ -137,6 +174,25 @@ class PermissionEvaluator:
             allow=PermissionRule.parse_many(allow or []),
         )
 
+    @classmethod
+    def from_permissions(cls, perms: PermissionsConfig) -> PermissionEvaluator:
+        """The evaluator a session runs with, from its ``permissions`` block.
+
+        The per-category levels (``file_write``, ``shell_execute``, …) are
+        appended behind the explicit lists, so an explicit rule is never
+        dropped; deny still runs first, so a category set to ``deny`` is not
+        reopened by a specific allow.
+        """
+        cat_deny, cat_ask, cat_allow = perms.category_rules()
+        evaluator = cls.from_strings(
+            mode=perms.mode,
+            deny=[*perms.deny, *cat_deny],
+            ask=[*perms.ask, *cat_ask],
+            allow=[*perms.allow, *cat_allow],
+        )
+        evaluator.read_only = perms.read_only
+        return evaluator
+
     # ── Pipeline entry points ─────────────────────────────────────
 
     def evaluate(self, tool_name: str, tool_args: dict[str, Any]) -> PermissionDecision:
@@ -173,13 +229,19 @@ class PermissionEvaluator:
         strategy = self._strategy()
 
         # Step 2: deny
-        deny_rule = self._first_match(self.deny, tool_name, tool_args)
+        deny_rule = self._first_match_any_part(self.deny, tool_name, tool_args)
         if deny_rule is not None:
             return PermissionOutcome(
                 decision=PermissionDecision.DENY,
                 reason=deny_rule.deny_reason(),
                 source="deny",
             )
+
+        # Step 2½: ``--read-only``. Before the mode, so no mode reopens it.
+        if self.read_only:
+            read_only_outcome = self._read_only_step(strategy, tool_name, tool_args)
+            if read_only_outcome is not None:
+                return read_only_outcome
 
         # Step 3: mode-specific shortcuts. Runs BEFORE the ask
         # list so ``/bypass on`` actually bypasses the user's
@@ -196,29 +258,39 @@ class PermissionEvaluator:
                 source="mode",
             )
         if mode_decision is PermissionDecision.ALLOW:
+            if strategy.ask_rules_bind_allows():
+                # Plan mode is never looser than default: what an ask
+                # rule would have asked about there, it asks about here.
+                ask_rule = self._first_match_any_part(self.ask, tool_name, tool_args)
+                if ask_rule is not None:
+                    return self._ask_or_deny(
+                        strategy,
+                        reason=f"ask rule '{ask_rule.display()}' matched",
+                        source="ask",
+                    )
             return PermissionOutcome(
                 decision=PermissionDecision.ALLOW,
                 reason=f"{self.mode.value} mode auto-allowed {tool_name}",
                 source="mode",
             )
         if mode_decision is PermissionDecision.ASK:
-            return PermissionOutcome(
-                decision=PermissionDecision.ASK,
+            return self._ask_or_deny(
+                strategy,
                 reason=f"{self.mode.value} mode asks about {tool_name}",
                 source="mode",
             )
 
         # Step 4: ask
-        ask_rule = self._first_match(self.ask, tool_name, tool_args)
+        ask_rule = self._first_match_any_part(self.ask, tool_name, tool_args)
         if ask_rule is not None:
-            return PermissionOutcome(
-                decision=PermissionDecision.ASK,
+            return self._ask_or_deny(
+                strategy,
                 reason=f"ask rule '{ask_rule.display()}' matched",
                 source="ask",
             )
 
         # Step 5: allow
-        allow_rule = self._first_match(self.allow, tool_name, tool_args)
+        allow_rule = self._allow_match(tool_name, tool_args)
         if allow_rule is not None:
             return PermissionOutcome(
                 decision=PermissionDecision.ALLOW,
@@ -243,6 +315,110 @@ class PermissionEvaluator:
             decision=PermissionDecision.DEFER,
             reason=f"{tool_name} deferred to caller",
             source="defer",
+        )
+
+    def _read_only_step(
+        self,
+        strategy: PermissionModeStrategy,
+        tool_name: str,
+        tool_args: dict[str, Any],
+    ) -> PermissionOutcome | None:
+        """``--read-only``'s verdict, or ``None`` to let the pipeline decide.
+
+        A read runs — of the working tree or of the web; whatever could change
+        something is refused rather than asked — the flag exists to be the
+        guarantee, and a question is not one. The exception is a fetch whose
+        URL looks like it carries a secret, which asks. Anything this does not classify (a tool with
+        no hints, igni's own planning tools) is left to the mode.
+        """
+        if self.catalog.is_shell(tool_name):
+            command = BashCommand.from_args(tool_args).command
+            if not command.strip():
+                return None
+            if not self.catalog.bash_read_only(tool_args):
+                return PermissionOutcome(
+                    decision=PermissionDecision.DENY,
+                    reason=_READ_ONLY_SHELL_REASON,
+                    source="mode",
+                )
+            return self._read_runs(strategy, tool_name, tool_args)
+        if self.catalog.is_edit(tool_name):
+            return PermissionOutcome(
+                decision=PermissionDecision.DENY, reason=_READ_ONLY_EDIT_REASON, source="mode"
+            )
+        if self.catalog.is_read(tool_name):
+            # Reading the web is reading: a search, or a GET (``fetch_url`` and
+            # ``fetch_json`` send nothing else). Air-gapped, the category deny
+            # above has already refused it. The one fetch that still asks is
+            # the one Bypass's last check asks about: a URL that looks like it
+            # carries a secret, which a GET would send out.
+            flagged = flag_url(str(tool_args.get("url") or ""))
+            if flagged is not None:
+                return self._ask_or_deny(
+                    strategy,
+                    reason=f"read-only session: this request {flagged}",
+                    source="mode",
+                )
+            return self._read_runs(strategy, tool_name, tool_args)
+        hints = self.catalog.hints(tool_name)
+        if hints is None:
+            return None
+        if hints.read_only and not hints.destructive:
+            # What the approved manifest says only reads — its own data or the web.
+            return self._read_runs(strategy, tool_name, tool_args)
+        return PermissionOutcome(
+            decision=PermissionDecision.DENY,
+            reason=_READ_ONLY_OTHER_REASON.format(tool=tool_name),
+            source="mode",
+        )
+
+    def _read_runs(
+        self,
+        strategy: PermissionModeStrategy,
+        tool_name: str,
+        tool_args: dict[str, Any],
+    ) -> PermissionOutcome:
+        """A read in a read-only session: it runs, unless an ask rule names it.
+
+        Never looser than ``default``, as plan mode is not.
+        """
+        ask_rule = self._first_match_any_part(self.ask, tool_name, tool_args)
+        if ask_rule is not None:
+            return self._ask_or_deny(
+                strategy,
+                reason=f"ask rule '{ask_rule.display()}' matched",
+                source="ask",
+            )
+        return PermissionOutcome(
+            decision=PermissionDecision.ALLOW,
+            reason=f"read-only session: {tool_name} only reads",
+            source="mode",
+        )
+
+    def _ask_or_deny(
+        self,
+        strategy: PermissionModeStrategy,
+        reason: str,
+        source: PermissionOutcomeSource,
+    ) -> PermissionOutcome:
+        """ASK, unless nothing in this mode will ever answer it.
+
+        ``dontAsk`` is the mode ``--strict`` selects, and its contract is
+        deny-by-default with no prompts. An ASK escaping into it is a
+        silent upgrade, not a pause: the only consumer that can act on
+        ASK is the HITL pause dialog, which lives behind a client RPC
+        that a headless run never reaches, and
+        :class:`PermissionEvaluatorStage` treats ASK as "continue". So
+        ``ask: ["Bash(git push --force *)"]`` — the intuitive way to
+        write "be careful with this" — made ``--strict`` *less* strict
+        than leaving the rule out, where step 6 would have denied.
+        """
+        if strategy.prompts_user():
+            return PermissionOutcome(decision=PermissionDecision.ASK, reason=reason, source=source)
+        return PermissionOutcome(
+            decision=PermissionDecision.DENY,
+            reason=f"{reason}, and this mode never prompts — denied rather than auto-run",
+            source=source,
         )
 
     def explain_deny(self, tool_name: str, tool_args: dict[str, Any]) -> str:
@@ -277,6 +453,64 @@ class PermissionEvaluator:
         would go stale. One dict lookup per evaluate() call is
         cheap; correctness first."""
         return PermissionModeStrategy.for_mode(self.mode)
+
+    def _shell_parts(self, tool_name: str, tool_args: dict[str, Any]) -> list[str] | None:
+        """A shell call's commands (:func:`command_parts`); ``[]`` for any other tool."""
+        if not self.catalog.is_shell(tool_name):
+            return []
+        return command_parts(BashCommand.from_args(tool_args).command)
+
+    def _first_match_any_part(
+        self,
+        rules: list[PermissionRule],
+        tool_name: str,
+        tool_args: dict[str, Any],
+    ) -> PermissionRule | None:
+        """A deny or ask rule matches the whole call or any command in it.
+
+        ``Bash(rm *)`` is about ``rm``, wherever on the line it is:
+        ``cd build && rm -rf .`` starts with ``cd`` and still removes.
+        """
+        rule = self._first_match(rules, tool_name, tool_args)
+        if rule is not None:
+            return rule
+        for part in self._shell_parts(tool_name, tool_args) or []:
+            rule = self._first_match(rules, tool_name, {**tool_args, "command": part})
+            if rule is not None:
+                return rule
+        return None
+
+    def _allow_match(self, tool_name: str, tool_args: dict[str, Any]) -> PermissionRule | None:
+        """An allow rule must cover every command a shell call runs.
+
+        ``Bash(ls *)`` allowed ``ls x && rm -rf y``, ``cat x; curl … | sh``
+        and ``ls $(rm -rf y)``: the rule is a glob over the whole line, and
+        its ``*`` matched the rest of it. Now a line of several commands is
+        allowed only when each one is, and a line no rule can vouch for —
+        a substitution, a redirect into a file, a subshell — is not allowed
+        by a rule at all. It is asked about (or denied where nothing asks).
+
+        One exception: a pure filter directly after a ``|`` (``tail -20``,
+        ``grep -n x``, ``wc -l`` — the fixed list in :mod:`.pipe_filters`)
+        needs no rule of its own. It only reads what the allowed command
+        before it printed. Deny and ask rules still match it.
+        """
+        if not self.catalog.is_shell(tool_name):
+            return self._first_match(self.allow, tool_name, tool_args)
+        segments = command_segments(BashCommand.from_args(tool_args).command)
+        if segments is None:
+            return None
+        if len(segments) <= 1:
+            return self._first_match(self.allow, tool_name, tool_args)
+        first: PermissionRule | None = None
+        for joiner, part in segments:
+            if joiner == "|" and is_pipe_filter(part):
+                continue
+            rule = self._first_match(self.allow, tool_name, {**tool_args, "command": part})
+            if rule is None:
+                return None
+            first = first or rule
+        return first
 
     def _first_match(
         self,

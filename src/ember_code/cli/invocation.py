@@ -38,14 +38,23 @@ from ember_code.core.config import settings as _settings_module
 from ember_code.core.config.settings import Settings
 from ember_code.core.worktree import WorktreeManager
 
+#: The console script pyproject installs. `ignite-ember` is the other
+#: one and is kept only for backwards compatibility, so it is not what
+#: we tell anybody to type.
+#:
+#: Spelled here rather than inline because this text used to say
+#: `ember`, which has never been an entry point — the first thing a new
+#: installation printed was three commands that do not exist.
+COMMAND = "igni"
+
 _HELP_TEXT = (
-    "igni no longer ships a terminal chat UI. Use one of:\n"
-    '  • ember -m "<message>"        one-shot message\n'
-    "  • ember -p                       pipe mode (stdin → stdout)\n"
-    '  • ember -c -m "<message>"     resume last session, one-shot\n'
+    f"{COMMAND} no longer ships a terminal chat UI. Use one of:\n"
+    f'  • {COMMAND} -m "<message>"         one-shot message\n'
+    f"  • {COMMAND} -p                      pipe mode (stdin → stdout)\n"
+    f'  • {COMMAND} -c -m "<message>"      resume last session, one-shot\n'
     "  • python -m ember_code.backend --socket <path>\n"
-    "        start the backend for a React client (web / Tauri /\n"
-    "        VSCode / JetBrains) to connect via Unix socket.\n"
+    "        start the backend for a React client (web / Tauri)\n"
+    "        to connect via Unix socket.\n"
 )
 
 
@@ -231,4 +240,55 @@ def load_settings_from_options(options: CliOptions) -> Settings:
     # NOT a free function) keeps the assertion shape stable while
     # still going through the typed encoder.
     payload = overrides.to_settings_payload()
-    return _settings_module.load_settings(cli_overrides=payload)
+
+    # Loaded twice, and the second is the one returned. ``-m`` and the pipe
+    # mode run a real session in this process, so an admin's group policy has
+    # to apply here too — otherwise ``{"permissions": {"web_fetch": "deny"}}``
+    # would hold in the app and not on the command line, which is the kind of
+    # half-enforcement a policy cannot have. The cache it is read from lives
+    # under ``storage.data_dir``, which is itself a setting, so the first pass
+    # answers "which directory" from local configuration alone. Both passes
+    # read a handful of small files; neither touches the network.
+    #
+    # The fetcher reads what the backend's ``AuthController`` last cached — a
+    # CLI invocation has no token of its own at settings-load time and must
+    # not stall on a portal call. See ``CachedSettingsFetcher``.
+    from ember_code.core.config.group_policy import CachedSettingsFetcher
+
+    # The pack is verified before it is merged; with ``group_policy.required``
+    # set and no verified pack, the fetcher raises ``GroupPolicyUnavailable``
+    # and this run starts no session (``main`` reports it).
+    local_only = _settings_module.load_settings(cli_overrides=payload)
+    settings = _settings_module.load_settings(
+        cli_overrides=payload,
+        group_policy_fetcher=CachedSettingsFetcher.for_settings(local_only),
+    )
+    if options.auto_approve and _bypass_forbidden(settings):
+        # ``--auto-approve`` is bypass mode plus four categories set to
+        # ``allow``. The loader already refuses the mode; the categories
+        # would still run every shell command and push unasked, which is
+        # bypass under another name. Ignored with a warning — the way the
+        # group tier treats a loosening it refuses — and loaded again
+        # without the flag, so any other flag passed still applies.
+        source = settings.permissions.mode_policy.bypass_source or "policy"
+        click.echo(
+            f"Warning: --auto-approve is turned off by your organisation's {source} "
+            "(permissions.allow_bypass: false); running without it.",
+            err=True,
+        )
+        payload = CliOverrides.from_options(
+            options.model_copy(update={"auto_approve": False})
+        ).to_settings_payload()
+        settings = _settings_module.load_settings(
+            cli_overrides=payload,
+            group_policy_fetcher=CachedSettingsFetcher.for_settings(local_only),
+        )
+    return settings
+
+
+def _bypass_forbidden(settings: Settings) -> bool:
+    """Did the organisation's managed settings or group policy turn bypass off?"""
+    from ember_code.core.config.permission_eval.mode_policy import ModePolicy
+
+    policy = getattr(getattr(settings, "permissions", None), "mode_policy", None)
+    return isinstance(policy, ModePolicy) and not policy.allow_bypass

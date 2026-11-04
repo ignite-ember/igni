@@ -1,0 +1,37 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "igni-cloud"
+version = "1.0.3"
+description = "igni's cloud layer: igni in a producer's microVM, with its state in PostgreSQL"
+readme = "README.md"
+license = "Apache-2.0"
+requires-python = ">=3.12,<3.13"
+authors = [{ name = "Ignite Ember" }]
+dependencies = [
+    # The core, at the same version: the layer plugs into its seams.
+    "ignite-ember==1.0.3",
+    # PostgreSQL: psycopg 3 is one driver with a sync and an async API, so
+    # alembic, igni's stores and Agno's AsyncPostgresDb all speak through it.
+    "psycopg[binary]~=3.3.6",
+    "agno[postgres]~=2.6.12",
+]
+
+[project.scripts]
+igni-cloud = "igni_cloud.cli:main"
+
+# How the core finds this package: ``IGNI_PROFILE=cloud`` installs the
+# layer, and a ``postgresql://`` database URL uses the storage.
+[project.entry-points."igni.layers"]
+cloud = "igni_cloud.layer:CloudLayer"
+
+[project.entry-points."igni.storage"]
+postgresql = "igni_cloud.storage.postgres:PostgresStorage"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/igni_cloud"]
+
+[tool.uv.sources]
+ignite-ember = { path = "../..", editable = true }

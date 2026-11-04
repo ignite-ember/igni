@@ -172,22 +172,44 @@ async def test_deny_decision_blocks_and_fires_permission_denied() -> None:
 
 
 @pytest.mark.asyncio
-async def test_ask_decision_fires_permission_request_and_falls_through() -> None:
-    """PreToolUse hook returning ``ask`` fires ``PermissionRequest``
-    for observability but MUST let the tool run — Agno's
-    ``requires_confirmation`` + HITL dialog handles ASK, and this
-    hook only sees the call AFTER the user's approval. Blocking
-    here undoes that approval and produces the "no canUseTool
-    bridge is wired yet" regression."""
+async def test_ask_decision_blocks_because_a_hook_cannot_prompt() -> None:
+    """A PreToolUse hook returning ``ask`` fires ``PermissionRequest``
+    and then blocks.
+
+    It used to fall through and run the tool, on the v0.8.3 reasoning
+    that Agno's HITL dialog had already resolved the ASK. That reasoning
+    belongs to the *evaluator*'s ASK branch: Agno pauses on
+    ``requires_confirmation``, which is set from the tool-permission
+    levels at registry-build time and which no hook can touch. A hook's
+    ``ask`` is therefore a fresh request that nothing answered, and
+    running the tool on it turns a plugin written to CC's semantics into
+    a rubber stamp.
+
+    Worse, which of the two it did depended on whether the hook also set
+    ``systemMessage`` — a field about wording, not intent.
+    """
     result, calls = await _run_with_hook_decision("ask")
-    # Fall-through: the fake tool actually ran.
-    assert "ran x.py" in result
+    assert "ran x.py" not in result
+    assert "Blocked" in result
+    # The model is told what would actually resolve it.
+    assert "allow/deny" in result
     # Event still fires for plugins / telemetry.
     requests = [c for c in calls if c[0] == "PermissionRequest"]
     assert len(requests) == 1
-    # No block string sneaks back into the tool return.
-    assert "Blocked" not in result
-    assert "canUseTool" not in result
+    denied = [c for c in calls if c[0] == "PermissionDenied"]
+    assert len(denied) == 1
+
+
+@pytest.mark.asyncio
+async def test_ask_decision_blocks_the_same_way_with_a_system_message() -> None:
+    """The systemMessage only changes the wording, never whether the
+    call runs. Before this, setting it was the difference between a
+    guard and a no-op."""
+    result, _ = await _run_with_hook_decision(
+        "ask", extra_payload={"systemMessage": "confirm this first"}
+    )
+    assert "ran x.py" not in result
+    assert result == "confirm this first"
 
 
 @pytest.mark.asyncio

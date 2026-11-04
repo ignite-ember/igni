@@ -81,7 +81,8 @@ class SearchController:
 
         project_root = Path(self._session.project_dir).resolve()
         cache_key = hashlib.sha1(
-            f"{project_root}\0{max_results}\0{snippet}".encode("utf-8", "ignore")
+            f"{project_root}\0{max_results}\0{snippet}".encode("utf-8", "ignore"),
+            usedforsecurity=False,  # a cache key
         ).hexdigest()
         cached = self._cache.get(cache_key)
         if cached is not None:

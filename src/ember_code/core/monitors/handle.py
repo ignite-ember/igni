@@ -19,6 +19,7 @@ import time
 from collections import deque
 from pathlib import Path
 
+from ember_code.core.activity import background
 from ember_code.core.monitors.config import MonitorConfig
 from ember_code.core.monitors.models import MonitorSnapshot, MonitorStatus
 
@@ -197,7 +198,8 @@ class MonitorHandle:
             logger.warning("Monitor %s launch failed: %s", self.name, exc)
             return
         self.mark_running()
-        self._drain_task = asyncio.create_task(
+        # Its supervisor holds the monitor's lease; the drain lives as long.
+        self._drain_task = background.daemon(
             self._drain_output(), name=f"monitor-drain-{self.name}"
         )
 

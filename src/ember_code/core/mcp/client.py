@@ -30,7 +30,7 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 # Optional deps — ``agno[mcp]`` isn't a hard requirement of the base
 # install. The module still loads without them; ``connect`` reports
@@ -43,6 +43,8 @@ except ImportError:  # pragma: no cover — exercised by test_connect_import_err
 
 from ember_code.core.mcp.approval import MCPApprovalManager
 from ember_code.core.mcp.config import MCPConfigLoader, MCPPolicy, MCPServerConfig
+from ember_code.core.mcp.naming import tool_name_prefix
+from ember_code.core.mcp.notification_tap import McpNotificationRouter
 from ember_code.core.mcp.schemas import (
     MCPConnectResult,
     MCPPrompt,
@@ -52,11 +54,40 @@ from ember_code.core.mcp.schemas import (
 from ember_code.core.mcp.stdio_binding import StdioMCPBinding
 from ember_code.core.mcp.tool_filter import MCPToolFilter
 from ember_code.core.mcp.tool_state import MCPToolStateStore
+from ember_code.core.network_policy import NetworkPolicy
 
 if TYPE_CHECKING:
     from agno.tools.mcp import MCPTools
 
+    from ember_code.core.mcp.request_meta import RequestMeta
+
 logger = logging.getLogger(__name__)
+
+
+def _with_stderr(reason: str, stderr_tail: str) -> str:
+    if not stderr_tail:
+        return reason
+    return f"{reason.rstrip('. ')}. Its process said on stderr: {stderr_tail}"
+
+
+def _no_tools_reason(name: str, *, stderr_tail: str) -> str:
+    """Why a connection that listed no tools failed.
+
+    Nearly always a process that exited before it answered, and then
+    its stderr is the reason, so it comes first. The IDE hint is for
+    the IDE's own MCP server (the one connection where "no tools" means
+    a setting is off) and is wrong for anything else — an extension's
+    developer was told to check an IDE they were not using.
+    """
+    if name.startswith("ext:"):
+        said = (
+            f"Its last lines on stderr: {stderr_tail}"
+            if stderr_tail
+            else "It wrote nothing to stderr; run its command by hand to see what it does."
+        )
+        return f"its MCP server returned no tools, or its process exited first. {said}"
+    generic = "MCP server connected but returned no tools. Ensure the IDE has MCP support enabled."
+    return _with_stderr(generic, stderr_tail)
 
 
 class MCPClientManager:
@@ -78,6 +109,7 @@ class MCPClientManager:
         policy: MCPPolicy | None = None,
         stdio_binding: StdioMCPBinding | None = None,
         group_mcps_dir: Path | None = None,
+        network_policy: NetworkPolicy | None = None,
     ):
         # ``group_mcps_dir`` is the org's, from the policy cache. It has
         # to arrive here: this is the loader whose result becomes
@@ -92,6 +124,10 @@ class MCPClientManager:
             policy if policy is not None else MCPPolicy.from_managed_settings()
         )
         self._project_dir: Path | None = Path(project_dir) if project_dir else None
+        #: Which URLs a server reached over the network may be at. The
+        #: session passes ``NetworkPolicy.from_settings``; without one
+        #: every URL is allowed, as on an install that is not air-gapped.
+        self._network_policy = network_policy or NetworkPolicy()
         # Disabled-tools persistence extracted to ``MCPToolStateStore``
         # so this manager stays focused on connection lifecycle.
         # The store is composed by ``MCPToolFilter`` below.
@@ -102,6 +138,15 @@ class MCPClientManager:
         self._stdio_binding = stdio_binding or StdioMCPBinding(
             StdioMCPBinding.default_errlog_path()
         )
+        #: Notification methods outside the MCP specification, and who
+        #: takes them — ``notifications/igni/notify`` from an extension
+        #: is the first. Applied to every stdio connection opened here.
+        self.notifications = McpNotificationRouter()
+        #: Asked on every tool call to a server whose config says
+        #: ``source == "extension"``, and sent as the call's ``_meta``
+        #: (:mod:`ember_code.core.mcp.request_meta`). The extensions layer
+        #: sets it: it is how an extension learns whom a call is for.
+        self.extension_request_meta: RequestMeta | None = None
 
     # ── Connection gate ───────────────────────────────────────────
 
@@ -110,8 +155,9 @@ class MCPClientManager:
 
         Returns ``None`` on green-light or the reason string if
         any gate rejects. Gates fire in order: managed-policy
-        deny, managed-policy not-allowed, user first-use
-        approval, MCP SDK availability. Callers wrap the
+        deny, managed-policy not-allowed, the air gap (a URL
+        server outside the network), user first-use approval,
+        MCP SDK availability. Callers wrap the
         returned reason in an :class:`MCPConnectResult.failure`
         and short-circuit.
         """
@@ -123,7 +169,33 @@ class MCPClientManager:
             logger.warning("MCP '%s' blocked by managed policy (not allowed)", name)
             return f"Server '{name}' is not in the allowed list"
 
-        if not self._approval.check_approval(name, config.source_path):
+        # Before the approval prompt, so nobody is asked to approve a
+        # connection that will not be made. Every transport but stdio
+        # is igni opening a socket to ``url``; a stdio server is a local
+        # process, and what it reaches is the network's to stop.
+        transport = str(getattr(config.type, "value", config.type))
+        if transport != "stdio" and config.url and not self._network_policy.allows(config.url):
+            logger.warning(
+                "MCP '%s' blocked: %s is outside the network (air-gapped)", name, config.url
+            )
+            return self._network_policy.refusal(config.url, what=f"MCP server '{name}'")
+
+        # An extension's own service is approved by the install, not
+        # by this prompt. The prompt exists for a threat this is not:
+        # ``.mcp.json`` is a file anyone can commit to a public repo
+        # or ship in a plugin, so cloning a repo must not be enough to
+        # spawn a command. An extension arrives through
+        # ``ExtensionInstaller``, which is an explicit administrative
+        # act against a validated manifest.
+        #
+        # Asking twice would also mean extensions could never start
+        # anywhere without a terminal: ``check_approval`` fails closed
+        # when there is nobody to ask, and a shared backend is exactly
+        # that. Managed policy above still applies, so an
+        # administrator can still block one by name.
+        if config.source != "extension" and not self._approval.check_approval(
+            name, config.source_path
+        ):
             logger.info("MCP '%s' denied by user approval prompt", name)
             return "User denied MCP server connection"
 
@@ -163,7 +235,7 @@ class MCPClientManager:
             return MCPConnectResult.failure(str(exc))
         except Exception as exc:
             logger.warning("MCP connect '%s' failed: %s", name, exc)
-            return MCPConnectResult.failure(str(exc))
+            return MCPConnectResult.failure(_with_stderr(str(exc), self._stderr_tail(name, config)))
 
         if mcp_tools is None:
             # _open_transport already logged and reported via the
@@ -181,8 +253,7 @@ class MCPClientManager:
             except Exception as exc:  # pragma: no cover — cleanup best-effort
                 logger.debug("MCP '%s' cleanup after empty-tools failed: %s", name, exc)
             return MCPConnectResult.failure(
-                "MCP server connected but returned no tools. "
-                "Ensure the IDE has MCP support enabled."
+                _no_tools_reason(name, stderr_tail=self._stderr_tail(name, config))
             )
 
         # Cache the full functions dict so we can restore an
@@ -191,6 +262,21 @@ class MCPClientManager:
         self._clients[name] = mcp_tools
         self._tool_filter.apply(name, mcp_tools)
         return MCPConnectResult.success(mcp_tools)
+
+    def _stdio_tail(self, name: str) -> str:
+        tail = getattr(self._stdio_binding, "stderr_tail", None)
+        if tail is None:
+            return ""
+        try:
+            result = tail(name)
+        except Exception:  # pragma: no cover — a diagnostic must not fail a connect
+            return ""
+        return result if isinstance(result, str) else ""
+
+    def _stderr_tail(self, name: str, config: MCPServerConfig) -> str:
+        """What a stdio server's process last said on stderr, or ``""``."""
+        transport = str(getattr(config.type, "value", config.type))
+        return self._stdio_tail(name) if transport == "stdio" else ""
 
     async def _open_transport(self, name: str, config: MCPServerConfig) -> MCPTools | None:
         """Dispatch to the transport-specific opener.
@@ -212,11 +298,16 @@ class MCPClientManager:
             # asymmetry was silent: stdio servers were namespaced, SSE servers
             # were not, and nothing in the config hints that the transport
             # decides it.
-            mcp_tools = _MCPTools(url=config.url, transport="sse", tool_name_prefix=f"mcp_{name}")
+            mcp_tools = _MCPTools(
+                url=config.url, transport="sse", tool_name_prefix=tool_name_prefix(name)
+            )
             await mcp_tools.__aenter__()
             return mcp_tools
         if transport == "stdio":
-            return await self._stdio_binding.open(name, config)
+            request_meta = self.extension_request_meta if config.source == "extension" else None
+            return await self._stdio_binding.open(
+                name, config, notifications=self.notifications, request_meta=request_meta
+            )
         return None
 
     async def disconnect_all(self) -> None:
@@ -289,8 +380,7 @@ class MCPClientManager:
         mapping.
 
         Public accessor over the internal ``_clients`` dict —
-        lets collaborators (:class:`MCPToolResolver`,
-        :class:`CodeIndexAvailabilityRefresher`) walk every
+        lets collaborators (:class:`MCPToolResolver`) walk every
         live client without reaching into a private
         attribute. The returned dict is a copy so external
         mutations don't leak into the manager's own state.
@@ -362,6 +452,28 @@ class MCPClientManager:
         re-applies the filter so the change is visible to the
         next agent run."""
         self._tool_filter.set_enabled(server, tool, enabled, self._clients.get(server))
+
+    def require_confirmation(self, server: str, tools: set[str]) -> None:
+        """Pause the agent before each of ``tools`` (registered names), for the permission mode to decide."""
+        self._tool_filter.require_confirmation(server, tools, self._clients.get(server))
+
+    async def tool_annotations(self, name: str) -> dict[str, Any]:
+        """``{server's own tool name: the annotations it reports}``, asked of the server now.
+
+        Empty when the server is not connected or will not say. Agno
+        drops the annotations when it builds its functions, so they
+        are read from the session rather than from the toolkit.
+        """
+        client = self._clients.get(name)
+        session = getattr(client, "session", None) if client is not None else None
+        if session is None:
+            return {}
+        try:
+            listed = await session.list_tools()
+        except Exception as exc:  # noqa: BLE001 — reported as "said nothing", not raised
+            logger.info("MCP '%s' did not list its tools' annotations: %s", name, exc)
+            return {}
+        return {tool.name: tool.annotations for tool in listed.tools}
 
     # ── Resources / prompts (typed wire shapes) ─────────────────
 

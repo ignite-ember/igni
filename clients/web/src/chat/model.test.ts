@@ -106,6 +106,19 @@ describe("applyEvent", () => {
     expect(tool.status).toBe("error");
   });
 
+  it("shows a call rejected in the approval dialog as rejected, not done or failed", () => {
+    const items = play([
+      toolStarted,
+      {
+        ...toolCompleted,
+        full_result: "Not run: the user rejected this call when asked to approve it.",
+        is_rejected: true,
+      } as ServerMessage,
+    ]);
+    const tool = items[0] as Extract<ChatItem, { kind: "tool" }>;
+    expect(tool.status).toBe("rejected");
+  });
+
   // ── tool_error event (separate from tool_completed{is_error}) ──
   // ``tool_error`` is the dedicated error event the BE emits when
   // a tool raises rather than returning a result. Walks back the
@@ -218,14 +231,14 @@ describe("applyEvent", () => {
   });
 
   it("info event appends an info item", () => {
-    // Info events surface BE-side notifications (e.g. "Knowledge
+    // Info events surface BE-side notifications (e.g. "Artifacts
     // sync loaded 5 entries"). Distinct from error styling.
     const items = play([
-      { type: "info", text: "knowledge sync complete" } as ServerMessage,
+      { type: "info", text: "artifacts sync complete" } as ServerMessage,
     ]);
     expect(items).toHaveLength(1);
     expect(items[0].kind).toBe("info");
-    expect((items[0] as { text: string }).text).toBe("knowledge sync complete");
+    expect((items[0] as { text: string }).text).toBe("artifacts sync complete");
   });
 
   it("unknown event types fall through (default branch — no-op)", () => {
@@ -242,6 +255,17 @@ describe("applyEvent", () => {
 });
 
 describe("restoredItem", () => {
+  it("restores a rejected tool call as rejected", () => {
+    const item = restoredItem({
+      role: "tool",
+      tool_name: "run_shell_command",
+      friendly_name: "Bash",
+      content: "Not run: the user rejected this call when asked to approve it.",
+      is_rejected: true,
+    });
+    expect(item).toMatchObject({ kind: "tool", status: "rejected" });
+  });
+
   it("strips injected system-context from user turns", () => {
     const item = restoredItem({
       role: "user",
@@ -1645,5 +1669,25 @@ describe("reduceWorkflowEvent — failure tape", () => {
     if (items[0].kind !== "workflow") return;
     expect(items[0].run.status).toBe("failed");
     expect(items[0].run.error).toBe("Design phase failed");
+  });
+});
+
+describe("a message an extension posted", () => {
+  it("restores labelled as the extension's, out of its history wrapper", () => {
+    const content =
+      "<system-context>\nThe message below was posted by the igni extension 'acme.reviewer', not typed by the person.\n</system-context>\n" +
+      '<extension-message from="acme.reviewer">\nTwo issues in auth.py.\n</extension-message>';
+    const item = restoredItem({ role: "user", content });
+    expect(item).toMatchObject({
+      kind: "user",
+      text: "Two issues in auth.py.",
+      fromExtension: "acme.reviewer",
+    });
+  });
+
+  it("leaves the person's own messages unlabelled", () => {
+    const item = restoredItem({ role: "user", content: "hello" });
+    expect(item).toMatchObject({ kind: "user", text: "hello" });
+    expect(item && "fromExtension" in item).toBe(false);
   });
 });

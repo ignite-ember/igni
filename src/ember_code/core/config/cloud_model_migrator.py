@@ -1,4 +1,4 @@
-"""``CloudModelMigrator`` — replace Ember Cloud rows with latest defaults.
+"""``CloudModelMigrator`` — replace igni server rows with latest defaults.
 
 Extracted from :meth:`SettingsLoader.migrate_cloud_models` so the
 migration logic operates on a typed :class:`ModelsConfig` rather

@@ -274,3 +274,48 @@ async def test_metadata_tracks_attempts():
     assert metadata.retry_count == 2
     assert metadata.retried
     assert metadata.final_delay_seconds > 0
+
+
+@pytest.mark.asyncio
+async def test_a_name_that_does_not_exist_is_not_retried():
+    """A host that does not resolve will not resolve in 80 seconds either.
+
+    A model fetching a URL it made up (``docs.orbit.example.com``) waited
+    through ten retries — 0.1 s doubling to 30 s, about 80 s — before the
+    tool said what it knew at once.
+    """
+    import socket
+
+    calls = 0
+
+    async def no_such_host():
+        nonlocal calls
+        calls += 1
+        try:
+            raise socket.gaierror(socket.EAI_NONAME, "nodename nor servname provided")
+        except socket.gaierror as exc:
+            raise httpx.ConnectError(str(exc)) from exc
+
+    with pytest.raises(httpx.ConnectError):
+        await retry_with_backoff(no_such_host, initial_delay=0.01)
+    assert calls == 1
+
+
+@pytest.mark.asyncio
+async def test_a_temporary_name_failure_is_still_retried():
+    import socket
+
+    calls = 0
+
+    async def flaky_dns():
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            try:
+                raise socket.gaierror(socket.EAI_AGAIN, "temporary failure in name resolution")
+            except socket.gaierror as exc:
+                raise httpx.ConnectError(str(exc)) from exc
+        return "ok"
+
+    result, _ = await retry_with_backoff(flaky_dns, initial_delay=0.01)
+    assert result == "ok" and calls == 2

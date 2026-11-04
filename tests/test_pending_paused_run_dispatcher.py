@@ -28,17 +28,18 @@ from ember_code.core.config.permission_eval import (
 )
 from ember_code.protocol import messages as msg
 
-# The pending-paused-run resume path these tests specify is NOT yet
-# implemented: ``MessageDispatcher._on_user_message`` currently goes
-# straight to ``run_message`` with no ``_pending_paused_requirements``
-# branch (grep confirms the attribute exists nowhere in production).
-# These tests are the spec for that future work — kept as xfail (not
-# deleted) so the intended behaviour stays documented and executable.
-# ``strict=False`` so they XPASS (not fail) once the feature lands,
-# flagging that the marker should be removed.
-pytestmark = pytest.mark.xfail(
+# The pending-paused-run resume path the xfail tests below specify is NOT
+# yet implemented: ``MessageDispatcher._on_user_message`` goes straight to
+# ``run_message`` with no ``_pending_paused_requirements`` branch. Those
+# tests are the spec for that work, kept so it stays documented and
+# executable. Their marker is strict, so the day the feature lands they
+# fail as XPASS and the marker has to go. (It used to be one non-strict
+# marker on the module: four tests passed for months under it unnoticed.)
+# The tests without the marker pass today and hold behaviour that is
+# right either way.
+_NOT_IMPLEMENTED = pytest.mark.xfail(
     reason="pending-paused resume path not implemented in MessageDispatcher yet",
-    strict=False,
+    strict=True,
 )
 
 
@@ -113,6 +114,7 @@ class TestPendingPausedRunDispatcher:
         first_call = mock_transport.send.call_args_list[0]
         assert first_call.args[0].type == "user_message_received"
 
+    @_NOT_IMPLEMENTED
     async def test_returns_early_without_calling_run_message(
         self, dispatcher: MessageDispatcher, mock_backend: MagicMock, mock_transport: MagicMock
     ) -> None:
@@ -131,6 +133,7 @@ class TestPendingPausedRunDispatcher:
 
         mock_backend.run_message.assert_not_called()
 
+    @_NOT_IMPLEMENTED
     async def test_sends_run_paused_for_user_deferred_req(
         self, dispatcher: MessageDispatcher, mock_backend: MagicMock, mock_transport: MagicMock
     ) -> None:
@@ -179,6 +182,7 @@ class TestPendingPausedRunDispatcher:
         delta_calls = [c for c in calls if c.args[0].type == "content_delta"]
         assert len(delta_calls) == 0
 
+    @_NOT_IMPLEMENTED
     async def test_clears_pending_requirements_after_processing(
         self, dispatcher: MessageDispatcher, mock_backend: MagicMock, mock_transport: MagicMock
     ) -> None:
@@ -197,6 +201,7 @@ class TestPendingPausedRunDispatcher:
 
         assert mock_backend._pending_paused_requirements is None
 
+    @_NOT_IMPLEMENTED
     async def test_stashes_auto_resolved_for_mixed_requirements(
         self, dispatcher: MessageDispatcher, mock_backend: MagicMock, mock_transport: MagicMock
     ) -> None:
@@ -272,6 +277,7 @@ class TestPendingPausedRunDispatcher:
         assert "content_delta" in types
         assert "run_paused" not in types
 
+    @_NOT_IMPLEMENTED
     async def test_auto_resume_all_reqeusts_auto_resolved(
         self, dispatcher: MessageDispatcher, mock_backend: MagicMock, mock_transport: MagicMock
     ) -> None:

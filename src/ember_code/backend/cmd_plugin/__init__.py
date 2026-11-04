@@ -3,7 +3,9 @@
 Exports:
 
 * :data:`PLUGIN_COMMANDS` — tuple of :class:`SlashCommand`
-  instances the registry consumes.
+  instances. The registry does not read it yet — it still wires the
+  bare-callable shims below — so this is the target shape, kept
+  type-checked against the Protocol.
 * :func:`cmd_plugin`, :func:`cmd_plugin_marketplace`,
   :func:`cmd_plugins` — bare-async-callable shims delegating to the
   SlashCommand instances so the existing
@@ -38,6 +40,7 @@ from ember_code.backend.cmd_plugin.commands import (
 )
 from ember_code.backend.cmd_plugin.context import SlashCommandContext
 from ember_code.backend.cmd_plugin.gateway import PluginBackendGateway
+from ember_code.backend.slash_command import SlashCommand
 
 if TYPE_CHECKING:
     from ember_code.backend.command_handler import CommandHandler
@@ -54,7 +57,10 @@ _PLUGIN_COMMAND = PluginCommand()
 _PLUGIN_MARKETPLACE_COMMAND = PluginMarketplaceCommand()
 _PLUGINS_COMMAND = PluginsCommand()
 
-PLUGIN_COMMANDS: tuple = (
+# Typed against the shared Protocol rather than a bare ``tuple`` so a
+# command that loses its ``name``/``description``/``run`` shape is
+# caught here, at the module that exports it.
+PLUGIN_COMMANDS: tuple[SlashCommand, ...] = (
     _PLUGIN_COMMAND,
     _PLUGINS_COMMAND,
 )

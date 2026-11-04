@@ -43,6 +43,8 @@ export interface ToolCompleted extends BaseMessage {
   has_markup: boolean;
   diff_rows: DiffRow[] | null;
   is_error: boolean;
+  /** Never ran: rejected in the approval dialog, or nobody could be asked. */
+  is_rejected?: boolean;
 }
 
 export interface ToolError extends BaseMessage {
@@ -102,7 +104,13 @@ export interface HITLRequest extends BaseMessage {
   friendly_name: string;
   tool_args: Record<string, unknown>;
   details: string;
-  agent_path: string;
+  /** ``details`` is still being written (the safety check asks the
+   *  model to describe the call); a ``requirement_details`` follows. */
+  details_pending?: boolean;
+  /** Parent → leaf, e.g. ["igni", "safety check"]. The BE sends a list
+   *  (``HITLRequest.agent_path: list[str]``); typed ``string`` before,
+   *  which let React concatenate it into "ignisafety check". */
+  agent_path: string[] | string;
 }
 
 export interface RunPaused extends BaseMessage {
@@ -127,10 +135,9 @@ export type CommandAction =
   | "help"
   | "mcp"
   | "plugins"
+  | "extensions"
   | "agents"
   | "skills"
-  | "knowledge"
-  | "codeindex"
   | "hooks"
   | "loop"
   | "schedule"
@@ -163,6 +170,11 @@ export interface StatusUpdate extends BaseMessage {
   model_configured?: boolean;
   cloud_connected: boolean;
   cloud_org: string;
+  /** The signed-in account's address. On disk, so it is present
+   *  on the first status push rather than after a round trip. */
+  cloud_email?: string;
+  /** Display name, once `/portal/me` has been asked. */
+  cloud_name?: string;
   /** Active permission mode (row 50 — plan-mode badge). One of
    *  ``default`` / ``plan`` / ``acceptEdits`` / ``bypassPermissions`` /
    *  ``dontAsk``. ``plan`` triggers the PlanBadge in the header.
@@ -238,11 +250,23 @@ export interface UserMessageReceived extends BaseMessage {
   text: string;
   client_id: string;
   queued: boolean;
+  /** Set when an extension posted it (`host.chat.post`). */
+  extension_id?: string;
+  /** Set, with `extension_id`, when the extension's service sent it: the service's client id. */
+  service_client_id?: string;
 }
 
 export interface RequirementResolved extends BaseMessage {
   type: "requirement_resolved";
   requirement_id: string;
+}
+
+/** The reason for an open approval, arriving after its dialog — the
+ *  safety check's description of the call. Replaces the spinner. */
+export interface RequirementDetails extends BaseMessage {
+  type: "requirement_details";
+  requirement_id: string;
+  details: string;
 }
 
 export type ServerMessage =
@@ -268,7 +292,8 @@ export type ServerMessage =
   | Welcome
   | Typing
   | UserMessageReceived
-  | RequirementResolved;
+  | RequirementResolved
+  | RequirementDetails;
 
 // ── FE → BE messages ────────────────────────────────────────────────
 
@@ -339,11 +364,25 @@ export const fe = {
     id,
     session_id: sessionId,
   }),
-  rpcRequest: (method: string, args: Record<string, unknown>, id: string) => ({
+  rpcRequest: (
+    method: string,
+    args: Record<string, unknown>,
+    id: string,
+    /**
+     * Which extension's frame this came from.
+     *
+     * Omitted for igni's own UI, and the backend refuses the `ext.*`
+     * namespace without it: an extension reaches its own service and
+     * no other, and with no caller there is nothing to check that
+     * against.
+     */
+    caller?: string,
+  ) => ({
     type: "rpc_request",
     id,
     method,
     args,
+    ...(caller === undefined ? {} : { caller }),
   }),
   shutdown: () => ({ type: "shutdown" }),
 };

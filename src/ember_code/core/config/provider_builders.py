@@ -13,7 +13,8 @@ by polymorphism: :class:`ProviderCatalog` holds
 ``GeminiBuilder`` defers its ``agno.models.google`` import to
 construction time inside a try/except and caches the class on the
 instance — so importing this module never fails on installs that
-lack ``google-genai``.
+lack ``google-genai``. ``AnthropicBuilder`` does the same for the
+``anthropic`` SDK.
 """
 
 from __future__ import annotations
@@ -24,6 +25,9 @@ from typing import Any
 
 import httpx
 
+from ember_code.core.activity import BusyKind
+from ember_code.core.activity.http import BusyAsyncClient
+from ember_code.core.auth.http_auth import CloudTokenAuth
 from ember_code.core.config.llm_call_logger import LlmCallLogger
 from ember_code.core.config.logging_model import LoggingModel
 from ember_code.core.config.model_entry import ModelRegistryEntry
@@ -47,8 +51,23 @@ class ProviderClientBuilder(ABC):
         *,
         cloud_token: str | None,
         llm_logger: LlmCallLogger,
+        cloud_auth: CloudTokenAuth | None = None,
     ) -> Any:
-        """Return a live Agno model instance for ``entry``."""
+        """Return a live Agno model instance for ``entry``.
+
+        ``cloud_auth``, when given, puts igni server's current token on
+        each request of an entry that uses it, instead of ``cloud_token``
+        — the token as it was when the model was built.
+        """
+
+    def endpoint_for(self, entry: ModelRegistryEntry) -> str | None:
+        """The URL this builder's client sends ``entry``'s requests to.
+
+        :class:`ModelRegistry` hands igni server's token to a build only
+        when this is igni server's own origin. ``None`` means the SDK's
+        own default host, which never is.
+        """
+        return entry.url
 
 
 class OpenAILikeBuilder(ProviderClientBuilder):
@@ -65,8 +84,9 @@ class OpenAILikeBuilder(ProviderClientBuilder):
         *,
         cloud_token: str | None,
         llm_logger: LlmCallLogger,
+        cloud_auth: CloudTokenAuth | None = None,
     ) -> LoggingModel:
-        kwargs = self._build_kwargs(entry, cloud_token=cloud_token)
+        kwargs = self._build_kwargs(entry, cloud_token=cloud_token, cloud_auth=cloud_auth)
         return LoggingModel(
             logger=llm_logger,
             vision=entry.vision,
@@ -78,6 +98,7 @@ class OpenAILikeBuilder(ProviderClientBuilder):
         entry: ModelRegistryEntry,
         *,
         cloud_token: str | None,
+        cloud_auth: CloudTokenAuth | None = None,
     ) -> dict[str, Any]:
         """OpenAI-like providers share a broad kwarg surface:
         base_url, api_key, temperature, max_tokens, timeout +
@@ -86,7 +107,7 @@ class OpenAILikeBuilder(ProviderClientBuilder):
         Models with explicit credentials use them directly.
         Otherwise, authenticated users route through the Ember
         Cloud gateway. URL and API key resolve independently:
-        - URL: from the entry, or the Ember Cloud gateway fallback
+        - URL: from the entry, or the igni server gateway fallback
         - Key: from the entry, or the injected cloud token
         """
         kwargs: dict[str, Any] = {"id": entry.model_id}
@@ -94,7 +115,11 @@ class OpenAILikeBuilder(ProviderClientBuilder):
         if entry.url:
             kwargs["base_url"] = entry.url
 
-        api_key = entry.resolve_api_key(cloud_token=cloud_token)
+        resolved = entry.resolve_key(cloud_token=cloud_token)
+        api_key = resolved.value
+        # igni server's token is read on each request, not fixed now: in
+        # a producer's VM there may be none yet, and it rotates.
+        auth = cloud_auth if resolved.cloud else None
         # OpenAILike requires SOME api_key value — even a placeholder
         # so the SDK's None-check inside its constructor doesn't
         # raise before the first call. When the resolver returns
@@ -106,7 +131,7 @@ class OpenAILikeBuilder(ProviderClientBuilder):
         # authentication error — phrased in their terms and arriving
         # nowhere near the cause. This is the only moment we know both
         # that a key was wanted and that none was found.
-        if not api_key:
+        if not api_key and auth is None:
             logger.warning("%s Requests to it will be rejected.", entry.why_no_api_key())
         kwargs["api_key"] = api_key or "not-set"
 
@@ -127,7 +152,10 @@ class OpenAILikeBuilder(ProviderClientBuilder):
         # Short keepalive expiry avoids stale connections that
         # hang when reused after idle periods (e.g. between user
         # messages).
-        kwargs["http_client"] = httpx.AsyncClient(
+        kwargs["http_client"] = BusyAsyncClient(
+            busy_holder="model",
+            busy_kind=BusyKind.MODEL_CALL,
+            auth=auth,
             timeout=httpx.Timeout(timeout_s),
             limits=httpx.Limits(
                 max_connections=10,
@@ -153,9 +181,11 @@ class GeminiBuilder(ProviderClientBuilder):
     def __init__(self) -> None:
         self._gemini_cls: type | None = None
         try:
-            from agno.models.google import Gemini  # noqa: WPS433 — lazy optional dep
+            from ember_code.core.config.checked_gemini import (  # noqa: WPS433 — lazy optional dep
+                CheckedGemini,
+            )
 
-            self._gemini_cls = Gemini
+            self._gemini_cls = CheckedGemini
         except ImportError:
             self._gemini_cls = None
 
@@ -163,13 +193,21 @@ class GeminiBuilder(ProviderClientBuilder):
     def available(self) -> bool:
         return self._gemini_cls is not None
 
+    def endpoint_for(self, entry: ModelRegistryEntry) -> str | None:
+        """Google's: the Gemini SDK is not given ``entry.url``."""
+        _ = entry
+        return None
+
     def build(
         self,
         entry: ModelRegistryEntry,
         *,
         cloud_token: str | None,
         llm_logger: LlmCallLogger,
+        cloud_auth: CloudTokenAuth | None = None,
     ) -> Any:
+        # Gemini's SDK takes a key, not an httpx client: no live token.
+        _ = cloud_auth
         if self._gemini_cls is None:
             raise RuntimeError(
                 "Gemini provider requested but google-genai is not installed. "
@@ -203,5 +241,133 @@ class GeminiBuilder(ProviderClientBuilder):
         if entry.temperature is not None:
             kwargs["temperature"] = entry.temperature
         if entry.max_tokens is not None:
+            # Gemini's name for it; ``max_tokens`` is no field of Agno's
+            # ``Gemini`` and failed the build with a TypeError.
+            kwargs["max_output_tokens"] = entry.max_tokens
+        return kwargs
+
+
+class AnthropicBuilder(ProviderClientBuilder):
+    """Builder for the ``anthropic`` provider: Claude over the native
+    Messages API, through Agno's ``Claude``.
+
+    ``url`` overrides the base URL, so an Anthropic-compatible gateway
+    inside the customer's network serves it as well as Anthropic does.
+    Everything else is :class:`OpenAILikeBuilder`'s surface — the same
+    key resolution, the same ``httpx`` client with its timeout and
+    busy lease, igni server's live token where the key is
+    ``cloud_token``.
+
+    Nothing about where a request goes is left to the SDK. It would
+    otherwise read ``ANTHROPIC_BASE_URL``, ``ANTHROPIC_AUTH_TOKEN`` and
+    an ``ant`` CLI profile from the machine, any of which can send a
+    request — or a credential — somewhere the config does not name. So
+    the base URL is always passed, the key is always passed (a sentinel
+    when none resolved, as for ``openai_like``), and the bearer token is
+    always ``None``.
+
+    The ``LoggingClaude`` import is lazy, like ``GeminiBuilder``'s: the
+    module imports the SDK, and an install without it must still start.
+    """
+
+    #: Where a model with no ``url`` is sent: Anthropic's API.
+    DEFAULT_BASE_URL = "https://api.anthropic.com"
+
+    def __init__(self) -> None:
+        self._claude_cls: type[Any] | None = None
+        try:
+            from ember_code.core.config.logging_claude import (  # noqa: WPS433 — lazy optional dep
+                LoggingClaude,
+            )
+
+            self._claude_cls = LoggingClaude
+        except ImportError:
+            self._claude_cls = None
+
+    @property
+    def available(self) -> bool:
+        return self._claude_cls is not None
+
+    def build(
+        self,
+        entry: ModelRegistryEntry,
+        *,
+        cloud_token: str | None,
+        llm_logger: LlmCallLogger,
+        cloud_auth: CloudTokenAuth | None = None,
+    ) -> Any:
+        if self._claude_cls is None:
+            raise RuntimeError(
+                "Anthropic provider requested but the anthropic SDK is not installed. "
+                "Run: pip install 'ignite-ember[anthropic]'"
+            )
+        kwargs = self._build_kwargs(entry, cloud_token=cloud_token, cloud_auth=cloud_auth)
+        return self._claude_cls(logger=llm_logger, vision=entry.vision, **kwargs)
+
+    def endpoint_for(self, entry: ModelRegistryEntry) -> str | None:
+        return self.base_url_for(entry)
+
+    @classmethod
+    def base_url_for(cls, entry: ModelRegistryEntry) -> str:
+        """The base URL the SDK is given.
+
+        The SDK appends ``/v1/messages`` itself, so a ``url`` written the
+        OpenAI way, ending in ``/v1``, would ask for ``/v1/v1/messages``.
+        That suffix is dropped rather than left to fail as a 404.
+        """
+        if not entry.url:
+            return cls.DEFAULT_BASE_URL
+        url = entry.url.rstrip("/")
+        if url.endswith("/v1"):
+            url = url[: -len("/v1")]
+        return url
+
+    def _build_kwargs(
+        self,
+        entry: ModelRegistryEntry,
+        *,
+        cloud_token: str | None,
+        cloud_auth: CloudTokenAuth | None = None,
+    ) -> dict[str, Any]:
+        resolved = entry.resolve_key(cloud_token=cloud_token)
+        auth = cloud_auth if resolved.cloud else None
+        if not resolved.value and auth is None:
+            logger.warning("%s Requests to it will be rejected.", entry.why_no_api_key())
+
+        timeout_s = entry.timeout
+        kwargs: dict[str, Any] = {
+            "id": entry.model_id,
+            # Always a value: ``None`` lets the SDK go looking for one.
+            "api_key": resolved.value or "not-set",
+            "timeout": float(timeout_s),
+            # Applied after Agno's own environment reads, so these win.
+            "client_params": {
+                "base_url": self.base_url_for(entry),
+                "auth_token": None,
+            },
+            "cache_system_prompt": entry.prompt_caching,
+            "cache_tools": entry.prompt_caching,
+            # Same client as ``openai_like``: the timeout on the
+            # transport too, the busy lease, and igni server's current
+            # token on each request where the key is ``cloud_token``.
+            "http_client": BusyAsyncClient(
+                busy_holder="model",
+                busy_kind=BusyKind.MODEL_CALL,
+                auth=auth,
+                timeout=httpx.Timeout(timeout_s),
+                limits=httpx.Limits(
+                    max_connections=10,
+                    max_keepalive_connections=5,
+                    keepalive_expiry=30,
+                ),
+            ),
+        }
+        if entry.temperature is not None:
+            kwargs["temperature"] = entry.temperature
+        if entry.max_tokens is not None:
             kwargs["max_tokens"] = entry.max_tokens
+        if entry.thinking is not None:
+            kwargs["thinking"] = dict(entry.thinking)
+        if entry.effort is not None:
+            kwargs["output_config"] = {"effort": entry.effort}
         return kwargs

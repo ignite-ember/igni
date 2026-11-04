@@ -53,12 +53,12 @@ mkdir -p "$SNAPSHOTS"
 echo "$MODE, in $IMAGE"
 
 if [[ "$MODE" == "update" ]]; then
-  INNER='npx playwright test e2e/app-visual.spec.ts --update-snapshots --reporter=line
+  INNER='npx playwright test e2e/app-visual.spec.ts --update-snapshots --reporter=line --workers=1
     cp e2e/app-visual.spec.ts-snapshots/*-linux.png /out/'
   MOUNT_OUT=(-v "$SNAPSHOTS":/out)
 else
   # Read-only: a comparison run must not be able to bless itself.
-  INNER='npx playwright test e2e/app-visual.spec.ts --reporter=line'
+  INNER='npx playwright test e2e/app-visual.spec.ts --reporter=line --workers=1'
   # Left unset rather than empty: macOS ships bash 3.2, where
   # expanding an empty array under `set -u` is an error.
   MOUNT_OUT=()
@@ -70,14 +70,31 @@ fi
 # x86_64 emulation — while the portal's 32 passed, which is luck
 # rather than portability. Pinned so the whole environment is
 # stated: image, version, architecture.
+# The repository root, not just this client: vite.config.ts aliases
+# `@ignite-ember/ui-react`, `@ignite-ember/test-utils` and the bridge to
+# `../../packages/*`, so a copy of clients/web alone fails every screen
+# with "Failed to resolve import @ignite-ember/ui-react" before a single
+# pixel is compared. node_modules is left behind (it is darwin-built
+# here, and `npm ci` makes the container's own).
+REPO_DIR="$(cd "$CLIENT_DIR/../.." && pwd)"
+#
+# One worker and every timeout x6 (T18). On an arm64 Mac the amd64
+# container runs under emulation, several times slower than CI's
+# native runner, and a worker per core starved each other until tests
+# hit the 20 s test and 5 s screenshot timeouts. Serial is slower in
+# total and finishes; the factor scales the test, expect and web-server
+# timeouts in playwright.config.ts, and CI leaves it at 1.
 docker run --rm --platform linux/amd64 \
-  -v "$CLIENT_DIR":/src:ro \
+  -v "$REPO_DIR":/src:ro \
   ${MOUNT_OUT[@]+"${MOUNT_OUT[@]}"} \
   -e CI= \
+  -e IGNI_E2E_TIMEOUT_FACTOR=6 \
   "$IMAGE" \
   bash -euc "
-    cp -r /src /work
-    cd /work
+    mkdir -p /work/clients
+    tar -C /src --exclude=node_modules --exclude=test-results --exclude=dist \
+      -cf - clients/web clients/ui packages | tar -C /work -xf -
+    cd /work/clients/web
     npm ci --no-audit --no-fund > /dev/null
     # No backend needed: every screen is a ?demo= route driven from
     # canned events in src/dev/.

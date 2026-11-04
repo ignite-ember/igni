@@ -61,7 +61,9 @@ class TestTheTableBuilds:
         """Which is the part that only happened in production before."""
         table = _router().build_table()
 
-        assert len(table) >= 100, len(table)
+        # A floor, not a count: 98 once Artifacts and CodeIndex took
+        # their methods to their extensions.
+        assert len(table) >= 90, len(table)
 
     def test_every_declared_method_has_a_binding(self):
         """`validate_rpc_table` raises inside `build_table`, so this
@@ -77,7 +79,7 @@ class TestTheTableBuilds:
     def test_the_enum_has_not_quietly_emptied(self):
         """A comparison of two derived sets is happy when both are
         empty. This is the floor that stops that."""
-        assert len(list(RpcMethod)) >= 100, len(list(RpcMethod))
+        assert len(list(RpcMethod)) >= 90, len(list(RpcMethod))
 
 
 class TestEveryBindingCanBeCalled:

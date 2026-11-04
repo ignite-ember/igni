@@ -21,6 +21,7 @@ import os
 from pathlib import Path
 
 from ember_code.core.config.caller_inspector import CallerContextInspector
+from ember_code.core.layer import Layers
 from ember_code.core.paths import DEFAULT_DATA_DIR
 
 
@@ -61,10 +62,14 @@ class LlmCallLogger:
         if self._configured or self._logger.handlers:
             self._configured = True
             return
-        self._log_dir.mkdir(parents=True, exist_ok=True)
-        log_path = self._log_dir / "llm_calls.log"
-        handler = logging.FileHandler(log_path)
-        handler.setFormatter(logging.Formatter("%(asctime)s %(message)s", datefmt="%H:%M:%S"))
+        handler: logging.Handler
+        if not Layers.current().log_files():
+            # No llm_calls.log where the layer keeps no log files.
+            handler = Layers.current().log_handler()
+        else:
+            self._log_dir.mkdir(parents=True, exist_ok=True)
+            handler = logging.FileHandler(self._log_dir / "llm_calls.log")
+            handler.setFormatter(logging.Formatter("%(asctime)s %(message)s", datefmt="%H:%M:%S"))
         self._logger.addHandler(handler)
         self._logger.setLevel(logging.INFO)
         # File only, for the same reason as the transport loggers below — and

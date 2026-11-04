@@ -45,6 +45,7 @@ so the loader itself no longer owns those primitives.
 
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 from warnings import warn
@@ -70,6 +71,9 @@ if TYPE_CHECKING:
     from ember_code.core.config.group_policy import GroupPolicyPack
     from ember_code.core.config.models import CliOverrides
     from ember_code.core.config.settings import Settings
+
+
+logger = logging.getLogger(__name__)
 
 
 class SettingsLoader:
@@ -211,7 +215,7 @@ class SettingsLoader:
         return self
 
     def migrate_cloud_models(self) -> SettingsLoader:
-        """Override Ember Cloud models in user config with latest
+        """Override igni server models in user config with latest
         defaults.
 
         Delegates to :class:`CloudModelMigrator` which operates on
@@ -260,6 +264,42 @@ class SettingsLoader:
         """
         from ember_code.core.config.settings import Settings
 
+        # The two organisation tiers are seen here on their own as well as
+        # merged, so the mode policy can tell a ``permissions.mode`` the
+        # organisation set from one a user or a flag set. The merged
+        # ``Settings`` cannot say where a value came from. Both are captured
+        # from the very calls the plan makes, so the pack and the file read
+        # are the ones the merge used, not a second fetch.
+        seen: dict[str, Any] = {}
+
+        def managed_path() -> Path | None:
+            path = cls.platform_managed_settings_path()
+            seen["managed_path"] = path
+            return path
+
+        fetch: Callable[[], GroupPolicyPack | None] | None = None
+        if group_policy_fetcher is not None:
+            # Bound to a local so the closure does not see ``None`` through
+            # the optional type.
+            group_fetcher = group_policy_fetcher
+
+            def fetch() -> GroupPolicyPack | None:
+                # Fetched once per load: the workspace-trust policy below is
+                # read from the same pack the merge then uses.
+                if "group_pack" not in seen:
+                    seen["group_pack"] = group_fetcher()
+                return seen["group_pack"]
+
+        # The organisation's workspace-trust policy is needed *before* the
+        # merge: whether the folder is trusted decides whether its config may
+        # set ``permissions`` and ``safety``. It is read from the managed file
+        # and the group pack alone (the environment applies in the schema), so
+        # nothing the folder says can influence it.
+        trust_policy = cls._workspace_trust_policy(managed_path, fetch)
+        from ember_code.core.workspace_trust import WorkspaceTrust
+
+        WorkspaceTrust.shared().set_policy(trust_policy)
+
         accumulator = SettingsAccumulator.from_defaults(Settings.default_dict())
         plan = SettingsMergePlan.default(
             project_dir=project_dir,
@@ -267,10 +307,98 @@ class SettingsLoader:
             accumulator=accumulator,
             settings_cls=Settings,
             defaults_models=Settings.defaults().models,
-            managed_path_provider=cls.platform_managed_settings_path,
-            group_policy_fetcher=group_policy_fetcher,
+            managed_path_provider=managed_path,
+            group_policy_fetcher=fetch,
         )
-        return plan.run()
+        settings = plan.run()
+        cls._apply_mode_policy(settings, seen)
+        cls._apply_final_permissions(settings, seen)
+        return settings
+
+    @staticmethod
+    def _workspace_trust_policy(
+        managed_path: Callable[[], Path | None],
+        fetch: Callable[[], GroupPolicyPack | None] | None,
+    ) -> Any:
+        """``workspace_trust`` from the group pack, overridden by the managed file."""
+        from ember_code.core.config.schemas.workspace_trust import WorkspaceTrustConfig
+
+        block: dict[str, Any] = {}
+        pack = fetch() if fetch is not None else None
+        if pack is not None:
+            group_block = pack.to_settings_dict().get("workspace_trust")
+            if isinstance(group_block, dict):
+                block = DictMerger.deep(block, group_block)
+        path = managed_path()
+        managed = YamlSource(path).load() if path is not None else {}
+        managed_block = managed.get("workspace_trust") if isinstance(managed, dict) else None
+        if isinstance(managed_block, dict):
+            block = DictMerger.deep(block, managed_block)
+        try:
+            return WorkspaceTrustConfig.model_validate(block)
+        except Exception as exc:  # noqa: BLE001 — a malformed policy fails closed
+            logger.warning(
+                "workspace_trust in the organisation's settings is invalid (%s); "
+                "treating every folder as untrusted.",
+                exc,
+            )
+            return WorkspaceTrustConfig(mode="never")
+
+    @staticmethod
+    def _apply_final_permissions(settings: Settings, seen: dict[str, Any]) -> None:
+        """Record which permission fields the organisation set, so they are final.
+
+        The merge already lets the managed file and group pack win in
+        ``Settings``. But two readers compare a category level against its
+        default rather than asking who set it — ``PermissionsConfig.category_rules``
+        and ``ToolPermissions`` — so a managed ``shell_execute: ask`` (equal to
+        the default) read as "unset" and a project's ``allow: [Bash]`` won.
+        Recording the fields lets both treat them as set, and final.
+        """
+        managed_path = seen.get("managed_path")
+        managed = YamlSource(managed_path).load() if managed_path is not None else {}
+        pack = seen.get("group_pack")
+        group = pack.to_settings_dict() if pack is not None else {}
+        final: set[str] = set()
+        for payload in (managed, group):
+            perms = payload.get("permissions") if isinstance(payload, dict) else None
+            if isinstance(perms, dict):
+                final.update(str(key) for key in perms)
+        settings.permissions.set_final_fields(frozenset(final))
+
+    @staticmethod
+    def _apply_mode_policy(settings: Settings, seen: dict[str, Any]) -> None:
+        """Record the organisation's mode policy and clamp the starting mode.
+
+        ``permissions.allow_bypass`` and the mode floor are read from the
+        managed file and the group pack alone — a user's or a project's
+        ``allow_bypass`` never reaches :class:`ModePolicy`. The starting mode
+        is clamped here, after every tier, so ``--auto-approve`` cannot start
+        a session in ``bypassPermissions`` when the organisation forbids it.
+        """
+        from ember_code.core.config.permission_eval.mode_policy import ModePolicy
+        from ember_code.core.config.permission_eval.schemas import PermissionMode
+
+        managed_path = seen.get("managed_path")
+        managed = YamlSource(managed_path).load() if managed_path is not None else {}
+        pack = seen.get("group_pack")
+        group = pack.to_settings_dict() if pack is not None else {}
+        policy = ModePolicy.from_tiers(managed, group)
+        perms = settings.permissions
+        perms.set_mode_policy(policy)
+        try:
+            start = PermissionMode(perms.mode)
+        except ValueError:
+            return
+        clamped = policy.clamp_start(start)
+        if clamped is not start:
+            logger.warning(
+                "Starting permission mode %s is not allowed by your organisation's "
+                "policy; starting in %s instead.",
+                start.value,
+                clamped.value,
+            )
+            perms.mode = clamped.value
 
 
 # ── Re-exports for external callers ────────────────────────────────

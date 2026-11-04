@@ -8,7 +8,7 @@ Failure conventions we recognise
 --------------------------------
 
 Agno raises ``TOOL_ERROR_EVENTS`` for exceptions, but most
-ember-code tools catch their failures and return an error message
+igni tools catch their failures and return an error message
 as a string instead. Without flagging those, the TUI shows a green
 ``✓`` for a call the agent treats as a denial — the feedback loop
 the user saw lying in v0.5.11.
@@ -17,11 +17,22 @@ We detect:
 
 * ``"Error: ..."`` prefix — used by ``edit_file``,
   ``edit_file_replace_all``, ``create_file``, notebook tools,
-  knowledge tools, codeindex tools.
-* Shell-tool non-zero exit shapes:
-  ``"Background process exited immediately (code N)"`` and
-  ``"[Exited with code N after Ts]"``. Code 0 is success and
-  must not flag.
+  knowledge tools.
+* Shell-tool non-zero exit shapes, one per emitter:
+  ``"Command exited with code N:"`` (foreground
+  ``run_shell_command``), ``"Background process exited with code
+  N:"`` (the background startup-window crash), and ``"[Exited with
+  code N after Ts]"`` (``await_process`` / ``watch_process``).
+  Code 0 is success and must not flag.
+
+These strings are copied from ``core/tools/process_supervisor.py``
+and ``core/tools/shell.py``; the first two drifted once already
+(the detector still matched a wording — "exited immediately (code
+N)" — that no tool had emitted since the supervisor extraction, so
+every failed shell command rendered as a green ✓).
+``tests/test_tool_error_conventions_match_shell.py`` pins each
+pattern against the emitter's own literal so the next rewording
+fails a test instead of a user's feedback loop.
 
 Strict prefix / regex anchors keep this from misfiring on body
 content (e.g. a Read of a file that legitimately contains
@@ -35,15 +46,37 @@ from collections.abc import Sequence
 
 # ── Default patterns ──────────────────────────────────────────────
 
-# Shell tool's failure conventions — non-zero exit code in either
-# of its two output shapes. We keep these as explicit patterns
-# instead of a generic "contains 'exit'" heuristic to avoid false
-# positives on a Read of a log file or a grep result.
-_DEFAULT_SHELL_BG_FAIL_RE = re.compile(r"^Background process exited immediately \(code (\d+)\)")
+# Shell tool's failure conventions — non-zero exit code in each of
+# its output shapes. We keep these as explicit patterns instead of a
+# generic "contains 'exit'" heuristic to avoid false positives on a
+# Read of a log file or a grep result.
+#
+# One pattern per emitting call site. Each must stay literal-for-
+# literal with the f-string it mirrors; the module docstring names
+# the drift that motivated the pinning test.
+
+# ``ProcessSupervisor.run_foregrounded`` — the foreground path of
+# run_shell_command, the highest-traffic tool in the product. Every
+# non-zero exit arrives in this shape.
+_DEFAULT_SHELL_EXEC_FAIL_RE = re.compile(r"^Command exited with code (\d+)")
+
+# ``ProcessSupervisor.run_backgrounded`` — the spawned process died
+# inside the 3 s startup window. The sibling "finished during startup
+# window (code 0)" wording is a success and deliberately unmatched.
+_DEFAULT_SHELL_BG_FAIL_RE = re.compile(r"^Background process exited with code (\d+)")
+
+# ``ShellTools.await_process`` / ``watch_process`` — a background
+# process the agent was waiting on has ended.
 _DEFAULT_SHELL_EXIT_FAIL_RE = re.compile(r"^\[Exited with code (\d+)")
 
 _DEFAULT_ERROR_PREFIXES: tuple[str, ...] = ("Error:",)
+
+# A call kept from running because the person said no, or because
+# nobody could be asked — ``bypass_guard.NOT_RUN``. Not a failure: the
+# card shows it as rejected, neither green nor red.
+_DEFAULT_REJECTED_PREFIXES: tuple[str, ...] = ("Not run:",)
 _DEFAULT_FAILURE_REGEXES: tuple[re.Pattern[str], ...] = (
+    _DEFAULT_SHELL_EXEC_FAIL_RE,
     _DEFAULT_SHELL_BG_FAIL_RE,
     _DEFAULT_SHELL_EXIT_FAIL_RE,
 )
@@ -69,13 +102,15 @@ class ToolResultErrorDetector:
         self,
         error_prefixes: Sequence[str] = _DEFAULT_ERROR_PREFIXES,
         failure_regexes: Sequence[re.Pattern[str]] = _DEFAULT_FAILURE_REGEXES,
+        rejected_prefixes: Sequence[str] = _DEFAULT_REJECTED_PREFIXES,
     ) -> None:
+        self._rejected_prefixes: tuple[str, ...] = tuple(rejected_prefixes)
         self._error_prefixes: tuple[str, ...] = tuple(error_prefixes)
         self._failure_regexes: tuple[re.Pattern[str], ...] = tuple(failure_regexes)
 
     @classmethod
     def default(cls) -> ToolResultErrorDetector:
-        """Return the production detector — ember-code's shell +
+        """Return the production detector — igni's shell +
         ``Error:`` prefix bundle.
 
         Mirrors :meth:`AgnoToolEventFormatter.__init__`'s default
@@ -86,7 +121,13 @@ class ToolResultErrorDetector:
         return cls(
             error_prefixes=_DEFAULT_ERROR_PREFIXES,
             failure_regexes=_DEFAULT_FAILURE_REGEXES,
+            rejected_prefixes=_DEFAULT_REJECTED_PREFIXES,
         )
+
+    def is_rejected(self, result: str) -> bool:
+        """Return True when the call was kept from running rather than failed."""
+        stripped = (result or "").lstrip()
+        return any(stripped.startswith(prefix) for prefix in self._rejected_prefixes)
 
     def is_error(self, result: str) -> bool:
         """Return True when ``result`` matches any configured

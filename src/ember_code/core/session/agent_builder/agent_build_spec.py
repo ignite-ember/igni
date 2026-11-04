@@ -31,6 +31,8 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict
 
+from ember_code.core.agno_telemetry import AgnoTelemetry
+
 
 class AgentBuildSpec(BaseModel):
     """All 25 kwargs the main ``Agent(...)`` call receives.
@@ -94,6 +96,9 @@ class AgentBuildSpec(BaseModel):
     # ── Tool event hooks ──
     tool_hooks: list[Any]
 
+    # ── Agno's own run telemetry (``core/agno_telemetry.py``) ──
+    telemetry: bool = AgnoTelemetry.CONSTRUCTOR_VALUE
+
     def instantiate(self, agent_cls: Any) -> Any:
         """Construct the Agno agent from this spec.
 
@@ -138,4 +143,5 @@ class AgentBuildSpec(BaseModel):
             learning=self.learning,
             add_learnings_to_context=self.add_learnings_to_context,
             tool_hooks=self.tool_hooks,
+            telemetry=self.telemetry,
         )

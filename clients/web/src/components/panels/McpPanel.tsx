@@ -2,7 +2,7 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react
 import type { IgniClient } from "../../protocol/client";
 import { Drawer } from "./Drawer";
 import { ChevronIcon } from "../Icons";
-import { Skeleton } from "../Skeleton";
+import { Skeleton } from "@ignite-ember/ui-react";
 
 interface McpResource {
   uri: string;
@@ -363,6 +363,11 @@ export function McpPanel({
     setBusy(s.name);
     try {
       await client.mcpToggle(s.name, !s.connected);
+    } catch (e) {
+      // Called as `void toggle(s)`: without this a timeout or a dropped
+      // socket was an unhandled rejection. The re-read below shows the
+      // server's real state, and its error when it has one.
+      console.error(e);
     } finally {
       setBusy(null);
       void refresh();

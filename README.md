@@ -1,5 +1,7 @@
 # igni
 
+[![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/ignite-ember/igni/badge)](https://scorecard.dev/viewer/?uri=github.com/ignite-ember/igni)
+
 **One spark ignites a team.** An AI coding assistant built with [Agno](https://github.com/agno-agi/agno) orchestration.
 
 [ignite-ember.sh](https://ignite-ember.sh)
@@ -33,33 +35,54 @@ The architectural choices that drive the gap: (1) **CodeIndex queried first, not
 |---|---|---|
 | Architecture | Single agent loop | Multi-agent teams (Agno) |
 | Task routing | Manual sub-agent spawning | Automatic via Coordinate/Route modes |
-| Code intelligence | Grep + file reads | CodeIndex semantic search (included free) |
-| Knowledge base | None | ChromaDB vector store with custom embeddings |
+| Code intelligence | Grep + file reads | Shell-first reads; CodeIndex semantic search as a licensed extension |
+| Project knowledge | None | The Artifacts extension (licensed; its own Neo4j store), served through your igni server |
 | Planning | Plan mode (read-only) | Agno reasoning + Tasks mode |
-| IDE integration | MCP server (stdio) | MCP server + client (Agno MCPTools) |
+| IDE integration | MCP server (stdio) | None — igni ships the desktop app, the web client and the CLI; MCP client (Agno MCPTools) |
 | Extensibility | Plugins, hooks, MCP | Agents + hooks + toolkits + MCP |
 | Agent evals | Not built-in | Built-in regression testing framework |
 | Memory | File-based MEMORY.md | Agno Memory + DB-backed storage |
 | Learning | None | Agno LearningMachine (user profiles, entity memory) |
 | Guardrails | None | PII detection, prompt injection, moderation |
 | HITL | Implicit | Explicit confirmation/input requirements |
-| Default model | Anthropic Claude | MiniMax M2.7 (model-agnostic, swappable) |
+| Default model | Anthropic Claude | Whatever your igni server routes to, or your own (model-agnostic) |
 
 ## Quick Start
 
 ```bash
 brew install ignite-ember/tap/ignite-ember  # or: pip install ignite-ember
-igni                             # start coding
+cd your-project
+igni -m "In one sentence, what does this project do?"
 ```
 
 `igni` is the command; `ignite-ember` is kept as an alias so existing
 shell aliases and scripts keep working. Both are the same entry point.
+On the command line it runs **one task and exits** (`-m`, or `-p` for a
+pipe); there is no terminal chat UI any more — run it bare and it says so.
+The interactive chat is the desktop app and the web client. A headless run cannot ask before it runs a command, so decide
+up front what it may do — see
+[A headless run cannot ask you anything](QUICKSTART.md#a-headless-run-cannot-ask-you-anything).
 
-To point it at your own igni server, set `api_url` in
-`.igni/config.local.yaml` and type `/login` **inside** a session — it is a
-slash command, not a shell subcommand. `igni /login` at a shell prompt
-answers `Error: No such command`, which is what this Quick Start used to
-tell you to run.
+To point it at your own igni server, set `api_url` in your user config,
+`~/.igni/config.yaml` — not a project's `.igni/config.yaml` or
+`config.local.yaml`, which may not name a server and are ignored for it,
+with a warning — and run `igni login` (or `igni login --token-stdin` with a
+token). That writes `~/.igni/credentials.json`, which `igni -m` and the desktop
+app both use. `/login` is not a shell subcommand: `igni /login` answers
+`Error: No such command`.
+
+```yaml
+# ~/.igni/config.yaml
+api_url: https://igni-api.acme.example
+# Only when the portal (the sign-in page) is not on the API's origin,
+# e.g. the API on :7777 and the portal on :3000:
+portal_url: https://igni.acme.example
+```
+
+`portal_url` is worked out from `api_url` when both run under one name and
+differ by a host label (`api.acme.example` → `acme.example`); set it when
+they differ any other way, such as by port, or sign-in opens a page the API
+does not serve.
 
 Or bring your own model (OpenAI, Anthropic, Groq, Ollama, etc.):
 
@@ -88,12 +111,15 @@ See [Quickstart](QUICKSTART.md) for the full setup guide.
 1. **Install** — `brew install ignite-ember/tap/ignite-ember` (or `pip install ignite-ember`)
 2. **Configure a model** — set `OPENAI_API_KEY` (or any provider key) and add the
    model to `.igni/config.yaml`; or point `api_url` at your igni server and run
-   `/login` inside a session
-3. **Run** — `igni`
+   `igni login`
+3. **Run** — `igni -m "…"`, or the desktop app
 
 See [Quickstart](QUICKSTART.md) for the full guide.
 
 ## Upgrading
+
+The VS Code and JetBrains extensions are no longer shipped or supported;
+release notes below that mention them are history.
 
 ### Rebrand + signed desktop app (v0.7.0 → v0.7.1)
 
@@ -189,36 +215,32 @@ If `brew upgrade` doesn't work or you encounter issues, manually reinstall:
 brew uninstall ignite-ember && brew untap ignite-ember/tap && brew tap ignite-ember/tap && brew install ignite-ember
 ```
 
-## TUI Mode
+## Clients
 
-`ignite-ember` launches the Textual-based terminal UI by default. The backend runs as a separate process, connected via Unix socket.
+The Textual terminal UI was removed in v0.9.7, and the VS Code and JetBrains
+extensions are no longer shipped. igni ships the desktop app (Tauri), the web
+client and the CLI. The desktop app and the web client share one web UI
+(`clients/web`); the desktop app talks to the backend over a Unix socket
+(`python -m ember_code.backend --socket <path>`). Features: streaming
+responses, agent tree visualization, token tracking, session picker, keyboard
+shortcuts, HITL confirmation dialogs. In a terminal, `igni -m` and `igni -p`
+run one task.
 
-Features: streaming responses, agent tree visualization, token tracking, session picker, keyboard shortcuts, HITL confirmation dialogs.
+## MCP
 
-## IDE Integration
-
-Dedicated extensions for **VS Code** and **JetBrains** (IntelliJ, PyCharm, WebStorm, etc.) ship the igni backend embedded in the extension — install from each marketplace and the chat surface lives inside your IDE; no MCP setup needed.
-
-In the other direction, igni acts as an MCP *client*: configure external MCP servers via `/mcp` or the MCP panel and their tools become available to the agent.
+igni acts as an MCP *client*: configure external MCP servers via `/mcp` or the MCP panel and their tools become available to the agent.
 
 > *Exposing igni itself as an MCP server (so any MCP-compatible IDE — Cursor, Windsurf, etc. — can connect to it) is on the roadmap; the `ignite-ember mcp serve` subcommand isn't shipped yet.*
 
 ## Key Features
 
-### Knowledge Base
+### Project knowledge
 
-Built-in vector knowledge base powered by ChromaDB and a local embedding model (all-MiniLM-L6-v2 — no API call, nothing leaves the machine):
-
-```yaml
-knowledge:
-  enabled: true
-  collection_name: "my_project"
-  # Embeddings are local (all-MiniLM-L6-v2) and not configurable — this
-  # line offered a choice between a local model and a cloud one, and
-  # `KnowledgeConfig` has no `embedder` field at all.
-```
-
-Add content via slash commands: `/knowledge add <url|path|text>`, search with `/knowledge search <query>`. Agents can search the knowledge base automatically during execution.
+There is no knowledge base in igni itself any more: the `knowledge:` settings
+and `/knowledge` commands left with the Artifacts module, a separate licensed
+service that keeps project documents and decisions in its own Neo4j store and
+ships its extension through your igni server. A super admin approves the
+service once; signed-in people get its tools.
 
 ### Learning & Reasoning
 
@@ -238,7 +260,7 @@ guardrails:
 
 ### Human-in-the-Loop (HITL)
 
-Agents can pause execution to request confirmation or user input before proceeding with sensitive operations. The TUI shows interactive approval dialogs.
+Agents can pause execution to request confirmation or user input before proceeding with sensitive operations. The desktop app and the web client show interactive approval dialogs; a headless `igni -m` cannot, so it follows the permission policy and stops at anything only a person could approve.
 
 ## Documentation
 
@@ -250,12 +272,20 @@ Agents can pause execution to request confirmation or user input before proceedi
 - [Tools](docs/TOOLS.md) — Available toolkits and capabilities
 - [MCP](docs/MCP.md) — IDE integration via Model Context Protocol
 - [Configuration](docs/CONFIGURATION.md) — Settings, permissions, and customization
-- [CodeIndex](docs/CODEINDEX.md) — Semantic code intelligence engine
+- CodeIndex — semantic code intelligence engine; an extension, documented in the CodeIndex repository (`igni__code-index/docs/igni-integration.md`)
 - [Benchmarks](docs/BENCHMARKS.md) — Head-to-head comparison vs Claude Code on a 12-case suite
 - [Evals](docs/EVALS.md) — Agent evaluation framework and regression testing
 - [Hooks](docs/HOOKS.md) — Pre/post tool execution hooks
+- [Extensibility Floor](docs/EXTENSIBILITY.md) — The contract extensions build against, and what it guarantees them
+- [Platform Plan](docs/PLATFORM_PLAN.md) — What has to be built for the single-user and shared backends, in order
+- [UI package](clients/ui/README.md) — The tokens, classes and components an extension builds against
+- [Design System](docs/DESIGN_SYSTEM.md) — The scales, the primitives, and what still needs a human eye
+- [Build Plan](docs/BUILD_PLAN.md) — The same work as ordered items, with the files they touch and how each one is verified
 - [Migration](docs/MIGRATION.md) — Coming from Claude Code or Codex
 - [Security](docs/SECURITY.md) — Threat model, permissions, and enterprise hardening
+- [Reporting a vulnerability](SECURITY.md) — where to send it, and what happens next
+- [Verifying a release](docs/VERIFYING_RELEASES.md) — checksums, SBOMs, build provenance and signatures, online and air-gapped
+- [Vulnerability management](docs/VULNERABILITY_MANAGEMENT.md) — what is scanned, what gates, and the remediation targets
 - [Development](docs/DEVELOPMENT.md) — Contributing and extending igni
 
 ## License

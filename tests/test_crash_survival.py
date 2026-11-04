@@ -30,6 +30,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from ember_code.backend.run_controller import RunController as BackendRunController
 from ember_code.backend.schemas_lifecycle import InterruptedRunSummary
 from ember_code.backend.server import BackendServer
 from ember_code.backend.server_lifecycle import LifecycleController
@@ -380,7 +381,7 @@ class TestInterruptedDetectionUsesPendingStore:
         await lifecycle.detect_interrupted_run()
 
         assert runs.interrupted_summary is not None
-        s = runs.interrupted_summary.summary_text
+        s = runs.interrupted_summary.recap
         assert "interrupted" in s.lower()
         assert "what's the meaning of life" in s.lower()
 
@@ -472,6 +473,82 @@ class TestPeriodicCheckpoint:
         # the goal once we fix the swallow) or stopped (current
         # behaviour). The test pins the swallow once implemented.
         assert calls >= 1
+
+
+class TestTheRecapMatchesItsDelivery:
+    """The recap is written at startup and read on the next message.
+
+    Those are two different situations and the note used to describe only the
+    first. Every delivery through ``RunController`` is the second: the user
+    typed something, the summary rides along with it, and the agent was told
+    "The user has not yet sent a new message" directly above the message they
+    had sent — then offered a choice between continuing, recapping, or asking
+    for direction, while the actual instruction sat one line below.
+    """
+
+    def _summary(self) -> InterruptedRunSummary:
+        return InterruptedRunSummary(
+            recap=(
+                "Previous run was interrupted before completion. "
+                "The user had asked: 'rename the total field'."
+            ),
+            pending_ids_to_drop=["m1"],
+        )
+
+    def test_the_recap_itself_carries_no_instruction(self):
+        """What is stored is what happened. What to do about it depends on a
+        fact the builder does not have yet, so it is not baked in."""
+        recap = self._summary().recap
+
+        assert "interrupted" in recap.lower()
+        assert "has not yet sent" not in recap
+        assert "Decide whether to continue" not in recap
+
+    def test_delivered_alone_it_says_nobody_has_spoken(self):
+        rendered = self._summary().render(awaiting_user=True)
+
+        assert "The user has not yet sent a new message." in rendered
+        assert rendered.startswith("Previous run was interrupted")
+
+    def test_delivered_with_a_message_it_does_not_claim_silence(self):
+        rendered = self._summary().render(awaiting_user=False)
+
+        assert "has not yet sent" not in rendered
+        assert "Their message below was sent after that." in rendered
+        assert "you cannot see how far it got" in rendered
+
+    @pytest.mark.parametrize("text", ["try that again", "  retry  "])
+    def test_the_controller_picks_the_accompanied_wording(self, text):
+        """The wiring, not just the schema: a controller holding a summary
+        renders it against the text of the message being sent."""
+        runs = BackendRunController.__new__(BackendRunController)
+        runs._interrupted_summary = self._summary()
+
+        note = runs._consume_interrupted_note(text)
+
+        assert note is not None
+        assert "has not yet sent" not in note
+
+    @pytest.mark.parametrize("text", ["", "   ", None])
+    def test_an_empty_submit_keeps_the_original_wording(self, text):
+        """A resume with no user text is the one case the old sentence
+        described, and it stays described."""
+        runs = BackendRunController.__new__(BackendRunController)
+        runs._interrupted_summary = self._summary()
+
+        note = runs._consume_interrupted_note(text)
+
+        assert note is not None
+        assert "The user has not yet sent a new message." in note
+
+    def test_it_is_one_shot(self):
+        """Consumed on the first read, however it rendered — otherwise the
+        recap resurfaces on every later turn of the same session."""
+        runs = BackendRunController.__new__(BackendRunController)
+        runs._interrupted_summary = self._summary()
+
+        assert runs._consume_interrupted_note("go on") is not None
+        assert runs._consume_interrupted_note("and again") is None
 
 
 # Used by the type checker / pyright; importing here makes the

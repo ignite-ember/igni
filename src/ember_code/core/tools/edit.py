@@ -28,14 +28,9 @@ class FileEditNotifier:
     - :class:`EmberEditTools` calls :meth:`notify` after every
       successful write.
 
-    Downstream clients react to ``file_edited`` PushNotifications:
-
-    - JetBrains plugin  -> ``LocalFileSystem.refreshAndFindFileByPath``
-      (Local History captures the change, open editor tabs reload,
-      the "modified externally" prompt stops firing).
-    - VSCode extension  -> ``workspace.openTextDocument`` reveal +
-      ``editor.action.revert`` reload.
-    - Tauri / web       -> no-op (the FE doesn't own an editor).
+    A client with an editor buffer can react to ``file_edited``
+    PushNotifications. Neither the desktop app nor the web client owns
+    one, so for them it is a no-op.
     """
 
     def __init__(self, listener: Callable[[str], None] | None = None) -> None:

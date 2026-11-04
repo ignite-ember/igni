@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import shutil
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Literal
 
 from ember_code.core.agents.markdown import AgentMarkdownFile
 from ember_code.core.agents.schemas import (
@@ -26,6 +26,15 @@ from ember_code.core.agents.schemas import (
 )
 from ember_code.core.paths import CONFIG_DIR
 from ember_code.core.tools.registry import ToolRegistry
+
+#: Where a promoted agent goes: the project's ``.igni/agents/`` (committed,
+#: shared with the team) or ``.igni/agents.local/`` (ignored, yours only).
+PromoteTarget = Literal["project", "personal"]
+
+_PROMOTE_DIRS: dict[str, tuple[str, AgentPriority]] = {
+    "project": ("agents", AgentPriority.PROJECT_EMBER),
+    "personal": ("agents.local", AgentPriority.PROJECT_LOCAL),
+}
 
 if TYPE_CHECKING:
     from agno.agent import Agent
@@ -146,22 +155,38 @@ class EphemeralAgentStore:
             if entry.definition.source_path and self._dir in entry.definition.source_path.parents
         ]
 
-    def promote(self, name: str, project_dir: Path) -> Path:
-        """Move an ephemeral's ``.md`` to the permanent agents dir
-        and re-tag it in the pool."""
+    def promote(self, name: str, project_dir: Path, target: str = "project") -> Path:
+        """Move an ephemeral's ``.md`` to a permanent agents dir and re-tag it.
+
+        ``target`` is ``"project"`` — ``.igni/agents/``, committed with the
+        project and shared with the team — or ``"personal"`` —
+        ``.igni/agents.local/``, which ``.igni/.gitignore`` keeps out of git.
+        A file already at the destination is not replaced: it is somebody's
+        agent, most likely the team's.
+        """
+        if target not in _PROMOTE_DIRS:
+            raise ValueError(
+                f"Unknown promote target '{target}': use project (--project) or "
+                "personal (--personal)."
+            )
+        subdir, priority = _PROMOTE_DIRS[target]
         entry = self._pool.get_entry(name)
         defn = entry.definition
         if not defn.source_path or self._dir not in defn.source_path.parents:
             raise ValueError(f"Agent '{name}' is not an ephemeral agent.")
 
-        dest_dir = project_dir / CONFIG_DIR / "agents"
-        dest_dir.mkdir(parents=True, exist_ok=True)
+        dest_dir = project_dir / CONFIG_DIR / subdir
         dest_path = dest_dir / defn.source_path.name
+        if dest_path.exists():
+            raise ValueError(
+                f"{dest_path} already exists; rename or remove it, or discard '{name}'."
+            )
+        dest_dir.mkdir(parents=True, exist_ok=True)
 
         shutil.move(str(defn.source_path), str(dest_path))
 
         defn.source_path = dest_path
-        self._pool.upsert_entry(AgentEntry(definition=defn, priority=AgentPriority.PROJECT_EMBER))
+        self._pool.upsert_entry(AgentEntry(definition=defn, priority=priority))
         return dest_path
 
     def discard(self, name: str) -> None:

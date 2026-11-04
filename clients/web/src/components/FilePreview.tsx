@@ -2,8 +2,7 @@
  * FilePreview — plain-browser fallback for `host.openFile()`.
  *
  * Only ever instantiated when no native host bridge is available
- * (Tauri / VSCode / JetBrains route the open through their own
- * editor). For a regular browser there's nothing better we can do,
+ * (the desktop app routes the open through the OS). For a regular browser there's nothing better we can do,
  * so we read the file via `read_file` and render it in a code block
  * with a path / copy / close affordance.
  */

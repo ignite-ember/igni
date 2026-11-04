@@ -1,7 +1,7 @@
 """Authentication slash commands: ``/login``, ``/logout``, ``/whoami``.
 
 Extracted from :mod:`ember_code.backend.command_handler` — three
-commands for the Ember Cloud auth surface.
+commands for the igni server auth surface.
 
 * ``/login`` — dispatches the login action; the transport
   layer opens the browser + handles the OAuth callback.

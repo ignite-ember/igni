@@ -192,6 +192,7 @@ class ToolCompletedHandler(EventHandler):
             diff_rows=data.diff_rows,
             run_id=header.run_id,
             is_error=is_error,
+            is_rejected=self._error_detector.is_rejected(data.full_result),
         )
 
 

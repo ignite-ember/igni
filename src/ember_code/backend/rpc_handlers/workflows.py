@@ -20,7 +20,7 @@ if TYPE_CHECKING:
 
 
 class WorkflowsRpcHandler(RpcHandler):
-    """Discover and run ``.claude/workflows/*.mjs`` scripts.
+    """Discover and run ``.igni/workflows/*.mjs`` scripts.
 
     Discovery is read-only and cached. ``run_workflow`` is the
     async entry point — it returns the ``workflow_run_id``

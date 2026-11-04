@@ -229,7 +229,6 @@ def test_plan_mode_allows_read_tools() -> None:
     ev = PermissionEvaluator.from_strings(mode="plan")
     assert ev.evaluate("WebSearch", {"query": "x"}) is PermissionDecision.ALLOW
     assert ev.evaluate("fetch_url", {"url": "https://x.test"}) is PermissionDecision.ALLOW
-    assert ev.evaluate("CodeIndex", {"cypher": "MATCH (n) RETURN n"}) is (PermissionDecision.ALLOW)
 
 
 def test_plan_mode_allows_readonly_shell() -> None:

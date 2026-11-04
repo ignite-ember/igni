@@ -52,13 +52,27 @@ class DiscoverMarkdownCommands(Protocol):
     .discover_markdown_commands` — kept as a Protocol (not a
     direct import reference) so tests can substitute a bare
     ``MagicMock`` without pulling in the real discovery chain.
+
+    It has to match *exactly*, parameter for parameter: a Protocol
+    is the only description of the dependency a type-checker ever
+    sees, so anything it omits is a call the checker cannot verify.
+    This one omitted ``group_dir`` — which
+    :meth:`MarkdownCommandDispatcher.try_render` has always passed —
+    and the omission survived because ``call-arg`` sat in the
+    project-wide ``disable_error_code`` list (SWU-100). Both halves
+    are fixed: the signature below is the real function's, and
+    ``pyproject.toml`` re-enables ``call-arg`` for this module.
+
+    Parameters are positional-or-keyword (no ``*``) because that is
+    how the real function declares them; the call site passes the
+    last two by keyword regardless.
     """
 
     def __call__(
         self,
         project_dir: Path,
-        *,
         read_claude: bool = True,
+        group_dir: Path | None = None,
     ) -> dict[str, MarkdownCommand]: ...
 
 

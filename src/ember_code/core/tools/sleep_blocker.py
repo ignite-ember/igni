@@ -100,8 +100,8 @@ class SleepBlocker:
             # ``-i`` prevents idle system sleep. ``-w`` ties the
             # assertion's lifetime to this process, so a crash here
             # cannot leave the machine awake indefinitely.
-            self._popen = subprocess.Popen(
-                ["caffeinate", "-i", "-w", str(os.getpid())],
+            self._popen = subprocess.Popen(  # noqa: S603 — a fixed argv list, no shell
+                ["caffeinate", "-i", "-w", str(os.getpid())],  # noqa: S607 — macOS's caffeinate from PATH
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
             )

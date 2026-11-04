@@ -7,7 +7,10 @@ used to sit inline in the pre-refactor
 * :class:`SessionDataService` for reads (so a corrupt row on
   disk drops silently rather than sinking the whole read),
 * Agno's ``db.rename_session`` directly for the write path (it's
-  a dedicated column-level update, not a ``session_data`` merge).
+  a dedicated column-level update, not a ``session_data`` merge),
+* :class:`TitleAsker` for the model call that makes a title — not
+  Agno's ``aset_session_name``, which blocks the event loop (see
+  that module).
 
 The wrapper-stripping rule (``**Title**`` / ``# Title`` /
 ``"Title"``) is expressed via :class:`SessionTitle` — the model
@@ -24,6 +27,7 @@ from agno.db.base import SessionType
 
 from ember_code.core.session.persistence.data_service import SessionDataService
 from ember_code.core.session.persistence.db_protocol import AgnoSessionDb
+from ember_code.core.session.persistence.title_asker import TitleAsker
 from ember_code.core.session.schemas import PersistResult, SessionTitle
 
 logger = logging.getLogger(__name__)
@@ -31,6 +35,10 @@ logger = logging.getLogger(__name__)
 
 class SessionNamer:
     """Coordinator for the session name orbit."""
+
+    # A title is made from the first message, and the second when the
+    # first is too short to say what the session is about.
+    _OPENING_RUNS = 2
 
     def __init__(
         self,
@@ -49,15 +57,15 @@ class SessionNamer:
         """
         self._session_id = new_session_id
 
-    async def auto_name(self, executor: Any) -> str:
-        """Ask Agno to auto-generate a session name from
-        conversation.
+    async def auto_name(self, model: Any, *, model_busy: bool = False) -> str:
+        """Title a session that has none, from its first message(s).
 
-        Returns the resulting (cleaned) name, or an empty string
-        when no name could be produced. Wrapper decoration is
-        stripped via :class:`SessionTitle` before the cleaned
-        form is persisted back — callers get a display-ready
-        string and no longer see markdown-wrapped names.
+        Returns the title, or ``""`` when the session has nothing to
+        title yet. The model is asked through :class:`TitleAsker` —
+        async, bounded, with the opening only — and when it is busy
+        with the person's work (``model_busy``) it is not asked at
+        all: the title is the opening's first words, so naming never
+        queues behind a run on the only GPU slot.
         """
         # Fast path: if the session already has a name, return the
         # cleaned form without asking the model. Pre-cleanup DB
@@ -66,23 +74,37 @@ class SessionNamer:
         existing = await self.get_name()
         if existing:
             return existing
-        try:
-            if hasattr(executor, "aset_session_name"):
-                await executor.aset_session_name(
-                    session_id=self._session_id,
-                    autogenerate=True,
-                )
-        except Exception as exc:
-            logger.debug("Failed to auto-name session: %s", exc)
+        opening = TitleAsker.opening(await self._opening_messages())
+        if not opening:
             return ""
-        # Re-read the raw name Agno just wrote and clean it. If the
-        # cleaned form differs from what Agno persisted, replace
-        # it so the session list never surfaces the wrapped variant.
-        raw_after = await self._get_name_raw()
-        title = SessionTitle(raw=raw_after)
-        if title.cleaned and title.cleaned != raw_after:
-            await self.rename(title.cleaned)
-        return title.cleaned
+        if model_busy:
+            title = TitleAsker.fallback(opening)
+        else:
+            title = await TitleAsker(model).ask(opening)
+        if not title:
+            return ""
+        written = await self.title(title)
+        return title if written.ok else ""
+
+    async def _opening_messages(self) -> list[str]:
+        """What the person sent in the session's first runs."""
+        if self._db is None:
+            return []
+        try:
+            session = await self._db.get_session(
+                session_id=self._session_id,
+                session_type=SessionType.AGENT,
+                deserialize=True,
+            )
+        except Exception as exc:
+            logger.debug("Failed to read the session to title it: %s", exc)
+            return []
+        texts: list[str] = []
+        for run in (getattr(session, "runs", None) or [])[: self._OPENING_RUNS]:
+            content = getattr(getattr(run, "input", None), "input_content", None)
+            if isinstance(content, str) and content.strip():
+                texts.append(content)
+        return texts
 
     async def rename(self, new_name: str) -> PersistResult:
         """Manually rename the current session.
@@ -104,6 +126,20 @@ class SessionNamer:
             logger.debug("Failed to rename session: %s", exc)
             return PersistResult(ok=False, error=str(exc))
         return PersistResult(ok=True)
+
+    async def title(self, name: str) -> PersistResult:
+        """Name the session, whether or not it has a row yet.
+
+        :meth:`rename` updates a row, and a session has none until its
+        first run completes. A chat opened for a service's thread
+        (``docs/CLOUD.md`` §6.1) is titled before anything has run in it,
+        so this writes the name into the row, creating it if it is not
+        there — the run that comes fills the rest in.
+        """
+        renamed = await self.rename(name)
+        if not renamed.ok or await self.get_name():
+            return renamed
+        return await self._data.write_key("session_name", name)
 
     async def get_name(self) -> str:
         """Get the current session's name from the database.

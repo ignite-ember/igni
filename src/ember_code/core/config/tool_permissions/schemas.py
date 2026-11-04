@@ -317,16 +317,11 @@ class ToolPermissionDefaults(BaseModel):
             "Edit": "ask",
             "Bash": "ask",
             "BashOutput": "ask",
-            "WebSearch": "allow",
-            "WebFetch": "allow",
+            # Asked, not allowed: a request out of the network needs a
+            # person's yes by default (``permissions.web_*: allow`` opts out).
+            "WebSearch": "ask",
+            "WebFetch": "ask",
             "NotebookEdit": "ask",
-            # Read-only by construction: ``codeindex_cypher`` is the toolkit's
-            # only function and ``assert_read_only_cypher`` rejects every
-            # mutating clause before the query reaches the driver. Read-only
-            # by construction, so listed here rather than left to the ``"ask"``
-            # fallback — which is what silently gated it in the main agent's
-            # toolkit.
-            "CodeIndex": "allow",
         }
     )
 
@@ -377,6 +372,16 @@ class CategoryToToolMap(BaseModel):
             pairs.append((cfg.web_search, self.web_search_tools))
         if cfg.web_fetch is not None:
             pairs.append((cfg.web_fetch, self.web_fetch_tools))
+        return pairs
+
+    def iter_config_fields(self, cfg: PermissionsConfig) -> list[tuple[str, list[str]]]:
+        """``(PermissionsConfig field name, [tool names])`` for every category
+        this map knows — the field name being what ``final_fields`` records."""
+        pairs: list[tuple[str, list[str]]] = [
+            (category.value, tools) for category, tools in self.canonical.items()
+        ]
+        pairs.append(("web_search", self.web_search_tools))
+        pairs.append(("web_fetch", self.web_fetch_tools))
         return pairs
 
 

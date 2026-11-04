@@ -45,7 +45,6 @@ class InstructionsBuilder:
         settings: Any,
         output_styles: dict,
         active_output_style_name: str,
-        codeindex_available: bool,
     ) -> None:
         self._project_dir = project_dir
         self._project_instructions = project_instructions
@@ -53,7 +52,6 @@ class InstructionsBuilder:
         self._settings = settings
         self._output_styles = output_styles
         self._active_output_style_name = active_output_style_name
-        self._codeindex_available = codeindex_available
 
     def append_project_instructions(self, out: list[str]) -> None:
         """Append the igni.md / CLAUDE.md project instructions."""
@@ -93,12 +91,9 @@ class InstructionsBuilder:
     def append_plan_mode_nudge(self, out: list[str]) -> None:
         """Append the plan-mode instructions block.
 
-        Base prose is always included; the CodeIndex-variant
-        extension is appended when the index is populated for the
-        current HEAD (avoids telling the agent to use a tool
-        whose results will be empty).
+        As extensions have shaped it; see :class:`PlanModeNudge`.
         """
-        nudge = PlanModeNudge(codeindex_available=self._codeindex_available)
+        nudge = PlanModeNudge()
         out.append(nudge.render())
 
     def append_output_style(self, out: list[str]) -> None:

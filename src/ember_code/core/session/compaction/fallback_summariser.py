@@ -151,7 +151,7 @@ class FallbackSummariser:
                     if len(snippet) > self._TRANSCRIPT_MSG_CAP:
                         snippet = snippet[: self._TRANSCRIPT_MSG_CAP] + "…"
                     lines.append(f"{msg.role.upper()}: {snippet}")
-            except Exception:
+            except Exception:  # noqa: S112 — an unreadable message is left out of a best-effort summary
                 continue
         if not lines:
             return ""

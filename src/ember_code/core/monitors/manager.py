@@ -24,6 +24,7 @@ import contextlib
 import logging
 from pathlib import Path
 
+from ember_code.core.activity import BusyKind, background
 from ember_code.core.monitors.config import MonitorConfig
 from ember_code.core.monitors.handle import MonitorHandle
 from ember_code.core.monitors.models import (
@@ -120,8 +121,12 @@ class MonitorManager:
             await handle.start()
         if name not in self._supervisors or self._supervisors[name].done():
             supervisor = MonitorSupervisor(handle, self._evaluator)
-            self._supervisors[name] = asyncio.create_task(
-                supervisor.run(), name=f"monitor-supervisor-{name}"
+            # A monitor that runs keeps igni busy until it stops.
+            self._supervisors[name] = background.start(
+                supervisor.run(),
+                holder=f"monitor:{name}",
+                reason="watching",
+                kind=BusyKind.MONITOR,
             )
         return handle
 

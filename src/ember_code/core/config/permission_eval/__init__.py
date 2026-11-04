@@ -2,9 +2,18 @@
 
 Package: parses ``Tool(pattern)`` rules, holds a
 :class:`PermissionMode`, and walks the 6-step evaluation pipeline
-(``hooks → deny → ask → mode → allow → defer``). No I/O, no
+(``hooks → deny → mode → ask → allow → defer``). No I/O, no
 network, no interactive prompts — those happen in the layer that
 calls this evaluator (the tool-event hook, eventually a UI bridge).
+
+Mode before ask is the one place this diverges from Claude Code's
+documented order, and it is deliberate — see the note in
+:class:`PermissionEvaluator`'s docstring. Claude Code runs ask
+first, which lets an explicit ``ask: Bash`` rule keep prompting
+even after the user turns on ``bypassPermissions``; here the mode
+shortcut wins instead, so ``/bypass on`` means what it says. Deny
+stays first either way: it is the safety floor, and nothing —
+mode included — reopens what a deny rule closed.
 
 Modelled on ``code.claude.com/docs/en/agent-sdk/permissions``. The
 TS-only ``auto`` mode (model classifier) is intentionally absent

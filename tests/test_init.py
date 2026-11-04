@@ -75,7 +75,7 @@ class TestInitializeProject:
 
 
 class TestHomeModelMigration:
-    """Older versions wrote a bundled Ember Cloud model entry into
+    """Older versions wrote a bundled igni server model entry into
     every home config. Hosted models now come from cloud discovery
     on session start, so those bundled rows are stale and get
     stripped on upgrade. User-customised entries are left alone."""
@@ -116,7 +116,7 @@ class TestHomeModelMigration:
 
     def test_legacy_m27_bundle_is_also_removed(self, tmp_path):
         """The M2.7 bundled entry from the intermediate release is
-        recognised the same way (Ember Cloud URL + ``cloud_token``)
+        recognised the same way (igni server URL + ``cloud_token``)
         and stripped — we never want a shadowed copy of a
         cloud-discovered entry sitting in home config."""
         path = self._write_home_config(

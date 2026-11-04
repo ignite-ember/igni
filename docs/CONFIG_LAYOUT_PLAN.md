@@ -27,7 +27,7 @@ should be true, and what breaks on the way.
 |---|---|---|
 | **Secrets** | `config.local.yaml` — a live provider `api_key` sits at line 19 in this repo right now | `~/.igni` |
 | **State** | `sessions.db`, `data.db`, `state.db` (conversation history, so code and prompts), `attachments/` (34 pasted files here), `process_logs/`, `.checksums.json` | `~/.igni` |
-| **Shareable config** | `agents/`, `skills/`, `commands/`, `rules/`, `output-styles/`, `workflows/`, `hooks/`, `settings.json`, `knowledge.yaml` | committed |
+| **Shareable config** | `agents/`, `skills/`, `commands/`, `rules/`, `output-styles/`, `workflows/`, `hooks/`, `settings.json`, `artifacts.yaml` | committed |
 
 `.gitignore` has `/.ember`, and **zero files are tracked** — which is
 correct, because you cannot commit that directory as it stands. The
@@ -165,7 +165,7 @@ retains the final veto. Nothing to change here.
 
 **Stays in the project.** `agents/`, `skills/`, `commands/`, `rules/`,
 `output-styles/`, `workflows/`, `hooks/`, `settings.json`,
-`knowledge.yaml`.
+`artifacts.yaml`.
 
 ### The awkward part: `config.yaml` has to split
 
@@ -202,7 +202,7 @@ default, and the init flow should stop putting them there.
 ## 3. The rename
 
 **Scope, measured.** 373 references across 110 source files in
-ember-code, 322 more across 51 test files, 16 in ember-server. The
+igni, 322 more across 51 test files, 16 in igni__server. The
 directory name is **not centralised**: 71 sites use the bare literal
 `".ember"`.
 
@@ -229,8 +229,8 @@ repository. The standing "drop all backward compat" rule is about *our*
 deployments; this is data on other people's machines, and a one-time
 directory rename costs almost nothing next to a full reindex.
 
-**One local wrinkle:** in this checkout `ember-server/.ember` is a
-**symlink** to `ember-code/.ember`, so the two share one directory. The
+**One local wrinkle:** in this checkout `igni__server/.ember` is a
+**symlink** to `igni/.ember`, so the two share one directory. The
 migration must not follow symlinks blindly and end up renaming a target
 twice.
 

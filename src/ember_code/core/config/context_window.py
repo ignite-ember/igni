@@ -37,6 +37,7 @@ from typing import Literal
 import httpx
 from pydantic import BaseModel
 
+from ember_code.core.activity.http import busy_call
 from ember_code.core.config.model_entry import ModelRegistryEntry
 
 logger = logging.getLogger(__name__)
@@ -84,13 +85,15 @@ class ContextWindowResolver:
     The optional ``cloud_token`` constructor argument is passed
     through to :meth:`ModelRegistryEntry.resolve_api_key` on every
     fetch so the resolver reuses the caller's already-derived
-    Ember Cloud token rather than re-reading credentials from disk
+    igni server token rather than re-reading credentials from disk
     or the environment.
     """
 
-    def __init__(self, cloud_token: str | None = None) -> None:
+    def __init__(self, cloud_token: str | None = None, server_url: str | None = None) -> None:
         self._cache: dict[str, int] = {}
         self._cloud_token = cloud_token
+        #: igni server's ``api_url``: the one origin the token is sent to.
+        self._server_url = server_url
 
     def resolve(
         self,
@@ -120,10 +123,16 @@ class ContextWindowResolver:
             return self._cache[model_id]
 
         if entry is not None and entry.url:
+            # Only igni server is sent igni server's token (B28).
+            token = (
+                self._cloud_token
+                if ModelRegistryEntry.same_origin(entry.url, self._server_url)
+                else None
+            )
             outcome = await self._fetch_from_api(
                 model_id=model_id,
                 base_url=entry.url,
-                api_key=entry.resolve_api_key(cloud_token=self._cloud_token) or "",
+                api_key=entry.resolve_api_key(cloud_token=token) or "",
             )
             if outcome.value is not None:
                 self._cache[model_id] = outcome.value
@@ -153,7 +162,7 @@ class ContextWindowResolver:
         if api_key:
             headers["Authorization"] = f"Bearer {api_key}"
         try:
-            async with httpx.AsyncClient(timeout=5.0) as client:
+            async with busy_call("model-catalog"), httpx.AsyncClient(timeout=5.0) as client:
                 resp = await client.get(url, headers=headers)
             if resp.status_code != 200:
                 logger.debug(

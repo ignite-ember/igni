@@ -55,3 +55,6 @@ class CliOptions(BaseModel):
     # ── Environment ─────────────────────────────────────────────
     worktree: bool = False
     add_dir: tuple[str, ...] = Field(default_factory=tuple)
+    #: Trust the folder for this run (``core/workspace_trust``), if the
+    #: organisation's policy allows it. Headless runs are untrusted without it.
+    trust: bool = False

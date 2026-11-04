@@ -7,7 +7,7 @@ This module executes arbitrary Python code found in the user's
 via ``importlib.util.spec_from_file_location`` + ``exec_module``.
 There is intentionally NO sandboxing: the tool files come from
 directories the user themselves put code in, on the machine they
-run ember-code on. Treating them as untrusted would require full
+run igni on. Treating them as untrusted would require full
 process isolation (subprocess + seccomp / gVisor / etc.), which is
 out of scope for a CLI developer tool.
 
@@ -19,6 +19,10 @@ What we *do* guard against:
 * Plugin-contributed tool dirs get a namespaced toolkit name
   (``custom_<plugin>_<file>``) so a rogue plugin can't shadow the
   user's own tools.
+
+A project's ``.igni/tools/`` is imported only when the folder is
+trusted (``core/workspace_trust``); an untrusted folder's tools are
+never imported.
 
 What we do NOT guard against: a malicious tool file can do anything
 the calling user can do. This matches Claude Code, JetBrains
@@ -152,8 +156,16 @@ class CustomToolLoader:
         # rewire which tool wins on name conflicts.
         sources: list[ToolSource] = [
             ToolSource(name_prefix="custom", tools_dir=Path.home() / CONFIG_DIR / "tools"),
-            ToolSource(name_prefix="custom", tools_dir=project_dir / CONFIG_DIR / "tools"),
         ]
+        # A folder's own tools are imported — run — only once the person
+        # trusts the folder (``core/workspace_trust``). Opening a repository
+        # must not be enough to execute its ``.igni/tools/*.py``.
+        from ember_code.core.workspace_trust import WorkspaceTrust
+
+        if WorkspaceTrust.shared().is_trusted(project_dir, what="tools (.igni/tools)"):
+            sources.append(
+                ToolSource(name_prefix="custom", tools_dir=project_dir / CONFIG_DIR / "tools")
+            )
         # The org's, from the group policy cache. Last of the non-plugin
         # sources, so a tool the group ships wins its name.
         if group_tools_dir is not None:

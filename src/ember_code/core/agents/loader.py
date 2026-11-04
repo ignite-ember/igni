@@ -1,13 +1,10 @@
 """Filesystem discovery + priority resolution for agent ``.md`` files.
 
-Owns three concerns:
+Owns two concerns:
 
 * Scanning the five standard roots (user/project × Claude/Ember +
   the project-local variant) and applying the priority table so
   the higher-priority definition wins on same-name collisions.
-* Picking the right CodeIndex prompt variant (``<name>.md`` vs
-  ``<name>.codeindex.md``) based on whether the current HEAD has
-  a populated chroma.
 * Applying the plugin security envelope when loading from a
   plugin-shipped ``agents/`` directory.
 
@@ -42,8 +39,6 @@ class AgentDefinitionLoader:
     """Scan the standard agent roots and return a merged
     :class:`LoadReport`.
 
-    ``codeindex_available`` is typed instance state — not a
-    ``getattr(self, "_codeindex_available", False)`` reach-in.
     ``restriction_policy`` is optional: passing one flips the
     plugin security envelope on for every loaded agent, so the
     same class serves both the base-load path and the plugin-load
@@ -54,13 +49,11 @@ class AgentDefinitionLoader:
         self,
         settings: Settings,
         project_dir: Path,
-        codeindex_available: bool,
         restriction_policy: PluginRestrictionPolicy | None = None,
         group_dir: Path | None = None,
     ) -> None:
         self._settings = settings
         self._project_dir = project_dir
-        self._codeindex_available = codeindex_available
         self._policy = restriction_policy
         self._group_dir = group_dir
 
@@ -113,10 +106,10 @@ class AgentDefinitionLoader:
     ) -> LoadReport:
         """Parse ``.md`` files from ``path`` into a :class:`LoadReport`.
 
-        Skips the wrong CodeIndex variant per
-        ``self._codeindex_available``. ``namespace`` prefixes
-        every loaded agent's ``name`` as ``<namespace>:<name>`` —
-        used by the plugin loader.
+        ``namespace`` prefixes every loaded agent's ``name`` as
+        ``<namespace>:<name>`` — used by the plugin loader, so a
+        plugin's agents never take an igni agent's name. What an
+        extension does to an agent is :meth:`AgentPool.apply_prompt_contributions`.
         """
         report = LoadReport()
         if not path.exists():
@@ -126,10 +119,7 @@ class AgentDefinitionLoader:
             priority if isinstance(priority, AgentPriority) else AgentPriority(int(priority))
         )
 
-        all_files = sorted(path.glob("*.md"))
-        picked = self._pick_variants(all_files)
-
-        for md_file in picked:
+        for md_file in sorted(path.glob("*.md")):
             try:
                 md = AgentMarkdownFile(md_file)
                 definition = md.parse()
@@ -147,40 +137,6 @@ class AgentDefinitionLoader:
                 logger.warning("Failed to parse agent from %s: %s", md_file, exc)
                 report.errors.append(LoadError(path=md_file, reason=str(exc)))
         return report
-
-    def _pick_variants(self, files: list[Path]) -> list[Path]:
-        """Filter out the wrong CodeIndex variant per
-        ``self._codeindex_available``.
-
-        Convention: every CodeIndex-aware agent ships as a
-        variant pair — ``<name>.md`` (plain, no-CodeIndex) +
-        sibling ``<name>.codeindex.md`` (with CodeIndex). The
-        loader picks the right one based on
-        ``_codeindex_available``:
-
-        * If CodeIndex is available, prefer the ``.codeindex.md``
-          variant. The plain ``<name>.md`` is skipped when the
-          sibling exists.
-        * If CodeIndex is unavailable, prefer the plain
-          ``<name>.md`` and skip the ``.codeindex.md`` variant.
-
-        If only one of the pair exists (older draft state), it
-        is always loaded — whichever variant is present, with
-        the agent's own no-CodeIndex fallback as a follow-up.
-        """
-        use_codeindex = self._codeindex_available
-        codeindex_stems = {
-            f.name[: -len(".codeindex.md")] for f in files if f.name.endswith(".codeindex.md")
-        }
-        picked: list[Path] = []
-        for md_file in files:
-            is_codeindex_variant = md_file.name.endswith(".codeindex.md")
-            if is_codeindex_variant and not use_codeindex:
-                continue
-            if not is_codeindex_variant and use_codeindex and md_file.stem in codeindex_stems:
-                continue
-            picked.append(md_file)
-        return picked
 
 
 __all__ = ["AgentDefinitionLoader"]

@@ -114,6 +114,7 @@ class LifecycleController:
             await self._backend._rehydrate_todos(),
             await self._backend._rehydrate_event_log(),
             await self._backend._rehydrate_orphan_processes(),
+            await self._backend._rehydrate_queued_messages(),
         )
         outcomes.log(logger)
 

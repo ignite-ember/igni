@@ -17,8 +17,8 @@ So this is deliberately the most boring code that could work:
   leave both alone. Two directories with overlapping state is a problem
   nobody can unpick afterwards, and "you have both, pick one" is a
   better outcome than a silent interleave.
-* **Never follow a symlink.** ``ember-server/.ember`` in this workspace
-  is a symlink to ``ember-code/.ember``; renaming through one would move
+* **Never follow a symlink.** ``igni__server/.ember`` in this workspace
+  is a symlink to ``igni/.ember``; renaming through one would move
   somebody else's directory and leave a dangling link behind.
 * **Idempotent.** Nothing to do is the normal case — after the first run
   there is no legacy directory, and this costs two ``stat`` calls.

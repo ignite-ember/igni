@@ -8,7 +8,8 @@ picker, MCP panel, login widget) get plain-text equivalents.
 
 from __future__ import annotations
 
-from typing import ClassVar
+from collections.abc import Awaitable, Callable
+from typing import Any, ClassVar
 
 from ember_code.backend.command_handler import CommandHandler, CommandResult
 from ember_code.core.session.core import Session
@@ -36,10 +37,20 @@ class InteractiveCommandDispatcher:
         CommandAction.MCP: "_render_mcp_status",
         CommandAction.COMPACT: "_render_compact",
         CommandAction.LOGIN: "_render_login",
+        CommandAction.RUN_PROMPT: "_render_run_prompt",
+        CommandAction.HELP: "_render_help",
     }
 
-    def __init__(self, session: Session) -> None:
+    def __init__(
+        self,
+        session: Session,
+        run_prompt: Callable[[str], Awaitable[Any]] | None = None,
+    ) -> None:
         self.session = session
+        # How a ``RUN_PROMPT`` result (a skill, a markdown command,
+        # ``/loop <prompt>``) becomes a turn: the REPL passes its own
+        # turn pipeline. Without one, the prompt is shown, not run.
+        self._run_prompt = run_prompt
 
     async def dispatch(self, command: str) -> bool:
         """Dispatch a slash command. Returns True if handled, False if unknown."""
@@ -80,10 +91,38 @@ class InteractiveCommandDispatcher:
         if result.content:
             display.print_info(f"Summary:\n{result.content}")
 
+    async def _render_run_prompt(self, result: CommandResult) -> None:
+        """Run the command's rendered prompt as a model turn.
+
+        A skill, a markdown command and ``/loop <prompt>`` all answer
+        with the prompt to run. This used to fall through to the
+        kind-based renderer, which printed that prompt as information
+        and ran nothing — so in the REPL no skill or markdown command
+        ever reached the model.
+        """
+        if self._run_prompt is None:
+            self._render_by_kind(result)
+            return
+        await self._run_prompt(result.content)
+
+    async def _render_help(self, result: CommandResult) -> None:
+        """A bare ``/help`` opens a panel elsewhere; here it is text."""
+        from ember_code.backend.cmd_help import help_overview
+
+        self.session.display.print_markdown(help_overview())
+
+    #: What ``igni -m /login`` says. It pointed at a TUI and a ``--no-tui``
+    #: flag that were both removed in v0.9.7, so the one hint a person got
+    #: on the command line named nothing they could run.
+    LOGIN_HINT = (
+        "Signing in is its own command: run `igni login` (it prints the portal "
+        "address and waits for the browser), or `igni login --token-stdin` with "
+        "a token. Set `api_url` in ~/.igni/config.yaml first. The desktop app and "
+        "the IDE extensions sign in to the same ~/.igni/credentials.json."
+    )
+
     async def _render_login(self, result: CommandResult) -> None:
-        self.session.display.print_info(
-            "Login is only available in TUI mode. Run without --no-tui to use /login."
-        )
+        self.session.display.print_info(self.LOGIN_HINT)
 
     async def _render_sessions(self, result: CommandResult) -> None:
         """List past sessions as text (no interactive picker)."""

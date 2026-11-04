@@ -26,6 +26,7 @@ import os
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
+from ember_code.core.layer import Layers
 from ember_code.core.paths import CONFIG_DIR
 
 #: Five files of 2 MB. Enough to hold a long session plus the couple of
@@ -76,8 +77,19 @@ def configure_logging(*, debug_flag: bool = False, path: Path | None = None) -> 
     happened, the root file handler went with them and the log stopped
     five lines in while the backend ran on for minutes.
     """
-    log_path = path or resolve_log_path()
     level = resolve_level(debug_flag=debug_flag)
+    layer = Layers.current()
+    if not layer.log_files():
+        # A layer that keeps no log file (the cloud's: JSON lines on
+        # standard output, which the node collects).
+        layer_pkg = logging.getLogger("ember_code")
+        stream = layer.log_handler()
+        if stream not in layer_pkg.handlers:
+            layer_pkg.addHandler(stream)
+        if layer_pkg.level == logging.NOTSET or layer_pkg.level > level:
+            layer_pkg.setLevel(level)
+        return None
+    log_path = path or resolve_log_path()
 
     pkg = logging.getLogger("ember_code")
     for existing in pkg.handlers:

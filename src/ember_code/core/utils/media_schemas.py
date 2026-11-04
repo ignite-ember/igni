@@ -301,10 +301,18 @@ class ResolvedText(BaseModel):
     ("photo.png not found in project / Downloads / Desktop / …")
     instead of silently dropping the reference. Not yet consumed
     by any caller — reserved for the follow-up UX pass.
+
+    :attr:`paths` are the references the resolver rewrote in the text.
+    :attr:`attachable` is every file the text names that a vision
+    model may be sent as media: those, plus the absolute paths already
+    written out (an upload's ``@<path>``) that lie in an allowed place —
+    see :meth:`MediaResolver.resolve_text_references
+    <ember_code.core.utils.media.MediaResolver.resolve_text_references>`.
     """
 
     text: str
     paths: list[str] = Field(default_factory=list)
+    attachable: list[str] = Field(default_factory=list)
     missed: list[str] = Field(default_factory=list)
 
     def __iter__(self) -> Iterator[Any]:  # type: ignore[override]

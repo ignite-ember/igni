@@ -1,5 +1,5 @@
 """Tests for config/cloud_models.py — the :class:`CloudModelCatalogClient`
-that fetches + merges the Ember Cloud key-pool catalogue.
+that fetches + merges the igni server key-pool catalogue.
 
 Covers both pieces independently:
 
@@ -12,7 +12,7 @@ Covers both pieces independently:
   :class:`FetchReason` so callers can distinguish causes.
 * ``CloudModelCatalogClient.merge_into`` — pure in-memory dict
   mutation. Verifies add-new, skip-existing (user config wins),
-  idempotency, the ember-server-proxy routing invariant (every
+  idempotency, the igni-server-proxy routing invariant (every
   cloud entry's URL points at ``{api_url}/v1``, never the upstream),
   and the entry shape (``api_key: "cloud_token"`` sentinel +
   ``source: "cloud"`` tag).
@@ -53,7 +53,7 @@ def test_fetch_returns_no_token_when_missing():
 
 def test_fetch_happy_path(monkeypatch):
     """The server returns ``{"models": [{"id": "..."}, ...]}`` — just
-    identifiers, no upstream URLs. The CLI talks to ember-server's
+    identifiers, no upstream URLs. The CLI talks to igni server's
     chat proxy, so leaking upstream routing is intentionally avoided
     on the server side."""
     captured: dict[str, object] = {}
@@ -82,7 +82,7 @@ def test_fetch_happy_path(monkeypatch):
         "gpt-4o",
         "anthropic/claude-opus-4-7",
     ]
-    # Every entry routes through the ember-server chat proxy.
+    # Every entry routes through the igni server chat proxy.
     for entry in result.entries:
         assert entry.url == "https://api.example.com/v1"
         assert entry.api_key == "cloud_token"
@@ -97,7 +97,7 @@ def test_fetch_tolerates_legacy_base_url_field(monkeypatch):
     entry. ``CloudModelEntry`` has ``extra='allow'`` so the field is
     tolerated but deliberately not propagated onto the resulting
     :class:`ModelRegistryEntry` (routing always goes through the
-    ember-server proxy)."""
+    igni server proxy)."""
 
     def handler(_req: httpx.Request) -> httpx.Response:
         return httpx.Response(
@@ -115,7 +115,7 @@ def test_fetch_tolerates_legacy_base_url_field(monkeypatch):
     assert len(result.entries) == 1
     entry = result.entries[0]
     assert entry.model_id == "gpt-4o"
-    # URL is the ember-server proxy — the legacy upstream field
+    # URL is the igni server proxy — the legacy upstream field
     # must NOT leak onto the registry entry.
     assert entry.url == "https://api.example.com/v1"
     assert "upstream.example" not in str(entry.model_dump())
@@ -226,7 +226,7 @@ def test_merge_adds_new_entries():
 def test_merge_routes_through_ember_server_even_for_legacy_payload():
     """Even when the wire response includes a legacy ``base_url``,
     the resulting registry entry routes through ``{api_url}/v1``
-    (the ember-server chat proxy). Verified end-to-end via
+    (the igni server chat proxy). Verified end-to-end via
     ``from_cloud_discovery`` — the legacy upstream URL never
     reaches the entry."""
     entries = _entries_for(["MiniMaxAI/MiniMax-M2.5"])
@@ -247,7 +247,7 @@ def test_merge_entry_shape_matches_local_registry():
     assert isinstance(entry, ModelRegistryEntry)
     assert entry.provider == "openai_like"
     assert entry.model_id == "gpt-4o"
-    # URL always points at ember-server's chat proxy, never upstream.
+    # URL always points at igni server's chat proxy, never upstream.
     assert entry.url == "https://api.example.com/v1"
     # ``cloud_token`` is the sentinel that the API-key resolver rewrites
     # to ``CloudCredentials.access_token`` at call time.

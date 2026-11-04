@@ -1,13 +1,27 @@
 """Shared test fixtures."""
 
 import os
+from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
 from dotenv import load_dotenv
 
+from ember_code.core.activity import ActivityRegistry
+from ember_code.core.approvals.events import approval_events
+from ember_code.core.config.schemas.storage_and_paths import StorageConfig
 from ember_code.core.config.settings import load_settings
+from ember_code.core.db.scope import tenancy
+from ember_code.core.db.urls import DatabaseUrl, Dialect
+from ember_code.core.hooks.extension_gate import ExtensionHookGate
+from ember_code.core.layer import Layers
 from ember_code.core.paths import CONFIG_DIR
+from ember_code.extensions.faults import ExtensionFaults
+from ember_code.extensions.host.hooks import ExtensionHooks
+from ember_code.extensions.host.processes import ExtensionProcesses
+from tests.egress_guard import EgressGuard, InternalNetwork
+from tests.root_guard import RootGuard
+from tests.storage_backends import ThrowawayPostgres
 
 # Load environment variables from .env at the repo root before any test
 # runs. This lets developers keep credentials for live tests
@@ -18,31 +32,105 @@ if _ENV_FILE.is_file():
     load_dotenv(_ENV_FILE, override=False)
 
 
-def pytest_configure(config):
-    """Register the ``integration`` marker so ``--strict-markers`` and
-    the warning filter don't flag it."""
-    config.addinivalue_line(
-        "markers",
-        "integration: test needs a live Neo4j (set NEO4J_TEST_URI to run).",
+#: The repository root, watched for files a test leaves there (``root_guard.py``).
+_ROOT = Path(__file__).resolve().parent.parent
+_ROOT_GUARD = pytest.StashKey[RootGuard]()
+
+
+def pytest_sessionstart(session: pytest.Session) -> None:
+    session.stash[_ROOT_GUARD] = RootGuard.taking(_ROOT)
+
+
+def pytest_sessionfinish(session: pytest.Session, exitstatus: int) -> None:
+    """Fail a run that left stray files in the repository root."""
+    guard = session.stash.get(_ROOT_GUARD, None)
+    if guard is None:
+        return
+    strays = guard.strays()
+    if not strays:
+        return
+    reporter = session.config.pluginmanager.get_plugin("terminalreporter")
+    if reporter is not None:
+        reporter.write_sep("=", "stray files in the repository root", red=True)
+        reporter.write_line(guard.report(strays))
+    session.exitstatus = pytest.ExitCode.TESTS_FAILED
+
+
+#: The marker a test carries when reaching the internet is what it is for.
+#: Registered in ``pyproject.toml``; the guard below stands down for it.
+REACHES_THE_INTERNET = "reaches_the_internet"
+
+
+@pytest.fixture(autouse=True)
+def _nothing_leaves_the_network(request: pytest.FixtureRequest) -> Iterator[None]:
+    """Every test runs as if inside the customer's network.
+
+    A name lookup or connection to anything outside it is refused while
+    the test runs, the way an air-gapped network refuses it, and the test
+    fails at teardown naming the destination — even when the code under
+    test swallowed the error. Sockets only: the child processes a test
+    starts on purpose are its own business, and
+    ``test_igni_reaches_nothing_outside_the_network.py`` watches those for
+    a real session. ``tests/egress_guard.py`` says what counts as inside.
+    """
+    if request.node.get_closest_marker(REACHES_THE_INTERNET):
+        yield
+        return
+    with EgressGuard(network=InternalNetwork()).watching() as log:
+        yield
+    if log.attempts:
+        pytest.fail(log.report(), pytrace=False)
+
+
+#: The marker a test carries when the extension sandbox is its subject.
+#: Registered in ``pyproject.toml``; the fixture below stands down for it.
+EXTENSION_SANDBOX = "extension_sandbox"
+
+
+@pytest.fixture(autouse=True)
+def _extension_processes_unsandboxed(request: pytest.FixtureRequest, monkeypatch) -> None:
+    """Extension processes the suite starts run outside the OS sandbox.
+
+    As if ``extensions.sandbox: false`` were in the user's settings. The
+    tests written before the sandbox existed are about other things, and
+    their fixtures do what an unconfined process may (write a pid file
+    beside themselves; run ``config.command`` without its arguments).
+    The sandbox's own tests carry ``@pytest.mark.extension_sandbox`` and
+    get the real settings and the real sandbox.
+    """
+    if request.node.get_closest_marker(EXTENSION_SANDBOX):
+        return
+    from ember_code.extensions.sandbox.settings import SandboxSettings
+
+    monkeypatch.setattr(
+        SandboxSettings,
+        "load",
+        classmethod(lambda cls, **_: cls(enabled=False, disabled_by="test suite's")),
     )
 
 
-def pytest_collection_modifyitems(config, items):
-    """Skip ``@pytest.mark.integration`` tests unless ``NEO4J_TEST_URI``
-    is set.
+#: The marker a test carries when workspace trust is its subject.
+#: Registered in ``pyproject.toml``; the fixture below stands down for it.
+WORKSPACE_TRUST = "workspace_trust"
 
-    Lives in ``conftest.py`` (not the test module) because pytest only
-    invokes this hook from conftest/plugin scope — a copy inside a test
-    module is silently ignored, which previously let the integration
-    suite error out with fixture ``KeyError`` / ``NameError`` instead
-    of skipping cleanly.
+
+@pytest.fixture(autouse=True)
+def _workspace_trust(request: pytest.FixtureRequest) -> Iterator[None]:
+    """Every folder the suite opens is trusted, unless the test is about trust.
+
+    Workspace trust (``core/workspace_trust``) starts every folder untrusted,
+    and the tests written before it exist open project folders whose tools,
+    hooks and settings are their subject. Those get a trusted folder, as a
+    person who had trusted it would. A test marked
+    ``@pytest.mark.workspace_trust`` gets the real decision, starting unset.
     """
-    if os.environ.get("NEO4J_TEST_URI"):
-        return
-    skip = pytest.mark.skip(reason="NEO4J_TEST_URI not set; integration tests skipped")
-    for item in items:
-        if "integration" in item.keywords:
-            item.add_marker(skip)
+    from ember_code.core.workspace_trust import WorkspaceTrust
+
+    WorkspaceTrust.reset_shared(
+        trust_everything=not request.node.get_closest_marker(WORKSPACE_TRUST)
+    )
+    yield
+    WorkspaceTrust.reset_shared(trust_everything=True)
 
 
 @pytest.fixture(autouse=True)
@@ -70,20 +158,73 @@ def _isolate_user_settings(tmp_path_factory, monkeypatch):
 
 
 @pytest.fixture(autouse=True)
-def _no_neo4j_download_in_tests(monkeypatch):
-    """Pin the knowledge runtime off for the whole suite.
+def _desktop_storage(monkeypatch):
+    """The suite runs against the desktop's SQLite files, whatever the
+    shell says: a developer's ``IGNI_DATABASE_URL`` must not point every
+    store at a shared database. The PostgreSQL tests name theirs
+    explicitly (``IGNI_TEST_DATABASE_URL``, ``tests/test_storage_backends.py``)."""
+    monkeypatch.delenv(StorageConfig.DATABASE_URL_ENV, raising=False)
+    monkeypatch.delenv(Layers.ENV, raising=False)
+    # The desktop's layer, chosen afresh: a test that installs another
+    # (``packages/igni-cloud``) does not leave it behind.
+    Layers.reset()
+    yield
+    Layers.reset()
+    tenancy.use(None)
+    approval_events.clear()
 
-    ``knowledge.enabled`` defaults to true, and the attach it gates
-    downloads Neo4j plus a JDK — about 500 MB — the first time it runs.
-    Nothing in the suite boots a full ``BackendApp`` today, so nothing
-    reaches it; this exists so that the day something does, it fails as
-    a test rather than as half a gigabyte pulled onto a CI runner.
 
-    This is the override's stated purpose — a *process* forcing the
-    answer. Tests that want the runtime on set the variable themselves
-    via ``monkeypatch``, which runs after this and so wins.
+#: Names a PostgreSQL server the storage tests may create and drop databases on.
+POSTGRES_TEST_URL_ENV = "IGNI_TEST_DATABASE_URL"
+
+
+@pytest.fixture(scope="session")
+def postgres_url() -> Iterator[str]:
+    """A throwaway PostgreSQL database for the run, or a skip saying why not."""
+    server = os.environ.get(POSTGRES_TEST_URL_ENV, "").strip()
+    if not server:
+        pytest.skip(
+            f"{POSTGRES_TEST_URL_ENV} is unset: the PostgreSQL storage tests need a server "
+            "they may create and drop databases on (tests/storage_backends.py has a "
+            "docker one-liner)"
+        )
+    database = ThrowawayPostgres(server)
+    url = database.create()
+    try:
+        yield url
+    finally:
+        database.drop()
+
+
+@pytest.fixture(params=[Dialect.SQLITE, Dialect.POSTGRESQL], ids=lambda d: d.value)
+def database_url(request, tmp_path: Path) -> DatabaseUrl:
+    """A shared database, on each dialect (``tests/storage_backends.py``)."""
+    if request.param is Dialect.POSTGRESQL:
+        return DatabaseUrl.parse(request.getfixturevalue("postgres_url"))
+    return DatabaseUrl.for_file(tmp_path / "shared.db")
+
+
+@pytest.fixture(autouse=True)
+def _a_fresh_activity_registry():
+    """Busy leases and wakes are the process's; each test starts with none."""
+    ActivityRegistry.reset_shared()
+    yield
+    ActivityRegistry.reset_shared()
+
+
+@pytest.fixture(autouse=True)
+def _no_extension_hooks_left_behind():
+    """Each test starts with no extension hooking anything.
+
+    The extensions' hooks and the core's gate are one per process, as in
+    the app; a test that installs a hooking extension must not leave
+    every later test's tool calls waiting on a process that is not there.
     """
-    monkeypatch.setenv("IGNI_NEO4J_RUNTIME", "0")
+    yield
+    ExtensionHookGate.install(None)
+    ExtensionHooks.reset_shared()
+    ExtensionFaults.reset_shared()
+    ExtensionProcesses.reset_shared()
 
 
 @pytest.fixture

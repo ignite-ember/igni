@@ -35,11 +35,18 @@ class PluginsState(BaseModel):
     the user's org group policy. It is merged on top of ``disabled``
     so group admins can block plugins even if a user has manually
     re-enabled them.
+
+    ``sources`` maps each install-managed plugin to the URL it was
+    cloned from, so ``/plugin update`` can ask the source policy before
+    fetching from it (an air-gapped install refuses a public host).
+    Plugins installed before it was recorded have no entry; the update
+    reads their git remote instead.
     """
 
     disabled: list[str] = Field(default_factory=list)
     pins: dict[str, str] = Field(default_factory=dict)
     group_disabled: list[str] = Field(default_factory=list)
+    sources: dict[str, str] = Field(default_factory=dict)
 
 
 def state_path(data_dir: str | Path = DEFAULT_DATA_DIR) -> Path:

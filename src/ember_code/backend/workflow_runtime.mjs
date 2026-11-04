@@ -1,6 +1,6 @@
 // workflow_runtime.mjs
 // ─────────────────────────────────────────────────────────────────
-// Node bridge for executing .claude/workflows/*.mjs scripts.
+// Node bridge for executing .igni/workflows/*.mjs scripts.
 //
 // Provides the `phase / agent / parallel / pipeline / log` globals
 // the script body calls (CC's Workflow() semantics), emits

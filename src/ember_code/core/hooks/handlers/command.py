@@ -8,7 +8,10 @@ Exit-code contract (CC-compatible):
 * ``2`` — block. Stderr (or the ``systemMessage`` from stdout
   JSON) becomes the block reason. For ``async_rewake`` hooks,
   the message is queued for the next turn instead of blocking.
-* Anything else — non-blocking soft error.
+* Anything else — non-blocking soft error, logged at WARNING.
+  Hooks fail OPEN: a hook that cannot run (missing script, bad
+  interpreter, timeout) does not block the tool call, so the log
+  is the only evidence it did not run. Do not downgrade it.
 """
 
 from __future__ import annotations
@@ -72,12 +75,56 @@ class CommandHookHandler(HookHandler):
                 return self._handle_block(hook, stdout, stderr)
             if proc.returncode == 0:
                 return self._handle_success(stdout)
-            return self._non_blocking()
+            return self._handle_soft_error(hook, proc.returncode, stderr)
         except asyncio.TimeoutError:
+            # Also a fail-open, also invisible before this line: the
+            # message below is dropped by every caller that isn't
+            # blocking on the result.
+            logger.warning(
+                "Hook %r timed out after %.1fs — continuing (hooks fail open)",
+                hook.command,
+                hook.timeout / 1000,
+            )
             return self._non_blocking("Hook timed out")
         except Exception as exc:
-            logger.debug("Command hook failed: %s", exc)
+            logger.warning(
+                "Hook %r could not be run (%s) — continuing (hooks fail open)",
+                hook.command,
+                exc,
+            )
             return self._non_blocking()
+
+    def _handle_soft_error(
+        self,
+        hook: HookDefinition,
+        returncode: int | None,
+        stderr: bytes,
+    ) -> HookResult:
+        """Any exit code that is neither 0 nor 2 — the hook did not
+        run to the contract, so we continue (fail open).
+
+        The log line is the whole point. Failing open silently is how
+        a PreToolUse hook whose script is simply not there reads as
+        "hook passed": ``bash -c`` exits 127, this branch returns
+        ``should_continue=True``, and the permission pipeline only
+        ever surfaces a hook's message when it *blocks*. Measured
+        before this existed: a missing ``validate-bash.sh`` produced
+        ``should_continue=True`` and not one log record at any level,
+        from any logger.
+
+        The stderr stays in the log rather than being handed back as
+        the hook's message: it is the hook author's diagnostic, and
+        routing subprocess stderr into the model's context would
+        publish whatever a broken script happened to print.
+        """
+        detail = stderr.decode(errors="replace").strip()
+        logger.warning(
+            "Hook %r exited %s — continuing (hooks fail open). stderr: %s",
+            hook.command,
+            returncode,
+            detail[:500] if detail else "<empty>",
+        )
+        return self._non_blocking()
 
     def _handle_block(self, hook: HookDefinition, stdout: bytes, stderr: bytes) -> HookResult:
         """Assemble the block message for an exit-2 hook, then

@@ -1,7 +1,7 @@
-"""Abstract base for the four session-startup phases.
+"""Abstract base for the session-startup phases.
 
-The warmup families under this sub-package (knowledge,
-codeindex, marketplace, MCP) all share a boot-time
+The warmup families under this sub-package (marketplace,
+MCP) all share a boot-time
 contract:
 
 * they hold a reference to the owning :class:`Session`,
@@ -22,6 +22,8 @@ import asyncio
 import logging
 from collections.abc import Callable, Coroutine
 from typing import TYPE_CHECKING
+
+from ember_code.core.activity import background
 
 if TYPE_CHECKING:
     from ember_code.core.session.core import Session
@@ -69,10 +71,10 @@ class SessionStartupPhase:
         warning in the no-loop early-return case.
         """
         try:
-            loop = asyncio.get_running_loop()
+            asyncio.get_running_loop()
         except RuntimeError:
             return False
-        loop.create_task(coro_factory())
+        background.start(coro_factory(), holder="startup", reason=type(self).__name__)
         return True
 
     def _log_swallowed(self, exc: BaseException, action: str) -> None:

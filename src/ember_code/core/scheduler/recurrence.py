@@ -193,9 +193,24 @@ class Recurrence(BaseModel):
         """Canonical on-the-wire string form persisted in ``ScheduledTask.recurrence``."""
         return f"every {self.amount} {self.unit.value}"
 
-    def next_after(self, anchor: datetime) -> datetime:
-        """The next occurrence after ``anchor`` (typically the last run's ``scheduled_at``)."""
-        return anchor + self.to_delta()
+    def next_after(self, anchor: datetime, *, not_before: datetime | None = None) -> datetime:
+        """The next occurrence after ``anchor`` (typically the last run's ``scheduled_at``).
+
+        ``not_before`` skips the occurrences that already elapsed. The
+        rescheduler passes wall-clock now: without it, a task whose
+        anchor is a weekend old returns an occurrence that is itself in
+        the past, so the store hands it straight back as due and every
+        missed slot is replayed as a full unattended agent run. With
+        it, the caller gets the first occurrence strictly in the future,
+        still on the original phase.
+        """
+        step = self.to_delta()
+        nxt = anchor + step
+        if not_before is None or nxt > not_before:
+            return nxt
+        # Arithmetic rather than a loop: ``every 1 minutes`` missed over
+        # a week is 10k iterations of the naive version.
+        return nxt + step * ((not_before - nxt) // step + 1)
 
     def first_occurrence(self, now: datetime | None = None) -> datetime:
         """The first occurrence relative to ``now`` (default: wall-clock now).

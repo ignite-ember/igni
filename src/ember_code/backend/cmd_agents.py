@@ -49,8 +49,8 @@ class AgentsCommand:
         match subcommand:
             case "promote":
                 if not sub_args:
-                    return CommandResult.error("Usage: /agents promote <name>")
-                return self.promote(sub_args.strip())
+                    return CommandResult.error(self.PROMOTE_USAGE)
+                return self.promote_args(sub_args)
             case "discard":
                 if not sub_args:
                     return CommandResult.error("Usage: /agents discard <name>")
@@ -60,11 +60,29 @@ class AgentsCommand:
             case _:
                 return self.open_panel()
 
+    PROMOTE_USAGE = (
+        "Usage: /agents promote <name> [--project | --personal]: --project (the "
+        "default) keeps it in .igni/agents/, committed and shared with the team; "
+        "--personal in .igni/agents.local/, yours only"
+    )
+
     # ── Verb methods ─────────────────────────────────────────────
 
-    def promote(self, name: str) -> CommandResult:
+    def promote_args(self, sub_args: str) -> CommandResult:
+        """``<name> [--project | --personal]``, either order."""
+        words = sub_args.split()
+        flags = [w for w in words if w.startswith("--")]
+        names = [w for w in words if not w.startswith("--")]
+        if len(names) != 1 or len(flags) > 1:
+            return CommandResult.error(self.PROMOTE_USAGE)
+        target = flags[0][2:] if flags else "project"
+        if target not in ("project", "personal"):
+            return CommandResult.error(self.PROMOTE_USAGE)
+        return self.promote(names[0], target)
+
+    def promote(self, name: str, target: str = "project") -> CommandResult:
         try:
-            dest = self._session.pool.promote_ephemeral(name, self._session.project_dir)
+            dest = self._session.pool.promote_ephemeral(name, self._session.project_dir, target)
             result = PromoteResult(ok=True, destination=str(dest))
         except (KeyError, ValueError, RuntimeError) as exc:
             result = PromoteResult(ok=False, error=str(exc))

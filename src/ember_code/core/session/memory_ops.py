@@ -8,6 +8,7 @@ from agno.memory import MemoryManager
 from agno.memory.strategies.types import MemoryOptimizationStrategyType
 from pydantic import BaseModel
 
+from ember_code.core.agno_telemetry import AgnoTelemetry
 from ember_code.core.config.models import ModelRegistry
 from ember_code.core.config.settings import Settings
 
@@ -54,7 +55,12 @@ class SessionMemoryManager:
     def _create_reader_agent(self) -> Any:
         """Create a temporary agent for reading memories."""
         model = ModelRegistry(self.settings).get_model()
-        return Agent(name="_memory_reader", model=model, db=self.db)
+        return Agent(
+            name="_memory_reader",
+            model=model,
+            db=self.db,
+            telemetry=AgnoTelemetry.CONSTRUCTOR_VALUE,
+        )
 
     async def get_memories(self) -> list[dict[str, str]]:
         """Get all user memories for the current user."""

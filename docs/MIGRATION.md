@@ -92,7 +92,7 @@ Claude Code agents grep for patterns. igni agents can also search by **meaning**
                security analysis, dependency graph, and references
 ```
 
-See [CodeIndex](CODEINDEX.md) for details.
+See `igni-integration.md` in the CodeIndex repository's docs (`igni__code-index`) for details.
 
 ### 5. Default Model
 
@@ -134,7 +134,7 @@ models:
 | `--resume <id>` | `--resume <id>` | Resume specific session |
 | `--print` / `-p` | `-m "prompt"` | Non-interactive single task |
 | `--dangerously-skip-permissions` | `--auto-approve` | Skip all permission prompts |
-| `--permission-mode plan` | `--read-only` | Read-only mode |
+| `--permission-mode plan` | `--read-only` | Read-only mode: reading files (read-only shell commands) and the web (search, URL fetch) runs, everything that writes or executes is refused (plan mode would ask) |
 | `--permission-mode acceptEdits` | `--accept-edits` | Auto-approve file edits |
 | `--worktree` | `--worktree` | Isolated git worktree session |
 | `--effort low\|high` | Not applicable | igni uses Agno reasoning instead |
@@ -173,7 +173,7 @@ models:
 
 | Claude Code | igni | Notes |
 |---|---|---|
-| `"allow": ["Bash(npm run *)"]` | `permissions.shell_restricted: "allow"` | Ember uses category-based + patterns |
+| `"allow": ["Bash(npm run *)"]` | `permissions.allow: ["Bash(npm run *)"]` | Same rule syntax |
 | `"deny": ["Read(.env)"]` | `safety.protected_paths: [".env"]` | Ember uses a dedicated protected paths list |
 | `"ask": ["Bash(git push *)"]` | `safety.require_confirmation: ["git push"]` | Same concept, different syntax |
 

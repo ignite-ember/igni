@@ -7,11 +7,11 @@ PATH; the Python API works from anywhere our package is importable.
 
 State + behaviour live together on :class:`Migrator`:
 
-* ``self._lock`` guards the per-path idempotency cache so concurrent
-  ``Database(...)`` constructions on the same file don't race two
+* ``self._lock`` guards the per-database idempotency cache so concurrent
+  ``Database(...)`` constructions on the same database don't race two
   ``alembic upgrade head`` runs.
-* ``self._upgraded_paths`` short-circuits repeat upgrades of the same
-  resolved path within a single process.
+* ``self._upgraded`` short-circuits repeat upgrades of the same
+  database within a single process.
 * ``self._package_root`` (defaulting to ``Path(__file__).resolve().parents[2]``
   → the ``ember_code`` package directory) is where ``alembic.ini`` and
   ``migrations/`` are looked up. Tests can point a fresh ``Migrator`` at
@@ -41,11 +41,12 @@ from pathlib import Path
 from alembic import command
 from alembic.config import Config
 
-from ember_code.core.db.engine import sync_url
+from ember_code.core.db.engine_registry import DatabaseTarget
+from ember_code.core.db.urls import DatabaseUrl
 
 
 class Migrator:
-    """Coordinator for ``alembic upgrade head`` runs against SQLite files.
+    """Coordinator for ``alembic upgrade head`` runs against igni's databases.
 
     Owns the per-path idempotency cache, the lock guarding it, and the
     on-disk locations of the packaged ``alembic.ini`` + ``migrations/``
@@ -63,7 +64,7 @@ class Migrator:
             package_root if package_root is not None else Path(__file__).resolve().parents[2]
         )
         self._lock = threading.Lock()
-        self._upgraded_paths: set[str] = set()
+        self._upgraded: set[str] = set()
 
     def _locate_alembic_ini(self) -> Path:
         """Locate ``alembic.ini`` inside the package; validate ``migrations/``.
@@ -87,28 +88,30 @@ class Migrator:
             "`brew reinstall ignite-ember`."
         )
 
-    def upgrade_to_head(self, db_path: str | Path) -> None:
-        """Run alembic ``upgrade head`` against the SQLite file at ``db_path``.
+    def upgrade_to_head(self, target: DatabaseTarget) -> None:
+        """Run alembic ``upgrade head`` against ``target`` — a SQLite
+        file or a database URL.
 
-        Idempotent and cached per resolved path so multiple constructions in
+        Idempotent and cached per database so multiple constructions in
         the same process don't re-run migrations.
         """
-        resolved_path = Path(str(db_path)).expanduser().resolve()
-        resolved_path.parent.mkdir(parents=True, exist_ok=True)
-        resolved = str(resolved_path)
+        url = DatabaseUrl.of(target)
+        url.prepare()
         with self._lock:
-            if resolved in self._upgraded_paths:
+            if url.url in self._upgraded:
                 return
 
             ini_path = self._locate_alembic_ini()
             cfg = Config(str(ini_path))
-            cfg.set_main_option("sqlalchemy.url", sync_url(resolved))
+            # ``%`` is interpolation syntax to configparser; a password
+            # may contain one.
+            cfg.set_main_option("sqlalchemy.url", url.sync.replace("%", "%%"))
             # In-process upgrade: keep our logging. ``env.py`` reads this and
             # skips ``fileConfig``, which would otherwise replace the root
             # handlers on every single startup.
             cfg.attributes["configure_logging"] = False
             command.upgrade(cfg, "head")
-            self._upgraded_paths.add(resolved)
+            self._upgraded.add(url.url)
 
 
 # Module-level singleton — production-wide shared cache. Tests and
@@ -117,7 +120,7 @@ class Migrator:
 migrator = Migrator()
 
 
-def upgrade_to_head(db_path: str | Path) -> None:
+def upgrade_to_head(target: DatabaseTarget) -> None:
     """Module-level shim delegating to the singleton :data:`migrator`.
 
     Kept as a ``def`` (not a bound-method assignment) so tests can
@@ -125,4 +128,4 @@ def upgrade_to_head(db_path: str | Path) -> None:
     singleton. This mirrors the free-function surface preserved by
     :mod:`ember_code.core.db.engine` around :class:`EngineRegistry`.
     """
-    migrator.upgrade_to_head(db_path)
+    migrator.upgrade_to_head(target)

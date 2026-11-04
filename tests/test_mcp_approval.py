@@ -9,10 +9,15 @@ from ember_code.core.mcp.approval import _USER_GLOBAL_MCP, MCPApprovalManager
 class TestMCPApprovalManager:
     """Unit tests for MCPApprovalManager."""
 
-    def test_project_mcp_json_is_auto_approved(self, tmp_path):
-        """Project .mcp.json servers are trusted by default."""
+    def test_project_mcp_json_is_not_auto_approved(self, tmp_path):
+        """A project .mcp.json is untrusted content — it must not skip the gate.
+
+        Was the opposite assertion: the manager returned True for any
+        path named ``.mcp.json``, so cloning a repo and sending one
+        message spawned whatever command it declared.
+        """
         mgr = MCPApprovalManager(approval_path=tmp_path / "approved.json")
-        assert mgr.is_approved("my-server", "/project/.mcp.json") is True
+        assert mgr.is_approved("my-server", "/project/.mcp.json") is False
 
     def test_non_standard_config_is_not_approved(self, tmp_path):
         mgr = MCPApprovalManager(approval_path=tmp_path / "approved.json")
@@ -81,7 +86,12 @@ class TestMCPApprovalManager:
     def test_check_approval_prompts_and_approves(self, tmp_path):
         mgr = MCPApprovalManager(approval_path=tmp_path / "approved.json")
 
-        with patch("ember_code.core.mcp.approval.Confirm.ask", return_value=True):
+        # pytest's stdin is not a tty, and the manager refuses to prompt
+        # without one — force the interactive branch.
+        with (
+            patch.object(MCPApprovalManager, "_can_prompt", staticmethod(lambda: True)),
+            patch("ember_code.core.mcp.approval.Confirm.ask", return_value=True),
+        ):
             result = mgr.check_approval("new-server", "/project/custom-mcp.json")
 
         assert result is True
@@ -90,7 +100,10 @@ class TestMCPApprovalManager:
     def test_check_approval_prompts_and_denies(self, tmp_path):
         mgr = MCPApprovalManager(approval_path=tmp_path / "approved.json")
 
-        with patch("ember_code.core.mcp.approval.Confirm.ask", return_value=False):
+        with (
+            patch.object(MCPApprovalManager, "_can_prompt", staticmethod(lambda: True)),
+            patch("ember_code.core.mcp.approval.Confirm.ask", return_value=False),
+        ):
             result = mgr.check_approval("new-server", "/project/custom-mcp.json")
 
         assert result is False

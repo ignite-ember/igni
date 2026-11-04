@@ -5,8 +5,11 @@ on:
     tags:
       - "v*"
 
+# Read-only by default. The jobs that write to the release say so
+# themselves (`contents: write`), and the one job that mints provenance
+# asks for `id-token` and `attestations` on its own.
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   authorize:
@@ -30,16 +33,41 @@ jobs:
     needs: ci
     runs-on: ubuntu-latest
     permissions:
+      contents: read
       id-token: write  # trusted publishing
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
-      - uses: actions/setup-python@v5
+      # The release has two version universes and nothing used to make
+      # them agree. Tag-derived: latest.json's ``version`` field and the
+      # ``pip install 'ignite-ember==…'`` line in the release body.
+      # Commit-derived: pyproject.toml, which hatchling stamps onto the
+      # wheel and sync-version.mjs copies into tauri.conf.json /
+      # Cargo.toml (``CARGO_PKG_VERSION``, what the updater plugin
+      # compares latest.json against). Tag ``v1.0.4`` on a tree still at
+      # 1.0.3 shipped a release whose own page contradicted itself, and
+      # an installed desktop app that stays "out of date" forever: the
+      # updater downloads the bundle, the bundle reports 1.0.3, the
+      # feed still says 1.0.4, so it offers the same update on every
+      # launch. This is the first step of publish-pypi and every other
+      # job needs it transitively, so the whole release stops here.
+      - name: Verify tag matches pyproject version
+        run: |
+          set -euo pipefail
+          TAG_V="${GITHUB_REF#refs/tags/v}"
+          PY_V="$(grep -m1 -E '^version[[:space:]]*=' pyproject.toml | sed -E 's/.*"([^"]+)".*/\1/')"
+          if [ "$TAG_V" != "$PY_V" ]; then
+            echo "::error::tag v$TAG_V does not match pyproject.toml version $PY_V — bump pyproject (and run scripts/sync-version.mjs) or retag"
+            exit 1
+          fi
+          echo "tag and pyproject agree on $PY_V"
+
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
         with:
           python-version: "3.12"
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v4
+        uses: astral-sh/setup-uv@38f3f104447c67c051c4a08e39b64a148898af3a # v4.2.0
 
       # Belt-and-suspenders: ``pyproject.toml`` is the SoT, but
       # ``src/ember_code/__init__.py``'s ``__version__`` lives outside
@@ -47,195 +75,52 @@ jobs:
       # author having run ``scripts/sync-version.mjs`` locally, this
       # step makes sure the published wheel exposes the right
       # ``__version__`` at import time.
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: "20"
 
       - name: Sync version across all clients
         run: node scripts/sync-version.mjs
 
+      # …and then fail if it had anything to do. The fixup above only
+      # helps THIS job: build-tauri checks the tag out fresh and never
+      # runs the syncer, so a stale ``clients/tauri/src-tauri/Cargo.toml``
+      # is what the shipped bundle reports as CARGO_PKG_VERSION — the
+      # value the updater plugin compares against latest.json's
+      # tag-derived ``version``. Mismatched, the app re-offers the same
+      # update on every launch, forever.
+      - name: Fail if the committed client versions were out of sync
+        run: |
+          set -euo pipefail
+          if ! git diff --quiet; then
+            echo "::error::client version files were not in sync with pyproject.toml — run 'node scripts/sync-version.mjs' and commit before tagging"
+            git diff --stat
+            exit 1
+          fi
+
       - name: Build package
         run: uv build
 
+      # The same bytes PyPI gets, for release-evidence: it attaches them to
+      # the GitHub release (for installs that cannot reach PyPI), lists them
+      # in SHA256SUMS and attests their provenance.
+      - name: Keep the wheel and sdist
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: python-dist
+          path: dist/
+          if-no-files-found: error
+          retention-days: 30
+
+      # With trusted publishing this also uploads PEP 740 attestations to
+      # PyPI (the action's default), so `pypi.org` shows where each file
+      # was built.
       - name: Publish to PyPI
-        uses: pypa/gh-action-pypi-publish@release/v1
+        uses: pypa/gh-action-pypi-publish@7245906fb61fa33a13554f9d5fb856fe61758086 # v1.14.3
         with:
           skip-existing: true
 
-  # Build the JetBrains plugin zip against the freshly-published
-  # ignite-ember version. The plugin bundles a generated
-  # ``ember-version.properties`` whose value comes from pyproject.toml
-  # via the ``generateEmberVersion`` gradle task — so the just-tagged
-  # release version flows automatically into the plugin without a
-  # separate bump.
-  build-jetbrains-plugin:
-    needs: publish-pypi
-    runs-on: ubuntu-latest
-    outputs:
-      plugin-zip: ${{ steps.locate.outputs.path }}
-      plugin-name: ${{ steps.locate.outputs.name }}
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-node@v4
-        with:
-          node-version: "20"
-          cache: "npm"
-          cache-dependency-path: clients/web/package-lock.json
-
-      - uses: actions/setup-java@v4
-        with:
-          distribution: "zulu"
-          java-version: "21"
-
-      # ``scripts/build-clients.sh`` invokes ``npm run build`` in
-      # ``clients/web/`` but does NOT ``npm ci`` first — it's
-      # designed for local-dev where ``node_modules`` is already on
-      # disk. CI starts clean, so we install deps explicitly here.
-      - name: Install web deps
-        run: |
-          cd clients/web
-          npm ci
-
-      - name: Build shared web UI and stage into plugin tree
-        run: ./scripts/build-clients.sh
-
-      - name: Build JetBrains plugin
-        run: |
-          cd clients/jetbrains
-          ./gradlew buildPlugin --no-daemon
-
-      - name: Locate built zip
-        id: locate
-        run: |
-          ZIP=$(ls clients/jetbrains/build/distributions/*.zip | head -1)
-          echo "path=$ZIP" >> "$GITHUB_OUTPUT"
-          echo "name=$(basename "$ZIP")" >> "$GITHUB_OUTPUT"
-
-      - name: Upload plugin artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: jetbrains-plugin
-          path: clients/jetbrains/build/distributions/*.zip
-          retention-days: 30
-
-      # Push to the JetBrains Marketplace. ``publishPlugin`` reads
-      # the already-built zip from ``build/distributions/`` — same
-      # bytes that get uploaded as the GitHub-Release artifact, so
-      # users get an identical bundle through either channel.
-      #
-      # ``JETBRAINS_MARKETPLACE_TOKEN`` is an upload token created
-      # at https://plugins.jetbrains.com/author/me/tokens with the
-      # "Upload Plugin" scope for the ``igni`` plugin.
-      #
-      # CRITICAL: JetBrains requires the FIRST upload of a new
-      # plugin to go through the web UI at
-      # https://plugins.jetbrains.com/plugin/add (so a human sets
-      # the listing's license, repo URL, screenshots before
-      # automated uploads are accepted). After that one-time
-      # manual upload, ``publishPlugin`` works for every
-      # subsequent release.
-      #
-      # Skipped on RC tags for the same reason as the VSCode
-      # marketplace push — JetBrains rejects re-uploads of the
-      # same version, and our version doesn't change across RC
-      # iterations.
-      - name: Publish to JetBrains Marketplace
-        if: ${{ !contains(github.ref_name, '-') }}
-        # Don't fail the whole release if JetBrains rejects:
-        #   * "Cannot find plugin" — first upload must be via the
-        #     web UI; this clears after the manual one-time setup
-        #   * "Version already exists" — same as VSCode, an earlier
-        #     RC pushed this version
-        # In either case, the plugin zip is still on the GitHub
-        # Release page and downloadable; the step is easily
-        # re-runnable from the workflow UI once the blocker is
-        # cleared.
-        continue-on-error: true
-        env:
-          ORG_GRADLE_PROJECT_jbToken: ${{ secrets.JETBRAINS_MARKETPLACE_TOKEN }}
-        run: |
-          cd clients/jetbrains
-          ./gradlew publishPlugin --no-daemon
-
-  # VSCode extension — built against the just-published
-  # ignite-ember version. Same SoT trick as the JetBrains plugin:
-  # ``scripts/sync-version.mjs`` reads pyproject.toml and writes
-  # ``src/version.generated.ts``, which the extension's runtime
-  # imports for the ``uv pip install`` pin.
-  build-vscode-plugin:
-    needs: publish-pypi
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-node@v4
-        with:
-          node-version: "20"
-          cache: "npm"
-          # The npm cache key for both the web bundle and the
-          # extension itself derives from their respective lock
-          # files. Without an explicit path, setup-node hunts for
-          # a lockfile at the repo root (none exists) and fails
-          # the job before any build step runs.
-          cache-dependency-path: |
-            clients/web/package-lock.json
-            clients/vscode/package-lock.json
-
-      - name: Build shared web UI
-        run: |
-          cd clients/web
-          npm ci
-          npm run build
-
-      - name: Build + package VSCode extension
-        run: |
-          cd clients/vscode
-          npm install --no-audit --no-fund
-          npm run package
-
-      - name: Upload VSIX artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: vscode-extension
-          path: clients/vscode/*.vsix
-          retention-days: 30
-
-      # Push to the VS Code Marketplace. ``vsce publish --packagePath``
-      # uploads the already-built .vsix instead of rebuilding — keeps
-      # the marketplace artifact byte-identical to the GitHub-Release
-      # artifact, so users get exactly the same bundle whether they
-      # install from the marketplace or download the VSIX directly.
-      #
-      # ``VSCE_PAT`` is a Personal Access Token from
-      # https://dev.azure.com/<org>/_usersSettings/tokens with the
-      # ``Marketplace > Manage`` scope. The publisher ``ignite-ember``
-      # (per ``package.json``) must already exist on
-      # https://marketplace.visualstudio.com/manage.
-      #
-      # Skipped on RC / alpha / beta / dev tags: the marketplace
-      # rejects re-uploads of the same version, and ``package.json``'s
-      # version doesn't change across RC iterations (it's pinned to
-      # ``pyproject.toml``'s SoT). RC tags get a VSIX uploaded as a
-      # GitHub-Release artifact for testing; the marketplace push
-      # only fires on final-version tags.
-      - name: Publish to VS Code Marketplace
-        if: ${{ !contains(github.ref_name, '-') }}
-        # Don't fail the whole release if the marketplace push
-        # rejects the version (most common cause: same version
-        # was already published from an earlier RC iteration).
-        # The VSIX is still available on the GitHub Release page,
-        # and the failure shows as a yellow warning in the
-        # workflow log — easy to re-run manually if needed.
-        continue-on-error: true
-        env:
-          VSCE_PAT: ${{ secrets.VSCE_PAT }}
-        run: |
-          cd clients/vscode
-          VSIX=$(ls *.vsix | head -1)
-          npx --yes @vscode/vsce publish --packagePath "$VSIX" --pat "$VSCE_PAT"
-
-  # Tauri desktop installers — mac (arm + intel), windows, linux.
+  # Tauri desktop installers — mac (Apple Silicon only), windows, linux.
   # Tauri Action handles the per-platform bundle (.dmg/.msi/.AppImage),
   # generates the updater signatures, and uploads everything to the
   # GitHub Release. ``tagName`` matches the tag we're already on so
@@ -255,11 +140,10 @@ jobs:
   # (we trigger by pushing a ``v*`` tag, not by clicking "Create
   # release") there's no existing release, and the action's
   # find-or-create-by-tag path errors with "Release not found or
-  # created" — possibly because the four matrix legs race to
+  # created" — possibly because the three matrix legs race to
   # create the same release. Pre-creating it as a draft serialises
   # the creation; the matrix uploads in parallel; the final
-  # ``github-release`` job downgrades draft → published and adds
-  # the VSIX + JetBrains zip.
+  # ``github-release`` job downgrades draft → published.
   prepare-release:
     needs: publish-pypi
     runs-on: ubuntu-latest
@@ -268,8 +152,8 @@ jobs:
     outputs:
       release_id: ${{ steps.create.outputs.id }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: softprops/action-gh-release@v2
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2.6.2
         id: create
         with:
           tag_name: ${{ github.ref_name }}
@@ -292,31 +176,30 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - platform: macos-14
+          - platform: macos-26
             args: --target aarch64-apple-darwin
-          - platform: macos-14
-            args: --target x86_64-apple-darwin
           - platform: windows-latest
             args: ""
           - platform: ubuntu-22.04
             args: ""
     runs-on: ${{ matrix.platform }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: "20"
           cache: "npm"
           cache-dependency-path: clients/web/package-lock.json
 
       - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable branch, 2026-10-16
         with:
-          targets: ${{ matrix.platform == 'macos-14' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
+          toolchain: stable
+          targets: ${{ matrix.platform == 'macos-26' && 'aarch64-apple-darwin' || '' }}
 
       - name: Cache Cargo
-        uses: Swatinem/rust-cache@v2
+        uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           workspaces: clients/tauri/src-tauri
 
@@ -339,7 +222,7 @@ jobs:
       # creds it exits non-zero with a clear "Authentication failed"
       # in ~5 seconds, fast-failing the run.
       - name: Preflight notarytool credentials (macOS)
-        if: matrix.platform == 'macos-14'
+        if: matrix.platform == 'macos-26'
         env:
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
@@ -350,7 +233,7 @@ jobs:
             | head -20
 
       - name: Build + sign + upload Tauri app
-        uses: tauri-apps/tauri-action@v0
+        uses: tauri-apps/tauri-action@84b9d35b5fc46c1e45415bdb6144030364f7ebc5 # v0.6.2
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
@@ -395,7 +278,7 @@ jobs:
       # pre-staple tarball is deleted so the next step's fallback
       # re-mints it via minisign against the new tarball.
       - name: Notarize + staple .app (macOS)
-        if: matrix.platform == 'macos-14'
+        if: matrix.platform == 'macos-26'
         env:
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
@@ -505,7 +388,7 @@ jobs:
           # the stapled version. tauri-bundler emits the tarball
           # locally as ``<productName>.app.tar.gz`` (no arch suffix),
           # but tauri-action RENAMES it to
-          # ``<productName>_<arch>.app.tar.gz`` (``_aarch64`` / ``_x64``)
+          # ``<productName>_<arch>.app.tar.gz`` (``_aarch64`` — the only Mac build)
           # when uploading to the release — and ``latest.json`` URLs
           # point at the arch-suffixed names. So if we upload the
           # bare basename we publish a new ``igni.app.tar.gz`` asset
@@ -523,11 +406,7 @@ jobs:
           # updater broke. Same variable means same file means no
           # divergence path.
           if [ -n "$OLD_TARBALL" ]; then
-            if [[ "${{ matrix.args }}" == *aarch64* ]]; then
-              REMOTE_NAME="igni_aarch64.app.tar.gz"
-            else
-              REMOTE_NAME="igni_x64.app.tar.gz"
-            fi
+            REMOTE_NAME="igni_aarch64.app.tar.gz"
             # ``gh release upload "file#displayName"`` only sets the
             # label in the UI — the asset's actual filename / URL
             # uses the local basename. So we have to RENAME the file
@@ -569,7 +448,7 @@ jobs:
       # ``signature`` field. ``updater-json`` below embeds the
       # file's contents verbatim.
       - name: Stash updater signature (macOS)
-        if: matrix.platform == 'macos-14'
+        if: matrix.platform == 'macos-26'
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
@@ -609,10 +488,10 @@ jobs:
           fi
           ls -la /tmp/updater-sig/
       - name: Upload updater signature artifact
-        if: matrix.platform == 'macos-14'
-        uses: actions/upload-artifact@v4
+        if: matrix.platform == 'macos-26'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: updater-sig-${{ contains(matrix.args, 'aarch64') && 'aarch64' || 'x86_64' }}
+          name: updater-sig-aarch64
           path: /tmp/updater-sig/updater.sig
           if-no-files-found: error
           retention-days: 1
@@ -625,7 +504,7 @@ jobs:
       # The .app.tar.gz updater payload (separately signed) is
       # untouched, so the auto-updater chain stays valid.
       - name: Strip DMG volume icon (macOS)
-        if: matrix.platform == 'macos-14'
+        if: matrix.platform == 'macos-26'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
@@ -647,7 +526,7 @@ jobs:
       contents: write
     steps:
       - name: Download macOS updater signatures
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           pattern: updater-sig-*
           path: /tmp/sigs/
@@ -663,22 +542,20 @@ jobs:
           PUB_DATE="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
           BASE_URL="https://github.com/${GITHUB_REPOSITORY}/releases/download/${TAG}"
 
-          # Each macOS matrix leg copied its ``.app.tar.gz.sig`` to
+          # The macOS matrix leg copied its ``.app.tar.gz.sig`` to
           # ``/tmp/updater-sig/updater.sig`` before uploading the
           # artifact, so the filename inside each download dir is
           # the stable ``updater.sig`` (no space-in-filename glob
           # surprises like the v0.6.2 attempt hit).
           AARCH64_SIG="$(cat /tmp/sigs/updater-sig-aarch64/updater.sig)"
-          X64_SIG="$(cat /tmp/sigs/updater-sig-x86_64/updater.sig)"
 
           # ``jq -Rs .`` reads the file content as a raw string and
           # JSON-quotes it (escapes newlines / quotes correctly).
           AARCH64_JSON="$(printf '%s' "$AARCH64_SIG" | jq -Rs .)"
-          X64_JSON="$(printf '%s' "$X64_SIG" | jq -Rs .)"
 
           # tauri-bundler emits ``<productName>_<arch>.app.tar.gz`` —
-          # productName is ``igni`` per tauri.conf.json, so the assets
-          # are ``igni_aarch64.app.tar.gz`` and ``igni_x64.app.tar.gz``.
+          # productName is ``igni`` per tauri.conf.json, so the asset
+          # is ``igni_aarch64.app.tar.gz`` (Apple Silicon only; no Intel build).
           # (Pre-rename builds at v0.6.x used ``Ember.Code_<arch>...``;
           # spaces in the old productName became dots in the
           # filename. Bumping ``productName`` in tauri.conf.json
@@ -692,10 +569,6 @@ jobs:
               "darwin-aarch64": {
                 "signature": ${AARCH64_JSON},
                 "url": "${BASE_URL}/igni_aarch64.app.tar.gz"
-              },
-              "darwin-x86_64": {
-                "signature": ${X64_JSON},
-                "url": "${BASE_URL}/igni_x64.app.tar.gz"
               }
             }
           }
@@ -708,27 +581,187 @@ jobs:
           echo "latest.json uploaded:"
           cat /tmp/latest.json
 
+  # SBOMs, checksums, provenance and (once the key exists) a signature,
+  # for every file this release ships — before the draft is published, so
+  # a release is never public without them. docs/VERIFYING_RELEASES.md is
+  # the user's side of this job.
+  #
+  # One SHA256SUMS covers everything: the desktop installers and updater
+  # payload already on the draft, the wheel and sdist, and
+  # the SBOMs. Provenance is minted for every line of it in one
+  # attestation, and the cosign signature is over it too, so one signed
+  # file vouches for every other — the shape of igni server's bundle
+  # MANIFEST.
+  release-evidence:
+    needs: [prepare-release, publish-pypi, build-tauri, updater-json]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write      # read the draft's assets, attach the evidence
+      id-token: write      # Sigstore certificate for the attestation
+      attestations: write  # store it on this repository
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      RELEASE_ID: ${{ needs.prepare-release.outputs.release_id }}
+      TAG: ${{ github.ref_name }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+
+      - name: Version
+        id: v
+        run: echo "version=${TAG#v}" >> "$GITHUB_OUTPUT"
+
+      - name: Download the wheel and sdist
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: python-dist
+          path: dist/python
+
+      # By release ID, not tag: a draft cannot be looked up by its tag
+      # (see github-release below). Evidence from an earlier attempt of this
+      # job is skipped, so a re-run hashes the shipped files only.
+      - name: Download the desktop assets from the draft
+        run: |
+          set -euo pipefail
+          mkdir -p dist/release
+          gh api --paginate "repos/${GITHUB_REPOSITORY}/releases/${RELEASE_ID}/assets" \
+            --jq '.[] | [.id, .name] | @tsv' |
+          while IFS=$'\t' read -r id name; do
+            case "$name" in
+              SHA256SUMS|SHA256SUMS.sig|*.cdx.json|*.sigstore.json) continue ;;
+            esac
+            echo "  $name"
+            gh api -H 'Accept: application/octet-stream' \
+              "repos/${GITHUB_REPOSITORY}/releases/assets/${id}" > "dist/release/${name}"
+          done
+          cp dist/python/* dist/release/
+          ls -la dist/release
+
+      # ── SBOMs: one per kind of thing a user installs ─────────────────
+      #
+      # The wheel's from uv.lock, every extra but `dev` — what `pip install
+      # 'ignite-ember[…]'` can bring in. The desktop app's from its
+      # lockfiles: the web UI's npm tree is inside it, plus the Tauri
+      # shell's crates. Development dependencies are left out: they do not
+      # ship.
+      - name: SBOM — Python package
+        run: |
+          uv export --frozen --no-dev --all-extras --no-extra dev \
+            --format cyclonedx1.5 --preview-features sbom-export \
+            -o "dist/release/ignite-ember-${{ steps.v.outputs.version }}.cdx.json"
+
+      - name: Stage the desktop app's lockfiles
+        run: |
+          set -euo pipefail
+          mkdir -p sbom-src/igni-desktop/web sbom-src/igni-desktop/shell
+          cp clients/web/package.json clients/web/package-lock.json sbom-src/igni-desktop/web/
+          cp clients/tauri/src-tauri/Cargo.toml clients/tauri/src-tauri/Cargo.lock sbom-src/igni-desktop/shell/
+
+      - name: SBOM — desktop app
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          scan-type: fs
+          scan-ref: sbom-src/igni-desktop
+          format: cyclonedx
+          output: dist/release/igni-desktop-${{ steps.v.outputs.version }}.cdx.json
+
+      - name: SHA256SUMS
+        run: |
+          set -euo pipefail
+          mkdir -p dist/evidence
+          (cd dist/release && sha256sum -- *) > dist/evidence/SHA256SUMS
+          cat dist/evidence/SHA256SUMS
+          { echo "### ${TAG}"; echo; echo '```'; cat dist/evidence/SHA256SUMS; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+
+      # SLSA build provenance for every file in SHA256SUMS, signed with a
+      # short-lived Sigstore certificate bound to this workflow run and
+      # recorded in Sigstore's public transparency log (this repository is
+      # public; the log entry says nothing the repository does not).
+      - name: Attest build provenance
+        id: attest
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-checksums: dist/evidence/SHA256SUMS
+
+      # The attestation also lives on GitHub (`gh attestation verify`
+      # fetches it); attaching the bundle lets a machine with no network
+      # verify it with `--bundle` and a trusted root.
+      - name: Keep the attestation bundle
+        run: cp "${{ steps.attest.outputs.bundle-path }}" "dist/evidence/igni-${{ steps.v.outputs.version }}.provenance.sigstore.json"
+
+      # ── Signature ────────────────────────────────────────────────────
+      #
+      # igni server's approach: a cosign key pair, not keyless, so a user
+      # needs only the public key to verify, and `--tlog-upload=false`
+      # keeps the signature out of the public log. igni server's offline
+      # bundle signs its images, not anything this repository publishes, so
+      # this is the only signature on these files.
+      #
+      # The key ceremony has not happened. Until COSIGN_PRIVATE_KEY,
+      # COSIGN_PASSWORD (secrets) and COSIGN_PUBLIC_KEY (variable) are all
+      # set, the release goes out unsigned and says so; with only some of
+      # them set it fails, because that is a mistake rather than a state.
+      - name: Is there a signing key?
+        id: key
+        env:
+          COSIGN_PRIVATE_KEY: ${{ secrets.COSIGN_PRIVATE_KEY }}
+          COSIGN_PASSWORD: ${{ secrets.COSIGN_PASSWORD }}
+          COSIGN_PUBLIC_KEY: ${{ vars.COSIGN_PUBLIC_KEY }}
+        run: |
+          set -euo pipefail
+          missing=()
+          [ -n "${COSIGN_PRIVATE_KEY}" ] || missing+=("secret COSIGN_PRIVATE_KEY")
+          [ -n "${COSIGN_PASSWORD}" ] || missing+=("secret COSIGN_PASSWORD")
+          [ -n "${COSIGN_PUBLIC_KEY}" ] || missing+=("variable COSIGN_PUBLIC_KEY")
+          if [ "${#missing[@]}" -eq 3 ]; then
+            echo "::notice title=Unsigned release::No cosign key is configured (the key ceremony has not happened); SHA256SUMS is not signed. Provenance and SBOMs are still attached."
+            echo "present=false" >> "$GITHUB_OUTPUT"
+          elif [ "${#missing[@]}" -gt 0 ]; then
+            echo "::error::cosign is half-configured; missing: ${missing[*]}"
+            exit 1
+          else
+            echo "present=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: sigstore/cosign-installer@dc72c7d5c4d10cd6bcb8cf6e3fd625a9e5e537da # v3.7.0
+        if: steps.key.outputs.present == 'true'
+        with:
+          cosign-release: v2.4.1
+
+      - name: Sign SHA256SUMS
+        if: steps.key.outputs.present == 'true'
+        env:
+          COSIGN_PRIVATE_KEY: ${{ secrets.COSIGN_PRIVATE_KEY }}
+          COSIGN_PASSWORD: ${{ secrets.COSIGN_PASSWORD }}
+          COSIGN_PUBLIC_KEY: ${{ vars.COSIGN_PUBLIC_KEY }}
+        run: |
+          set -euo pipefail
+          cosign sign-blob --yes --key env://COSIGN_PRIVATE_KEY --tlog-upload=false \
+            --output-signature dist/evidence/SHA256SUMS.sig dist/evidence/SHA256SUMS
+          printf '%s\n' "${COSIGN_PUBLIC_KEY}" > "${RUNNER_TEMP}/cosign.pub"
+          cosign verify-blob --key "${RUNNER_TEMP}/cosign.pub" --insecure-ignore-tlog=true \
+            --signature dist/evidence/SHA256SUMS.sig dist/evidence/SHA256SUMS
+
+      # Only what this job adds: the desktop assets are already on the
+      # draft.
+      - name: Attach to the draft release
+        run: |
+          set -euo pipefail
+          gh release upload "$TAG" --repo "$GITHUB_REPOSITORY" --clobber \
+            dist/python/* dist/release/*.cdx.json dist/evidence/*
+
   github-release:
-    needs: [prepare-release, publish-pypi, build-jetbrains-plugin, build-vscode-plugin, build-tauri, updater-json]
+    needs: [prepare-release, publish-pypi, build-tauri, updater-json, release-evidence]
     runs-on: ubuntu-latest
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           fetch-depth: 0
-
-      - name: Download JetBrains plugin
-        uses: actions/download-artifact@v4
-        with:
-          name: jetbrains-plugin
-          path: artifacts/
-
-      - name: Download VSCode extension
-        uses: actions/download-artifact@v4
-        with:
-          name: vscode-extension
-          path: artifacts/
 
       - name: Generate release notes
         id: notes
@@ -765,19 +798,14 @@ jobs:
       # rejects ``tag_name`` collisions on PATCH. Using ``gh
       # release`` CLI with the ID we already know avoids the
       # lookup entirely.
-      - name: Upload IDE artifacts + publish release
+      - name: Publish release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           RELEASE_ID: ${{ needs.prepare-release.outputs.release_id }}
         run: |
           set -euo pipefail
-          # Upload VSIX + JetBrains zip to the existing draft. Tauri
-          # bundles were already attached by the build-tauri matrix.
-          for f in artifacts/*.zip artifacts/*.vsix; do
-            [ -f "$f" ] || continue
-            echo "Uploading $f"
-            gh release upload "${{ github.ref_name }}" "$f" --clobber
-          done
+          # Every asset is already on the draft: the Tauri bundles from
+          # the build-tauri matrix, the evidence from release-evidence.
 
           # Compose the final body + publish (draft → false). We use
           # the API directly because ``gh release edit`` can't take
@@ -791,23 +819,25 @@ jobs:
 
           **Python (CLI / library):**
           ```bash
-          pip install 'ignite-ember==${{ steps.notes.outputs.pip_version }}'
+          pip install 'ignite-ember[decisions]==${{ steps.notes.outputs.pip_version }}'
           # or
-          uv pip install 'ignite-ember==${{ steps.notes.outputs.pip_version }}'
+          uv pip install 'ignite-ember[decisions]==${{ steps.notes.outputs.pip_version }}'
+          # ``[decisions]`` adds igni's decisions service (Laya, torch) for
+          # Bypass mode's last check and ``host.decide``; leave it out on a
+          # backend that points IGNI_DECISIONS_URL at a shared one.
           ```
 
-          **JetBrains plugin:** download the ``ember-code-jetbrains-*.zip``
-          asset below and install via Settings → Plugins → ⚙ →
-          Install Plugin from Disk…
+          **Desktop app:** download the installer for your platform
+          (``.dmg``, ``.msi`` or ``.AppImage``) below.
 
-          **VSCode extension:** download the ``ember-code-vscode-*.vsix``
-          asset below and install with:
-          ```bash
-          code --install-extension ember-code-vscode-*.vsix
-          ```
+          ## Verify
 
-          Both IDE plugins bootstrap uv + Python + ignite-ember on
-          first launch — no manual setup required.
+          ``SHA256SUMS`` lists every file on this release. Each one has
+          GitHub build provenance (``gh attestation verify <file> --repo
+          ${{ github.repository }}``; the bundle is attached for offline
+          checks), the ``*.cdx.json`` files are CycloneDX SBOMs, and
+          ``SHA256SUMS.sig``, when present, is a cosign signature over the
+          checksums. See docs/VERIFYING_RELEASES.md.
           BODY_EOF
           )
 
@@ -928,7 +958,13 @@ jobs:
             homepage "https://ignite-ember.sh"
             url "PLACEHOLDER_URL"
             sha256 "PLACEHOLDER_SHA"
-            license "MIT"
+            # Apache-2.0, matching ``LICENSE`` at the repo root and
+            # ``license = "Apache-2.0"`` in pyproject.toml. This said
+            # "MIT" for every release published so far, which put a
+            # licence the project has never shipped under on the tap
+            # page brew users read before installing. Homebrew validates
+            # this string against its SPDX list, so keep it SPDX-exact.
+            license "Apache-2.0"
 
             depends_on "git"
             depends_on "python@3.12"
@@ -939,7 +975,15 @@ jobs:
             def install
               venv = virtualenv_create(libexec, "python3.12")
               system libexec/"bin/python3.12", "-m", "pip", "install", "--prefer-binary", "ignite-ember==PLACEHOLDER_VERSION"
+              # Both console scripts from pyproject's [project.scripts].
+              # ``igni`` is the canonical command and the one README and
+              # QUICKSTART tell brew users to type; for every release up
+              # to now only ``ignite-ember`` was linked, so the
+              # documented install path shipped without the documented
+              # command. The test below runs ``igni`` for that reason —
+              # dropping this line again fails the formula's own test.
               bin.install_symlink libexec/"bin/ignite-ember"
+              bin.install_symlink libexec/"bin/igni"
 
               # Clear dylib IDs from Rust-built Python extensions so Homebrew's
               # install_name_tool fixup doesn't fail on them.
@@ -949,6 +993,10 @@ jobs:
             end
 
             test do
+              # Run the canonical name first: ``brew test`` is the only
+              # thing that would have caught the missing symlink, and it
+              # was pointed at the other binary.
+              assert_match "igni", shell_output("#{bin}/igni --version")
               assert_match "igni", shell_output("#{bin}/ignite-ember --version")
             end
           end

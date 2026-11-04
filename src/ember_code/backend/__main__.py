@@ -39,7 +39,6 @@ from ember_code.backend.schemas_rpc import (
     DirListResult,
     DisplayConfigResult,
     FileCompletion,
-    GetClientStateResult,
     LifecyclePhase,
     LoginStarted,
     ModelRegistryResult,
@@ -48,8 +47,9 @@ from ember_code.backend.schemas_rpc import (
     SessionPoolConfig,
     SkillDefinition,
     UpdateAvailable,
-    WriteClientStateResult,
 )
+from ember_code.core.data_paths import canonical_project_dir
+from ember_code.transport.ws_auth import take_token_from_environment
 
 __all__ = [
     "AttachSessionResult",
@@ -58,7 +58,6 @@ __all__ = [
     "DirListResult",
     "DisplayConfigResult",
     "FileCompletion",
-    "GetClientStateResult",
     "LifecyclePhase",
     "LoginStarted",
     "ModelRegistryResult",
@@ -67,7 +66,6 @@ __all__ = [
     "SessionPoolConfig",
     "SkillDefinition",
     "UpdateAvailable",
-    "WriteClientStateResult",
     "_build_rpc_table",
     "_handle_message",
     "_serialize",
@@ -86,9 +84,9 @@ def warn_if_unsupported_python(emit: Callable[..., None] = logger.warning) -> bo
     """Say so, loudly, when the backend is running off-version.
 
     The reason this is worth a check rather than a note in a README: the
-    failure is silent. On 3.14 the Neo4j sidecar exits without writing
-    stderr, without a Neo4j log, and without raising through the attach
-    — the knowledge base simply never comes up, and the panel says
+    failure is silent. On 3.14 a Neo4j sidecar the backend used to run
+    exited without writing stderr, without a log, and without raising —
+    the feature behind it simply never came up, and the panel said
     "disabled" as though someone had configured it that way. Two hours
     went into that before the interpreter turned out to be the variable.
 
@@ -103,8 +101,7 @@ def warn_if_unsupported_python(emit: Callable[..., None] = logger.warning) -> bo
         return True
     emit(
         "running on Python %d.%d; this backend is supported on %d.%d only. "
-        "Some subsystems fail silently off-version — the Neo4j sidecar behind "
-        "the knowledge base is the known one.",
+        "Some subsystems fail silently off-version.",
         *actual,
         *SUPPORTED_PYTHON,
     )
@@ -120,7 +117,7 @@ def warn_if_unsupported_python(emit: Callable[..., None] = logger.warning) -> bo
     default=None,
     help="Listen on a loopback WebSocket port instead of a Unix socket "
     "(0 = auto-assign; the bound port is printed in the ready line). "
-    "Used by GUI clients (Tauri / VSCode / JetBrains webviews).",
+    "Used by GUI clients (the Tauri desktop app, the web client).",
 )
 @click.option("--project-dir", type=click.Path(exists=True), default=".")
 @click.option("--resume-session", "resume_session_id", default=None)
@@ -148,20 +145,21 @@ def main(
 
     warn_if_unsupported_python()
 
+    # Taken out of the environment at once, before anything is spawned
+    # that would inherit it (shell tools, hooks, MCP servers).
+    ws_token = take_token_from_environment()
+
     extra_dirs = [Path(d) for d in additional_dirs] if additional_dirs else None
-    # Canonicalise the project dir so two clients pointing at the
-    # "same" folder via slightly different paths (``/tmp`` vs
-    # ``/private/tmp`` on macOS, symlink resolution, trailing slash)
-    # both land on the same ``.ember/state.db`` and see identical
-    # session lists. ``strict=False`` lets us keep going if the
-    # directory doesn't yet exist — startup will create it.
-    resolved_project = Path(project_dir).resolve(strict=False)
+    # One spelling of the project dir, shared with ``igni migrate`` and
+    # every store, so all of them open the same ``state.db``.
+    resolved_project = canonical_project_dir(project_dir)
     app = BackendApp(
         socket_path=socket_path,
         ws_port=ws_port,
         project_dir=resolved_project,
         resume_session_id=resume_session_id,
         additional_dirs=extra_dirs,
+        ws_token=ws_token,
     )
     asyncio.run(app.run())
 

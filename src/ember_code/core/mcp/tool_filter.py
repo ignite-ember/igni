@@ -173,6 +173,23 @@ class MCPToolFilter:
             for tool in names
         ]
 
+    def require_confirmation(self, name: str, tools: set[str], client: MCPTools | None) -> None:
+        """Have the agent pause before calling each of ``tools``.
+
+        Set on the connect-time snapshot as well as the live dict —
+        they hold the same function objects, but a tool the person has
+        switched off is only in the snapshot, and switching it back on
+        must not bring it back without the pause.
+        """
+        sources = [self._original_functions.get(name) or {}]
+        live = getattr(client, "functions", None) if client is not None else None
+        if isinstance(live, dict):
+            sources.append(live)
+        for functions in sources:
+            for fname, func in functions.items():
+                if fname in tools:
+                    func.requires_confirmation = True
+
     def forget(self, name: str) -> None:
         """Drop the connect-time snapshot for ``name`` — called
         by the manager on disconnect so a fresh connect starts

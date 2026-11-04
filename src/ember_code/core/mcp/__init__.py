@@ -11,7 +11,6 @@ from ember_code.core.mcp.schemas import (
 )
 from ember_code.core.mcp.stdio_binding import StdioMCPBinding
 from ember_code.core.mcp.tool_filter import MCPToolFilter
-from ember_code.core.mcp.tools import MCPToolProvider
 
 __all__ = [
     "MCPApprovalManager",
@@ -24,6 +23,5 @@ __all__ = [
     "MCPServerConfig",
     "MCPToolFilter",
     "MCPToolInfo",
-    "MCPToolProvider",
     "StdioMCPBinding",
 ]

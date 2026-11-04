@@ -10,49 +10,51 @@ by ``UserConfigStore.set_default_model``); this store layers on top
 so a resumed session keeps the model it was last using even if the
 user has since picked a different default for new sessions.
 
-Lives in the same project-local ``state.db`` Agno uses, so no new
-file is needed. ``CREATE TABLE IF NOT EXISTS`` runs on first use;
-existing databases pick up the table on next launch.
+Lives in the project's database (the desktop's ``state.db``, the
+same file Agno uses), keyed by scope and ``session_id``.
 """
 
 from __future__ import annotations
 
 import asyncio
-import contextlib
 import logging
-import sqlite3
+import time
 from pathlib import Path
 
-from ember_code.core.session._sqlite_utils import connect_kv
+from sqlalchemy import Integer, PrimaryKeyConstraint, String, select
+from sqlalchemy.orm import Mapped, mapped_column
+
+from ember_code.core.db.base import Base
+from ember_code.core.db.database import Database
+from ember_code.core.db.scope import ScopedColumns
+from ember_code.core.db.upsert import ConflictInsert
 
 logger = logging.getLogger(__name__)
 
 
-_SCHEMA = """
-CREATE TABLE IF NOT EXISTS ember_session_preferences (
-    session_id TEXT PRIMARY KEY,
-    model_name TEXT,
-    updated_at INTEGER NOT NULL DEFAULT (strftime('%s', 'now'))
-);
-"""
+class SessionPreferenceModel(ScopedColumns, Base):
+    __tablename__ = "ember_session_preferences"
+    __table_args__ = (
+        PrimaryKeyConstraint(
+            "org", "producer", "project", "session_id", name="pk_ember_session_preferences"
+        ),
+    )
+
+    session_id: Mapped[str] = mapped_column(String, nullable=False)
+    model_name: Mapped[str | None] = mapped_column(String, nullable=True)
+    updated_at: Mapped[int] = mapped_column(Integer, nullable=False)
 
 
 class SessionPreferencesStore:
-    """SQLite-backed key/value store for per-session preferences.
+    """Key/value store for per-session preferences.
 
     Writes are tiny (one row, single column update) so the sync API
     is exposed directly. Async wrappers exist for hot paths invoked
     from the event loop.
     """
 
-    def __init__(self, db_path: Path) -> None:
-        self._db_path = db_path
-        self._db_path.parent.mkdir(parents=True, exist_ok=True)
-        with contextlib.closing(self._connect()) as conn, conn:
-            conn.executescript(_SCHEMA)
-
-    def _connect(self) -> sqlite3.Connection:
-        return connect_kv(self._db_path)
+    def __init__(self, db: Database | str | Path) -> None:
+        self._db = Database.of(db)
 
     def set_model(self, session_id: str, model_name: str) -> None:
         """Upsert the model preference for ``session_id``.
@@ -62,15 +64,20 @@ class SessionPreferencesStore:
         the time we get here — the only consequence of a failed save
         is that ``--continue`` won't restore this specific choice.
         """
+        now = int(time.time())
         try:
-            with contextlib.closing(self._connect()) as conn, conn:
-                conn.execute(
-                    "INSERT INTO ember_session_preferences (session_id, model_name) "
-                    "VALUES (?, ?) "
-                    "ON CONFLICT(session_id) DO UPDATE SET "
-                    "model_name=excluded.model_name, "
-                    "updated_at=strftime('%s', 'now')",
-                    (session_id, model_name),
+            with self._db.sync_session() as session, session.begin():
+                stmt = ConflictInsert.into(session, SessionPreferenceModel).values(
+                    **self._db.scope.stamp(),
+                    session_id=session_id,
+                    model_name=model_name,
+                    updated_at=now,
+                )
+                session.execute(
+                    stmt.on_conflict_do_update(
+                        index_elements=["org", "producer", "project", "session_id"],
+                        set_={"model_name": model_name, "updated_at": now},
+                    )
                 )
         except Exception as exc:
             logger.debug("set_model failed for %s: %s", session_id, exc)
@@ -78,17 +85,16 @@ class SessionPreferencesStore:
     def get_model(self, session_id: str) -> str | None:
         """Return the persisted model for ``session_id`` or None."""
         try:
-            with contextlib.closing(self._connect()) as conn:
-                row = conn.execute(
-                    "SELECT model_name FROM ember_session_preferences WHERE session_id=?",
-                    (session_id,),
-                ).fetchone()
+            with self._db.sync_session() as session:
+                return session.scalar(
+                    select(SessionPreferenceModel.model_name).where(
+                        self._db.scope.where(SessionPreferenceModel),
+                        SessionPreferenceModel.session_id == session_id,
+                    )
+                )
         except Exception as exc:
             logger.debug("get_model failed for %s: %s", session_id, exc)
             return None
-        if row is None:
-            return None
-        return row["model_name"]
 
     # ── Async wrappers ────────────────────────────────────────────
 

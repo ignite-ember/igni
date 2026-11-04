@@ -8,44 +8,53 @@
  * phone width, and a single short turn rather than two so the frame
  * is not wall-to-wall text.
  *
- * Run with:  npx playwright test e2e/landing-shot-mobile.spec.ts
+ * Run with:  IGNI_E2E_SHOTS=1 npx playwright test e2e/landing-shot-mobile.spec.ts
  * Output:    LANDING_SHOT_DIR (defaults to ./landing-shots)
  */
 
 import { test, expect } from "./fixtures/embed";
+import { signedInStatus } from "./fixtures/backend";
 
 const OUT = process.env.LANDING_SHOT_DIR || "landing-shots";
+
+// Every test here writes product shots, some of them tracked, so none runs
+// in a full `npx playwright test` unless asked for. Like app-shots.spec.ts.
+test.skip(
+  process.env.IGNI_E2E_SHOTS !== "1",
+  "Set IGNI_E2E_SHOTS=1 to write the landing shots. They overwrite the " +
+    "PNGs tracked under landing-shots/ and assert almost nothing, so a " +
+    "full run must not write them.",
+);
 
 const MODEL = "igni 1.0 27b";
 const PROJECT = "/Users/dev/acme/payments-api";
 
-// Narrow enough that the app lays itself out like a VSCode side panel,
-// which is a real surface rather than a contrivance.
+// Narrow enough that the app lays itself out like a narrow desktop
+// window or a small tablet, which is a real surface rather than a
+// contrivance.
 test.use({ viewport: { width: 460, height: 660 }, deviceScaleFactor: 2 });
 
-test("capture phone product shot", async ({ page, backend, appUrl }) => {
+const capture = "capture phone product shot";
+test(capture, { tag: "@manual" }, async ({ page, backend, appUrl }) => {
   backend.onRpc("attach_session", () => ({
     session_id: "sess-landing",
     project_dir: PROJECT,
   }));
   backend.onRpc("get_session_id", () => "a1f9c2e4");
-  backend.onRpc("get_status", () => ({
-    type: "status_update",
-    model: MODEL,
-    context_tokens: 8_200,
-    max_context: 200_000,
-    cloud_connected: true,
-    cloud_org: "Acme",
-  }));
+  backend.onRpc("get_status", () =>
+    signedInStatus({
+      model: MODEL,
+      context_tokens: 8_200,
+      max_context: 200_000,
+      cloud_connected: true,
+      cloud_org: "Acme",
+    }),
+  );
   backend.onRpc("count_context_tokens", () => 8_200);
-  backend.onRpc("codeindex_status", () => ({
-    install_state: "active",
-    head_indexed: true,
-    sync_in_progress: false,
-    sync_error: null,
-    remote_url: "https://github.com/acme/payments-api",
+  backend.onRpc("get_login_state", () => ({
+    logged_in: true,
+    email: "dev@acme.com",
   }));
-  backend.onRpc("get_login_state", () => ({ logged_in: true, email: "dev@acme.com" }));
   backend.onRpc("list_sessions", () => ({ sessions: [] }));
 
   await page.goto(appUrl);
@@ -59,7 +68,9 @@ test("capture phone product shot", async ({ page, backend, appUrl }) => {
   await expect
     .poll(() => backend.received().find((m) => m.type === "user_message"))
     .toBeTruthy();
-  const runId = String(backend.received().find((m) => m.type === "user_message")!.id);
+  const runId = String(
+    backend.received().find((m) => m.type === "user_message")!.id,
+  );
 
   backend.pushEvent({ type: "run_started", id: runId });
 
@@ -67,9 +78,9 @@ test("capture phone product shot", async ({ page, backend, appUrl }) => {
     type: "tool_started",
     id: "t1",
     run_id: runId,
-    tool_name: "codeindex_search",
-    friendly_name: "CodeIndex",
-    args_summary: "domain:auth + domain:billing",
+    tool_name: "run_shell_command",
+    friendly_name: "Shell",
+    args_summary: "rg -l auth | xargs rg -l billing",
   });
   backend.pushEvent({
     type: "tool_completed",
@@ -98,12 +109,16 @@ test("capture phone product shot", async ({ page, backend, appUrl }) => {
   backend.pushEvent({ type: "stream_end", id: runId });
   backend.pushEvent({ type: "run_completed", id: runId });
 
-  await expect(page.locator(".msg-assistant").last()).toContainText("patch all three");
+  await expect(page.locator(".msg-assistant").last()).toContainText(
+    "patch all three",
+  );
   await page.waitForTimeout(1200);
 
   // Off-the-bottom scroll affordance is correct behaviour and reads as
   // an artefact in a still.
-  await page.addStyleTag({ content: ".scroll-to-bottom { display: none !important; }" });
+  await page.addStyleTag({
+    content: ".scroll-to-bottom { display: none !important; }",
+  });
   await page.waitForTimeout(400);
 
   for (const scheme of ["dark", "light"] as const) {

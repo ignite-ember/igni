@@ -7,9 +7,18 @@
  *  - demultiplex streamed run events (same `id` until `stream_end`)
  *  - fan out uncorrelated events (status updates, push notifications)
  *
- * The WS URL is provided by the embedding shell (Tauri / VSCode /
- * JetBrains) via `?ws=` query param or `window.__EMBER_WS_URL__`;
- * `ws://127.0.0.1:8765` is the dev-server fallback.
+ * The WS URL is provided by the embedding shell (Tauri) via the `?ws=`
+ * query param; `ws://127.0.0.1:8765` is the dev-server fallback.
+ *
+ * The backend's WebSocket is open to every web page and local process
+ * unless it checks who connects, so a backend the desktop shell spawned
+ * requires the shell's per-launch token. The shell puts it in the URL
+ * fragment (`#igni_ws_token=…`, never sent to a server, kept across
+ * reloads); an embedder can also use `<meta name="ember-ws-token">` or
+ * `window.__EMBER_WS_TOKEN__`. It goes to the backend as the WebSocket
+ * subprotocol `igni-token.<token>` next to `igni.v1` — the one handshake
+ * field a browser lets a page set, and unlike the query string it ends
+ * up in no request log. See `src/ember_code/transport/ws_auth.py`.
  */
 
 import type { RPCResponse, ServerMessage } from "./messages";
@@ -17,10 +26,11 @@ import { fe } from "./messages";
 
 declare global {
   interface Window {
-    __EMBER_WS_URL__?: string;
+    /** The backend's per-launch WebSocket token, for an embedder that
+     *  injects globals rather than navigating with a fragment. */
+    __EMBER_WS_TOKEN__?: string;
     /** Native OS folder picker, injected by the embedding shell
-     *  (Tauri dialog plugin, VSCode showOpenDialog, JetBrains
-     *  FileChooser). Receives the session's currently locked dir
+     *  (Tauri dialog plugin). Receives the session's currently locked dir
      *  as the starting location; resolves to an absolute path or
      *  null on cancel. */
     __EMBER_PICK_DIR__?: (start?: string) => Promise<string | null>;
@@ -42,31 +52,41 @@ export async function pickNativeDirectory(
 
 export function resolveWsUrl(): string {
   const param = new URLSearchParams(window.location.search).get("ws");
-  // VSCode webviews disallow inline scripts under the default CSP, so
-  // the extension delivers the URL via <meta name="ember-ws-url">.
-  // Read that as a second source before falling back to the dev port.
+  const url = param || "ws://127.0.0.1:8765";
+  // Confirms which URL ended up on the wire. Logged once at
+  // construction time.
+  // eslint-disable-next-line no-console
+  console.info("[igni] WS URL:", url, "(param:", param, ")");
+  return url;
+}
+
+/** The subprotocol igni's backend speaks (and selects). */
+export const WS_SUBPROTOCOL = "igni.v1";
+/** The offered subprotocol that carries the token. */
+export const WS_TOKEN_PROTOCOL_PREFIX = "igni-token.";
+const WS_TOKEN_FRAGMENT_KEY = "igni_ws_token";
+
+/** The backend's per-launch token, or "" when this backend needs none
+ *  (one started by hand or by an IDE plugin). Never logged. */
+export function resolveWsToken(): string {
+  const hash = (typeof window !== "undefined" && window.location?.hash) || "";
+  const fromFragment = new URLSearchParams(hash.replace(/^#/, "")).get(WS_TOKEN_FRAGMENT_KEY);
   const metaTag =
     typeof document !== "undefined"
-      ? (document.querySelector('meta[name="ember-ws-url"]') as HTMLMetaElement | null)
+      ? (document.querySelector('meta[name="ember-ws-token"]') as HTMLMetaElement | null)
       : null;
-  const meta = metaTag?.content || null;
-  const url = param || meta || window.__EMBER_WS_URL__ || "ws://127.0.0.1:8765";
-  // Helps when debugging IDE-embedded clients (VSCode / JetBrains) where
-  // the host injects the URL — confirms which source won and what value
-  // ended up on the wire. Logged once at construction time.
-  // eslint-disable-next-line no-console
-  console.info(
-    "[igni] WS URL:",
-    url,
-    "(param:",
-    param,
-    "meta:",
-    meta,
-    "global:",
-    window.__EMBER_WS_URL__,
-    ")",
-  );
-  return url;
+  return (
+    fromFragment ||
+    metaTag?.content ||
+    (typeof window !== "undefined" ? window.__EMBER_WS_TOKEN__ : "") ||
+    ""
+  ).trim();
+}
+
+/** What to offer as `Sec-WebSocket-Protocol`. Nothing without a token,
+ *  so a client still reaches a backend that predates the check. */
+export function wsProtocols(token: string): string[] | undefined {
+  return token ? [WS_SUBPROTOCOL, `${WS_TOKEN_PROTOCOL_PREFIX}${token}`] : undefined;
 }
 
 export interface ChatSearchMatch {
@@ -109,6 +129,7 @@ const RPC_TIMEOUT_MS = 60_000;
 export class IgniClient {
   private ws: WebSocket | null = null;
   private url: string;
+  private token: string;
   private closed = false;
   /** Per-request stream handlers, keyed by message id. */
   private streams = new Map<string, StreamHandler>();
@@ -132,8 +153,9 @@ export class IgniClient {
    *  connection that was supposed to be gone. */
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
 
-  constructor(url: string = resolveWsUrl()) {
+  constructor(url: string = resolveWsUrl(), token: string = resolveWsToken()) {
     this.url = url;
+    this.token = token;
   }
 
   connect(): void {
@@ -163,7 +185,8 @@ export class IgniClient {
     }
 
     this.emitState("connecting");
-    const ws = new WebSocket(this.url);
+    const protocols = wsProtocols(this.token);
+    const ws = protocols ? new WebSocket(this.url, protocols) : new WebSocket(this.url);
     this.ws = ws;
     // Every handler checks it still belongs to the active socket —
     // events from a replaced socket must not flip the shared state.
@@ -331,6 +354,15 @@ export class IgniClient {
     method: string,
     args: Record<string, unknown> = {},
     timeoutMs: number = RPC_TIMEOUT_MS,
+    /**
+     * Which extension is asking. Omitted for igni's own UI.
+     *
+     * Prefer {@link asExtension} over passing this by hand — it is
+     * the fourth positional argument of a method called on nearly
+     * every line of this file, which is not a thing to rely on
+     * anybody remembering.
+     */
+    caller?: string,
   ): Promise<T> {
     const id = genId("rpc");
     return new Promise<T>((resolve, reject) => {
@@ -351,8 +383,32 @@ export class IgniClient {
         reject,
         timer,
       });
-      this.send(fe.rpcRequest(method, args, id));
+      // As in `request()`: a send that throws (no socket) must take its
+      // waiter and timer with it. Thrown from the executor, the promise
+      // rejected but the waiter stayed registered for the full timeout —
+      // one per attempt from a panel polling a backend that is down.
+      try {
+        this.send(fe.rpcRequest(method, args, id, caller));
+      } catch (e) {
+        clearTimeout(timer);
+        this.rpcWaiters.delete(id);
+        reject(e);
+      }
     });
+  }
+
+  /**
+   * This client, speaking for one extension.
+   *
+   * Every call made through the returned object carries that
+   * extension's id, which is what lets the backend enforce the
+   * manifest's `permissions.rpc` rather than trusting this process
+   * to have done it. The host frame checks the grant too, but that
+   * check is a courtesy that produces a good error message — a
+   * renderer is not where a decision about what may be read belongs.
+   */
+  asExtension(extensionId: string): ExtensionCaller {
+    return new ExtensionCaller(this, extensionId);
   }
 
   /** Switch model — request/reply, resolves with the BE's Info ack. */
@@ -555,5 +611,34 @@ export class IgniClient {
 
   private emitState(s: ConnectionState): void {
     for (const fn of this.stateListeners) fn(s);
+  }
+}
+
+/**
+ * An {@link IgniClient} bound to one extension.
+ *
+ * A class rather than a bound function because the binding is the
+ * whole point: there is no way to call through this without the
+ * caller being set, and no fourth positional argument for anybody to
+ * forget. Obtained from {@link IgniClient.asExtension}.
+ */
+export class ExtensionCaller {
+  constructor(
+    private readonly client: IgniClient,
+    readonly extensionId: string,
+  ) {}
+
+  /** Call a backend method as this extension. */
+  rpc<T = unknown>(
+    method: string,
+    args: Record<string, unknown> = {},
+    timeoutMs?: number,
+  ): Promise<T> {
+    return this.client.rpc<T>(
+      method,
+      args,
+      timeoutMs ?? RPC_TIMEOUT_MS,
+      this.extensionId,
+    );
   }
 }

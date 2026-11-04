@@ -94,8 +94,8 @@ class TestWhatItRefuses:
         assert (tmp_path / CONFIG_DIR / "credentials.json").read_text() == "new"
 
     def test_a_symlink_is_left_alone(self, tmp_path: Path):
-        """``ember-server/.ember`` in this workspace is a symlink to
-        ``ember-code/.ember``. Renaming through it would move somebody
+        """``igni__server/.ember`` in this workspace is a symlink to
+        ``igni/.ember``. Renaming through it would move somebody
         else's directory and leave a dangling link behind."""
         real = tmp_path / "elsewhere"
         real.mkdir()

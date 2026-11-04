@@ -6,6 +6,42 @@ from pathlib import Path
 import yaml
 from pydantic import BaseModel
 
+# Ordered alternation: the indexed form must be tried before the bare
+# one, and ``\d+`` must be greedy. See :func:`_substitute_arguments`.
+_ARG_TOKEN_RE = re.compile(r"\$ARGUMENTS\[(\d+)\]|\$ARGUMENTS|\$(\d+)")
+
+
+def _substitute_arguments(body: str, arguments: str) -> str:
+    """Replace ``$ARGUMENTS``, ``$ARGUMENTS[i]`` and ``$N`` in one pass.
+
+    One pass rather than a sequence of :meth:`str.replace` rounds,
+    because the sequential form made two of the documented tokens
+    unreachable. A global ``$ARGUMENTS`` replace running first ate the
+    prefix of ``$ARGUMENTS[0]`` and left ``alpha beta[0]`` in the body;
+    replacing ``$1``..``$N`` in ascending order rewrote the ``$1`` of
+    ``$10`` as soon as a skill took ten arguments. The alternation
+    settles both: indexed before bare, longest run of digits wins.
+
+    Substituted text is never rescanned, so an argument that itself
+    contains ``$2`` stays literal instead of pulling in another arg.
+    Out-of-range indices are left as written — a skill invoked with too
+    few arguments shows the unfilled token rather than silently
+    dropping it.
+    """
+    args = arguments.split()
+
+    def replace(match: re.Match[str]) -> str:
+        indexed, positional = match.group(1), match.group(2)
+        if indexed is not None:  # $ARGUMENTS[i] — zero-based
+            i = int(indexed)
+        elif positional is not None:  # $N — one-based, so $0 never matches
+            i = int(positional) - 1
+        else:  # bare $ARGUMENTS — the whole string, spacing preserved
+            return arguments
+        return args[i] if 0 <= i < len(args) else match.group(0)
+
+    return _ARG_TOKEN_RE.sub(replace, body)
+
 
 class SkillDefinition(BaseModel):
     """Parsed skill definition from a SKILL.md file."""
@@ -23,13 +59,7 @@ class SkillDefinition(BaseModel):
 
     def render(self, arguments: str = "", session_id: str = "") -> str:
         """Render the skill body with argument substitutions."""
-        text = self.body
-        text = text.replace("$ARGUMENTS", arguments)
-
-        args = arguments.split() if arguments else []
-        for i, arg in enumerate(args):
-            text = text.replace(f"${i + 1}", arg)
-            text = text.replace(f"$ARGUMENTS[{i}]", arg)
+        text = _substitute_arguments(self.body, arguments)
 
         if self.source_dir:
             text = text.replace("${IGNI_SKILL_DIR}", str(self.source_dir))
