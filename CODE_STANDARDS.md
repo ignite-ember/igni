@@ -118,25 +118,26 @@ Surface the gap.
 A commit written by a person alone carries no such trailer. That is the
 one an author writes.
 
-There is a second accepted trailer, and nobody writes it:
+There are two more accepted trailers, and nobody writes them:
+
+`Co-authored-by: dmytrozezyk <dmytro.zezyk@ignite-ember.sh>`
 
 `Co-authored-by: dmytrozezyk <dev@example.com>`
 
-GitHub appends it to every squash merge, naming the author of the
+GitHub appends one to every squash merge, naming the author of the
 commits being squashed. It is the forge's record of who wrote the
 branch, not a claim anyone made in a commit message, and it cannot be
-declined without giving up squash merges. So the rule accepts exactly
-these two and nothing else: **if a commit carries a `Co-Authored-By`
-line, its address is one of the two above.**
+declined without giving up squash merges. The first is the founder's
+address, used for every commit since 2026-11-04; the second is the
+placeholder the history was written under (below). So the rule accepts
+exactly these three and nothing else: **if a commit carries a
+`Co-Authored-By` line, its address is one of the three above.**
 
-`dev@example.com` is a placeholder — it is whatever `git config
-user.email` says on the machine the branches are written on, and it has
-never been set to a real address. Setting one is the better fix, and it
-lands here: change the identity, then change the line above, and the
-test reads the new address out of this section. Until then the rule
-names the placeholder rather than pretending the history is clean,
-because a rule that disagrees with every merge commit is the decorative
-kind this one replaced.
+`dev@example.com` is a placeholder — it was what `git config
+user.email` said on the machine the branches were written on until
+2026-11-04, when the real address was set. It stays accepted because
+the history (and the first squash merge to main, 4ee4c173) carries it,
+and a commit message cannot be reworded afterwards.
 
 **What this rule said before, and why it changed.** It said commits use
 `Co-Authored-By: Ignite Ember <noreply@igniteember.sh>` — "Not Claude."
