@@ -103,8 +103,8 @@ jobs:
           tool: cargo-audit
 
       # Reads the lockfiles only; nothing is installed.
-      - name: npm audit (web UI, VS Code extension)
-        run: uv run --no-project --with 'cvss>=3,<4' python scripts/dependency_audit.py npm clients/web clients/vscode .
+      - name: npm audit (web UI)
+        run: uv run --no-project --with 'cvss>=3,<4' python scripts/dependency_audit.py npm clients/web .
 
       - name: cargo audit (desktop shell)
         run: uv run --no-project --with 'cvss>=3,<4' python scripts/dependency_audit.py cargo clients/tauri/src-tauri
@@ -289,13 +289,9 @@ jobs:
             --with pytest --with jsonschema \
             pytest --noconftest -q -rs tests/test_the_extension_docs_run.py
 
-  # The shared web UI lives under ``clients/web`` and is consumed by
-  # the Tauri / VSCode / JetBrains shells. Typecheck + tests run on
-  # every push so a regression doesn't ride through to a release
-  # build.
   # Shared web UI lives under ``clients/web`` and is consumed by the
-  # Tauri / VSCode / JetBrains shells. Typecheck + tests run on every
-  # platform so a path-separator or shell-quoting regression doesn't
+  # Tauri desktop shell and served as the web client. Typecheck + tests
+  # run on every platform so a path-separator or shell-quoting regression doesn't
   # ride through to a release build undetected.
   web:
     runs-on: ${{ matrix.os }}
@@ -394,157 +390,6 @@ jobs:
           name: playwright-report
           path: clients/web/playwright-report/
           retention-days: 7
-
-  # The JetBrains plugin compiles Kotlin against the IntelliJ
-  # Platform 2024.2.4 SDK. Builds on every host platform because the
-  # plugin's own runtime (uv download, venv bootstrap) is exercised
-  # on each — we want CI to catch path-handling or process-spawn
-  # bugs in ``EmberRuntime``/``EmberBackendService`` per OS, not
-  # just at user-install time. The distributable zip is still
-  # platform-independent (uv is fetched at runtime); the matrix
-  # validates the launcher logic, not the artifact contents.
-  jetbrains-plugin:
-    runs-on: ${{ matrix.os }}
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
-    steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
-
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
-        with:
-          node-version: "20"
-          cache: "npm"
-          cache-dependency-path: clients/web/package-lock.json
-
-      - name: Install + build shared web UI
-        run: |
-          cd clients/web
-          npm ci
-          npm run build
-
-      - name: Stage web bundle for plugin
-        shell: bash
-        run: |
-          mkdir -p clients/jetbrains/src/main/resources/webui
-          cp -R clients/web/dist/. clients/jetbrains/src/main/resources/webui/
-
-      - uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3 # v4.9.1
-        with:
-          distribution: "zulu"
-          java-version: "21"
-
-      - name: Build plugin (Unix)
-        if: runner.os != 'Windows'
-        run: |
-          cd clients/jetbrains
-          ./gradlew buildPlugin --no-daemon
-
-      - name: Build plugin (Windows)
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: |
-          cd clients/jetbrains
-          .\gradlew.bat buildPlugin --no-daemon
-
-      # Pure-logic JUnit tests — sub-second, no IDE bootstrap. Linux
-      # only because the tested helpers (uv triple, cache path,
-      # JSON escape) are platform-aware and we already cover Mac /
-      # Windows via the buildPlugin step above.
-      - name: JetBrains unit tests
-        if: runner.os == 'Linux'
-        run: |
-          cd clients/jetbrains
-          ./gradlew test --no-daemon
-
-      # Only the Linux build is uploaded — the distributable zip is
-      # platform-independent (uv is fetched per-host at runtime), so
-      # there's no value in archiving three identical artifacts. The
-      # mac / Windows jobs exist to exercise the launcher build path,
-      # not to ship a deliverable.
-      - name: Upload plugin artifact
-        if: runner.os == 'Linux'
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
-        with:
-          name: ember-code-jetbrains
-          path: clients/jetbrains/build/distributions/*.zip
-          retention-days: 14
-
-  # VSCode extension — same matrix story as the JetBrains plugin:
-  # the artifact (VSIX) is platform-independent because uv is fetched
-  # at runtime, but we exercise the extension's launcher code on
-  # each platform to catch path / process-spawn regressions before a
-  # user does. Only Linux uploads the VSIX.
-  vscode-plugin:
-    runs-on: ${{ matrix.os }}
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
-    steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
-
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
-        with:
-          node-version: "20"
-          cache: "npm"
-          cache-dependency-path: |
-            clients/web/package-lock.json
-            clients/vscode/package-lock.json
-
-      - name: Install + build shared web UI
-        run: |
-          cd clients/web
-          npm ci
-          npm run build
-
-      - name: Install + build VSCode extension
-        run: |
-          cd clients/vscode
-          npm install --no-audit --no-fund
-          npm run package
-
-      # ``@vscode/test-electron`` downloads a real VSCode binary and
-      # launches it; on Linux runners that needs a display + the
-      # usual GUI deps. ``xvfb-run`` gives us a headless one. Mac /
-      # Windows runners have a real desktop so they just work.
-      - name: VSCode extension tests (Linux headless)
-        if: runner.os == 'Linux'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y xvfb libxkbfile-dev libsecret-1-dev
-          cd clients/vscode
-          xvfb-run -a npm test
-
-      - name: VSCode extension tests (mac / Windows)
-        if: runner.os != 'Linux'
-        run: |
-          cd clients/vscode
-          npm test
-
-      - name: Upload VSIX artifact
-        if: runner.os == 'Linux'
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
-        with:
-          name: ember-code-vscode
-          path: clients/vscode/*.vsix
-          retention-days: 14
-
-  # Proxy-propagation integration test. Stands up a tiny logging
-  # proxy, runs the same uv-download command runtime.ts issues
-  # when proxyEnv is set, asserts the request flowed through.
-  # Fast (~5 s) — runs on every PR so regressions in the proxy
-  # plumbing surface before they ship.
-  proxy-propagation:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
-        with:
-          node-version: "20"
-      - name: Run proxy integration test
-        run: ./scripts/test-proxy-integration.sh
 
   # Tauri Rust shell: the desktop bridge between the system WebView
   # and the BE process. Most of the code is Tauri framework glue;

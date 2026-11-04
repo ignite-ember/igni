@@ -126,7 +126,7 @@ Small once Phase 3 exists.
 
 | | |
 |---|---|
-| IDE plugins | Frozen at context-handoff scope. Extensions render in the igni app only. |
+| IDE plugins | **Dropped (D19)** — the VS Code and JetBrains plugins are no longer built, released or supported. Extensions render in the igni app only. |
 | Coding | A single-user-backend concern. The shared backend works on documents, data and connected systems. |
 | Extensions | One concept, two packagings — sidecar or remote. UI is an optional contribution. |
 | Tools | Always MCP. No second tool transport. |

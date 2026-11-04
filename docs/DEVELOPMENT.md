@@ -48,7 +48,7 @@ igni/
 │   ├── bundled_agents/     # the agent `.md` files that ship inside the wheel
 │   ├── bundled_skills/     # the `SKILL.md` directories that ship inside the wheel
 │   └── migrations/         # Alembic environment + `versions/`
-├── clients/                # the front-ends: `web`, `tauri`, `vscode`, `jetbrains`
+├── clients/                # the front-ends: `web` (the web client, and the UI the desktop app loads), `tauri`
 ├── agents/                 # repo-root copies of most agent `.md` files, read by a few
 │                           # scripts and one parity test. `bundled_agents/` is what ships,
 │                           # and the two have already drifted apart.
@@ -321,8 +321,8 @@ The interactive surface is a GUI client, not a terminal app — `igni`
 and `ignite-ember` are the non-interactive CLI, and chat happens in the
 clients under `clients/`, which connect to the server started by
 `python -m ember_code.backend`. Splitting the front-end out means the
-same backend serves four clients (web, tauri, vscode, jetbrains) over
-one wire protocol. Inside the backend, `BackendApp` is a thin shell that
+same backend serves the desktop app and the web client over one wire
+protocol. Inside the backend, `BackendApp` is a thin shell that
 delegates to the controllers listed above; each stays testable in
 isolation and none of them becomes the god-class.
 

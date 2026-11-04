@@ -9,7 +9,7 @@ Two kinds of release come out of this repository:
 
 | Tag | Workflow | What it ships |
 |---|---|---|
-| `v<version>` | `.github/workflows/release.yml` | the `ignite-ember` wheel and sdist, the desktop installers and macOS updater payload, the VS Code extension (`.vsix`), the JetBrains plugin (`.zip`) |
+| `v<version>` | `.github/workflows/release.yml` | the `ignite-ember` wheel and sdist, the desktop installers and macOS updater payload |
 | `sdk-v<version>` | `.github/workflows/sdk-release.yml` | `igni-service` and `igni-extension` wheels and sdists, the three `@ignite-ember/*` npm tarballs |
 
 ## What is on a release
@@ -27,8 +27,6 @@ SBOMs, per thing you install:
 |---|---|---|
 | `ignite-ember-<v>.cdx.json` | the wheel / sdist, every optional extra | `uv.lock` |
 | `igni-desktop-<v>.cdx.json` | the desktop app: the Tauri shell's crates and the web UI's npm packages | `clients/tauri/src-tauri/Cargo.lock`, `clients/web/package-lock.json` |
-| `igni-vscode-<v>.cdx.json` | the VS Code extension: the web UI it bundles (the extension has no runtime dependencies of its own) | `clients/web/package-lock.json`, `clients/vscode/package-lock.json` |
-| `igni-jetbrains-<v>.cdx.json` | the JetBrains plugin: the web UI it bundles (the IntelliJ Platform provides the plugin's runtime) | `clients/web/package-lock.json` |
 | `igni-service-<v>.cdx.json`, `igni-extension-<v>.cdx.json` | each Python SDK | its own `uv.lock` |
 
 The npm SDK packages declare no dependencies (`@ignite-ember/ui-react`'s are
@@ -153,9 +151,6 @@ The same bytes on PyPI and npmjs carry the registries' own evidence:
 * **npmjs** — published with `--provenance`; `npm audit signatures` in a
   project that installs them verifies the registry signatures and
   provenance.
-* **IDE marketplaces** — the VS Code Marketplace and JetBrains Marketplace
-  copies are uploaded from the same `.vsix` and `.zip`, so their digests match
-  `SHA256SUMS`.
 
 ## What else signs a release
 

@@ -716,7 +716,7 @@ Optional, and packaging-independent *within a single-user backend*: the client i
 
 **The dividing rule:** the iframe owns pages; json-render owns anything inline in the chat stream. Per-message iframes wreck scrolling, selection and performance.
 
-Capability UI renders in the igni app only — never inside the VS Code or JetBrains host.
+Capability UI renders in the igni app only: the desktop app and the web client.
 
 ---
 

@@ -27,8 +27,7 @@ you rather than going quiet.
 ## Please do not open a public issue first
 
 The source is public, so it is fair to ask why. Because every copy of igni
-is **installed** — from PyPI, Homebrew, the VS Code and JetBrains
-marketplaces, or a desktop installer — and each one is upgraded when its
+is **installed** — from PyPI, Homebrew or a desktop installer — and each one is upgraded when its
 owner gets round to it. A public report is exploitable against every
 installation that has not upgraded yet, and there is no vendor-operated
 service anybody can patch centrally to protect them. Only the macOS desktop
@@ -41,11 +40,11 @@ Security tab is for.
 ## What helps
 
 * **the version.** `igni --version` prints it; the desktop app shows it in
-  its About box; the IDE plugins carry the same number, because every
-  client's version is copied from `pyproject.toml` at release and the
-  release refuses to start if they disagree;
-* **which client.** The CLI, the desktop app, the VS Code extension, the
-  JetBrains plugin and the web UI share one backend, but not one
+  its About box with the same number, because every client's version is
+  copied from `pyproject.toml` at release and the release refuses to start
+  if they disagree;
+* **which client.** The CLI, the desktop app and the web client share one
+  backend, but not one
   launcher, one sandbox or one way of reaching that backend, and a finding
   in one is often not in the others;
 * **a reproduction, not a description**, if you have one: a prompt, a
@@ -75,7 +74,6 @@ Security tab is for.
   Homebrew formula;
 * the desktop app (macOS, Windows, Linux installers on the GitHub
   release) and its updater;
-* the VS Code extension and the JetBrains plugin;
 * the shared web UI in `clients/web`;
 * the SDKs: `igni-service` and `igni-extension` on PyPI,
   `@ignite-ember/extension-bridge`, `@ignite-ember/ui-react` and

@@ -79,8 +79,8 @@ uv run pytest tests/ -q          # the whole Python suite
 make packages-check              # the Python SDKs under packages/, each in its own env
 ```
 
-If you touch the web UI (`clients/web`, which the desktop app and both IDE
-plugins load):
+If you touch the web UI (`clients/web`, which the desktop app loads and which
+is the web client):
 
 ```bash
 cd clients/web

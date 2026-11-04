@@ -38,7 +38,7 @@ The architectural choices that drive the gap: (1) **CodeIndex queried first, not
 | Code intelligence | Grep + file reads | Shell-first reads; CodeIndex semantic search as a licensed extension |
 | Project knowledge | None | The Artifacts extension (licensed; its own Neo4j store), served through your igni server |
 | Planning | Plan mode (read-only) | Agno reasoning + Tasks mode |
-| IDE integration | MCP server (stdio) | VS Code and JetBrains extensions; MCP client (Agno MCPTools) |
+| IDE integration | MCP server (stdio) | None — igni ships the desktop app, the web client and the CLI; MCP client (Agno MCPTools) |
 | Extensibility | Plugins, hooks, MCP | Agents + hooks + toolkits + MCP |
 | Agent evals | Not built-in | Built-in regression testing framework |
 | Memory | File-based MEMORY.md | Agno Memory + DB-backed storage |
@@ -59,8 +59,7 @@ igni -m "In one sentence, what does this project do?"
 shell aliases and scripts keep working. Both are the same entry point.
 On the command line it runs **one task and exits** (`-m`, or `-p` for a
 pipe); there is no terminal chat UI any more — run it bare and it says so.
-The interactive chat is the desktop app and the VS Code and JetBrains
-extensions. A headless run cannot ask before it runs a command, so decide
+The interactive chat is the desktop app and the web client. A headless run cannot ask before it runs a command, so decide
 up front what it may do — see
 [A headless run cannot ask you anything](QUICKSTART.md#a-headless-run-cannot-ask-you-anything).
 
@@ -118,6 +117,9 @@ See [Quickstart](QUICKSTART.md) for the full setup guide.
 See [Quickstart](QUICKSTART.md) for the full guide.
 
 ## Upgrading
+
+The VS Code and JetBrains extensions are no longer shipped or supported;
+release notes below that mention them are history.
 
 ### Rebrand + signed desktop app (v0.7.0 → v0.7.1)
 
@@ -215,19 +217,18 @@ brew uninstall ignite-ember && brew untap ignite-ember/tap && brew tap ignite-em
 
 ## Clients
 
-The Textual terminal UI was removed in v0.9.7. The interactive chat is the
-desktop app (Tauri) and the VS Code and JetBrains extensions, which share one
-web UI (`clients/web`) and talk to the backend over a Unix socket
+The Textual terminal UI was removed in v0.9.7, and the VS Code and JetBrains
+extensions are no longer shipped. igni ships the desktop app (Tauri), the web
+client and the CLI. The desktop app and the web client share one web UI
+(`clients/web`); the desktop app talks to the backend over a Unix socket
 (`python -m ember_code.backend --socket <path>`). Features: streaming
 responses, agent tree visualization, token tracking, session picker, keyboard
 shortcuts, HITL confirmation dialogs. In a terminal, `igni -m` and `igni -p`
 run one task.
 
-## IDE Integration
+## MCP
 
-Dedicated extensions for **VS Code** and **JetBrains** (IntelliJ, PyCharm, WebStorm, etc.) ship the igni backend embedded in the extension — install from each marketplace and the chat surface lives inside your IDE; no MCP setup needed.
-
-In the other direction, igni acts as an MCP *client*: configure external MCP servers via `/mcp` or the MCP panel and their tools become available to the agent.
+igni acts as an MCP *client*: configure external MCP servers via `/mcp` or the MCP panel and their tools become available to the agent.
 
 > *Exposing igni itself as an MCP server (so any MCP-compatible IDE — Cursor, Windsurf, etc. — can connect to it) is on the roadmap; the `ignite-ember mcp serve` subcommand isn't shipped yet.*
 
@@ -259,7 +260,7 @@ guardrails:
 
 ### Human-in-the-Loop (HITL)
 
-Agents can pause execution to request confirmation or user input before proceeding with sensitive operations. The desktop app and IDE extensions show interactive approval dialogs; a headless `igni -m` cannot, so it follows the permission policy and stops at anything only a person could approve.
+Agents can pause execution to request confirmation or user input before proceeding with sensitive operations. The desktop app and the web client show interactive approval dialogs; a headless `igni -m` cannot, so it follows the permission policy and stops at anything only a person could approve.
 
 ## Documentation
 

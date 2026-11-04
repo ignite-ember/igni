@@ -23,13 +23,11 @@ updates:
       python-minor-and-patch:
         update-types: [minor, patch]
 
-  # The web UI every client bundles, the VS Code extension, and the root
-  # package.json.
+  # The web UI every client bundles, and the root package.json.
   - package-ecosystem: npm
     directories:
       - /
       - /clients/web
-      - /clients/vscode
     schedule:
       interval: weekly
     open-pull-requests-limit: 5
@@ -46,13 +44,6 @@ updates:
     groups:
       cargo-minor-and-patch:
         update-types: [minor, patch]
-
-  # The JetBrains plugin's build (the IntelliJ Platform Gradle plugin, JUnit).
-  - package-ecosystem: gradle
-    directory: /clients/jetbrains
-    schedule:
-      interval: weekly
-    open-pull-requests-limit: 3
 
   - package-ecosystem: github-actions
     directory: /

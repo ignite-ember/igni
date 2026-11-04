@@ -2,7 +2,7 @@
 
 **Scope:** What's actually shipped, who it's for, how `igni__server` relates, and how it compares to alternatives — verified against both repositories.
 
-> **Since this report:** CodeIndex and Artifacts are extensions, not part of igni. The local per-commit Neo4j graph, its embedder and `codeindex_cypher` are the CodeIndex extension's (`igni__code-index/extension`); igni runs no graph database and no embedder. Where this report places them in igni, read the extension.
+> **Since this report:** CodeIndex and Artifacts are extensions, not part of igni. The local per-commit Neo4j graph, its embedder and `codeindex_cypher` are the CodeIndex extension's (`igni__code-index/extension`); igni runs no graph database and no embedder. Where this report places them in igni, read the extension. The VS Code and JetBrains plugins are dropped (D19): igni ships the desktop app, the web client and the CLI, so read the report's "four surfaces" as those.
 
 ---
 

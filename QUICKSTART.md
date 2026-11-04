@@ -32,8 +32,8 @@ source .venv/bin/activate       # puts `igni` on your PATH
 `igni` in a terminal runs **one task and exits** (`igni -m "…"`, or a pipe).
 There is no terminal chat UI any more: run with no arguments and it says so.
 The interactive chat — confirmations, the session list, `/login` — is the
-desktop app and the VS Code and JetBrains extensions, which all run the same
-backend and share `~/.igni`.
+desktop app and the web client, which run the same backend and share
+`~/.igni`.
 
 ## Authenticate
 
@@ -61,7 +61,7 @@ printf %s "$TOKEN" | igni login --token-stdin   # or keep a token you already ha
 It writes `~/.igni/credentials.json`; `igni -m` then uses the models your
 server routes to, with no `models:` entry, and first syncs the extensions
 your server distributes (`igni ext sync` does that on its own). The desktop
-app and the IDE extensions sign in to the same file (**Sign in to your igni
+app and the web client sign in to the same file (**Sign in to your igni
 server**, or `/login` in their chat). `/login` is not a shell command —
 `igni /login` answers `Error: No such command`, and `igni -m /login` only
 points at `igni login`.
@@ -181,7 +181,7 @@ cat error.log | igni -p -m "What caused this crash?"
 
 Reads stdin, processes it with your message, writes to stdout.
 
-### The desktop app and IDE extensions
+### The desktop app and the web client
 
 The interactive chat: streaming replies, the agent tree, the session list,
 approval dialogs and slash commands. `/help` lists the commands and
@@ -340,7 +340,7 @@ Control how much the agent can do without asking:
 | `igni --strict -m …` | Denies the agent anything without an allow rule; asks before an organisation group hook runs |
 | `igni --auto-approve -m …` | Auto-approves everything (use with caution) |
 
-When the desktop app or an IDE extension asks for approval, you can:
+When the desktop app or the web client asks for approval, you can:
 - **[y] Allow once** — approve this specific call
 - **[a] Always allow** — permanently allow this exact command
 - **[s] Allow similar** — permanently allow the pattern (e.g., `pytest *`)
@@ -350,7 +350,7 @@ When the desktop app or an IDE extension asks for approval, you can:
 
 ## Slash Commands
 
-In the desktop app and IDE extensions, use `/` commands (`igni -m "/help"`
+In the desktop app and the web client, use `/` commands (`igni -m "/help"`
 prints the full list; most also work as `igni -m "/<command>"`):
 
 | Command | What It Does |
@@ -400,7 +400,7 @@ signed in and a super admin has approved that service; nothing in
 igni is an MCP *client*: servers in `.mcp.json` (or added with `/mcp` in the
 app) give the agent their tools. igni as an MCP *server* (`igni mcp serve`) is
 not shipped — this section used to show its config, and the command does not
-exist. For an IDE, use the VS Code or JetBrains extension.
+exist.
 
 ### Web Tools
 
