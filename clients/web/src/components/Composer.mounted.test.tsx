@@ -353,6 +353,73 @@ describe("@ file completion", () => {
     expect(windowModel.get("composer")).toMatchObject({ text: "@a", mode: "chat" });
   });
 
+  // The race behind the flaky Web E2E "accepting an entry inserts a pill"
+  // (live-composer.spec.ts): each keystroke of "@calc" asks the backend,
+  // "@cal" already lists calc.py, and Enter accepts it while the "@calc"
+  // lookup is still in flight. Accepting closed the menu but left that
+  // lookup current, so its answer reopened the picker over the pill — and
+  // an open picker swallows the next Enter, so the message is never sent.
+  describe("a lookup still in flight when the menu closes does not reopen it", () => {
+    /** Answers "cal" at once; holds "calc" until `release()` is called. */
+    function withSlowLastLookup() {
+      const stub = stubClient();
+      let release: () => void = () => {};
+      stub.completeFiles.mockImplementation(async (q) => {
+        if (q === "calc") await new Promise<void>((r) => (release = r));
+        return { matches: ["calc.py"], total: 1 };
+      });
+      return { stub, release: () => release() };
+    }
+
+    it("after Enter accepts an entry", async () => {
+      const { stub, release } = withSlowLastLookup();
+      const { editor, container, windowModel } = mount({}, stub);
+      typeInto(editor, "@cal");
+      await flush();
+      typeInto(editor, "@calc"); // its lookup is now pending
+      await flush();
+      expect(container.querySelector(".popup-item .cmd")!.textContent).toBe("calc.py");
+
+      press(editor, "Enter");
+      await nextFrame();
+      expect(container.querySelector(".popup-menu")).toBeNull();
+
+      release();
+      await flush();
+
+      expect(container.querySelector(".popup-menu")).toBeNull();
+      expect(windowModel.get("composer").text).toBe("@calc.py ");
+    });
+
+    it("after Escape closes the menu", async () => {
+      const { stub, release } = withSlowLastLookup();
+      const { editor, container } = mount({}, stub);
+      typeInto(editor, "@cal");
+      await flush();
+      typeInto(editor, "@calc");
+      await flush();
+
+      press(editor, "Escape");
+      release();
+      await flush();
+
+      expect(container.querySelector(".popup-menu")).toBeNull();
+    });
+
+    it("after the token stops being a mention", async () => {
+      const { stub, release } = withSlowLastLookup();
+      const { editor, container } = mount({}, stub);
+      typeInto(editor, "@calc");
+      await flush();
+
+      typeInto(editor, "@calc "); // a space ends the token; no lookup
+      release();
+      await flush();
+
+      expect(container.querySelector(".popup-menu")).toBeNull();
+    });
+  });
+
   it("a failed lookup closes the menu rather than leaving a stale one", async () => {
     const stub = withFiles(["a.ts"]);
     const { editor, container } = mount({}, stub);
