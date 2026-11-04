@@ -33,7 +33,7 @@ dependencies = [
     "cryptography>=42",
     # The key store (`igni_service.sql_keystore`). Async because every
     # service this is for is.
-    "sqlalchemy[asyncio]>=2.0.40,<2.1",
+    "sqlalchemy[asyncio]>=2.0.40,<2.2",
 ]
 
 [project.urls]
