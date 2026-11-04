@@ -1,6 +1,6 @@
 """Per-client UI state.
 
-The web UI, the JetBrains plugin, and the VSCode extension all need a
+The web client and the desktop app both need a
 small amount of state that survives across reloads: which session a
 window is bound to, sidebar collapsed/open, composer drafts, future
 toggles. Each client stores nothing locally except a stable

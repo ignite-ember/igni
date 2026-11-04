@@ -536,7 +536,7 @@ class BackendApp:
         """Wait for the first client, or for shutdown, whichever comes first.
 
         ``True`` when a window connected; ``False`` when shutdown was asked
-        for first. GUI shells (Tauri / VSCode / JetBrains webviews) may open
+        for first. GUI clients (the Tauri desktop app, the web client) may open
         long after the BE is ready and webviews reload at will, so on
         WebSocket there is no timeout — shutdown comes from signals, the
         parent watchdog, or an explicit Shutdown message instead.

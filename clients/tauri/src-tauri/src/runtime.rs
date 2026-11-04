@@ -1,5 +1,4 @@
-//! Managed-runtime bootstrap — Rust port of ``EmberRuntime.kt``
-//! (JetBrains) and ``runtime.ts`` (VSCode).
+//! Managed-runtime bootstrap.
 //!
 //! On first launch the Tauri shell now self-provisions everything
 //! the BE needs: downloads ``uv``, asks uv to install a pinned
@@ -15,8 +14,7 @@
 //! **Dev override.** When ``IGNI_DEV_BACKEND`` is set we use that
 //! Python path verbatim and skip every download. This is the
 //! escape hatch for igni contributors who want to point the
-//! shell at an editable ``pip install -e .`` install — same
-//! semantics as the JetBrains/VSCode versions.
+//! shell at an editable ``pip install -e .`` install.
 
 use std::fs;
 use std::io::Read;

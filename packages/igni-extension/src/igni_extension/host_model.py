@@ -87,14 +87,14 @@ class StateChange(BaseModel):
 
 
 class WindowInfo(BaseModel):
-    """One igni window: a desktop window, an IDE panel or a browser tab."""
+    """One igni window: a desktop window or a browser tab."""
 
     model_config = ConfigDict(extra="allow")
 
     id: str
     """Stable across reloads of the same window."""
     kind: str
-    """`tauri`, `vscode`, `jetbrains` or `web`."""
+    """`tauri` or `web`."""
     connected: bool
     focused: bool
     """Whether the person is using this window: it has focus."""

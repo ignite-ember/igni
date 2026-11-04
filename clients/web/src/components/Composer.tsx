@@ -1,7 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import type { IgniClient } from "../protocol/client";
 import { useWindowField, type ComposerMode, type WindowModel } from "../clientState";
-import { host } from "../lib/host";
 import {
   codePillLabels,
   EditableInput,
@@ -968,23 +967,14 @@ export function Composer({
               );
               void (async () => {
                 try {
-                  // Prefer the host's indexed search (JetBrains uses
-                  // PyCharm's trigram index — ~100ms vs ~5s for the
-                  // ``rg`` subprocess RPC on big projects). If the
-                  // host returns null we fall through to the BE RPC,
-                  // which still handles every other client (web,
-                  // Tauri, VSCode) plus JetBrains while the project
-                  // is still indexing.
-                  const res =
-                    (await host.searchCode(pasted)) ??
-                    (await client.rpc<{
-                      matches: {
-                        path: string;
-                        line: number;
-                        end_line?: number;
-                        preview: string;
-                      }[];
-                    }>("search_code", { snippet: pasted }));
+                  const res = await client.rpc<{
+                    matches: {
+                      path: string;
+                      line: number;
+                      end_line?: number;
+                      preview: string;
+                    }[];
+                  }>("search_code", { snippet: pasted });
                   if (res.matches?.length) {
                     // Build a friendly label from the first match's
                     // path + line span. ``end_line`` covers the case

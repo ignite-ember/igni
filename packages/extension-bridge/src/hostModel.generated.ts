@@ -52,11 +52,11 @@ export interface StateChange {
   value?: string | null;
 }
 
-/** One igni window: a desktop window, an IDE panel or a browser tab. */
+/** One igni window: a desktop window or a browser tab. */
 export interface WindowInfo {
   /** Stable across reloads of the same window. */
   id: string;
-  /** `tauri`, `vscode`, `jetbrains` or `web`. */
+  /** `tauri` or `web`. */
   kind: string;
   connected: boolean;
   /** Whether the person is using this window: it has focus. */

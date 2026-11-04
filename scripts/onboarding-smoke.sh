@@ -1,9 +1,8 @@
 #!/usr/bin/env bash
 # Onboarding smoke test — exercises the exact path a new user takes
-# the first time they install the JetBrains plugin, VSCode extension,
-# or Tauri app. Replicates what ``EmberRuntime.ensureBackendPython``
-# (Kotlin) and ``runtime.ts::ensureBackendPython`` (Node) do at first
-# launch.
+# the first time they install the desktop app. Replicates what the
+# Tauri shell's bootstrap (``clients/tauri/src-tauri/src/runtime.rs``)
+# does at first launch.
 #
 # Steps:
 #

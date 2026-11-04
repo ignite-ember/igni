@@ -4,8 +4,8 @@
 //! `<project>/.igni/backend.lock` as soon as it binds (Python side:
 //! `backend/supervisor.py::write_discovery_lockfile`, called from
 //! `backend/app.py`). Every client is meant to read that before
-//! starting one of its own. The IDE plugins do
-//! (`clients/vscode/src/extension.ts`); this shell did not.
+//! starting one of its own. The IDE plugins (since dropped) did;
+//! this shell did not.
 //!
 //! What that cost: open a repo in VS Code and then the desktop app on
 //! the same repo, and you got two backends. The second one overwrote

@@ -375,7 +375,7 @@ Guardrails are applied via `AgnoFeatures.apply_to_agent()` — they attach as pr
 
 ### 10. The backend's local WebSocket
 
-The desktop app (and the IDE webviews) talk to the backend over a WebSocket
+The desktop app and the web client talk to the backend over a WebSocket
 on `127.0.0.1`, on a port picked at launch and published in
 `<project>/.igni/backend.lock`. Loopback keeps the network out, but not the
 person's own browser: browsers apply no CORS to WebSockets, so any page they
@@ -387,11 +387,11 @@ checks run at the handshake, before the connection is upgraded
 
 **Origin, always.** A browser always sends `Origin`. Allowed: the Tauri
 webview (`tauri://localhost`, `http://tauri.localhost`,
-`https://tauri.localhost`), VS Code webviews (`vscode-webview://…`) and
-loopback pages (`http(s)://127.0.0.1`, `localhost`, `[::1]`, any port: the
-JetBrains panel's own server, the Vite dev server). Everything else is
-refused, including a DNS-rebound name and `null` (sandboxed iframes,
-`file://`). A request without `Origin` comes from a non-browser client.
+`https://tauri.localhost`) and loopback pages (`http(s)://127.0.0.1`,
+`localhost`, `[::1]`, any port: the web client, the Vite dev server).
+Everything else is refused: a DNS-rebound name, `null` (sandboxed iframes,
+`file://`), and `vscode-webview://` now that the IDE plugins are gone. A
+request without `Origin` comes from a non-browser client.
 
 **A per-launch token, where the launcher made one.** The desktop app
 generates 32 random bytes (base64url) at each launch of the backend:
@@ -409,10 +409,9 @@ right one. `X-Igni-Gateway: control` does not stand in for the token: on a
 desktop anybody can send that header.
 
 **Where there is no token.** A backend started by hand
-(`python -m ember_code.backend --ws-port …`) or by the VS Code or JetBrains
-plugin gets no token, so only the Origin check applies: web pages are kept
-out, local processes of the same user are not. In the cloud the backend
-listens inside the producer's VM, reachable only through the node agent's
+(`python -m ember_code.backend --ws-port …`) gets no token, so only the
+Origin check applies: web pages are kept out, local processes of the same
+user are not. In the cloud the backend listens inside the producer's VM, reachable only through the node agent's
 vsock stream, and the gateway authenticates every client (an igni bearer
 token) before it opens a stream; the gateway's own connections are marked
 `X-Igni-Gateway: control` by the node agent, which strips that header from

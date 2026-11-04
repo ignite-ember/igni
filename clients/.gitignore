@@ -1,9 +1,6 @@
 node_modules/
 dist/
 out/
-vscode/media/
 tauri/src-tauri/target/
 tauri/src-tauri/gen/
-jetbrains/build/
-jetbrains/.gradle/
 *.tsbuildinfo

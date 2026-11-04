@@ -182,7 +182,8 @@ async def test_the_control_stream_with_a_token_offers_it_too(guarded):
         ("http://localhost:5179", True),
         ("http://127.0.0.1:61234", True),
         ("http://[::1]:8080", True),
-        ("vscode-webview://1a2b3c", True),
+        # The IDE plugins are dropped; their webview origin is a stranger.
+        ("vscode-webview://1a2b3c", False),
         ("https://evil.example", False),
         ("http://localhost.evil.example", False),
         ("tauri://evil", False),

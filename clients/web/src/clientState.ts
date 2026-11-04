@@ -61,8 +61,8 @@ const CLIENT_ID_KEY = "ember-code:client-id";
  * each window its own identity while keeping the model on the BE.
  *
  * The first window is labelled `main` and predates multi-window, so
- * it keeps the unsuffixed key. Hosts with a single view (browser,
- * VSCode, JetBrains) pass `""` and land on the same key.
+ * it keeps the unsuffixed key. A host with a single view (the
+ * browser) passes `""` and lands on the same key.
  *
  * Note for whoever wires up "New Window": labels must be stable
  * across app restarts, not minted fresh each launch. A random label
@@ -292,7 +292,7 @@ export class WindowModel {
     private client: IgniClient,
     public readonly clientId: string,
     private debounceMs = 250,
-    /** `tauri`, `vscode`, `jetbrains` or `web` — `host.kind`. */
+    /** `tauri` or `web` — `host.kind`. */
     private viewKind = "web",
     /** What the views show before the model answers. */
     initial: Partial<WindowState> = {},

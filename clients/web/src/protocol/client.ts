@@ -7,9 +7,8 @@
  *  - demultiplex streamed run events (same `id` until `stream_end`)
  *  - fan out uncorrelated events (status updates, push notifications)
  *
- * The WS URL is provided by the embedding shell (Tauri / VSCode /
- * JetBrains) via `?ws=` query param or `window.__EMBER_WS_URL__`;
- * `ws://127.0.0.1:8765` is the dev-server fallback.
+ * The WS URL is provided by the embedding shell (Tauri) via the `?ws=`
+ * query param; `ws://127.0.0.1:8765` is the dev-server fallback.
  *
  * The backend's WebSocket is open to every web page and local process
  * unless it checks who connects, so a backend the desktop shell spawned
@@ -27,13 +26,11 @@ import { fe } from "./messages";
 
 declare global {
   interface Window {
-    __EMBER_WS_URL__?: string;
     /** The backend's per-launch WebSocket token, for an embedder that
      *  injects globals rather than navigating with a fragment. */
     __EMBER_WS_TOKEN__?: string;
     /** Native OS folder picker, injected by the embedding shell
-     *  (Tauri dialog plugin, VSCode showOpenDialog, JetBrains
-     *  FileChooser). Receives the session's currently locked dir
+     *  (Tauri dialog plugin). Receives the session's currently locked dir
      *  as the starting location; resolves to an absolute path or
      *  null on cancel. */
     __EMBER_PICK_DIR__?: (start?: string) => Promise<string | null>;
@@ -55,30 +52,11 @@ export async function pickNativeDirectory(
 
 export function resolveWsUrl(): string {
   const param = new URLSearchParams(window.location.search).get("ws");
-  // VSCode webviews disallow inline scripts under the default CSP, so
-  // the extension delivers the URL via <meta name="ember-ws-url">.
-  // Read that as a second source before falling back to the dev port.
-  const metaTag =
-    typeof document !== "undefined"
-      ? (document.querySelector('meta[name="ember-ws-url"]') as HTMLMetaElement | null)
-      : null;
-  const meta = metaTag?.content || null;
-  const url = param || meta || window.__EMBER_WS_URL__ || "ws://127.0.0.1:8765";
-  // Helps when debugging IDE-embedded clients (VSCode / JetBrains) where
-  // the host injects the URL — confirms which source won and what value
-  // ended up on the wire. Logged once at construction time.
+  const url = param || "ws://127.0.0.1:8765";
+  // Confirms which URL ended up on the wire. Logged once at
+  // construction time.
   // eslint-disable-next-line no-console
-  console.info(
-    "[igni] WS URL:",
-    url,
-    "(param:",
-    param,
-    "meta:",
-    meta,
-    "global:",
-    window.__EMBER_WS_URL__,
-    ")",
-  );
+  console.info("[igni] WS URL:", url, "(param:", param, ")");
   return url;
 }
 

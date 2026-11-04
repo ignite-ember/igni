@@ -6,8 +6,7 @@
  * Two surfaces:
  *
  *   • ``ensureClientId`` — reads/mints the stable id the window's model
- *     is kept under. Each web tab / IDE webview / JetBrains panel keeps
- *     its own.
+ *     is kept under. Each web tab / desktop window keeps its own.
  *   • ``WindowModel`` — the host-owned model of the window: hydrated
  *     from the backend, written optimistically (a view shows its write
  *     at once) and confirmed by the backend's push, with conflicts

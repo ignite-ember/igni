@@ -30,8 +30,8 @@ class TaskStatus(str, Enum):
         """Rich-markup icon for TUI rendering.
 
         Named ``terminal_icon`` (not ``icon``) because the value is
-        Rich markup that is TUI-specific — VSCode/JetBrains frontends
-        must map from the enum on their own side.  Adding a new
+        Rich markup that is TUI-specific — GUI frontends must map
+        from the enum on their own side.  Adding a new
         :class:`TaskStatus` member without extending this property
         will raise :class:`KeyError` at render time, which is the
         desired fail-loud behaviour (versus the old ``.get(..., "?")``

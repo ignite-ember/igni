@@ -59,7 +59,7 @@ export interface EscContext {
   isProcessing: boolean;
   /** True when ``document.documentElement.dataset.fullscreen``
    * is ``"true"`` (set by the Tauri shell's fullscreen detector
-   * in ``lib.rs``). False on the web / VSCode / JetBrains hosts
+   * in ``lib.rs``). False in a plain browser
    * (where the attribute is never set). */
   isFullscreen: boolean;
 }

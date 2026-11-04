@@ -198,8 +198,8 @@ function HookRow({ hook }: { hook: HookEntry }) {
   );
 
   // Webhook URLs aren't files — open externally if at all. Script
-  // commands go through the host bridge: native IDE in VSCode /
-  // JetBrains / Tauri, preview modal in plain web.
+  // commands go through the host bridge: the OS in Tauri,
+  // preview modal in plain web.
   if (isWebhook) {
     return <div className="hooks-row">{Inner}</div>;
   }

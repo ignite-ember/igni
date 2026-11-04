@@ -10,7 +10,7 @@
  *     FULL path (not the basename — file paths are only useful
  *     when complete).
  *   • Open → routes through ``host.openFile`` (the host abstraction
- *     handles VSCode / JetBrains / Tauri differently).
+ *     handles Tauri and the browser differently).
  */
 
 import { afterEach, describe, expect, it, vi } from "vitest";

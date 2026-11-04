@@ -169,23 +169,6 @@
   }
 }
 
-/* VSCode webview host — VSCode injects a full palette of
-   ``--vscode-*`` custom properties into every webview matching
-   the user's active colour theme. Aliasing our own ``--bg`` to
-   ``--vscode-sideBar-background`` (the ambient panel colour,
-   not the editor's brighter document canvas) makes the tool
-   window read as native VSCode chrome instead of a hard-coded
-   palette patch. The dark/light polarity signal from
-   ``vscode.window.activeColorTheme.kind`` still drives the
-   rest of the palette via ``[data-theme]``, so foreground
-   colours, borders, and highlight tokens stay in sync.
-   Placed after both theme branches so source-order beats the
-   ``[data-theme="light"]`` and dark-media declarations above
-   without needing ``!important``. */
-:root[data-host="vscode"] {
-  --bg: var(--vscode-sideBar-background, var(--bg));
-}
-
 * {
   box-sizing: border-box;
 }
@@ -514,9 +497,9 @@ button {
 /* Solid opaque cover for the top ~118 px of the sidebar. Items
    scrolling into this strip disappear at the bottom edge — the
    "Sessions" cluster paints above (z:10) untouched. Was a
-   six-layer ``backdrop-filter`` blur ramp originally; even in
-   JCEF windowed mode it dropped the plugin to ~9 fps, so we
-   accept the flat look on every surface for consistency. */
+   six-layer ``backdrop-filter`` blur ramp originally; it cost
+   too many frames, so we accept the flat look on every surface
+   for consistency. */
 .sidebar-blur {
   position: absolute;
   top: 0;
@@ -736,8 +719,7 @@ button {
 
 /* ── Window drag region (Tauri only) ────────────────────────────────
    Make the header itself a drag handle so the user can grab any
-   empty area to move the window — VSCode/JetBrains webviews and
-   plain browsers ignore ``-webkit-app-region`` entirely, so this
+   empty area to move the window — plain browsers ignore ``-webkit-app-region`` entirely, so this
    only kicks in for the standalone Tauri shell. Interactive
    children (buttons, inputs, pills, links) are excluded below so
    they remain clickable.
@@ -786,8 +768,7 @@ button {
        they remain clickable.
    The hint comes from the Tauri init script setting
    ``data-host="tauri"`` + ``data-platform="mac"`` on <html> — all
-   other hosts (JetBrains JCEF, VSCode webview, plain browser)
-   keep their default OS chrome and aren't affected by these
+   other hosts (the plain browser) keep their default OS chrome and aren't affected by these
    rules. */
 /* The traffic-light cluster is anchored to the top-left of the
    WINDOW, not to any panel. So the "title bar" host depends on
@@ -1052,9 +1033,9 @@ button {
 /* Solid opaque background painted behind the header content
    (``z-index: -1``) so messages scrolling up under the header
    disappear at the panel's bottom edge. Was a six-layer
-   backdrop-filter blur stack originally — killed FPS on JCEF
-   even in windowed mode (measured 9 fps with blur enabled vs
-   120 fps with the flat panel). Matches the header's own
+   backdrop-filter blur stack originally — it killed FPS
+   (measured 9 fps with blur enabled vs 120 fps with the flat
+   panel). Matches the header's own
    bounds exactly — earlier versions hung 28 px past the bottom
    as a drag-tail, but that just made the opaque strip look
    twice as tall as needed; the header row itself is drag
@@ -4133,44 +4114,6 @@ button {
   cursor: default;
 }
 
-/* ── IDE dark themes: calmer send button ──────────────────────
-   The ember orange-to-red gradient reads as brand promo in
-   the calm dark chrome of both JetBrains (Darcula / New UI)
-   and VSCode dark themes, not as a primary action. Retone
-   every mode (default / plan / acceptEdits / bypass) to a
-   single subtle raised chip: ``--bg-raised`` background so
-   the button rides the same theme variables as the composer
-   surface. White icon matching the ``Execute`` label.
-   The mode's *name* still sits in the left half of the pill
-   as text, so the safety signal (Plan / Bypass / …) isn't
-   lost — it's just delivered by the word instead of a color.
-   Scoped to IDE hosts only via ``:is(...)`` so web + Tauri
-   keep the ember gradient. */
-:root[data-theme="dark"]:is([data-host="jetbrains"], [data-host="vscode"]) .send-btn:not(.stop),
-:root[data-theme="dark"]:is([data-host="jetbrains"], [data-host="vscode"]) .send-split[data-mode] {
-  background: var(--bg-raised);
-}
-
-/* Thicker arrow stroke on the IDE-dark send button.
-   The shared ``strokeProps`` in Icons.tsx sets ``stroke-width:
-   1.6`` for every icon. At 1.6px + anti-aliasing on a small
-   pill button the arrow reads spindly next to the bolder
-   ``Execute`` label text; 2.4 gives them matched visual
-   weight. Scoped so we don't beef up every icon in the app. */
-:root[data-theme="dark"]:is([data-host="jetbrains"], [data-host="vscode"]) .send-btn:not(.stop) svg,
-:root[data-theme="dark"]:is([data-host="jetbrains"], [data-host="vscode"]) .send-split[data-mode] .send-split-go svg {
-  stroke-width: 2.4;
-}
-
-:root[data-theme="dark"]:is([data-host="jetbrains"], [data-host="vscode"]) .send-btn:not(.stop):hover:not(:disabled),
-:root[data-theme="dark"]:is([data-host="jetbrains"], [data-host="vscode"]) .send-split[data-mode]:hover:not(:has(:disabled)) {
-  /* Hover: nudge slightly toward the foreground, plus a soft
-     dark shadow. No orange glow — this is a secondary button
-     now, not a promo pill. */
-  background: color-mix(in srgb, var(--bg-raised) 70%, var(--fg));
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.25);
-}
-
 /* Compound selector (``.popup-menu.send-mode-menu``) beats
    the base ``.popup-menu`` rule by specificity instead of by
    source order — without this the base ``left: 0; right: 0``
@@ -4188,7 +4131,7 @@ button {
 }
 
 /* Stack each mode item as label-on-top + description-below
-   (VSCode command-palette pattern). The base popup-item is
+   (command-palette pattern). The base popup-item is
    ``display: flex; align-items: baseline`` which puts label
    and description on the same row — that caused the
    right-edge clipping the user reported because long
@@ -5076,25 +5019,6 @@ button {
   animation: panel-pop 0.18s cubic-bezier(0.2, 0.9, 0.3, 1.15);
 }
 
-/* IDE hosts — drawer's page canvas matches the IDE chrome,
-   not the brand brown. Inner chips / input rectangles / org
-   tag / branch rows keep their own ``--bg-surface`` /
-   ``--bg-raised`` fills so the brand tones still show
-   through where the design expects them; only the outer
-   canvas swaps.
-
-   - JetBrains: ``--bg`` is the IDE's ``Panel.background``
-     (pushed via ``LafManagerListener`` in the plugin).
-   - VSCode: ``--bg`` is already aliased at the top of this
-     file to ``--vscode-sideBar-background`` so the drawer
-     sits on the same tone as the surrounding sidebar chrome.
-
-   Web / Tauri keep the branded card treatment — no need to
-   flatten there, the drawer is a modal over a brand page. */
-:root:is([data-host="jetbrains"], [data-host="vscode"]) .drawer {
-  background: var(--bg);
-}
-
 @keyframes panel-pop {
   from {
     opacity: 0;
@@ -5421,8 +5345,7 @@ button {
 
   /* The status line carries session id, ctx meter, and status
    * chips — all things the user needs to see at a glance, especially
-   * inside the narrow JetBrains/VSCode tool window where this query
-   * fires. Tighten the gap and let items wrap onto a second row when
+   * in a narrow window where this query fires. Tighten the gap and let items wrap onto a second row when
    * they don't fit; don't hide them. */
   .statusline {
     gap: var(--space-4);
@@ -6113,8 +6036,7 @@ button {
 }
 
 .task-filters {
-  /* Wrap to a second row when the panel is too narrow (VSCode side
-     panel, JetBrains tool window) — beats overflowing the parent and
+  /* Wrap to a second row when the panel is too narrow — beats overflowing the parent and
      beats horizontal scrolling, which hides the count badges users
      came here for. The pill background stays a single rounded shape
      because the inner buttons each have their own rounded corners.
@@ -8600,7 +8522,7 @@ button {
  * the shell never scrolls — demos need to provide their own scroll
  * container. ``height: 100vh`` + ``overflow-y: auto`` on
  * ``.demo-page`` gives a single scroll surface that scrolls
- * independently of any host-shell (Tauri / VSCode / browser). */
+ * independently of any host-shell (Tauri / browser). */
 
 .demo-page {
   max-width: 1400px;

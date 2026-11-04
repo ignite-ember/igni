@@ -2,9 +2,8 @@
 
 Non-interactive command surface. The Textual TUI was removed in
 v0.9.7 — interactive chat now lives in the React clients
-(``clients/web``, ``clients/tauri``, ``clients/vscode``,
-``clients/jetbrains``), which speak to the backend server started
-via ``python -m ember_code.backend --socket <path>``.
+(``clients/web``, ``clients/tauri``), which speak to the backend
+server started via ``python -m ember_code.backend --socket <path>``.
 
 Supported modes:
 

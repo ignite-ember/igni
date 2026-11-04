@@ -53,8 +53,8 @@ _HELP_TEXT = (
     f"  • {COMMAND} -p                      pipe mode (stdin → stdout)\n"
     f'  • {COMMAND} -c -m "<message>"      resume last session, one-shot\n'
     "  • python -m ember_code.backend --socket <path>\n"
-    "        start the backend for a React client (web / Tauri /\n"
-    "        VSCode / JetBrains) to connect via Unix socket.\n"
+    "        start the backend for a React client (web / Tauri)\n"
+    "        to connect via Unix socket.\n"
 )
 
 

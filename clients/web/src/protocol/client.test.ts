@@ -2,12 +2,8 @@
  * Tests for ``resolveWsUrl`` — the WS-URL precedence resolver.
  *
  * Precedence (highest → lowest):
- *   1. ``?ws=...`` URL query param
- *   2. ``<meta name="ember-ws-url" content="...">`` (VSCode webview
- *      delivery, because the extension can't inject globals under
- *      the default CSP)
- *   3. ``window.__EMBER_WS_URL__`` global (JetBrains JCEF injection)
- *   4. dev fallback ``ws://127.0.0.1:8765``
+ *   1. ``?ws=...`` URL query param (the Tauri shell)
+ *   2. dev fallback ``ws://127.0.0.1:8765``
  *
  * Vitest runs in node, so we hand-stub ``window`` + ``document``
  * with the bare minimum surface the resolver touches. Each test
@@ -60,28 +56,20 @@ describe("resolveWsUrl precedence", () => {
     expect(resolveWsUrl()).toBe("ws://127.0.0.1:8765");
   });
 
-  it("uses the global when only __EMBER_WS_URL__ is set", () => {
-    win.__EMBER_WS_URL__ = "ws://injected.example/1";
-    expect(resolveWsUrl()).toBe("ws://injected.example/1");
-  });
-
-  it("uses the meta tag when set, even over the global", () => {
-    // VSCode webview delivery wins over the JetBrains-style
-    // global — they shouldn't both be present, but if they
-    // are, the meta tag is the more-recent-of-the-two.
-    win.__EMBER_WS_URL__ = "ws://global.example";
-    metaTag = { content: "ws://meta.example" };
-    expect(resolveWsUrl()).toBe("ws://meta.example");
-  });
-
-  it("URL param wins over meta tag and global", () => {
-    // The query param is the explicit user-controlled override
-    // (used by the Tauri loader to bridge to the spawned BE's
-    // random port). Must beat anything else.
+  it("uses the URL param", () => {
+    // The query param is how the Tauri loader bridges to the spawned
+    // BE's random port.
     win.location.search = "?ws=ws%3A%2F%2Fparam.example%3A9999";
-    metaTag = { content: "ws://meta.example" };
-    win.__EMBER_WS_URL__ = "ws://global.example";
     expect(resolveWsUrl()).toBe("ws://param.example:9999");
+  });
+
+  it("reads no meta tag and no global", () => {
+    // The ``ember-ws-url`` meta tag and ``__EMBER_WS_URL__`` were the
+    // IDE plugins' delivery paths; igni no longer ships them, and a
+    // page that sets either still talks to the dev port.
+    win.__EMBER_WS_URL__ = "ws://global.example";
+    metaTag = { content: "ws://meta.example" };
+    expect(resolveWsUrl()).toBe("ws://127.0.0.1:8765");
   });
 
   it("URL param is URL-decoded by URLSearchParams (no double-decode bug)", () => {
@@ -93,13 +81,9 @@ describe("resolveWsUrl precedence", () => {
     expect(resolveWsUrl()).toBe("ws://127.0.0.1:51234");
   });
 
-  it("empty URL param does NOT win over meta tag", () => {
-    // ``?ws=`` shows up when a tab forgets to set the param.
-    // Treating it as "explicit empty" would lose the legitimate
-    // VSCode meta-tag fallback.
+  it("empty URL param falls back to the dev port", () => {
     win.location.search = "?ws=";
-    metaTag = { content: "ws://meta.example" };
-    expect(resolveWsUrl()).toBe("ws://meta.example");
+    expect(resolveWsUrl()).toBe("ws://127.0.0.1:8765");
   });
 
   it("ignores unrelated query params", () => {
@@ -122,7 +106,7 @@ describe("resolveWsUrl precedence", () => {
 // subprotocol ``igni-token.<token>`` next to ``igni.v1``.
 
 describe("resolveWsToken", () => {
-  it("is empty when nothing carries one (hand-started or IDE backend)", () => {
+  it("is empty when nothing carries one (hand-started backend)", () => {
     expect(resolveWsToken()).toBe("");
   });
 

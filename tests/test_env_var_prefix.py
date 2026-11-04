@@ -6,8 +6,8 @@ variable names specifically, because they are the one identifier class that
 crosses a process boundary: a client sets a variable and the Python backend
 reads it, so renaming one side and missing the other leaves a variable that
 is simply never read — and nothing fails loudly. `IGNI_PARENT_PID` is the
-clearest case: Tauri, the VS Code extension, the JetBrains plugin and the
-web e2e harness all set it, and `backend/supervisor.py` reads it to know
+clearest case: Tauri and the web e2e harness both set it (the IDE plugins
+did too, until they were dropped), and `backend/supervisor.py` reads it to know
 when to shut down. Miss one setter and that client leaks backend processes,
 silently.
 
@@ -167,13 +167,12 @@ class TestTheCrossProcessContractAgrees:
         assert "EMBER_PARENT_PID" not in setter
 
     def test_every_client_that_sets_parent_pid_uses_the_new_name(self):
-        """Four separate clients set it, and the JetBrains one cannot be
-        compiled here — so this is the only check that covers it."""
+        """The desktop shell and the web e2e harness both set it."""
         root = _repo_root()
         setters = [
             "clients/tauri/src-tauri/src/lib.rs",
-            "clients/vscode/src/runtime.ts",
-            "clients/jetbrains/src/main/kotlin/sh/igniteember/embercode/EmberRuntime.kt",
+            "clients/web/e2e/fixtures/live-be.ts",
+            "clients/web/e2e/real-be-thinking.mjs",
         ]
         for rel in setters:
             body = (root / rel).read_text()

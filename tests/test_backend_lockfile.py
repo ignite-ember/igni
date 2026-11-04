@@ -44,7 +44,7 @@ class TestLockfile:
     def test_on_disk_wire_format_is_stable(self, tmp_path: Path) -> None:
         """The on-disk JSON MUST keep the exact key-set
         ``{pid, port, wire_version, created_at}`` — out-of-tree
-        readers (VSCode extension, JB plugin, ``jq``) parse this
+        readers (the Tauri shell, ``jq``) parse this
         file directly. Golden-file assertion guards the wire
         format."""
         lock = Lockfile(tmp_path)

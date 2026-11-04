@@ -8,11 +8,12 @@ process. Two checks run at the handshake, before the upgrade:
 
 * **Origin.** A browser always sends ``Origin``; a page that is not one
   of igni's own is refused (403). Allowed: the Tauri webview
-  (``tauri://localhost``, ``http(s)://tauri.localhost``), VS Code
-  webviews (``vscode-webview://…``) and loopback pages
-  (``http(s)://127.0.0.1|localhost|[::1]:<any port>``: the JetBrains
-  panel's own server, the Vite dev server). A remote page, a DNS-rebound
-  name, and ``null`` (sandboxed iframes, ``file://``) are refused. A
+  (``tauri://localhost``, ``http(s)://tauri.localhost``) and loopback
+  pages (``http(s)://127.0.0.1|localhost|[::1]:<any port>``: the web
+  client, the Vite dev server). A remote page, a DNS-rebound name, any
+  other scheme (``vscode-webview://`` included: igni no longer ships
+  the IDE plugins) and ``null`` (sandboxed iframes, ``file://``) are
+  refused. A
   request without ``Origin`` is a non-browser client.
 * **Token.** When whoever launched the backend gave it a per-launch
   secret (``IGNI_WS_TOKEN``, set by the desktop shell in the child's
@@ -21,7 +22,7 @@ process. Two checks run at the handshake, before the upgrade:
   igni-token.<token>``. The server answers with ``igni.v1`` only, so the
   token is never echoed. Compared with :func:`hmac.compare_digest`.
 
-Without a token (a backend started by hand, by an IDE plugin, or in the
+Without a token (a backend started by hand, or in the
 cloud, where the gateway authenticates every client and nothing outside
 the VM reaches the port) only the Origin check applies.
 ``X-Igni-Gateway: control`` never exempts a connection from the token: on
@@ -71,7 +72,6 @@ TOKEN_PROTOCOL_PREFIX = "igni-token."  # noqa: S105 — a subprotocol prefix, no
 TAURI_ORIGINS = frozenset(
     {"tauri://localhost", "http://tauri.localhost", "https://tauri.localhost"}
 )
-_VSCODE_WEBVIEW_SCHEME = "vscode-webview"
 _LOOPBACK_HOSTS = frozenset({"127.0.0.1", "localhost", "::1"})
 
 
@@ -105,8 +105,6 @@ def origin_allowed(origin: str) -> bool:
         _ = parts.port
     except ValueError:
         return False
-    if parts.scheme == _VSCODE_WEBVIEW_SCHEME and host:
-        return True
     return parts.scheme in ("http", "https") and host in _LOOPBACK_HOSTS
 
 

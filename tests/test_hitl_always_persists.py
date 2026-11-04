@@ -10,7 +10,7 @@ Only the TUI's ``hitl_handler`` persisted, because it called
 ``save_permission_rule`` client-side before firing the resolve.
 
 The fix moved the persistence into ``resolve_hitl_batch`` so
-every client (web, VSCode, JetBrains, TUI) shares one code
+every client (web, desktop, TUI) shares one code
 path. Web + friends: no client change needed; the choice
 they already send is now honored. TUI: still calls
 ``save_permission_rule`` explicitly — that's idempotent

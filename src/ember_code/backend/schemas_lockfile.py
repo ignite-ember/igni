@@ -53,8 +53,8 @@ class LockfilePayload(BaseModel):
     ``<project>/.igni/backend.lock``.
 
     Field order and names are fixed by the on-disk wire format —
-    out-of-tree readers (VSCode extension, JB plugin, Tauri shell,
-    plain ``jq``) parse this file directly, so the key-set MUST NOT
+    out-of-tree readers (the Tauri shell, plain ``jq``) parse this
+    file directly, so the key-set MUST NOT
     drift. :meth:`model_dump` produces exactly
     ``{"pid", "port", "wire_version", "created_at"}`` in insertion
     order to match the previous hand-rolled dict serialisation.

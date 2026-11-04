@@ -366,7 +366,7 @@ export default function App() {
   // theme at mount and never again.
   const frameTheme = useDocumentTheme();
   // Put text in the composer and hand the person the caret: a skill
-  // picked from a panel, a selection sent from the IDE. The text is the
+  // picked from a panel, a message to edit and resend. The text is the
   // model's (``ui.composer``); the caret is the editor's, reached
   // through the handle the Composer fills in.
   const composerFocus = useRef<(() => void) | null>(null);
@@ -381,8 +381,8 @@ export default function App() {
     },
     [windowModel],
   );
-  // Plain-browser fallback for host.openFile — bridge-equipped hosts
-  // (Tauri / VSCode / JetBrains) handle the open themselves. The
+  // Plain-browser fallback for host.openFile — the desktop app
+  // handles the open itself. The
   // preview is ``ui.preview``, so an extension can open one too.
   const preview = useWindowField(windowModel, "preview");
   useEffect(() => {
@@ -416,39 +416,13 @@ export default function App() {
         : "linux";
   }, []);
 
-  // IDE → web-UI event bus. Two paths converge here:
-  //
-  //   • JetBrains dispatches ``ember-host`` CustomEvents on
-  //     ``window`` via ``executeJavaScript``.
-  //   • VSCode dispatches plain ``message`` events via
-  //     ``webview.postMessage`` — the standard webview channel.
-  //
-  // Both sources carry the same shape (``{type, payload}`` for the
-  // CustomEvent detail, or ``{type, ...fields}`` for postMessage).
-  // We normalise into ``(type, payload)`` and feed a single dispatch
-  // so the rest of the handler is host-agnostic. Sub-handlers seed
-  // the composer with a structured form the model will interpret
-  // correctly — ``@<path>:start-end`` reference + fenced block.
+  // Desktop-shell → web-UI event bus. The Tauri shell dispatches
+  // ``ember-host`` CustomEvents on ``window`` (``{type, payload}`` in
+  // ``detail``) for its native menu items.
   useEffect(() => {
     const dispatch = (type: string, payload: Record<string, unknown>) => {
-      if (type === "ember:addToComposer") {
-        const text = String(payload.text ?? "");
-        const path = payload.path ? String(payload.path) : null;
-        const line = typeof payload.line === "number" ? payload.line : null;
-        const endLine =
-          typeof payload.end_line === "number" ? payload.end_line : null;
-        const range =
-          line != null
-            ? `:${line}${endLine != null && endLine !== line ? `-${endLine}` : ""}`
-            : "";
-        const ref = path ? `@${path}${range}\n` : "";
-        seedComposer(`${ref}\`\`\`\n${text}\n\`\`\``);
-      } else if (type === "ember:attachFile") {
-        const path = payload.path ? String(payload.path) : null;
-        if (path) seedComposer(`@${path}`);
-      } else if (type === "ember:menu") {
-        // Native-menu items routed through the host bridge. Tauri
-        // and (future) JetBrains menu hooks both emit these. ``id``
+      if (type === "ember:menu") {
+        // Native-menu items routed through the host bridge. ``id``
         // is the menu item identifier the native side registered.
         const id = String(payload.id ?? "");
         if (id === "new_chat") {
@@ -473,30 +447,6 @@ export default function App() {
             /* already closed */
           }
         }
-      } else if (type === "ember:theme") {
-        // IDE theme override — wins over OS ``prefers-color-scheme``.
-        // The CSS already keys off ``html[data-theme]`` (see
-        // ``theme.css``); we just toggle the attribute. When the
-        // bridge disconnects (web build, no IDE), the attribute is
-        // never set and the OS-detected default takes over.
-        const dark = Boolean(payload.dark);
-        document.documentElement.setAttribute(
-          "data-theme",
-          dark ? "dark" : "light",
-        );
-        // Match the host's actual panel background so the tool
-        // window doesn't paint a differently-shaded patch inside
-        // Darcula / High Contrast / custom themes. ``--bg`` is the
-        // one custom property every panel / composer / dialog
-        // sources their background from; overriding it as an
-        // inline style on ``:root`` beats the CSS-file default
-        // via specificity.
-        const bg = typeof payload.bg === "string" ? payload.bg : null;
-        if (bg) {
-          document.documentElement.style.setProperty("--bg", bg);
-        } else {
-          document.documentElement.style.removeProperty("--bg");
-        }
       }
     };
     const onCustom = (e: Event) => {
@@ -507,25 +457,9 @@ export default function App() {
       const { type, payload } = ev.detail || { type: "", payload: {} };
       dispatch(type, payload || {});
     };
-    const onMessage = (e: MessageEvent) => {
-      const data = e.data as {
-        type?: string;
-        payload?: Record<string, unknown>;
-      } & Record<string, unknown>;
-      if (!data || typeof data.type !== "string") return;
-      // ``ember:searchCodeResult`` is correlation-id traffic owned
-      // by ``host.searchCode`` — don't dispatch as a normal event.
-      if (data.type === "ember:searchCodeResult") return;
-      // Some VSCode messages use a nested ``payload``; others (the
-      // older shape) inline fields. Tolerate both.
-      const payload = (data.payload as Record<string, unknown>) ?? data;
-      dispatch(data.type, payload);
-    };
     window.addEventListener("ember-host", onCustom);
-    window.addEventListener("message", onMessage);
     return () => {
       window.removeEventListener("ember-host", onCustom);
-      window.removeEventListener("message", onMessage);
     };
   }, []);
 
@@ -551,8 +485,7 @@ export default function App() {
     [windowModel],
   );
   // Single dispatch for user-facing notifications. Tries the native
-  // host bridge first (Tauri → macOS Notification Center; VSCode →
-  // ``window.showInformationMessage``; JetBrains → balloon). Only
+  // host bridge first (Tauri → macOS Notification Center). Only
   // falls back to the in-app toast stack on plain web where no
   // bridge exists.
   const notifyHost = useCallback(
@@ -1400,8 +1333,8 @@ export default function App() {
           // don't belong in whichever conversation the user happens to
           // be in. Render as a toast (top-right, persistent across
           // conversation switches) and, if the app is backgrounded,
-          // additionally fire a native host notification (Tauri /
-          // VSCode / JetBrains) so the user notices.
+          // additionally fire a native host notification (the desktop
+          // app) so the user notices.
           const desc =
             String(m.payload.description ?? "").trim() || "(no description)";
           const result = String(m.payload.result ?? "").trim();
@@ -1436,13 +1369,9 @@ export default function App() {
           );
         } else if (m.channel === "file_edited") {
           // BE edit_file / edit_file_replace_all / create_file just
-          // wrote to disk. Forward to the host (JetBrains for now)
-          // so it can refresh the VFS — that one call drops the
-          // "modified externally" prompt, reloads any open editor
-          // tab, and snapshots a Local History entry. No-ops on
-          // hosts without an editor (web, Tauri's plain window).
-          const path = String((m.payload as { path?: unknown }).path ?? "");
-          if (path) void host.notifyFileEdited(path);
+          // wrote to disk. Neither the desktop app nor the web client
+          // holds an editor buffer to refresh, so there is nothing to
+          // do; the branch keeps the push out of the fall-through.
         } else if (m.channel === "orchestrate_event") {
           // Visualizer streaming path: the visualizer sub-agent emits
           // its whole response as one JSON object (a json-render spec),
@@ -3153,7 +3082,7 @@ export default function App() {
             />
             {/* Version last in the brand row — reads as
                 ``igni ● v0.9.0``. Renders only when a host
-                embedded the values (JB / Tauri / VSCode); the
+                embedded the values (Tauri); the
                 component itself paints nothing otherwise. */}
             <BackendVersionChip />
           </div>
@@ -3182,63 +3111,58 @@ export default function App() {
               </svg>
             </button>
           )}
-          {/* Project chip — hidden when running inside an IDE (VSCode /
-              JetBrains): the IDE's workspace folder IS the project root,
-              and the FE shouldn't offer a switcher that would force the
-              user to override the IDE's notion of "the current project". */}
-          {host.kind !== "vscode" && host.kind !== "jetbrains" && (
-            <button
-              className="chip"
-              title={
-                projectDir
-                  ? `Session locked to ${projectDir} — click to lock a different project`
-                  : "Lock this session to a project folder"
-              }
-              onClick={() =>
-                void (async () => {
-                  // 1. Shell-injected native dialog (Tauri/IDE webviews).
-                  const native = await pickNativeDirectory(projectDir);
-                  if (native) return void attachInFolder(native);
-                  if (native === null) return; // user cancelled
-                  // 2. BE-side native dialog: the BE runs on the user's
-                  //    machine, so it can open the real OS picker even
-                  //    for a plain browser tab. 10-min timeout — the
-                  //    dialog waits for a human.
-                  try {
-                    const res = await client.rpc<{
-                      path: string;
-                      cancelled: boolean;
-                      error: string;
-                    }>("pick_dir_native", {}, 600_000);
-                    if (res.path) return void attachInFolder(res.path);
-                    if (res.cancelled) return;
-                    // fall through on error (headless Linux, etc.)
-                  } catch {
-                    /* fall through to in-app picker */
-                  }
-                  // 3. Last resort: in-app server-side browser.
-                  setPanel({ kind: "dir-picker" });
-                })()
-              }
+          {/* Project chip — opens the folder picker. */}
+          <button
+            className="chip"
+            title={
+              projectDir
+                ? `Session locked to ${projectDir} — click to lock a different project`
+                : "Lock this session to a project folder"
+            }
+            onClick={() =>
+              void (async () => {
+                // 1. Shell-injected native dialog (the desktop app).
+                const native = await pickNativeDirectory(projectDir);
+                if (native) return void attachInFolder(native);
+                if (native === null) return; // user cancelled
+                // 2. BE-side native dialog: the BE runs on the user's
+                //    machine, so it can open the real OS picker even
+                //    for a plain browser tab. 10-min timeout — the
+                //    dialog waits for a human.
+                try {
+                  const res = await client.rpc<{
+                    path: string;
+                    cancelled: boolean;
+                    error: string;
+                  }>("pick_dir_native", {}, 600_000);
+                  if (res.path) return void attachInFolder(res.path);
+                  if (res.cancelled) return;
+                  // fall through on error (headless Linux, etc.)
+                } catch {
+                  /* fall through to in-app picker */
+                }
+                // 3. Last resort: in-app server-side browser.
+                setPanel({ kind: "dir-picker" });
+              })()
+            }
+          >
+            <FolderIcon />{" "}
+            <span
+              className="chip-label"
+              style={{
+                // Full path, truncated from the LEFT so the project
+                // name (the informative end) stays visible.
+                maxWidth: 380,
+                overflow: "hidden",
+                textOverflow: "ellipsis",
+                whiteSpace: "nowrap",
+                direction: "rtl",
+                textAlign: "left",
+              }}
             >
-              <FolderIcon />{" "}
-              <span
-                className="chip-label"
-                style={{
-                  // Full path, truncated from the LEFT so the project
-                  // name (the informative end) stays visible.
-                  maxWidth: 380,
-                  overflow: "hidden",
-                  textOverflow: "ellipsis",
-                  whiteSpace: "nowrap",
-                  direction: "rtl",
-                  textAlign: "left",
-                }}
-              >
-                {projectDir ? `⁨${projectDir}⁩` : "project"}
-              </span>
-            </button>
-          )}
+              {projectDir ? `⁨${projectDir}⁩` : "project"}
+            </span>
+          </button>
           {(status?.cloud_connected || waiting > 0) && (
             <button
               className={

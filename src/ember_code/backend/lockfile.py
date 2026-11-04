@@ -1,6 +1,6 @@
 """Per-project backend lockfile — discovery + shared-BE coordination.
 
-When a client (VSCode extension, JB plugin, Tauri shell) wants a
+When a client (the Tauri shell, a second desktop window) wants a
 backend for a project, it should first check
 ``<project>/.igni/backend.lock``:
 
@@ -175,7 +175,7 @@ class Lockfile:
         tmp = self._path.with_suffix(self._path.suffix + ".tmp")
         # ``model_dump`` preserves field-declaration order so the
         # on-disk JSON keeps ``{pid, port, wire_version, created_at}``
-        # — same key-set out-of-tree readers (jq, VSCode, JB) parse
+        # — same key-set out-of-tree readers (jq, the Tauri shell) parse
         # today. Byte-stable wire format is a hard requirement.
         # ``exclude_none``: ``ws_token`` only appears when there is one.
         data = (json.dumps(payload.model_dump(exclude_none=True)) + "\n").encode("utf-8")

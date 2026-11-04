@@ -10,7 +10,7 @@ An earlier iteration proposed embedding a ``header: RunHeader``
 sub-object on every run-scoped event. That would have nested the
 wire JSON from flat ``{run_id, parent_run_id}`` to
 ``{header: {run_id, parent_run_id}}`` — breaking every FE client
-(React web, Tauri, VSCode, JetBrains, TUI) that parses those
+(React web, Tauri, TUI) that parses those
 fields at the top level.
 
 The mixin approach avoids that: :class:`RunScopedMessage`

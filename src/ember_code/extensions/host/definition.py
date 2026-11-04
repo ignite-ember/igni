@@ -161,9 +161,9 @@ TYPES = (
     ),
     typedef(
         "WindowInfo",
-        "One igni window: a desktop window, an IDE panel or a browser tab.",
+        "One igni window: a desktop window or a browser tab.",
         field("id", "str", "Stable across reloads of the same window."),
-        field("kind", "str", "`tauri`, `vscode`, `jetbrains` or `web`."),
+        field("kind", "str", "`tauri` or `web`."),
         field("connected", "bool"),
         field("focused", "bool", "Whether the person is using this window: it has focus."),
         field("session_id", "str | None", "The session it shows.", optional=True),

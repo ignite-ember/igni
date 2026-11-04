@@ -5,7 +5,7 @@
 
 .DESCRIPTION
     Exercises the path a new Windows user takes the first time they
-    install the JetBrains plugin / VSCode extension / Tauri app:
+    install the desktop app:
 
         1. Download uv-x86_64-pc-windows-msvc.zip from GitHub releases
         2. ``uv python install 3.12``

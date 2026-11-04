@@ -48,12 +48,6 @@ vi.hoisted(() => {
   });
 });
 
-// The host's indexed code search is an IDE feature; in a browser window it
-// answers nothing and the composer falls back to the backend's
-// ``search_code``, which is the path these tests drive.
-const hostSearch = vi.hoisted(() => vi.fn(async (_snippet: string) => null as unknown));
-vi.mock("../lib/host", () => ({ host: { searchCode: hostSearch } }));
-
 import { act, cleanup, fireEvent, render, waitFor } from "@testing-library/react";
 import type React from "react";
 
@@ -158,7 +152,6 @@ async function nextFrame() {
 
 afterEach(() => {
   cleanup();
-  hostSearch.mockClear();
 });
 
 describe("sending", () => {
@@ -569,7 +562,6 @@ describe("pasting code", () => {
     await nextFrame();
 
     expect(notPrevented).toBe(false);
-    expect(hostSearch).toHaveBeenCalledWith(SNIPPET);
     expect(stub.rpc).toHaveBeenCalledWith("search_code", { snippet: SNIPPET });
     expect(windowModel.get("composer").text).toMatch(/@code:c1/);
     expect(windowModel.get("composer").text).not.toContain("print('hi')");

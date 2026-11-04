@@ -5,7 +5,7 @@ build-backend = "hatchling.build"
 [project]
 name = "ignite-ember"
 version = "1.0.3"
-description = "AI coding assistant with multi-agent orchestration — TUI, web, JetBrains, VSCode, and Tauri clients"
+description = "AI coding assistant with multi-agent orchestration — desktop app, web client and CLI"
 readme = "README.md"
 license = "Apache-2.0"
 # 3.12 exactly, not a floor. The desktop app installs 3.12 and only
@@ -16,7 +16,7 @@ license = "Apache-2.0"
 # ``uv sync`` pick an interpreter the product never ships on.
 requires-python = ">=3.12,<3.13"
 authors = [{ name = "Ignite Ember" }]
-keywords = ["ai", "coding-assistant", "agent", "agno", "claude", "openai", "tui", "jetbrains"]
+keywords = ["ai", "coding-assistant", "agent", "agno", "claude", "openai", "tui"]
 classifiers = [
     "Development Status :: 4 - Beta",
     "Environment :: Console",

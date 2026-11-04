@@ -117,7 +117,7 @@ def warn_if_unsupported_python(emit: Callable[..., None] = logger.warning) -> bo
     default=None,
     help="Listen on a loopback WebSocket port instead of a Unix socket "
     "(0 = auto-assign; the bound port is printed in the ready line). "
-    "Used by GUI clients (Tauri / VSCode / JetBrains webviews).",
+    "Used by GUI clients (the Tauri desktop app, the web client).",
 )
 @click.option("--project-dir", type=click.Path(exists=True), default=".")
 @click.option("--resume-session", "resume_session_id", default=None)

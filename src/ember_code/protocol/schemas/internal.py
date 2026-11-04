@@ -48,7 +48,7 @@ class ToolResultData(BaseModel):
     has_markup: bool = False
     # Kept as ``list[tuple[str, str]]`` for the wire so existing
     # ``ToolCompleted.diff_rows`` protocol clients (React web /
-    # Tauri / VSCode / JetBrains) continue to deserialize.
+    # Tauri) continue to deserialize.
     diff_rows: list[tuple[str, str]] | None = None
 
     @model_validator(mode="after")

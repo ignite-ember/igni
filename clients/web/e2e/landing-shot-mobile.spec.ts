@@ -29,8 +29,9 @@ test.skip(
 const MODEL = "igni 1.0 27b";
 const PROJECT = "/Users/dev/acme/payments-api";
 
-// Narrow enough that the app lays itself out like a VSCode side panel,
-// which is a real surface rather than a contrivance.
+// Narrow enough that the app lays itself out like a narrow desktop
+// window or a small tablet, which is a real surface rather than a
+// contrivance.
 test.use({ viewport: { width: 460, height: 660 }, deviceScaleFactor: 2 });
 
 const capture = "capture phone product shot";

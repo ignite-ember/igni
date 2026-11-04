@@ -12,11 +12,10 @@ import { host } from "./lib/host";
 import "./theme.css";
 import "./workflow.css";
 
-// Stamp ``data-host`` on <html> so host-conditional CSS
-// (VSCode's ``--vscode-*`` bridge, JB/Tauri layout tweaks) has
-// something to key off. Tauri also stamps this itself from its
-// INIT_SCRIPT — running twice is harmless, the values agree —
-// but VSCode and JCEF don't, so we do it here for them.
+// Stamp ``data-host`` on <html> so host-conditional CSS (the
+// Tauri layout tweaks) has something to key off. Tauri also stamps
+// this itself from its INIT_SCRIPT — running twice is harmless,
+// the values agree — and a plain browser tab gets ``web``.
 document.documentElement.dataset.host = host.kind;
 
 // Demo URLs:

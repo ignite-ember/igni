@@ -146,7 +146,7 @@ async def test_session_directory_store_concurrent_overwrites_pick_one(
 
 @pytest.mark.asyncio
 async def test_client_state_concurrent_writes_from_many_clients(tmp_path: Path):
-    """Each FE client (web, JetBrains, VSCode webview) has its own
+    """Each FE client (web tab, desktop window) has its own
     ``client_id`` and writes its own keys. N clients writing at once
     must all land, with no cross-key contamination.
     """

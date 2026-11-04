@@ -63,8 +63,8 @@ class BackgroundProcessDonePayload(BaseModel):
 
 class FileEditedPayload(BaseModel):
     """Channel ``file_edited``. Fired every time an edit tool writes
-    to disk. JetBrains plugin listens for this to refresh the VFS
-    (so Local History captures the change)."""
+    to disk. A client with an editor buffer can refresh it; neither
+    the desktop app nor the web client acts on it today."""
 
     path: str
 

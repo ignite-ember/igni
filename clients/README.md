@@ -1,22 +1,20 @@
 # igni GUI clients
 
-One shared web UI, three thin native shells — all speaking the same
-FE↔BE protocol the TUI uses, over a loopback WebSocket added in
-`ember_code.transport.websocket`:
-
-```
+One shared web UI, served as the web client and hosted by one thin
+native shell — all speaking the same FE↔BE protocol the TUI used, over a
+loopback WebSocket added in```
                        ┌──────────────────────────────┐
                        │   python -m ember_code.backend │
                        │   --ws-port 0                 │
                        └──────────────┬───────────────┘
                                       │ ws://127.0.0.1:<port>
-            ┌─────────────────────────┼─────────────────────────┐
-            │                         │                         │
-   ┌────────┴───────┐        ┌────────┴───────┐        ┌────────┴───────┐
-   │  tauri/        │        │  vscode/       │        │  jetbrains/    │
-   │  native window │        │  webview panel │        │  JCEF panel    │
-   └────────┬───────┘        └────────┬───────┘        └────────┬───────┘
-            └─────────────────────────┼─────────────────────────┘
+                     ┌────────────────┴────────────────┐
+                     │                                 │
+            ┌────────┴───────┐                ┌────────┴───────┐
+            │  tauri/        │                │  browser tab   │
+            │  native window │                │  (web client)  │
+            └────────┬───────┘                └────────┬───────┘
+                     └────────────────┬────────────────┘
                                       │
                               ┌───────┴────────┐
                               │  web/          │
@@ -28,15 +26,15 @@ FE↔BE protocol the TUI uses, over a loopback WebSocket added in
   LandingPage (ember orange→red gradient, Primer-style tokens).
   Streaming chat, thinking blocks, tool-call cards, HITL permission
   dialogs, slash commands, model picker, sessions. The WS URL comes
-  from `?ws=` or `window.__EMBER_WS_URL__` (injected by shells).
+  from `?ws=` (set by the Tauri shell), else the dev port.
 - **tauri/** — Tauri v2 standalone app; spawns the BE, opens the UI.
-- **vscode/** — extension command `igni: Open Chat`; bundles the
-  UI into a webview, spawns the BE for the workspace folder.
-- **jetbrains/** — tool window with JCEF; per-project BE service.
 
-Each shell does only: spawn `python -m ember_code.backend --ws-port 0
---project-dir <dir>` (interpreter override: `IGNI_PYTHON`), parse the
-JSON ready line for `ws_port`, point the web UI at it. Process
+The VS Code and JetBrains plugins that used to live here were dropped
+(D19); they are in the git history.
+
+The shell spawns `python -m ember_code.backend --ws-port 0
+--project-dir <dir>` (interpreter override: `IGNI_PYTHON`), parses the
+JSON ready line for `ws_port`, and points the web UI at it. Process
 lifecycle: killed by the shell on close + BE's `IGNI_PARENT_PID`
 watchdog as backstop.
 
@@ -45,9 +43,9 @@ watchdog as backstop.
 | Client    | Builds verified here | Needs |
 |-----------|----------------------|-------|
 | web       | yes (`npm run build`, e2e against real BE) | Node 20+ |
-| vscode    | yes (`npm run build`) | Node 20+ |
 | tauri     | scaffold only — no Rust toolchain on this machine | rustup |
-| jetbrains | scaffold only — no JDK on this machine | JDK 17+ |
+
+no JDK on this machine | JDK 17+ |
 
 ## First-pass scope (core)
 

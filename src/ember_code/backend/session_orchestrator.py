@@ -160,7 +160,7 @@ class SessionOrchestrator:
         self._dir_registry.set_dir(self._backend.session_id, self._backend.project_dir)
 
         # Per-client UI state — survives reloads, shared across all
-        # clients (web, JetBrains, VSCode) since each holds the same
+        # clients (web, desktop) since each holds the same
         # opaque ``client_id`` and the BE is the source of truth.
         self._client_state = ClientStateStore.from_locator(storage)
 

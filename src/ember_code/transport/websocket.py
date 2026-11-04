@@ -1,7 +1,7 @@
 """WebSocket transport — one JSON protocol message per text frame.
 
-Serves browser-based frontends (the shared web UI used by the Tauri
-app, the VSCode webview, and the JetBrains JCEF panel). Wire format
+Serves browser-based frontends (the shared web UI: the web client
+and the Tauri app). Wire format
 is the same JSON the Unix-socket transport uses, except WebSocket
 frames already delimit messages so no newline framing is needed.
 

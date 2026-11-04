@@ -857,8 +857,7 @@ fn set_app_title(
 /// Build a triage dump — plugin version, pinned vs installed
 /// ``ignite-ember`` versions, interpreter path, dev-override env
 /// state, marker contents — and pop it in a native message dialog.
-/// One-click bug-report triage: same purpose as the JetBrains
-/// plugin's ``DoctorAction``.
+/// One-click bug-report triage.
 ///
 /// Runs on a background thread because the version probe spawns
 /// a subprocess; blocking the main thread would freeze the app.
@@ -1346,8 +1345,7 @@ fn bootstrap_and_open(app: &AppHandle, project_dir: &str) -> Result<(), String> 
         discovery::Decision::Refuse { running } => {
             // Mixing traffic across wire versions corrupts state, and
             // spawning alongside it is the duplicate we're removing —
-            // so this is a dead end the user has to resolve. Mirrors
-            // what the VSCode extension tells them.
+            // so this is a dead end the user has to resolve.
             return Err(format!(
                 "Another igni backend is running for this project on version {running}, \
                  but this app is {}. Close the other client (or restart it on the \
@@ -1377,8 +1375,7 @@ fn bootstrap_and_open(app: &AppHandle, project_dir: &str) -> Result<(), String> 
     // Publish the connection before navigating, so a New Window
     // opened the moment the first one paints already has somewhere to
     // point. Version params feed the shared bundle's
-    // ``BackendVersionChip`` — same shape the JetBrains plugin uses,
-    // one component, three surfaces.
+    // ``BackendVersionChip``.
     let conn = BackendConn {
         port,
         ws_token,
@@ -1676,8 +1673,7 @@ pub fn run() {
             // dock icon while uv downloads. The bootstrap runs on a
             // background thread; progress events update the page;
             // when the BE is ready we navigate the same window to
-            // the real UI. Same pattern as the JetBrains tool-
-            // window placeholder.
+            // the real UI.
             build_app_window(&app.handle().clone(), "main", "loading.html", "igni")?;
 
             // Bootstrap kicks off on a background thread so the
@@ -1704,9 +1700,9 @@ pub fn run() {
         // ``main`` webview; the FE picks them up via
         // ``window.addEventListener('ember-menu', e => …)`` and
         // routes them through the existing host-bridge dispatcher
-        // (same handler as the JetBrains ``ember-host`` events,
-        // just on a separate channel because Tauri's emit format
-        // and JCEF's CustomEvent shape don't line up cleanly).
+        // (the ``ember-host`` dispatcher, reached through a separate
+        // channel because Tauri's emit format is not a DOM
+        // CustomEvent).
         .on_menu_event(|app, event| match event.id().as_ref() {
             "new_window" => {
                 open_new_window(app);
