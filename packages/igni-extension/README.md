@@ -282,6 +282,18 @@ async def show_session(session_id: str, window_id: str) -> str:
           chat = ext.host.sessions.chat(run.session_id)
           await chat.post("Two issues in the files you just changed.")
   ```
+- `ext.host.agents.promote_ephemeral(name, target)` keeps an agent the
+  orchestrator made for one task, as `/agents promote` does: `target` is
+  `"project"` (the default — `.igni/agents/`, committed and the team's,
+  `--project`) or `"personal"` (`.igni/agents.local/`, kept out of git,
+  `--personal`). Leaving it out means the project. It needs the `agents`
+  grant:
+
+  <!-- continues -->
+  ```python
+  async def keep_for_me(name: str) -> None:
+      await ext.host.agents.promote_ephemeral(name, target="personal")
+  ```
 - `await ext.host.notifications.notify(LocalNotification(...))` tells
   the person at this machine something — it never leaves the machine;
   igni opens `target` when it is clicked and shows a repeated `event_key`

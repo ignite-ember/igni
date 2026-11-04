@@ -239,6 +239,18 @@ state, settings and notifications need no grant. A write goes through
 the handler igni's own UI uses, so one the person could not make is
 refused the same way.
 
+A method takes what the person's own action takes. Keeping an ephemeral
+agent, for one: `/agents promote <name> --project | --personal` in the
+chat, and `host.agents.promote_ephemeral(name, target)` for an extension,
+where `target` is `"project"` (the default, `.igni/agents/`, shared through
+git) or `"personal"` (`.igni/agents.local/`, yours only); anything else is
+`invalid`:
+
+<!-- illustrative -->
+```python
+await ext.host.agents.promote_ephemeral("api-auditor", target="personal")
+```
+
 **One schema, two SDKs.** The model is described once
 (`ember_code.extensions.host.definition`, versioned under §8) and both
 SDKs' `host` objects are generated from it (`make host-sdks`); a test

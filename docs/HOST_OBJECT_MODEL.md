@@ -202,7 +202,7 @@ Errors carry a code both SDKs raise (`HostError.code`): `not_granted`,
 | `host.tasks` — the agent's todo list and sub-agent tasks | `todos` | `created`, `updated`, `iteration`, `snapshot`, `todos_changed` | — | `chat.read` |
 | `host.loop` | `status` | `changed` | `pause()`, `resume()`, `cancel_pending()`, `pop_pending()` | `chat.control` |
 | `host.commands` | `list` (slash commands), `skills`, `skill_definitions`, `skill_details` | — (they change with `plugins.changed`) | `run(command)` — as the extension; the answer comes back to it | `commands` |
-| `host.agents` | `details` | `changed` | `promote_ephemeral(name)`, `discard_ephemeral(name)` | `agents` |
+| `host.agents` | `details` | `changed` | `promote_ephemeral(name, target)`, `discard_ephemeral(name)` | `agents` |
 | `host.workflows` | `list` | `changed` | `run(name, input)`, `cancel(workflow_run_id)` | `workflows` |
 | `host.scheduler` | `tasks` | `event` | `start()`, `run_now(task_id)`, `cancel(task_id)` | `scheduler` |
 | `host.processes` — background shells | `list` | `changed` | `tail(pid, lines)`, `stop(pid)`, `run(command)` | `processes` |

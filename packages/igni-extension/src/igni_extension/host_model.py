@@ -1505,9 +1505,9 @@ class HostAgents(HostObject):
         self.changed: Signal[CollectionChange] = Signal("agents.changed", CollectionChange)
         """An agent was promoted or discarded."""
 
-    async def promote_ephemeral(self, name: str) -> JsonValue:
-        """Keep an agent made for one task."""
-        return cast(JsonValue, await self._call("promote_ephemeral", {"name": name}, JsonValue))
+    async def promote_ephemeral(self, name: str, target: str | None = None) -> JsonValue:
+        """Keep an agent made for one task, as `/agents promote` does."""
+        return cast(JsonValue, await self._call("promote_ephemeral", {"name": name, "target": target}, JsonValue))
 
     async def discard_ephemeral(self, name: str) -> JsonValue:
         """Drop an agent made for one task."""

@@ -1433,9 +1433,9 @@ export class HostAgents extends HostObject {
     this.changed = new Signal("agents.changed");
   }
 
-  /** Keep an agent made for one task. */
-  promote_ephemeral(name: string): Promise<JsonValue> {
-    return this.call<JsonValue>("promote_ephemeral", { name });
+  /** Keep an agent made for one task, as `/agents promote` does. */
+  promote_ephemeral(name: string, target?: string): Promise<JsonValue> {
+    return this.call<JsonValue>("promote_ephemeral", { name, target });
   }
 
   /** Drop an agent made for one task. */

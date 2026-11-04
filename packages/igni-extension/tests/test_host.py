@@ -304,3 +304,22 @@ async def test_busy_takes_renews_and_lets_go_of_a_lease() -> None:
         assert ("self.busy", "syncing") in paths[3:-1], "renewed while the block ran"
         assert paths[-1] == ("self.done", "syncing")
         await ext.aclose()
+
+
+async def test_promote_takes_the_target_the_slash_command_does() -> None:
+    """`/agents promote --project | --personal`: the same choice, and none means project."""
+    fake = FakeHost(
+        granted=("agents",),
+        answers={"agents.promote_ephemeral": {"ok": True, "name": "helper", "dest": "x"}},
+    )
+    async with fake:
+        ext = IgniExtension("acme.example", environ=fake.environment())
+        await ext.host.agents.promote_ephemeral("helper")
+        await ext.host.agents.promote_ephemeral("helper", target="personal")
+        await ext.host.agents.promote_ephemeral("helper", "project")
+        assert [c.params for c in fake.calls] == [
+            {"name": "helper"},
+            {"name": "helper", "target": "personal"},
+            {"name": "helper", "target": "project"},
+        ]
+        await ext.aclose()

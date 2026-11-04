@@ -958,9 +958,22 @@ class AgentMembers(Members):
     async def details(self, c: Call) -> Any:
         return await self.rpc(RpcMethod.GET_AGENT_DETAILS, c=c)
 
+    #: Where ``promote_ephemeral`` may keep an agent, as ``/agents promote
+    #: --project | --personal`` and the panel's RPC ``target`` name them.
+    PROMOTE_TARGETS = ("project", "personal")
+
     @call("agents.promote_ephemeral")
     async def promote(self, c: Call) -> Any:
-        return await self.rpc(RpcMethod.PROMOTE_EPHEMERAL_AGENT, {"name": c.params["name"]}, c=c)
+        target = c.params.get("target") or "project"
+        if target not in self.PROMOTE_TARGETS:
+            raise HostModelError(
+                ErrorCode.INVALID,
+                f"no promote target {target!r}: project (.igni/agents/, the default) "
+                "or personal (.igni/agents.local/)",
+            )
+        return await self.rpc(
+            RpcMethod.PROMOTE_EPHEMERAL_AGENT, {"name": c.params["name"], "target": target}, c=c
+        )
 
     @call("agents.discard_ephemeral")
     async def discard(self, c: Call) -> Any:

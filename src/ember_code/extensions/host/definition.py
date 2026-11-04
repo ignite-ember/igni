@@ -1608,8 +1608,16 @@ OBJECTS = (
         methods=(
             method(
                 "promote_ephemeral",
-                "Keep an agent made for one task.",
+                "Keep an agent made for one task, as `/agents promote` does.",
                 param("name", "str"),
+                param(
+                    "target",
+                    "str",
+                    "`project` (the default): `.igni/agents/`, committed and the team's, "
+                    "as `--project`; or `personal`: `.igni/agents.local/`, kept out of git "
+                    "and yours only, as `--personal`.",
+                    optional=True,
+                ),
                 result="json",
             ),
             method(

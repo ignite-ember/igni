@@ -99,6 +99,7 @@ class FakeSession:
         self.workflow_runner = None
         self.run_release: asyncio.Event | None = None
         self.titles: list[str] = []
+        self.promoted: list[tuple[str, str]] = []
 
     # ── Lifecycle the pool and dispatcher touch ───────────────────
 
@@ -223,6 +224,13 @@ class FakeSession:
 
     def get_agent_details(self) -> list[dict]:
         return [{"name": "main"}]
+
+    def promote_ephemeral_agent(self, name: str, target: str = "project") -> Any:
+        from ember_code.backend.schemas_panels import PromoteEphemeralResult
+
+        self.promoted.append((name, target))
+        subdir = "agents" if target == "project" else "agents.local"
+        return PromoteEphemeralResult(ok=True, name=name, dest=f".igni/{subdir}/{name}.md")
 
     async def get_scheduled_tasks(self, include_done: bool = True) -> list[dict]:
         return [{"id": "t1", "description": "nightly"}]
