@@ -134,7 +134,7 @@ models:
 | `--resume <id>` | `--resume <id>` | Resume specific session |
 | `--print` / `-p` | `-m "prompt"` | Non-interactive single task |
 | `--dangerously-skip-permissions` | `--auto-approve` | Skip all permission prompts |
-| `--permission-mode plan` | `--read-only` | Read-only mode: read-only shell commands run, everything that writes or reaches the network is refused (plan mode would ask) |
+| `--permission-mode plan` | `--read-only` | Read-only mode: reading files (read-only shell commands) and the web (search, URL fetch) runs, everything that writes or executes is refused (plan mode would ask) |
 | `--permission-mode acceptEdits` | `--accept-edits` | Auto-approve file edits |
 | `--worktree` | `--worktree` | Isolated git worktree session |
 | `--effort low\|high` | Not applicable | igni uses Agno reasoning instead |

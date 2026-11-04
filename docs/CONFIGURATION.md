@@ -902,7 +902,7 @@ ignite-ember --model gpt-4o                  # use OpenAI
 
 # Safety modes
 ignite-ember --no-web                # disable web access
-ignite-ember --read-only             # reads only: read-only shell runs, the rest is refused
+ignite-ember --read-only             # reads files and the web; anything that changes is refused
 
 # Display
 ignite-ember --verbose               # show routing + reasoning

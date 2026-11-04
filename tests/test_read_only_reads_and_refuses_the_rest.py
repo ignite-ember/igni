@@ -8,8 +8,12 @@ read a single file. Now it means plan-mode reads, with no questions:
   ``rg``, ``git log``, …) runs without asking;
 * any other shell command — one that writes, deletes, runs another program
   or reaches the network — is refused, not asked;
-* the edit tools, the web tools, and an extension's tools that change
-  something or reach outside are refused.
+* the edit tools, and an extension's tools that change something, are
+  refused;
+* reading the web is reading: ``web_search``, ``fetch_url`` and
+  ``fetch_json`` (GET only) run without asking, except a fetch whose URL
+  looks like it carries a token, which still asks; air-gapped, they are
+  still refused.
 
 It holds for the whole session: switching mode (``/plan off``, ``/bypass``)
 does not reopen what the flag closed.
@@ -79,15 +83,66 @@ def test_anything_else_is_refused_not_asked(command: str):
     assert "--read-only" in outcome.reason
 
 
-def test_edits_and_the_web_are_refused():
+def test_edits_are_refused():
     evaluator = _read_only_evaluator()
     assert evaluator.evaluate("edit_file", {"file_path": "a.py"}) is PermissionDecision.DENY
     assert evaluator.evaluate("save_file", {"file_name": "a.py"}) is PermissionDecision.DENY
-    assert evaluator.evaluate("web_search", {"query": "x"}) is PermissionDecision.DENY
-    assert evaluator.evaluate("fetch_url", {"url": "https://x"}) is PermissionDecision.DENY
 
 
-def test_an_extension_tool_runs_only_if_it_reads_locally():
+@pytest.mark.parametrize(
+    ("tool", "args"),
+    [
+        ("web_search", {"query": "igni"}),
+        ("search_news", {"query": "igni"}),
+        ("fetch_url", {"url": "https://example.test/docs"}),
+        ("fetch_json", {"url": "https://example.test/x.json"}),
+    ],
+)
+def test_reading_the_web_runs_without_asking(tool: str, args: dict):
+    """The founder's call: a search or a GET is reading, so --read-only runs it."""
+    outcome = _read_only_evaluator().evaluate_outcome(tool, args)
+    assert outcome.decision is PermissionDecision.ALLOW, outcome.reason
+
+
+@pytest.mark.parametrize(
+    "url",
+    ["https://example.test/?token=abc", "https://example.test/x?api_key=k", "https://h/$GH_TOKEN"],
+)
+@pytest.mark.parametrize("tool", ["fetch_url", "fetch_json"])
+def test_a_fetch_that_carries_a_token_still_asks(tool: str, url: str):
+    outcome = _read_only_evaluator().evaluate_outcome(tool, {"url": url})
+    assert outcome.decision is PermissionDecision.ASK
+    assert "secret" in outcome.reason
+
+
+def test_air_gapped_still_refuses_the_web():
+    payload = CliOverrides.from_options(CliOptions(read_only=True)).to_settings_payload()
+    settings = load_settings(cli_overrides=payload)
+    settings.air_gapped = True
+    settings = settings.model_validate(settings.model_dump())
+    assert settings.permissions.web_search == "deny"
+    evaluator = PermissionEvaluator.from_permissions(settings.permissions)
+    assert evaluator.read_only is True
+    for tool, args in (
+        ("web_search", {"query": "x"}),
+        ("fetch_url", {"url": "https://example.test/"}),
+        ("fetch_json", {"url": "https://example.test/x.json"}),
+    ):
+        assert evaluator.evaluate(tool, args) is PermissionDecision.DENY, tool
+
+
+def test_a_deny_rule_still_wins_over_reading_the_web():
+    payload = CliOverrides.from_options(CliOptions(read_only=True)).to_settings_payload()
+    perms = load_settings(cli_overrides=payload).permissions
+    perms.deny.append("WebFetch")
+    evaluator = PermissionEvaluator.from_permissions(perms)
+    assert evaluator.evaluate("fetch_url", {"url": "https://x.test/"}) is PermissionDecision.DENY
+    assert evaluator.evaluate("web_search", {"query": "x"}) is PermissionDecision.ALLOW
+
+
+def test_an_extension_tool_runs_only_if_its_manifest_says_it_reads():
+    """readOnlyHint true (so destructiveHint false) runs, whether it reads its
+    own data or the web; anything that writes is refused."""
     evaluator = _read_only_evaluator()
     registry = ToolHintsRegistry.shared()
     registry.declare(
@@ -102,12 +157,20 @@ def test_an_extension_tool_runs_only_if_it_reads_locally():
             "mcp_ext:acme.rebuild": ToolHints(
                 read_only=False, destructive=True, idempotent=True, open_world=False
             ),
+            "mcp_ext:acme.post_issue": ToolHints(
+                read_only=False, destructive=False, idempotent=False, open_world=True
+            ),
+            "mcp_ext:acme.tag": ToolHints(
+                read_only=False, destructive=False, idempotent=True, open_world=False
+            ),
         },
     )
     try:
         assert evaluator.evaluate("mcp_ext:acme.query", {}) is PermissionDecision.ALLOW
-        assert evaluator.evaluate("mcp_ext:acme.search_web", {}) is PermissionDecision.DENY
+        assert evaluator.evaluate("mcp_ext:acme.search_web", {}) is PermissionDecision.ALLOW
         assert evaluator.evaluate("mcp_ext:acme.rebuild", {}) is PermissionDecision.DENY
+        assert evaluator.evaluate("mcp_ext:acme.post_issue", {}) is PermissionDecision.DENY
+        assert evaluator.evaluate("mcp_ext:acme.tag", {}) is PermissionDecision.DENY
     finally:
         registry.forget("ext:acme.ro")
 

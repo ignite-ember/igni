@@ -47,6 +47,7 @@ from ember_code.core.config.permission_eval.schemas import (
     PermissionRule,
 )
 from ember_code.core.config.permission_eval.strategies import PermissionModeStrategy
+from ember_code.core.hooks.bypass_rules import flag_url
 
 if TYPE_CHECKING:
     from ember_code.core.config.schemas.permissions import PermissionsConfig
@@ -56,7 +57,8 @@ _READ_ONLY_SHELL_REASON = (
     "this session is read-only (--read-only): only read-only shell commands run "
     "(cat, ls, rg, grep, find, head, wc, git log/diff/show/status, …), and this "
     "one could write, delete, run another program or reach the network. Read "
-    "with those commands; for anything else, say what you would run and why "
+    "files with those commands and the web with web_search/fetch_url; for "
+    "anything else, say what you would run and why "
     "rather than retrying."
 )
 _READ_ONLY_EDIT_REASON = (
@@ -64,9 +66,8 @@ _READ_ONLY_EDIT_REASON = (
     "change in your plan and call exit_plan_mode(plan)."
 )
 _READ_ONLY_OTHER_REASON = (
-    "this session is read-only (--read-only): {tool} changes something or "
-    "reaches outside this machine, so it does not run. Say what you would use "
-    "it for rather than retrying."
+    "this session is read-only (--read-only): {tool} can change something, so "
+    "it does not run. Say what you would use it for rather than retrying."
 )
 
 
@@ -324,9 +325,10 @@ class PermissionEvaluator:
     ) -> PermissionOutcome | None:
         """``--read-only``'s verdict, or ``None`` to let the pipeline decide.
 
-        A read runs; whatever could change something or reach outside is
-        refused rather than asked — the flag exists to be the guarantee, and
-        a question is not one. Anything this does not classify (a tool with
+        A read runs — of the working tree or of the web; whatever could change
+        something is refused rather than asked — the flag exists to be the
+        guarantee, and a question is not one. The exception is a fetch whose
+        URL looks like it carries a secret, which asks. Anything this does not classify (a tool with
         no hints, igni's own planning tools) is left to the mode.
         """
         if self.catalog.is_shell(tool_name):
@@ -344,18 +346,31 @@ class PermissionEvaluator:
             return PermissionOutcome(
                 decision=PermissionDecision.DENY, reason=_READ_ONLY_EDIT_REASON, source="mode"
             )
-        hints = self.catalog.hints(tool_name)
-        if self.catalog.is_read(tool_name) or (hints is not None and not hints.is_local_read):
-            # The web tools, and an extension's tools that change something or
-            # reach outside its own system.
-            return PermissionOutcome(
-                decision=PermissionDecision.DENY,
-                reason=_READ_ONLY_OTHER_REASON.format(tool=tool_name),
-                source="mode",
-            )
-        if hints is not None:
+        if self.catalog.is_read(tool_name):
+            # Reading the web is reading: a search, or a GET (``fetch_url`` and
+            # ``fetch_json`` send nothing else). Air-gapped, the category deny
+            # above has already refused it. The one fetch that still asks is
+            # the one Bypass's last check asks about: a URL that looks like it
+            # carries a secret, which a GET would send out.
+            flagged = flag_url(str(tool_args.get("url") or ""))
+            if flagged is not None:
+                return self._ask_or_deny(
+                    strategy,
+                    reason=f"read-only session: this request {flagged}",
+                    source="mode",
+                )
             return self._read_runs(strategy, tool_name, tool_args)
-        return None
+        hints = self.catalog.hints(tool_name)
+        if hints is None:
+            return None
+        if hints.read_only and not hints.destructive:
+            # What the approved manifest says only reads — its own data or the web.
+            return self._read_runs(strategy, tool_name, tool_args)
+        return PermissionOutcome(
+            decision=PermissionDecision.DENY,
+            reason=_READ_ONLY_OTHER_REASON.format(tool=tool_name),
+            source="mode",
+        )
 
     def _read_runs(
         self,

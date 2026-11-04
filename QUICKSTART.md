@@ -134,8 +134,9 @@ at its first `cat` with *"Run paused for confirmation … the tool did not
 run"* and exits 1. Decide up front what it may do:
 
 ```bash
-# reads only: commands built entirely from read-only ones (cat, rg, ls,
-# git diff, …) run; edits and anything else are refused
+# reads only, files and the web: commands built entirely from read-only ones
+# (cat, rg, ls, git diff, …), web search and URL fetches run; edits and
+# anything else are refused
 igni --read-only -m "…"
 ```
 
@@ -335,7 +336,7 @@ Control how much the agent can do without asking:
 |---|---|
 | `igni -m …` | Asks for file writes and shell commands — headless, that means it stops (see [A headless run cannot ask you anything](#a-headless-run-cannot-ask-you-anything)) |
 | `igni --accept-edits -m …` | Auto-approves file edits, asks for shell |
-| `igni --read-only -m …` | Reads, never changes: read-only shell commands (`cat`, `ls`, `rg`, `git log`, …) run without asking; edits, any other shell command and the web are refused, not asked |
+| `igni --read-only -m …` | Reads files and the web, never changes anything: read-only shell commands (`cat`, `ls`, `rg`, `git log`, …), web search and URL fetches run without asking; edits and any other shell command are refused, not asked |
 | `igni --strict -m …` | Denies the agent anything without an allow rule; asks before an organisation group hook runs |
 | `igni --auto-approve -m …` | Auto-approves everything (use with caution) |
 
@@ -467,7 +468,7 @@ All flags at a glance:
 | `-p, --pipe` | Pipe mode: read stdin, write stdout |
 | `-c, --continue` | Resume last session |
 | `--session-id <id>` | Resume specific session |
-| `--read-only` | Read-only shell commands run unasked; edits, other shell commands and the web are refused |
+| `--read-only` | Reads files and the web: read-only shell commands, web search and URL fetches run unasked; edits and other shell commands are refused |
 | `--accept-edits` | Auto-approve file edits, ask for shell |
 | `--auto-approve` | Auto-approve everything (use with caution) |
 | `--strict` | Deny the agent anything without an explicit allow rule (reads included); run your organisation's group hooks only once you approve them (`hooks.group: ask`) |

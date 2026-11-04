@@ -76,8 +76,9 @@ class PermissionsConfig(BaseModel):
     allow_bypass: bool = True
     #: ``--read-only``: plan-mode reads for the whole session, with no
     #: questions. A shell command built only from the read-only allow-list
-    #: runs; any other shell command, the edit tools, the web tools and an
-    #: extension's tools that change something or reach outside are refused.
+    #: runs, as do the web tools (a search or a GET) and an extension's tools
+    #: its manifest declares read-only; any other shell command, the edit
+    #: tools and an extension's tools that change something are refused.
     #: Held by the evaluator itself, so switching mode does not reopen it
     #: (:meth:`PermissionEvaluator._read_only_step`). Only ever tightens, so
     #: any tier may set it.

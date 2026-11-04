@@ -175,10 +175,10 @@ class CliOverrides(BaseModel):
             # commands on the read-only allow-list (``cat``, ``ls``, ``rg``,
             # ``git log``, …) — igni reads files through the shell, so denying
             # it outright, as this flag used to, left a read-only agent unable
-            # to read. Every other shell command is refused, not asked, and so
-            # are the web tools and an extension's tools that change or reach
-            # outside: ``read_only`` is checked by the evaluator before the
-            # mode, and survives a mode switch. See
+            # to read. Reading the web is reading too (search, GET fetches).
+            # Every other shell command is refused, not asked, and so are an
+            # extension's tools that change something: ``read_only`` is checked
+            # by the evaluator before the mode, and survives a mode switch. See
             # tests/test_read_only_reads_and_refuses_the_rest.py.
             perms.read_only = True
         if opts.strict:

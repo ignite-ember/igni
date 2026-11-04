@@ -118,7 +118,7 @@ needs its rule, and a deny or ask rule naming a filter still applies to it.
 | `ignite-ember` (default) | Asks for writes and shell commands |
 | `ignite-ember --accept-edits` | Auto-approves file edits, asks for shell |
 | `ignite-ember --strict` | Denies anything without an explicit allow rule, including reads — it never asks about the agent's tools. Hooks your organisation's group policy ships run only once you approve them (`hooks.group: ask`), and not at all headless |
-| `ignite-ember --read-only` | Reads, never changes: read-only shell commands run without asking; edits, every other shell command and the web are refused, not asked (see below) |
+| `ignite-ember --read-only` | Reads files and the web, never changes anything: read-only shell commands, web search and URL fetches run without asking; edits and every other shell command are refused, not asked (see below) |
 | `ignite-ember --auto-approve` | Auto-approves everything (use with caution) |
 
 #### The last check before `--auto-approve` runs a call
@@ -150,20 +150,37 @@ reason.
 
 #### What `--read-only` does
 
-It is plan mode's reads with no questions, for the whole session:
+It is plan mode's reads with no questions, for the whole session. Reading
+covers your files and the web:
 
 - **Runs without asking:** a shell command built entirely from the read-only
   allow-list — `cat`, `ls`, `head`, `tail`, `wc`, `rg`, `grep`, `find`
   (without `-exec`/`-delete`), `diff`, `stat`, `jq`, `git status`/`log`/
   `diff`/`show`/`blame`/`ls-files`/`grep`/`branch` (listing), and pipes
   between them. igni has no read tool, so this is how the agent reads your
-  working tree. Also an extension's tools that only read their own data
-  (CodeIndex's `codeindex_cypher`, for one), and the notebook readers.
+  working tree. Also `web_search`, `search_news`, `fetch_url` and `fetch_json`
+  (each a search or a GET, sending nothing else); an extension's or MCP
+  server's tools whose approved manifest says `readOnlyHint: true` and
+  `destructiveHint: false`, whether they read their own data or the web
+  (CodeIndex's `codeindex_cypher`, for one); and the notebook readers.
+- **Asked:** a `fetch_url`/`fetch_json` whose URL looks like it carries a
+  secret or token (`?token=`, `?api_key=`, `$VAR`) — the same check Bypass's
+  last check makes. Headless, with nobody to answer, it is refused.
 - **Refused, not asked:** every other shell command — anything that writes
   (`>`, `sed -i`, `git checkout`), deletes (`rm`, `find -delete`), runs
   another program (`xargs`, `| sh`, `python3`) or reaches the network (`curl`,
-  `git push`, `pip install`) — the edit tools, `web_search` and `fetch_url`,
-  and an extension's tools that change something or reach outside.
+  `git push`, `pip install`) — the edit tools, and an extension's or MCP
+  server's tools that are not declared read-only (a tool that POSTs, files an
+  issue or writes anywhere).
+- **Air-gapped** (`air_gapped: true`), the web tools are still denied and
+  never built; `--read-only` does not reopen them.
+
+Reading the web unasked is a deliberate choice, and it has a cost worth
+naming: a session that reads files and fetches URLs without a person looking
+can, in principle, put what it read into a URL. The secret-in-URL check
+catches the obvious shape, not every one. Where that matters, add
+`--no-web` (or `permissions.web_fetch: deny`) to `--read-only`, or run
+air-gapped.
 
 The allow-list, not a list of dangerous commands, is the boundary: a command
 nobody anticipated is refused. Deny rules still win over a read, and an ask
@@ -489,7 +506,9 @@ true` turns every one of these off ([CONFIGURATION.md](CONFIGURATION.md),
 
 **The web asks, and that is decided, not provisional.** In the normal modes a
 web search or URL fetch waits for a person's yes (`--strict` denies it unless a
-rule allows it; `air_gapped` builds neither tool). Bypass (`--auto-approve`,
+rule allows it; `air_gapped` builds neither tool). `--read-only` counts
+both as reading, so they run unasked there too (still asking about a URL that
+carries what looks like a secret). Bypass (`--auto-approve`,
 `/bypass`) means "do not ask me", so there both run unasked like every other
 tool, keeping what Bypass always keeps: an explicit `deny` still wins, and its
 last check still turns a fetch whose URL carries what looks like a secret or
