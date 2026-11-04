@@ -120,6 +120,10 @@ dev = [
 mcp = [
     # ``~=1.28.1`` capped CVE-2026-59951, whose fix is 1.30.0. This pin
     # has now blocked a fix once; widened to the minor.
+    # Held below 2: igni's MCP client is Agno 2.6's ``MCPTools``, which
+    # imports 1.x's ``streamablehttp_client`` (gone in 2.x; Agno needs
+    # ``mcp>=2.1`` only from its 3.0), and igni-extension's session hook
+    # reads 1.x's lowlevel server. mcp 2 moves with Agno 3.
     "mcp~=1.30",
 ]
 gemini = [
