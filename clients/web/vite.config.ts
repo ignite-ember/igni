@@ -13,12 +13,12 @@ export default defineConfig({
       // specifier an extension author writes. An alias rather than a
       // workspace link because the app is built, tested and shipped
       // from here and a link would make `npm install` a build step.
-      "@ignite-ember/ui-react/": resolvePath(__dirname, "../../packages/ui-react/src") + "/",
+      "@ignite-ember/ui-react/": resolvePath(import.meta.dirname, "../../packages/ui-react/src") + "/",
       "@ignite-ember/ui-react": resolvePath(
-        __dirname,
+        import.meta.dirname,
         "../../packages/ui-react/src/index.ts",
       ),
-      "@ignite-ember/test-utils/": resolvePath(__dirname, "../../packages/test-utils") + "/",
+      "@ignite-ember/test-utils/": resolvePath(import.meta.dirname, "../../packages/test-utils") + "/",
       // The floor's peer dependencies, pointed at this package's
       // ``node_modules``. ``packages/`` is outside it, so a bare
       // import from there resolves nowhere — the same hole the
@@ -26,19 +26,19 @@ export default defineConfig({
       // workspace would fix both at once and is the right end state;
       // it also makes ``npm install`` a build step for the app,
       // which is a bigger change than this one.
-      react: resolvePath(__dirname, "./node_modules/react"),
-      "react-dom": resolvePath(__dirname, "./node_modules/react-dom"),
-      "react/jsx-runtime": resolvePath(__dirname, "./node_modules/react/jsx-runtime"),
-      "react-markdown": resolvePath(__dirname, "./node_modules/react-markdown"),
-      "remark-gfm": resolvePath(__dirname, "./node_modules/remark-gfm"),
-      mermaid: resolvePath(__dirname, "./node_modules/mermaid"),
+      react: resolvePath(import.meta.dirname, "./node_modules/react"),
+      "react-dom": resolvePath(import.meta.dirname, "./node_modules/react-dom"),
+      "react/jsx-runtime": resolvePath(import.meta.dirname, "./node_modules/react/jsx-runtime"),
+      "react-markdown": resolvePath(import.meta.dirname, "./node_modules/react-markdown"),
+      "remark-gfm": resolvePath(import.meta.dirname, "./node_modules/remark-gfm"),
+      mermaid: resolvePath(import.meta.dirname, "./node_modules/mermaid"),
       "@testing-library/react": resolvePath(
-        __dirname,
+        import.meta.dirname,
         "./node_modules/@testing-library/react",
       ),
-      "@ignite-ember/extension-bridge/": resolvePath(__dirname, "../../packages/extension-bridge/src") + "/",
-      "@ignite-ember/extension-bridge": resolvePath(__dirname, "../../packages/extension-bridge/src/index.ts"),
-      "@ignite-ember/ui-css": resolvePath(__dirname, "../ui/igni-ui.css"),
+      "@ignite-ember/extension-bridge/": resolvePath(import.meta.dirname, "../../packages/extension-bridge/src") + "/",
+      "@ignite-ember/extension-bridge": resolvePath(import.meta.dirname, "../../packages/extension-bridge/src/index.ts"),
+      "@ignite-ember/ui-css": resolvePath(import.meta.dirname, "../ui/igni-ui.css"),
     },
   },
   plugins: [react()],
@@ -51,7 +51,7 @@ export default defineConfig({
     strictPort: true,
     // ``packages/`` is a sibling of ``clients/``, and vite refuses to
     // serve outside its root by default.
-    fs: { allow: [resolvePath(__dirname, "../..")] },
+    fs: { allow: [resolvePath(import.meta.dirname, "../..")] },
   },
   build: {
     outDir: "dist",
