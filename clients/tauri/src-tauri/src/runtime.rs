@@ -239,11 +239,14 @@ pub fn ensure_backend_python(progress: ProgressFn) -> Result<BackendInstall, Str
     let venv_dir = cache.join("venv");
     let venv_python = venv_dir.join(venv_python_rel_path());
 
-    let want_marker = format!(
-        "uv={UV_VERSION};python={PYTHON_VERSION};ignite={IGNITE_EMBER_VERSION}"
-    );
-    let have_marker = fs::read_to_string(&marker_path).ok();
-    let marker_matches = have_marker.as_deref() == Some(want_marker.as_str());
+    // Each component is versioned on its own: an igni release changes only
+    // `ignite`, so it reinstalls only the package into the existing venv and
+    // keeps the downloaded uv, the Python interpreter, the venv and the
+    // decision model (which lives in `huggingface/`, outside the venv).
+    let want = ComponentVersions::current();
+    let mut have = read_marker(&marker_path);
+    let uv_present = is_executable(&uv_path);
+    let venv_present = is_executable(&venv_python);
 
     // Probe the venv's interpreter to catch a specific failure
     // mode: marker file says one version, but the wheels on disk
@@ -254,30 +257,31 @@ pub fn ensure_backend_python(progress: ProgressFn) -> Result<BackendInstall, Str
     // or wedged; fall back to the marker/executable signals so a
     // transient subprocess hiccup doesn't trigger a multi-minute
     // reinstall on every startup.
-    let venv_actual_version = if is_executable(&venv_python) {
+    let venv_actual_version = if venv_present {
         probe_cli_version(&venv_python)
     } else {
         None
     };
-    let venv_version_mismatch = matches!(
+    let plan = plan_install(
+        &have,
+        &want,
+        uv_present,
+        venv_present,
         venv_actual_version.as_deref(),
-        Some(v) if v != IGNITE_EMBER_VERSION
     );
-    if venv_version_mismatch && marker_matches {
+    if plan.venv_version_mismatch {
         eprintln!(
-            "Managed venv marker says ignite={} but the interpreter reports {} — reinstalling.",
-            IGNITE_EMBER_VERSION,
+            "Managed venv marker says ignite={} but the interpreter reports {} — reinstalling ignite-ember.",
+            have.ignite.as_deref().unwrap_or("<none>"),
             venv_actual_version.as_deref().unwrap_or("<probe failed>")
         );
     }
-    let needs_reinstall =
-        !is_executable(&venv_python) || !marker_matches || venv_version_mismatch;
 
     // An air-gapped install has no route to github.com (uv), the Python
     // builds uv fetches, PyPI or Hugging Face, so it does not try: the
     // runtime has to be provisioned into the cache by whoever installs
     // the app. Said plainly rather than left to four timeouts.
-    if (!is_executable(&uv_path) || needs_reinstall) && UpdatePolicy::load().air_gapped() {
+    if plan.any() && UpdatePolicy::load().air_gapped() {
         return Err(format!(
             "igni is air-gapped (air_gapped: true), so the desktop app will not download its Python \
              runtime. Install ignite-ember[decisions]=={IGNITE_EMBER_VERSION} from your package mirror \
@@ -288,26 +292,50 @@ pub fn ensure_backend_python(progress: ProgressFn) -> Result<BackendInstall, Str
         ));
     }
 
+    // The marker is rewritten after each step that succeeds, so a bootstrap
+    // that fails half-way redoes only what it did not finish.
     // ── 1. uv binary ──
-    if !is_executable(&uv_path) || needs_reinstall {
+    if plan.fetch_uv {
         progress("Downloading uv (one-time, ~25 MB)…");
         download_uv(&uv_path).map_err(|e| format!("download uv: {e}"))?;
+        have.uv = want.uv.clone();
+        write_marker(&marker_path, &have)?;
     }
 
-    // ── 2-5. Python + venv + ignite-ember + prefetch ──
-    if needs_reinstall {
+    // ── 2-3. Python + venv ──
+    // The venv is tied to its Python, so a Python bump (or a missing venv)
+    // wipes and recreates it; a fresh venv has no ignite-ember in it.
+    if plan.rebuild_venv {
         if venv_dir.exists() {
             progress("Refreshing managed venv…");
             fs::remove_dir_all(&venv_dir).map_err(|e| format!("clean venv: {e}"))?;
         }
+        have.ignite = None;
         progress(&format!("Installing Python {PYTHON_VERSION} (one-time)…"));
         run_uv(&uv_path, &["python", "install", PYTHON_VERSION])?;
 
         progress("Creating backend venv…");
-        run_uv(&uv_path, &["venv", "--python", PYTHON_VERSION,
-            venv_dir.to_string_lossy().as_ref()])?;
+        run_uv(
+            &uv_path,
+            &[
+                "venv",
+                "--python",
+                PYTHON_VERSION,
+                venv_dir.to_string_lossy().as_ref(),
+            ],
+        )?;
+        have.python = want.python.clone();
+        write_marker(&marker_path, &have)?;
+    }
 
-        progress("Installing ignite-ember (one-time)…");
+    // ── 4-5. ignite-ember + prefetch ──
+    // `uv pip install ignite-ember==X` upgrades (or downgrades) in place.
+    if plan.install_ignite {
+        progress(if plan.rebuild_venv {
+            "Installing ignite-ember (one-time)…"
+        } else {
+            "Updating ignite-ember…"
+        });
         run_uv(
             &uv_path,
             &[
@@ -323,7 +351,9 @@ pub fn ensure_backend_python(progress: ProgressFn) -> Result<BackendInstall, Str
 
         // Pre-warm the decision model so the first Bypass check or
         // `host.decide` doesn't stall on a silent HuggingFace download.
-        progress("Downloading igni's decision model (one-time, ~1.7 GB)…");
+        // Re-run on every package install, since a release can change the
+        // model; with the model already in `HF_HOME` it only loads it.
+        progress("Checking igni's decision model (~1.7 GB on first install)…");
         let mut cmd = Command::new(&venv_python);
         cmd.args(["-m", "ember_code.prefetch_models"]);
         cmd.env("HF_HOME", &hf_home);
@@ -331,20 +361,17 @@ pub fn ensure_backend_python(progress: ProgressFn) -> Result<BackendInstall, Str
             .status()
             .map_err(|e| format!("spawn prefetch_models: {e}"))?;
         if !status.success() {
-            return Err(format!(
-                "prefetch_models exited with status {status}"
-            ));
+            return Err(format!("prefetch_models exited with status {status}"));
         }
 
-        fs::write(&marker_path, &want_marker)
-            .map_err(|e| format!("write install marker: {e}"))?;
+        have.ignite = want.ignite.clone();
+        write_marker(&marker_path, &have)?;
     }
 
     // Probe the (possibly-just-reinstalled) venv one more time so
     // the returned ``BackendInstall`` carries the confirmed
-    // version. Skipped when the initial probe already matched and
-    // no reinstall happened.
-    let final_version = if needs_reinstall {
+    // version. Skipped when the package was not reinstalled.
+    let final_version = if plan.install_ignite {
         probe_cli_version(&venv_python)
     } else {
         venv_actual_version
@@ -352,11 +379,124 @@ pub fn ensure_backend_python(progress: ProgressFn) -> Result<BackendInstall, Str
 
     Ok(BackendInstall {
         python: venv_python,
-        env: vec![("HF_HOME".to_string(), hf_home.to_string_lossy().into_owned())],
+        env: vec![(
+            "HF_HOME".to_string(),
+            hf_home.to_string_lossy().into_owned(),
+        )],
         actual_cli_version: final_version,
         expected_cli_version: expected,
         source: BackendSource::ManagedVenv,
     })
+}
+
+/// The versions of the three things the managed runtime is made of, as
+/// stored in the install marker (``uv=X;python=Y;ignite=Z``) and as this
+/// build wants them.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+struct ComponentVersions {
+    uv: Option<String>,
+    python: Option<String>,
+    ignite: Option<String>,
+}
+
+impl ComponentVersions {
+    fn current() -> Self {
+        Self::of(UV_VERSION, PYTHON_VERSION, IGNITE_EMBER_VERSION)
+    }
+
+    fn of(uv: &str, python: &str, ignite: &str) -> Self {
+        Self {
+            uv: Some(uv.to_string()),
+            python: Some(python.to_string()),
+            ignite: Some(ignite.to_string()),
+        }
+    }
+}
+
+/// Parse a marker field by field. Builds before the per-component split
+/// wrote the same ``uv=X;python=Y;ignite=Z`` string (and compared it as one
+/// fingerprint), so their markers parse as they are: the first launch after
+/// this update does not itself reinstall anything. A field that is missing
+/// or unreadable is ``None``, which redoes that component.
+fn parse_marker(contents: &str) -> ComponentVersions {
+    let mut state = ComponentVersions::default();
+    for part in contents.trim().split(';') {
+        let Some((k, v)) = part.split_once('=') else {
+            continue;
+        };
+        let v = v.trim();
+        if v.is_empty() {
+            continue;
+        }
+        match k.trim() {
+            "uv" => state.uv = Some(v.to_string()),
+            "python" => state.python = Some(v.to_string()),
+            "ignite" => state.ignite = Some(v.to_string()),
+            _ => {}
+        }
+    }
+    state
+}
+
+fn read_marker(path: &Path) -> ComponentVersions {
+    fs::read_to_string(path)
+        .map(|s| parse_marker(&s))
+        .unwrap_or_default()
+}
+
+fn format_marker(v: &ComponentVersions) -> String {
+    format!(
+        "uv={};python={};ignite={}",
+        v.uv.as_deref().unwrap_or(""),
+        v.python.as_deref().unwrap_or(""),
+        v.ignite.as_deref().unwrap_or("")
+    )
+}
+
+fn write_marker(path: &Path, v: &ComponentVersions) -> Result<(), String> {
+    fs::write(path, format_marker(v)).map_err(|e| format!("write install marker: {e}"))
+}
+
+/// What [`ensure_backend_python`] has to (re)do.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+struct InstallPlan {
+    fetch_uv: bool,
+    /// Wipe and recreate the venv (installs the Python first).
+    rebuild_venv: bool,
+    /// ``uv pip install ignite-ember==X`` into the venv, then prefetch.
+    install_ignite: bool,
+    /// The interpreter reports an ignite-ember other than the one wanted.
+    venv_version_mismatch: bool,
+}
+
+impl InstallPlan {
+    fn any(&self) -> bool {
+        self.fetch_uv || self.rebuild_venv || self.install_ignite
+    }
+}
+
+/// Decide, without touching the disk or the network, what the bootstrap
+/// does. `venv_actual` is the ignite-ember the venv's interpreter reports
+/// (``None`` when it is missing or the probe failed; only a positive
+/// mismatch acts on it).
+fn plan_install(
+    have: &ComponentVersions,
+    want: &ComponentVersions,
+    uv_present: bool,
+    venv_present: bool,
+    venv_actual: Option<&str>,
+) -> InstallPlan {
+    let fetch_uv = !uv_present || have.uv != want.uv;
+    let rebuild_venv = !venv_present || have.python != want.python;
+    let venv_version_mismatch =
+        matches!((venv_actual, want.ignite.as_deref()), (Some(a), Some(w)) if a != w);
+    let install_ignite = rebuild_venv || have.ignite != want.ignite || venv_version_mismatch;
+    InstallPlan {
+        fetch_uv,
+        rebuild_venv,
+        install_ignite,
+        venv_version_mismatch,
+    }
 }
 
 /// True if ``IGNITE_EMBER_DEV`` is set to something truthy. Kept
@@ -383,8 +523,8 @@ fn is_ack_value(v: &str) -> bool {
 
 /// Return ``ember_code.__version__`` as reported by the given
 /// Python interpreter, or ``None`` on any failure. 2s subprocess
-/// timeout — the real observed cost for a cold ``import ember_code
-/// + print(__version__)`` is 30-80ms; the ceiling is a safety net
+/// timeout — the real observed cost for a cold ``import ember_code;
+/// print(__version__)`` is 30-80ms; the ceiling is a safety net
 /// against a wedged interpreter blocking the whole bootstrap.
 pub fn probe_cli_version(python: &Path) -> Option<String> {
     if !is_executable(python) {
@@ -822,5 +962,170 @@ mod tests {
         }
         let err = provisioned_install(python, "1.0.3".into(), |_| None).err().expect("refused");
         assert!(err.contains("cannot import ember_code"), "{err}");
+    }
+
+    // ── Per-component install plan ──
+    //
+    // An igni release changes only `ignite`: it reinstalls the package and
+    // keeps uv, the Python, the venv and the decision model (ported from
+    // 49de299d, #14).
+
+    fn v(uv: &str, python: &str, ignite: &str) -> ComponentVersions {
+        ComponentVersions::of(uv, python, ignite)
+    }
+
+    #[test]
+    fn an_up_to_date_install_does_nothing() {
+        let want = v("0.5.7", "3.12", "1.0.3");
+        let plan = plan_install(&want, &want, true, true, Some("1.0.3"));
+        assert_eq!(plan, InstallPlan::default());
+        assert!(!plan.any());
+    }
+
+    #[test]
+    fn an_igni_only_bump_reinstalls_only_the_package() {
+        let plan = plan_install(
+            &v("0.5.7", "3.12", "1.0.2"),
+            &v("0.5.7", "3.12", "1.0.3"),
+            true,
+            true,
+            Some("1.0.2"),
+        );
+        assert!(plan.install_ignite);
+        assert!(!plan.fetch_uv, "uv is kept");
+        assert!(!plan.rebuild_venv, "the Python and the venv are kept");
+    }
+
+    #[test]
+    fn a_python_bump_rebuilds_the_venv_and_keeps_uv() {
+        let plan = plan_install(
+            &v("0.5.7", "3.11", "1.0.3"),
+            &v("0.5.7", "3.12", "1.0.3"),
+            true,
+            true,
+            Some("1.0.3"),
+        );
+        assert!(plan.rebuild_venv && plan.install_ignite);
+        assert!(!plan.fetch_uv);
+    }
+
+    #[test]
+    fn a_uv_bump_refetches_uv_and_keeps_the_venv() {
+        let plan = plan_install(
+            &v("0.5.6", "3.12", "1.0.3"),
+            &v("0.5.7", "3.12", "1.0.3"),
+            true,
+            true,
+            Some("1.0.3"),
+        );
+        assert!(plan.fetch_uv);
+        assert!(!plan.rebuild_venv && !plan.install_ignite);
+    }
+
+    #[test]
+    fn a_missing_uv_is_fetched_whatever_the_marker_says() {
+        let want = v("0.5.7", "3.12", "1.0.3");
+        let plan = plan_install(&want, &want, false, true, Some("1.0.3"));
+        assert!(plan.fetch_uv && !plan.rebuild_venv && !plan.install_ignite);
+    }
+
+    #[test]
+    fn a_missing_venv_is_rebuilt_whatever_the_marker_says() {
+        let want = v("0.5.7", "3.12", "1.0.3");
+        let plan = plan_install(&want, &want, true, false, None);
+        assert!(plan.rebuild_venv && plan.install_ignite);
+        assert!(!plan.fetch_uv);
+    }
+
+    #[test]
+    fn a_venv_reporting_another_igni_is_reinstalled() {
+        // Marker matches, wheels on disk do not (a manual pip upgrade, an
+        // install that skipped the marker rewrite).
+        let want = v("0.5.7", "3.12", "1.0.3");
+        let plan = plan_install(&want, &want, true, true, Some("1.0.9"));
+        assert!(plan.venv_version_mismatch && plan.install_ignite);
+        assert!(
+            !plan.fetch_uv && !plan.rebuild_venv,
+            "the package is reinstalled in place"
+        );
+    }
+
+    #[test]
+    fn a_failed_probe_is_not_a_mismatch() {
+        let want = v("0.5.7", "3.12", "1.0.3");
+        let plan = plan_install(&want, &want, true, true, None);
+        assert!(!plan.venv_version_mismatch && !plan.any());
+    }
+
+    #[test]
+    fn no_marker_redoes_everything() {
+        let plan = plan_install(
+            &ComponentVersions::default(),
+            &v("0.5.7", "3.12", "1.0.3"),
+            true,
+            true,
+            Some("1.0.3"),
+        );
+        assert!(plan.fetch_uv && plan.rebuild_venv && plan.install_ignite);
+    }
+
+    #[test]
+    fn an_old_single_string_marker_parses_field_by_field() {
+        // What builds before the split wrote, byte for byte.
+        let old = parse_marker("uv=0.5.7;python=3.12;ignite=1.0.2");
+        assert_eq!(old, v("0.5.7", "3.12", "1.0.2"));
+        // So the first launch after the update reinstalls only the package.
+        let plan = plan_install(
+            &old,
+            &v("0.5.7", "3.12", "1.0.3"),
+            true,
+            true,
+            Some("1.0.2"),
+        );
+        assert!(plan.install_ignite && !plan.fetch_uv && !plan.rebuild_venv);
+    }
+
+    #[test]
+    fn a_garbled_marker_field_counts_as_unknown() {
+        let m = parse_marker("uv=0.5.7;python=;nonsense;ignite=1.0.3\n");
+        assert_eq!(m.uv.as_deref(), Some("0.5.7"));
+        assert_eq!(m.python, None);
+        assert_eq!(m.ignite.as_deref(), Some("1.0.3"));
+        assert_eq!(parse_marker(""), ComponentVersions::default());
+    }
+
+    #[test]
+    fn the_marker_round_trips() {
+        let want = v("0.5.7", "3.12", "1.0.3");
+        assert_eq!(format_marker(&want), "uv=0.5.7;python=3.12;ignite=1.0.3");
+        assert_eq!(parse_marker(&format_marker(&want)), want);
+        // A venv rebuilt but not yet given igni records no ignite.
+        let partial = ComponentVersions {
+            ignite: None,
+            ..want.clone()
+        };
+        assert_eq!(parse_marker(&format_marker(&partial)), partial);
+    }
+
+    #[test]
+    fn the_decision_model_cache_is_outside_the_venv() {
+        // A venv rebuild wipes `venv/`; the model lives in `huggingface/`
+        // beside it, so neither an igni upgrade nor a Python bump wipes it.
+        let src = include_str!("runtime.rs");
+        let body = src
+            .split("pub fn ensure_backend_python")
+            .nth(1)
+            .unwrap()
+            .split("\n}\n")
+            .next()
+            .unwrap();
+        assert!(body.contains("cache.join(\"huggingface\")"));
+        assert!(body.contains("cache.join(\"venv\")"));
+        assert_eq!(
+            body.matches("remove_dir_all").count(),
+            1,
+            "only the venv is ever removed"
+        );
+        assert!(body.contains("remove_dir_all(&venv_dir)"));
     }
 }
