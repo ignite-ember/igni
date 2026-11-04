@@ -13,6 +13,9 @@ streamed lease expires after :attr:`BusyAsyncClient.STREAM_TTL_SECONDS`.
 A client used once inside a ``with`` — the usual shape for a call to igni
 server — is wrapped by :func:`busy_call` instead, so the code keeps
 building ``httpx.AsyncClient`` (which tests stand in for).
+
+The ``anthropic`` SDK takes an ``httpx2`` client instead; its busy client
+is in :mod:`ember_code.core.activity.http2`.
 ``tests/test_background_work_is_accounted_for.py`` fails when a client
 is built without either; the reviewed exceptions — a connection held
 open while nothing happens, such as the notification stream — are
@@ -47,10 +50,11 @@ class _BusyCall:
     def __init__(self, kind: BusyKind, holder: str, registry: ActivityRegistry | None) -> None:
         self.kind = kind
         self.holder = holder
-        self._registry = registry
+        self.registry = registry
 
-    def hold(self, request: httpx.Request) -> Lease:
-        registry = self._registry if self._registry is not None else ActivityRegistry.shared()
+    def hold(self, request: httpx.Request | Any) -> Lease:
+        """``request`` is an ``httpx`` or an ``httpx2`` request (``http2.py``)."""
+        registry = self.registry if self.registry is not None else ActivityRegistry.shared()
         return registry.hold(self.kind, self.holder, f"{request.method} {request.url.host}")
 
 

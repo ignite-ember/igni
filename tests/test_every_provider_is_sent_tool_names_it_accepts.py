@@ -226,13 +226,16 @@ async def test_openai_like_maps_a_streamed_call_back():
 
 
 async def test_anthropic_sends_valid_names_and_maps_the_call_back():
+    # The anthropic SDK is built on httpx2 and takes only its client.
+    import httpx2
+
     wire = Wire()
 
-    def answer(request: httpx.Request) -> httpx.Response:
+    def answer(request: httpx2.Request) -> httpx2.Response:
         body = json.loads(request.content)
         wire.bodies.append(body)
         sent = body["tools"][0]["name"]
-        return httpx.Response(
+        return httpx2.Response(
             200,
             json={
                 "id": "msg_1",
@@ -249,7 +252,7 @@ async def test_anthropic_sends_valid_names_and_maps_the_call_back():
         )
 
     model = build(AnthropicBuilder(), "anthropic")
-    model.http_client = httpx.AsyncClient(transport=httpx.MockTransport(answer))
+    model.http_client = httpx2.AsyncClient(transport=httpx2.MockTransport(answer))
     response = await model.ainvoke(
         messages=history(),
         assistant_message=Message(role="assistant"),

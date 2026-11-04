@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import sys
 from typing import Any
 
 import httpx
@@ -74,7 +75,7 @@ class ModelHttpClientManager:
         model = self._extract_model(team)
         client = self._extract_client(model)
         result = HttpClientCloseResult(ok=True)
-        if isinstance(client, httpx.AsyncClient):
+        if self._is_async_client(client):
             try:
                 await asyncio.wait_for(client.aclose(), timeout=3)
             except Exception as exc:
@@ -87,13 +88,21 @@ class ModelHttpClientManager:
             model.http_client = self._fresh(client)
         return result
 
-    def _fresh(self, old: Any) -> BusyAsyncClient:
+    def _fresh(self, old: Any) -> Any:
         """A new client, with the old one's auth and timeout.
 
         The auth is what puts igni server's current token on each request
         to its gateway (:class:`~ember_code.core.auth.http_auth.CloudTokenAuth`);
         a bare client after the first run sent the next one with none.
+
+        A Claude model's client is an ``httpx2`` one
+        (:mod:`ember_code.core.activity.http2`), and is renewed as one: an
+        ``httpx`` client there is one the SDK refuses, and Agno would
+        quietly swap in the SDK's own, with neither the lease nor the auth.
         """
+        renewed = getattr(old, "renewed", None)
+        if self._is_async_client(old) and callable(renewed):
+            return renewed(limits=self._limits)
         if isinstance(old, httpx.AsyncClient):
             return BusyAsyncClient(
                 busy_holder="model",
@@ -105,6 +114,19 @@ class ModelHttpClientManager:
         return BusyAsyncClient(
             busy_holder="model", busy_kind=BusyKind.MODEL_CALL, limits=self._limits
         )
+
+    @staticmethod
+    def _is_async_client(client: Any) -> bool:
+        """An ``httpx`` or ``httpx2`` async client.
+
+        ``httpx2`` is looked up, not imported: it arrives with the
+        ``anthropic`` SDK, and if nothing has imported it no client of it
+        exists.
+        """
+        if isinstance(client, httpx.AsyncClient):
+            return True
+        httpx2 = sys.modules.get("httpx2")
+        return httpx2 is not None and isinstance(client, httpx2.AsyncClient)
 
     @staticmethod
     def _extract_model(team: Team) -> Any:

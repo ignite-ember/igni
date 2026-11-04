@@ -90,11 +90,13 @@ def test_every_allowance_is_still_used():
 UNCOUNTED_CLIENTS: dict[str, str] = {
     "notifications/stream.py": "held open for as long as somebody is signed in: not work",
     "core/activity/http.py": "the busy clients themselves",
+    "core/activity/http2.py": "the busy client on httpx2, for the anthropic SDK",
 }
 
 
 class Clients(ast.NodeVisitor):
-    """``httpx.Client(...)`` / ``httpx.AsyncClient(...)`` not under a ``busy_call``."""
+    """``httpx.Client(...)`` / ``httpx.AsyncClient(...)``, or ``httpx2``'s, not
+    under a ``busy_call``."""
 
     def __init__(self) -> None:
         self.found: list[int] = []
@@ -118,7 +120,7 @@ class Clients(ast.NodeVisitor):
         if (
             isinstance(func, ast.Attribute)
             and func.attr in {"Client", "AsyncClient"}
-            and getattr(func.value, "id", None) == "httpx"
+            and getattr(func.value, "id", None) in {"httpx", "httpx2"}
             and not self._covered
         ):
             self.found.append(node.lineno)

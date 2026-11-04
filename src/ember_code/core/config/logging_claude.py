@@ -25,7 +25,9 @@ from __future__ import annotations
 
 from typing import Any
 
+import httpx2
 from agno.models.anthropic import Claude
+from anthropic import AsyncAnthropic
 
 from ember_code.core.config.llm_call_logger import LlmCallLogger
 from ember_code.core.config.message_sanitizer import MessageSanitizer
@@ -90,6 +92,25 @@ class LoggingClaude(ToolNameBoundary, ReplyCutRetries, Claude):
 
     def _reply_ending(self) -> ReplyEnding:
         return ReplyEnding(self.id, self.max_tokens, ANTHROPIC)
+
+    # ── The client ────────────────────────────────────────────────
+
+    def get_async_client(self) -> AsyncAnthropic:
+        """Agno's, but handing the SDK the builder's ``httpx2`` client.
+
+        Agno 2.6 passes ``http_client`` on only when it is an
+        ``httpx.AsyncClient``, and otherwise logs a warning and lets the
+        SDK make its own — one without the busy lease, the ``X-Api-Key``
+        auth or igni server's token. SDK 2 takes only an ``httpx2``
+        client, so that check would drop every client igni builds.
+        """
+        if self.async_client and not self.async_client.is_closed():
+            return self.async_client
+        params = self._get_client_params()
+        if isinstance(self.http_client, httpx2.AsyncClient):
+            params["http_client"] = self.http_client
+        self.async_client = AsyncAnthropic(**params)
+        return self.async_client
 
     # ── Private helpers ───────────────────────────────────────────
 
