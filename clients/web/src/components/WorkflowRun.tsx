@@ -290,8 +290,11 @@ function PhaseRow({
         type="button"
         className="workflow-phase-header"
         onClick={onToggle}
+        // No aria-label: the button's text (title, status, elapsed) is its
+        // name, and aria-expanded already says open or closed. A label of
+        // "Collapse" replaced all of that, so a screen reader heard five
+        // identical "Collapse" buttons (axe: label-content-name-mismatch).
         aria-expanded={!collapsed}
-        aria-label={collapsed ? "Expand" : "Collapse"}
       >
         <ChevronIcon size={12} down={!collapsed} />
         <span className="workflow-phase-node" aria-hidden>
