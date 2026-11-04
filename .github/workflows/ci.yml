@@ -350,7 +350,7 @@ jobs:
   web-e2e:
     name: Web E2E
     runs-on: ubuntu-latest
-    container: mcr.microsoft.com/playwright:v1.61.1-noble
+    container: mcr.microsoft.com/playwright:v1.64.1-noble
     defaults:
       run:
         working-directory: clients/web
