@@ -260,11 +260,11 @@ jobs:
           # release exactly once — matrix legs upload to that id.
           releaseId: ${{ needs.prepare-release.outputs.release_id }}
           args: ${{ matrix.args }}
-          # ``includeUpdaterJson`` makes the action emit ``latest.json``
-          # alongside the artifacts; our endpoint in tauri.conf.json
-          # points at the ``latest`` release alias so newly-published
-          # binaries are picked up the next time the app checks.
-          includeUpdaterJson: true
+          # No updater JSON from the action: the ``updater-json`` job
+          # builds ``latest.json`` itself, pointing at the stapled
+          # ``igni_aarch64.app.tar.gz`` (v1 renamed this input from
+          # ``includeUpdaterJson``).
+          uploadUpdaterJson: false
 
       # Submit the signed .app to Apple's notarization service
       # ourselves, with per-30s status logging. Replaces the
@@ -416,16 +416,22 @@ jobs:
             # ``igni_<arch>.app.tar.gz`` (which ``latest.json``
             # points at) stayed as tauri-action's pre-staple upload.
             STAGED="$RUNNER_TEMP/${REMOTE_NAME}"
+            # Whatever name tauri-action uploaded the pre-staple tarball
+            # and its .sig under (v0 renamed it ``igni_<arch>``; v1 keeps
+            # Tauri CLI's own name), remove it: the release must carry
+            # only the stapled tarball, under the name latest.json uses,
+            # and nothing un-notarized for SHA256SUMS to count.
+            gh release view "${{ github.ref_name }}" --repo "$GITHUB_REPOSITORY" --json assets -q '.assets[].name' \
+              | { grep -E '\.app\.tar\.gz(\.sig)?$' || true; } \
+              | while read -r asset; do
+                  [ "$asset" = "$REMOTE_NAME" ] && continue
+                  echo "  removing tauri-action's pre-staple asset: $asset"
+                  gh release delete-asset "${{ github.ref_name }}" "$asset" --yes --repo "$GITHUB_REPOSITORY"
+                done
             cp "$OLD_TARBALL" "$STAGED"
             echo "Re-uploading stapled tarball: $STAGED (renamed from $OLD_TARBALL)"
             ls -la "$STAGED"
             gh release upload "${{ github.ref_name }}" "$STAGED" --clobber --repo "$GITHUB_REPOSITORY"
-            # Drop the stale bare-basename asset that v0.7.0..v0.7.3
-            # created — ``latest.json`` points at the arch-suffixed
-            # name; the bare one is just confusing noise on the
-            # release page. ``|| true`` so we don't fail if it
-            # wasn't there in the first place (later runs).
-            gh release delete-asset "${{ github.ref_name }}" "igni.app.tar.gz" --yes --repo "$GITHUB_REPOSITORY" 2>/dev/null || true
             echo "  ✓ uploaded as ${REMOTE_NAME}"
           else
             echo "::error::OLD_TARBALL is empty — regen step didn't find a tarball; updater payload will be stale"
