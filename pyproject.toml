@@ -107,7 +107,7 @@ dev = [
     # so the documented coverage command has never run.
     "pytest-cov~=7.1.0",
     "ruff~=0.15.6",
-    "mypy~=1.19.1",
+    "mypy~=2.4.1",
     "python-dotenv~=1.2.2",
     # Validates ``docs/extension-manifest.schema.json`` and the example
     # manifests against it. It was already importable here as a
