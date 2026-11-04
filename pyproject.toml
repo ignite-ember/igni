@@ -58,7 +58,7 @@ dependencies = [
     # Claude through the native Messages API (``provider: anthropic``),
     # used by Agno's ``Claude``. Held at 0.x: 1.0 moved the SDK onto
     # ``httpx2``, and Agno 2.6 hands it an ``httpx`` client.
-    "anthropic~=0.125.0",
+    "anthropic~=2.3.0",
     "tokenizers~=0.22.2",
     "ripgrep~=15.1.0",
     # Ed25519 verification of extension bundle signatures
@@ -124,7 +124,7 @@ gemini = [
     "google-genai~=2.8.0",
 ]
 anthropic = [
-    "anthropic~=0.125.0",
+    "anthropic~=2.3.0",
 ]
 web = [
     "duckduckgo-search~=8.1",
