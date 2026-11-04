@@ -183,11 +183,13 @@ class ProcessProbe:
 
         async def round_trip() -> list[str]:
             with stderr_path.open("w") as errlog:
-                async with stdio_client(params, errlog=errlog) as (read, write):
-                    async with ClientSession(read, write) as session:
-                        await session.initialize()
-                        listed = await session.list_tools()
-                        return [tool.name for tool in listed.tools]
+                async with (
+                    stdio_client(params, errlog=errlog) as (read, write),
+                    ClientSession(read, write) as session,
+                ):
+                    await session.initialize()
+                    listed = await session.list_tools()
+                    return [tool.name for tool in listed.tools]
 
         try:
             tools = await asyncio.wait_for(round_trip(), self._timeout)
