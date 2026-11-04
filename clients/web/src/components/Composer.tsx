@@ -380,7 +380,17 @@ export function Composer({
   useEffect(() => {
     textRef.current = text;
   }, [text]);
+  // Sequence number of the newest file lookup; an answer to an older one
+  // is dropped. Bumped by every lookup *and* by every close, because a
+  // closed menu is newer than any lookup still in flight: without that, an
+  // answer arriving after Enter accepted an entry (or Escape, or a space
+  // ending the token) reopened the picker, and an open picker swallows the
+  // next Enter (T23; the flaky "accepting an entry inserts a pill" E2E).
   const mentionSeq = useRef(0);
+  const closeMenu = () => {
+    mentionSeq.current++;
+    setMenu(null);
+  };
   // Re-entrancy guard so a rapid scroll doesn't fire dozens of
   // overlapping completeFiles RPCs.
   const loadingMore = useRef(false);
@@ -446,6 +456,7 @@ export function Composer({
     // is in the first token (mirrors TUI autocomplete behaviour).
     if (value.startsWith("/") && !value.slice(0, caret).includes(" ")) {
       const q = value.slice(1, caret);
+      mentionSeq.current++; // a pending @ lookup is no longer about this text
       const entries = filterSlashCommands(
         mergeCommands(backendCommands, skills),
         q,
@@ -487,12 +498,12 @@ export function Composer({
               : null,
           );
         } catch {
-          setMenu(null);
+          if (seq === mentionSeq.current) setMenu(null);
         }
         return;
       }
     }
-    setMenu(null);
+    closeMenu();
   };
 
   const applyMenuChoice = (entry: { key: string }) => {
@@ -505,7 +516,7 @@ export function Composer({
       const after = text.slice(caret);
       setText(`${before}@${entry.key} ${after}`);
     }
-    setMenu(null);
+    closeMenu();
     requestAnimationFrame(() => {
       ref.current?.focus();
       ref.current?.caretToEnd();
@@ -574,7 +585,7 @@ export function Composer({
     setHistIdx(-1);
     setText("");
     setMode("chat");
-    setMenu(null);
+    closeMenu();
     onTyping?.(""); // clear our remote draft on other views
     requestAnimationFrame(autoGrow);
     setAttachments([]);
@@ -607,7 +618,7 @@ export function Composer({
           menu.kind === "slash" &&
           entry.key === withPrefix(text.trim())
         ) {
-          setMenu(null);
+          closeMenu();
           submit();
           return;
         }
@@ -632,7 +643,7 @@ export function Composer({
     if (e.key === "Escape") {
       let consumed = false;
       if (menu) {
-        setMenu(null);
+        closeMenu();
         consumed = true;
       }
       if (mode !== "chat") {
@@ -667,7 +678,7 @@ export function Composer({
       setMode("chat");
       setText("");
       ref.current?.setValue("");
-      setMenu(null);
+      closeMenu();
       onTyping?.("");
       return;
     }
@@ -748,7 +759,7 @@ export function Composer({
   useEffect(() => {
     if (!focusRef) return;
     focusRef.current = () => {
-      setMenu(null);
+      closeMenu();
       setHistIdx(-1);
       requestAnimationFrame(() => {
         ref.current?.focus();
