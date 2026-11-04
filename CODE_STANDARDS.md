@@ -118,20 +118,38 @@ Surface the gap.
 A commit written by a person alone carries no such trailer. That is the
 one an author writes.
 
-There are two more accepted trailers, and nobody writes them:
+There are three more accepted trailers, and nobody writes them:
 
 `Co-authored-by: dmytrozezyk <dmytro.zezyk@ignite-ember.sh>`
 
 `Co-authored-by: dmytrozezyk <dev@example.com>`
+
+`Co-authored-by: dependabot[bot] <49699333+dependabot[bot]@users.noreply.github.com>`
 
 GitHub appends one to every squash merge, naming the author of the
 commits being squashed. It is the forge's record of who wrote the
 branch, not a claim anyone made in a commit message, and it cannot be
 declined without giving up squash merges. The first is the founder's
 address, used for every commit since 2026-11-04; the second is the
-placeholder the history was written under (below). So the rule accepts
-exactly these three and nothing else: **if a commit carries a
-`Co-Authored-By` line, its address is one of the three above.**
+placeholder the history was written under (below); the third is what
+every Dependabot pull request gets when it is squash-merged (first on
+main as af570fc4). So the rule accepts exactly these four addresses,
+plus the bot form below, and nothing else: **if a commit carries a
+`Co-Authored-By` line, its address is one of the four above or a GitHub
+bot account's.**
+
+A GitHub bot account's address is GitHub's own noreply form for an App,
+`<id>+<name>[bot]@users.noreply.github.com` — a number, `+`, the login,
+and the literal `[bot]` suffix. Dependabot's is one instance of it; the
+form is accepted rather than a list of bots because the next bot the
+repository runs (`github-actions[bot]`, a renovate app) would otherwise
+fail main on a squash merge nobody can reword, the same way af570fc4 did.
+It cannot admit a person: `[bot]` is reserved for GitHub Apps, and no
+user login may contain a bracket, so a human's noreply address
+(`<id>+<login>@users.noreply.github.com`) does not match it. People are
+still held to the exact addresses above. The squash also appends the
+bot's own `Signed-off-by: dependabot[bot] <support@github.com>`, which
+the DCO check accepts as it would anyone's sign-off.
 
 `dev@example.com` is a placeholder — it was what `git config
 user.email` said on the machine the branches were written on until
@@ -162,8 +180,8 @@ rule that has never run does not get its typos found. Both spellings are
 rejected; the history contains the hyphenated one, so checking only the
 typo would have caught nothing.)
 
-`tests/test_the_commit_convention_is_followed.py` reads both accepted
-trailers out of this section and checks them against the history, so this
+`tests/test_the_commit_convention_is_followed.py` reads the accepted
+trailers and the bot form out of this section and checks them against the history, so this
 paragraph and the commits cannot drift apart again. It runs with
 `fetch-depth: 0` on the `test` job — before that it skipped itself on
 every CI run, because a shallow checkout gives the merge commit no

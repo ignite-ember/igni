@@ -57,6 +57,18 @@ _RETIRED = re.compile(r"noreply@ignite-?ember\.sh", re.I)
 #: and reading it as accepted would make the check vacuous.
 _EXPLANATION = "**What this rule said before"
 
+#: GitHub's noreply address for an App account, as its squash merge writes it
+#: into ``Co-authored-by`` (``49699333+dependabot[bot]@users.noreply.github.com``).
+#: Rule 5 accepts the *form*, not a list of bots: each new bot would otherwise
+#: fail main on a squash nobody can reword, as af570fc4 did. It cannot match a
+#: person — ``[bot]`` is reserved for Apps and a user login has no brackets — so
+#: humans stay held to the exact addresses Rule 5 names.
+_GITHUB_BOT = re.compile(r"^\d+\+[a-z0-9][a-z0-9-]*\[bot\]@users\.noreply\.github\.com$")
+
+#: How Rule 5 spells that form. Asserted present, so the pattern above and the
+#: document cannot drift apart silently.
+_BOT_FORM = "<id>+<name>[bot]@users.noreply.github.com"
+
 
 def _rule_five() -> str:
     return _STANDARDS.read_text().split("### Rule 5")[1].split("\n### ")[0]
@@ -70,10 +82,10 @@ def _documented_trailer() -> str:
 def _accepted_trailers() -> list[str]:
     """Every trailer Rule 5 accepts, read from the document, in order.
 
-    There are two and they arrive by different routes. The first is written by
-    whoever makes the commit and names the model that assisted. The second is
-    appended by GitHub on every squash merge, naming the author of the branch
-    being squashed — nobody types it and it cannot be declined while squash
+    They arrive by two routes. The first is written by whoever makes the commit
+    and names the model that assisted. The rest are appended by GitHub on every
+    squash merge, naming the author of the branch being squashed (a person, or
+    Dependabot for its own pull requests) — nobody types it and it cannot be declined while squash
     merges are in use.
 
     Only the part *above* the explanation counts. The retired trailer is quoted
@@ -191,8 +203,19 @@ class TestTheRuleIsReadable:
         that was survivable is that the check never ran."""
         accepted = _accepted_trailers()
 
-        assert len(accepted) == 3, accepted
-        assert _address(accepted[0]) != _address(accepted[1])
+        assert len(accepted) == 4, accepted
+        assert len({_address(t) for t in accepted}) == 4, accepted
+
+    def test_it_names_the_bot_form_and_dependabot_is_an_instance(self):
+        """Every Dependabot squash merge carries GitHub's trailer for the bot.
+        The document names the form; the named Dependabot address must be an
+        instance of it, or the pattern here is checking something else."""
+        assert _BOT_FORM in _rule_five()
+        bots = [t for t in _accepted_trailers() if _GITHUB_BOT.match(_address(t))]
+
+        assert [_address(t) for t in bots] == [
+            "49699333+dependabot[bot]@users.noreply.github.com"
+        ], bots
 
     def test_the_placeholder_address_is_admitted_to_be_one(self):
         """``dev@example.com`` is whatever ``git config user.email`` happens to
@@ -244,18 +267,60 @@ def _address(trailer: str) -> str:
     return match.group(1).strip().lower() if match else trailer.strip().lower()
 
 
+def _is_accepted(trailer: str) -> bool:
+    """Whether Rule 5 accepts this trailer: a named address, or a GitHub bot's."""
+    address = _address(trailer)
+    return address in {_address(t) for t in _accepted_trailers()} or bool(
+        _GITHUB_BOT.match(address)
+    )
+
+
+class TestTheBotFormIsNarrow:
+    """Admitting a form instead of a list is only safe if the form cannot be
+    reached by a person or by the retired company trailer."""
+
+    @pytest.mark.parametrize(
+        "trailer",
+        [
+            "dependabot[bot] <49699333+dependabot[bot]@users.noreply.github.com>",
+            "github-actions[bot] <41898282+github-actions[bot]@users.noreply.github.com>",
+        ],
+    )
+    def test_github_bot_squash_trailers_are_accepted(self, trailer):
+        assert _is_accepted(trailer)
+
+    @pytest.mark.parametrize(
+        "trailer",
+        [
+            # A person's GitHub noreply address: same shape, no ``[bot]``.
+            "dmytro_zezyk <143008456+ignite-ember@users.noreply.github.com>",
+            "someone <someone@users.noreply.github.com>",
+            # ``[bot]`` without GitHub's id+ prefix or domain is not the forge's.
+            "dependabot[bot] <dependabot[bot]@users.noreply.github.com>",
+            "dependabot[bot] <49699333+dependabot[bot]@example.com>",
+            "dependabot[bot] <support@github.com>",
+            # The retired company trailer stays rejected.
+            "Ignite Ember <noreply@ignite-ember.sh>",
+            "Ignite Ember <noreply@igniteember.sh>",
+            "Some Person <person@example.org>",
+        ],
+    )
+    def test_people_and_lookalikes_are_not(self, trailer):
+        assert not _is_accepted(trailer)
+
+
 class TestTheHistoryFollowsIt:
     def test_every_co_authored_commit_names_a_documented_author(self):
         expected = {_address(t) for t in _accepted_trailers()}
         offenders = []
         for sha, body in _history():
             for found in _TRAILER.findall(body):
-                if _address(found) not in expected:
+                if not _is_accepted(found):
                     offenders.append(f"{sha}: {found.strip()!r}")
 
         assert not offenders, (
             f"these commits carry a Co-Authored-By that Rule 5 does not name "
-            f"(accepted addresses: {sorted(expected)}): {offenders}"
+            f"(accepted addresses: {sorted(expected)}, or {_BOT_FORM}): {offenders}"
         )
 
     def test_the_comparison_is_on_the_address(self):
