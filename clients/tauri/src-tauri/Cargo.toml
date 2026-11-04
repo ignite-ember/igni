@@ -39,7 +39,7 @@ flate2 = "1"
 tar = "0.4"
 # Cross-platform per-user cache dir (``~/Library/Caches`` on mac,
 # ``$XDG_CACHE_HOME`` on linux, ``%LOCALAPPDATA%`` on windows).
-dirs = "5"
+dirs = "7"
 # Free-space check before bootstrap so we fail fast on a full disk
 # instead of mid-pip-install.
 fs2 = "0.4"
