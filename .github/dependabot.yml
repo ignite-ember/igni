@@ -45,10 +45,15 @@ updates:
       cargo-minor-and-patch:
         update-types: [minor, patch]
 
+  # Actions too: minor and patch grouped, each major its own pull request.
+  # A major action release changes inputs and outputs (release.yml, which
+  # CI cannot exercise, is where that bites), so it is reviewed against its
+  # changelog on its own rather than inside a bundle of nine.
   - package-ecosystem: github-actions
     directory: /
     schedule:
       interval: weekly
+    open-pull-requests-limit: 5
     groups:
-      actions:
-        patterns: ["*"]
+      actions-minor-and-patch:
+        update-types: [minor, patch]

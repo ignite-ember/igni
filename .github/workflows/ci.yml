@@ -305,9 +305,12 @@ jobs:
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
+      # Node 24: vitest 5 wants ^22.12 and jsdom 30 ^22.22.2, and Node 20
+      # is past end of life. On 20, every jsdom worker died at start-up
+      # ("Cannot read properties of undefined (reading 'bind')").
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
-          node-version: "20"
+          node-version: "24"
           cache: "npm"
           cache-dependency-path: clients/web/package-lock.json
 
@@ -347,7 +350,7 @@ jobs:
   web-e2e:
     name: Web E2E
     runs-on: ubuntu-latest
-    container: mcr.microsoft.com/playwright:v1.61.1-noble
+    container: mcr.microsoft.com/playwright:v1.64.1-noble
     defaults:
       run:
         working-directory: clients/web
@@ -474,7 +477,7 @@ jobs:
 
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
-          node-version: "20"
+          node-version: "24"
           cache: "npm"
           cache-dependency-path: clients/web/package-lock.json
 

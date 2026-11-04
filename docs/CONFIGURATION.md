@@ -181,7 +181,8 @@ There are three providers:
 - **Keys** resolve exactly as for `openai_like` (`api_key`, `api_key_env`, `api_key_cmd`, `cloud_token`), and the key is sent as `x-api-key`. With `cloud_token`, igni server's current token also goes as `Authorization: Bearer`, read at each request.
 - **Nothing is taken from the machine's environment.** The Anthropic SDK would otherwise read `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`, `ANTHROPIC_BASE_URL` and an `ant` CLI profile; igni passes the endpoint and the key explicitly, so the registry entry is the whole story. To use `ANTHROPIC_API_KEY`, say so: `api_key_env: ANTHROPIC_API_KEY`.
 - **Prompt caching** is on by default: the system prompt and the tool list carry `cache_control`, so each turn re-reads them from the cache. `prompt_caching: false` turns it off.
-- **Thinking** is off unless the model does it by default. `thinking` is passed to the API unchanged — `{type: adaptive}` on current models (Opus 4.6 and later), `{type: enabled, budget_tokens: N}` only on older ones that still take it. `effort` (`low`, `medium`, `high`, `xhigh`, `max`) sets `output_config.effort`. Current models reject `temperature`; leave it unset for them.
+- **Thinking** is off unless the model does it by default. `thinking` is passed to the API unchanged — `{type: adaptive}` on current models (Opus 4.6 and later), `{type: enabled, budget_tokens: N}` only on older ones that still take it. `effort` (`low`, `medium`, `high`, `xhigh`, `max`) sets `output_config.effort`.
+- **`temperature` is not sent.** The API version igni's SDK speaks (`2026-10-21`) has no sampling parameters and answers `temperature`, `top_p` or `top_k` with a 400 at any value, so a row that sets `temperature` logs a warning and goes without it.
 - **`max_tokens`** defaults to 8192 (Agno's default) when unset.
 - **`context_window`**: set it. Without it igni assumes 128k.
 
@@ -197,7 +198,7 @@ There are three providers:
 | `api_key_cmd` | string | no | Shell command that outputs the API key (e.g., `op read ...` for 1Password) |
 | `context_window` | int | no | Context window size in tokens. Falls back to 128k if not set |
 | `vision` | bool | no | Whether the model supports image input. Default `false`. When `true`, file references (images, PDFs) are attached as multimodal content. When `false`, file paths are resolved so the AI can read them via tools |
-| `temperature` | float | no | Default temperature for this model |
+| `temperature` | float | no | Default temperature for this model. Not sent for `anthropic` |
 | `max_tokens` | int | no | Default max output tokens |
 | `timeout` | int | no | Request timeout in seconds. Default 60 |
 | `thinking` | object | no | `anthropic` only. The Messages API `thinking` object, sent as written (e.g. `{type: adaptive}`) |

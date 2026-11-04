@@ -45,21 +45,23 @@ classifiers = [
 dependencies = [
     "agno[openai,ddg,sqlite,sql,mcp]~=2.6.12",
     "aiosqlite~=0.22.1",
-    "sqlalchemy[asyncio]~=2.0.50",
-    "alembic~=1.18.4",
+    "sqlalchemy[asyncio]~=2.1.6",
+    "alembic~=1.20.1",
     "greenlet~=3.5.1",
     "rich~=15.0.0",
     "textual~=8.2.7",
     "pyyaml~=6.0.3",
-    "click~=8.4.1",
-    "pydantic~=2.13.4",
+    "click~=8.5.0",
+    "pydantic~=2.14.2",
     "httpx~=0.28.1",
-    "google-genai~=2.8.0",
+    "google-genai~=2.34.0",
     # Claude through the native Messages API (``provider: anthropic``),
-    # used by Agno's ``Claude``. Held at 0.x: 1.0 moved the SDK onto
-    # ``httpx2``, and Agno 2.6 hands it an ``httpx`` client.
-    "anthropic~=0.125.0",
-    "tokenizers~=0.22.2",
+    # used by Agno's ``Claude``. From 1.0 the SDK is built on ``httpx2``
+    # and refuses an ``httpx`` client, which Agno 2.6 would hand it; igni
+    # builds an ``httpx2`` one (``core/activity/http2.py``) and gives it to
+    # the SDK itself (``LoggingClaude.get_async_client``).
+    "anthropic~=2.3.0",
+    "tokenizers~=0.23.3",
     "ripgrep~=15.1.0",
     # Ed25519 verification of extension bundle signatures
     # (``extensions/signature.py``). It was already importable as a
@@ -95,19 +97,19 @@ Changelog = "https://github.com/ignite-ember/igni/releases"
 # backend image leaves this out and never carries torch. The desktop app
 # installs ``ignite-ember[decisions]``.
 decisions = [
-    "laya~=0.4.4",
-    "starlette~=1.9.0",
+    "laya~=0.4.20",
+    "starlette~=1.10.0",
     "uvicorn~=0.54.0",
 ]
 dev = [
-    "pytest~=9.0.2",
-    "pytest-asyncio~=1.3.0",
+    "pytest~=9.2.0",
+    "pytest-asyncio~=1.4.1",
     # ``make test-cov`` and docs/TESTING.md both pass ``--cov``; without
     # the plugin pytest rejects the unrecognised argument and exits 4,
     # so the documented coverage command has never run.
     "pytest-cov~=7.1.0",
-    "ruff~=0.15.6",
-    "mypy~=1.19.1",
+    "ruff~=0.17.3",
+    "mypy~=2.4.1",
     "python-dotenv~=1.2.2",
     # Validates ``docs/extension-manifest.schema.json`` and the example
     # manifests against it. It was already importable here as a
@@ -118,13 +120,17 @@ dev = [
 mcp = [
     # ``~=1.28.1`` capped CVE-2026-59951, whose fix is 1.30.0. This pin
     # has now blocked a fix once; widened to the minor.
+    # Held below 2: igni's MCP client is Agno 2.6's ``MCPTools``, which
+    # imports 1.x's ``streamablehttp_client`` (gone in 2.x; Agno needs
+    # ``mcp>=2.1`` only from its 3.0), and igni-extension's session hook
+    # reads 1.x's lowlevel server. mcp 2 moves with Agno 3.
     "mcp~=1.30",
 ]
 gemini = [
-    "google-genai~=2.8.0",
+    "google-genai~=2.34.0",
 ]
 anthropic = [
-    "anthropic~=0.125.0",
+    "anthropic~=2.3.0",
 ]
 web = [
     "duckduckgo-search~=8.1",

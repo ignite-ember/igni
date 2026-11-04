@@ -9,7 +9,7 @@ test is ``test_anthropic_live.py``.
 What is covered: the config fields as a registry row carries them; the
 builder the catalog picks, and an install without the SDK; every way a
 key resolves; the base URL and its override; what the request body
-carries (sampling, caching, thinking); images and PDFs as native
+carries (caching, thinking, effort, and no sampling parameter); images and PDFs as native
 content blocks; a tool-call round trip through an agent igni builds,
 streaming and not; a second run after the client is replaced; and a
 whole igni turn under the egress guard, reaching no Agno host.
@@ -219,6 +219,33 @@ async def test_cloud_token_sends_the_current_token(tmp_path: Path) -> None:
     assert headers["x-api-key"] == "tok-at-build"
 
 
+async def test_a_rotated_cloud_token_is_retried_once_after_a_401(tmp_path: Path) -> None:
+    """CloudTokenAuth's rule, kept on the httpx2 client SDK 2 needs."""
+    import httpx2
+
+    from ember_code.core.config.anthropic_auth import AnthropicKeyAuth
+
+    creds = tmp_path / "credentials.json"
+    store = CredentialsStore(str(creds))
+    store.save(Credentials.new("tok-old", "ada@acme.test"))
+    seen: list[tuple[str | None, str | None]] = []
+
+    def answer(request: httpx2.Request) -> httpx2.Response:
+        seen.append((request.headers.get("authorization"), request.headers.get("x-api-key")))
+        if len(seen) == 1:
+            store.save(Credentials.new("tok-new", "ada@acme.test"))  # rotated meanwhile
+            return httpx2.Response(401)
+        return httpx2.Response(200)
+
+    auth = AnthropicKeyAuth("tok-at-build", CloudTokenAuth(str(creds)))
+    async with httpx2.AsyncClient(transport=httpx2.MockTransport(answer), auth=auth) as client:
+        sent = await client.post(
+            "http://gw.test/v1/messages", headers={"Authorization": "Bearer tok-at-build"}
+        )
+    assert sent.status_code == 200
+    assert seen == [("Bearer tok-old", "tok-at-build"), ("Bearer tok-new", "tok-at-build")]
+
+
 async def test_no_key_is_said_out_loud_and_nothing_ambient_is_used(
     monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
 ) -> None:
@@ -270,7 +297,6 @@ async def test_the_request_carries_the_configured_fields() -> None:
     with StubMessagesApi(Reply(text="fine")) as stub:
         row = entry(
             stub.url,
-            temperature=0.3,
             max_tokens=2048,
             thinking={"type": "adaptive"},
             effort="low",
@@ -280,7 +306,6 @@ async def test_the_request_carries_the_configured_fields() -> None:
     body = stub.messages[0].body
     assert body["model"] == MODEL_ID
     assert body["max_tokens"] == 2048
-    assert body["temperature"] == 0.3
     assert body["thinking"] == {"type": "adaptive"}
     assert body["output_config"] == {"effort": "low"}
     # Prompt caching: the system prompt and the last tool are marked.
@@ -288,6 +313,24 @@ async def test_the_request_carries_the_configured_fields() -> None:
     assert body["tools"][-1]["cache_control"] == {"type": "ephemeral"}
     assert model.timeout == 60.0
     assert model.http_client.timeout.read == 60.0
+
+
+async def test_temperature_is_not_sent_and_says_so(caplog: pytest.LogCaptureFixture) -> None:
+    """API version 2026-10-21, which SDK 2 sends, answers ``temperature``
+    with a 400 at any value; sent, every request on the row would fail."""
+    with StubMessagesApi(Reply(text="fine")) as stub, caplog.at_level(logging.WARNING):
+        await agent(build(entry(stub.url, temperature=0.3))).arun("hi")
+    assert "temperature" not in stub.messages[0].body
+    assert "does not send" in caplog.text
+
+
+async def test_the_sdk_is_handed_igni_s_client() -> None:
+    """Not the SDK's own: that one has neither the busy lease nor the auth."""
+    from ember_code.core.activity.http2 import BusyAsyncClient as BusyAsyncClient2
+
+    model = build(entry("http://127.0.0.1:9"))
+    assert isinstance(model.http_client, BusyAsyncClient2)
+    assert model.get_async_client()._client is model.http_client
 
 
 async def test_prompt_caching_can_be_turned_off() -> None:
@@ -376,16 +419,30 @@ async def test_a_tool_call_round_trip_streaming() -> None:
     assert "The sum is 5." in text
 
 
-async def test_a_second_run_after_the_client_is_replaced() -> None:
-    """What the backend does after every run (``ModelHttpClientManager``)."""
+async def test_a_second_run_after_the_client_is_replaced(tmp_path: Path) -> None:
+    """What the backend does after every run (``ModelHttpClientManager``).
+
+    The replacement is igni's client again, auth included: an ``httpx``
+    one would be refused by the SDK and swapped, by Agno, for the SDK's
+    own, and the second run would go out without igni server's token."""
+    from ember_code.core.activity.http2 import BusyAsyncClient as BusyAsyncClient2
+
+    creds = tmp_path / "credentials.json"
+    CredentialsStore(str(creds)).save(Credentials.new("tok-now", "ada@acme.test"))
     with StubMessagesApi(Reply(text="one"), Reply(text="two")) as stub:
-        model = build(entry(stub.url))
+        row = entry(stub.url, api_key=CLOUD_TOKEN_SENTINEL)
+        model = build(row, cloud_token="tok-at-build", cloud_auth=CloudTokenAuth(str(creds)))
         runner = agent(model)
         await runner.arun("first")
+        first = model.http_client
         await ModelHttpClientManager().close_and_replace(runner)  # type: ignore[arg-type]
         out = await runner.arun("second")
     assert len(stub.messages) == 2
     assert "two" in str(out.content)
+    assert model.http_client is not first
+    assert isinstance(model.http_client, BusyAsyncClient2)
+    second = stub.messages[1].headers
+    assert (second["authorization"], second["x-api-key"]) == ("Bearer tok-now", "tok-at-build")
 
 
 # ── A whole igni turn, under the egress guard ─────────────────────

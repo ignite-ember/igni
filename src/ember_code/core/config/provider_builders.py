@@ -254,9 +254,12 @@ class AnthropicBuilder(ProviderClientBuilder):
     ``url`` overrides the base URL, so an Anthropic-compatible gateway
     inside the customer's network serves it as well as Anthropic does.
     Everything else is :class:`OpenAILikeBuilder`'s surface — the same
-    key resolution, the same ``httpx`` client with its timeout and
-    busy lease, igni server's live token where the key is
-    ``cloud_token``.
+    key resolution, the same client with its timeout and busy lease
+    (on ``httpx2``, which the SDK is built on), igni server's live token
+    where the key is ``cloud_token``. The key goes as ``X-Api-Key``, as
+    it always has, though SDK 2 would send it as a bearer token
+    (``anthropic_auth.py``). ``temperature`` is not sent: the API
+    version SDK 2 speaks rejects it.
 
     Nothing about where a request goes is left to the SDK. It would
     otherwise read ``ANTHROPIC_BASE_URL``, ``ANTHROPIC_AUTH_TOKEN`` and
@@ -334,11 +337,20 @@ class AnthropicBuilder(ProviderClientBuilder):
         if not resolved.value and auth is None:
             logger.warning("%s Requests to it will be rejected.", entry.why_no_api_key())
 
+        # The SDK is built on httpx2 and takes only an httpx2 client; both
+        # modules import it, so they are imported here, past the
+        # "installed?" check in ``build``.
+        import httpx2  # noqa: WPS433 — arrives with the optional SDK
+
+        from ember_code.core.activity.http2 import BusyAsyncClient as BusyAsyncClient2
+        from ember_code.core.config.anthropic_auth import AnthropicKeyAuth
+
+        # Always a value: ``None`` lets the SDK go looking for one.
+        key = resolved.value or "not-set"
         timeout_s = entry.timeout
         kwargs: dict[str, Any] = {
             "id": entry.model_id,
-            # Always a value: ``None`` lets the SDK go looking for one.
-            "api_key": resolved.value or "not-set",
+            "api_key": key,
             "timeout": float(timeout_s),
             # Applied after Agno's own environment reads, so these win.
             "client_params": {
@@ -347,15 +359,16 @@ class AnthropicBuilder(ProviderClientBuilder):
             },
             "cache_system_prompt": entry.prompt_caching,
             "cache_tools": entry.prompt_caching,
-            # Same client as ``openai_like``: the timeout on the
-            # transport too, the busy lease, and igni server's current
-            # token on each request where the key is ``cloud_token``.
-            "http_client": BusyAsyncClient(
+            # What ``openai_like`` gets, on httpx2: the timeout on the
+            # transport too, the busy lease, the key as ``X-Api-Key``, and
+            # igni server's current token on each request where the key is
+            # ``cloud_token``.
+            "http_client": BusyAsyncClient2(
                 busy_holder="model",
                 busy_kind=BusyKind.MODEL_CALL,
-                auth=auth,
-                timeout=httpx.Timeout(timeout_s),
-                limits=httpx.Limits(
+                auth=AnthropicKeyAuth(key, auth),
+                timeout=httpx2.Timeout(timeout_s),
+                limits=httpx2.Limits(
                     max_connections=10,
                     max_keepalive_connections=5,
                     keepalive_expiry=30,
@@ -363,7 +376,15 @@ class AnthropicBuilder(ProviderClientBuilder):
             ),
         }
         if entry.temperature is not None:
-            kwargs["temperature"] = entry.temperature
+            # API version 2026-10-21, which SDK 2 sends, rejects
+            # ``temperature`` (and ``top_p``, ``top_k``) with a 400, at any
+            # value; the SDK no longer takes them. Sent, every request on
+            # this row would fail.
+            logger.warning(
+                "Model %r sets temperature, which the anthropic provider does not "
+                "send: the Messages API no longer takes sampling parameters.",
+                entry.model_id,
+            )
         if entry.max_tokens is not None:
             kwargs["max_tokens"] = entry.max_tokens
         if entry.thinking is not None:
