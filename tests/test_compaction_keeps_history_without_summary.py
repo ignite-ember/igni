@@ -69,7 +69,9 @@ def _session_stub(agno_session):
 
 def _conversation(summary=None):
     """An agno session carrying real history worth losing."""
-    return SimpleNamespace(session_id="sess-1", runs=[SimpleNamespace(), SimpleNamespace()], summary=summary)
+    return SimpleNamespace(
+        session_id="sess-1", runs=[SimpleNamespace(), SimpleNamespace()], summary=summary
+    )
 
 
 @pytest.fixture

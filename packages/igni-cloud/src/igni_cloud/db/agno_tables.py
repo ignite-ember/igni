@@ -9,8 +9,8 @@ from __future__ import annotations
 import asyncio
 
 from agno.db.migrations.manager import MigrationManager
-from agno.exceptions import MigrationRequiredError
 from agno.db.postgres import AsyncPostgresDb
+from agno.exceptions import MigrationRequiredError
 
 from ember_code.core.db.agno_schema import AgnoSchema
 from ember_code.core.db.urls import DatabaseUrl

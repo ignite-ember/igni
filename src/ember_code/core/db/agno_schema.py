@@ -27,9 +27,9 @@ from pathlib import Path
 from typing import Any, ClassVar
 
 from agno.db.migrations.manager import MigrationManager
+from agno.db.sqlite import AsyncSqliteDb
 from packaging.version import Version
 from sqlalchemy import inspect, text
-from agno.db.sqlite import AsyncSqliteDb
 
 from ember_code.core.activity import background
 
@@ -94,7 +94,9 @@ class AgnoSchema:
         schema = getattr(db, "db_schema", None)
         async with db.db_engine.begin() as connection:
             columns = await connection.run_sync(
-                lambda sync: [c["name"] for c in inspect(sync).get_columns(session_table, schema=schema)]
+                lambda sync: [
+                    c["name"] for c in inspect(sync).get_columns(session_table, schema=schema)
+                ]
             )
             if "runs" not in columns:
                 return

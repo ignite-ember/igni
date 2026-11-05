@@ -69,7 +69,11 @@ class TestCompactIfNeeded:
     async def test_at_80_percent_triggers_compact(self):
         # Right at threshold — the ``usage < 0.8`` guard should
         # let 80% through as a trigger.
-        s = _bare_session(agno_session=SimpleNamespace(session_id="sess-1", runs=[SimpleNamespace()], summary=None))
+        s = _bare_session(
+            agno_session=SimpleNamespace(
+                session_id="sess-1", runs=[SimpleNamespace()], summary=None
+            )
+        )
         coord = CompactionCoordinator(s)
         # A summary has to land for the pass to complete: since the
         # conversation is only dropped when something replaces it,
@@ -102,7 +106,11 @@ class TestCompactIfNeeded:
     async def test_fires_post_compact_hook_on_success(self):
         # PostCompact fires so plugins can react even when the
         # compaction is auto-triggered.
-        s = _bare_session(agno_session=SimpleNamespace(session_id="sess-1", runs=[SimpleNamespace()], summary=None))
+        s = _bare_session(
+            agno_session=SimpleNamespace(
+                session_id="sess-1", runs=[SimpleNamespace()], summary=None
+            )
+        )
         coord = CompactionCoordinator(s)
         # PostCompact is the "history was cleared" signal, so it only
         # fires on a pass that actually cleared it — give the pass a
@@ -130,7 +138,9 @@ class TestForceCompact:
     @pytest.mark.asyncio
     async def test_precompact_hook_can_cancel(self):
         # Same veto path as auto-compact, but for /compact.
-        agno = SimpleNamespace(session_id="sess-1", runs=[SimpleNamespace(messages=[])], summary=None)
+        agno = SimpleNamespace(
+            session_id="sess-1", runs=[SimpleNamespace(messages=[])], summary=None
+        )
         s = _bare_session(
             agno_session=agno,
             hook_result=HookResult(should_continue=False, message="unsaved changes"),
