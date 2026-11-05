@@ -26,7 +26,7 @@ serde = { version = "1", features = ["derive"] }
 # RS256 and SHA-256 from ``ring``, base64url from ``base64``. Both were
 # already in the build through rustls/ureq, so neither adds a crate.
 ring = "0.17"
-base64 = "0.22"
+base64 = "0.23"
 
 # ── Bootstrap runtime (see ``src/runtime.rs``) ─────────────────────
 # Sync HTTP client — ``ureq`` pulls in a fraction of what ``reqwest``
@@ -39,7 +39,7 @@ flate2 = "1"
 tar = "0.4"
 # Cross-platform per-user cache dir (``~/Library/Caches`` on mac,
 # ``$XDG_CACHE_HOME`` on linux, ``%LOCALAPPDATA%`` on windows).
-dirs = "5"
+dirs = "7"
 # Free-space check before bootstrap so we fail fast on a full disk
 # instead of mid-pip-install.
 fs2 = "0.4"
@@ -50,7 +50,7 @@ fs2 = "0.4"
 # default. Builder-time ``traffic_light_position`` doesn't survive
 # ``location.href`` navigations on macOS Big Sur+.
 objc2 = "0.5"
-objc2-foundation = { version = "0.2", features = ["NSGeometry"] }
+objc2-foundation = { version = "0.3", features = ["NSGeometry"] }
 # CFRunLoopObserver — fires after every main-thread layout pass so
 # we can immediately undo AppKit's reset of the traffic-light
 # cluster. Background polling can't outrun the reset; a runloop
@@ -74,7 +74,7 @@ libc = "0.2"
 [target.'cfg(target_os = "windows")'.dependencies]
 # uv ships its Windows release as a .zip. Tar.gz on every other
 # platform — see ``runtime::extract_uv``.
-zip = { version = "2", default-features = false, features = ["deflate"] }
+zip = { version = "9", default-features = false, features = ["deflate"] }
 
 [lib]
 name = "igni_app_lib"
