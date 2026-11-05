@@ -26,7 +26,7 @@ serde = { version = "1", features = ["derive"] }
 # RS256 and SHA-256 from ``ring``, base64url from ``base64``. Both were
 # already in the build through rustls/ureq, so neither adds a crate.
 ring = "0.17"
-base64 = "0.22"
+base64 = "0.23"
 
 # ── Bootstrap runtime (see ``src/runtime.rs``) ─────────────────────
 # Sync HTTP client — ``ureq`` pulls in a fraction of what ``reqwest``
