@@ -118,9 +118,11 @@ Surface the gap.
 A commit written by a person alone carries no such trailer. That is the
 one an author writes.
 
-There are three more accepted trailers, and nobody writes them:
+There are four more accepted trailers, and nobody writes them:
 
 `Co-authored-by: dmytrozezyk <dmytro.zezyk@ignite-ember.sh>`
+
+`Co-authored-by: dmytro_zezyk <143008456+ignite-ember@users.noreply.github.com>`
 
 `Co-authored-by: dmytrozezyk <dev@example.com>`
 
@@ -130,13 +132,16 @@ GitHub appends one to every squash merge, naming the author of the
 commits being squashed. It is the forge's record of who wrote the
 branch, not a claim anyone made in a commit message, and it cannot be
 declined without giving up squash merges. The first is the founder's
-address, used for every commit since 2026-11-04; the second is the
-placeholder the history was written under (below); the third is what
-every Dependabot pull request gets when it is squash-merged (first on
-main as af570fc4). So the rule accepts exactly these four addresses,
-plus the bot form below, and nothing else: **if a commit carries a
-`Co-Authored-By` line, its address is one of the four above or a GitHub
-bot account's.**
+address, used for every commit since 2026-11-04; the second is the same
+person's GitHub account (ignite-ember) under GitHub's noreply address,
+which GitHub uses for commits made on the website — the "Update branch"
+button, an edit in the browser — and so names in the squash trailer
+(first on main as 8431f6ad); the third is the placeholder the history
+was written under (below); the fourth is what every Dependabot pull
+request gets when it is squash-merged (first on main as af570fc4). So
+the rule accepts exactly these five addresses, plus the bot form below,
+and nothing else: **if a commit carries a `Co-Authored-By` line, its
+address is one of the five above or a GitHub bot account's.**
 
 A GitHub bot account's address is GitHub's own noreply form for an App,
 `<id>+<name>[bot]@users.noreply.github.com` — a number, `+`, the login,
