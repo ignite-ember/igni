@@ -40,6 +40,7 @@ from typing import TYPE_CHECKING, Any, Literal, Protocol, runtime_checkable
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+from ember_code.core.agents.trained_layout import TrainedLayout
 from ember_code.core.agno_telemetry import AgnoTelemetry
 
 if TYPE_CHECKING:
@@ -343,13 +344,17 @@ class AgentConstructorArgs(BaseModel):
         between "missing key" (use its default) and "key with
         None" (explicit disable) for both.
         """
+        # Rendered as igni-1.0 was trained to read them (``trained_layout``).
+        instructions, markdown = TrainedLayout.instructions(
+            self.instructions, markdown=self.markdown
+        )
         kwargs: dict[str, Any] = {
             "name": self.name,
             "model": self.model,
             "description": self.description,
-            "instructions": self.instructions,
+            "instructions": instructions,
             "tools": self.tools,
-            "markdown": self.markdown,
+            "markdown": markdown,
             "num_history_runs": self.num_history_runs,
             "retries": self.retries,
             # Agno's run telemetry to os-api.agno.com (core/agno_telemetry.py).

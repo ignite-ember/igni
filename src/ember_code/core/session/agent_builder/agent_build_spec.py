@@ -31,6 +31,7 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict
 
+from ember_code.core.agents.trained_layout import TrainedLayout
 from ember_code.core.agno_telemetry import AgnoTelemetry
 
 
@@ -117,12 +118,16 @@ class AgentBuildSpec(BaseModel):
         # Expanded explicitly (rather than ``**self.model_dump()``)
         # so Agno kwarg renames surface as a diff on this call and
         # so kwarg-order changes don't silently reshape the call.
+        # Rendered as igni-1.0 was trained to read them (``trained_layout``).
+        instructions, markdown = TrainedLayout.instructions(
+            self.instructions, markdown=self.markdown
+        )
         return agent_cls(
             name=self.name,
             model=self.model,
             tools=self.tools,
-            instructions=self.instructions,
-            markdown=self.markdown,
+            instructions=instructions,
+            markdown=markdown,
             retries=self.retries,
             db=self.db,
             session_id=self.session_id,
