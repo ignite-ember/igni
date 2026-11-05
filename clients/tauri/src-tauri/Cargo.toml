@@ -50,7 +50,7 @@ fs2 = "0.4"
 # default. Builder-time ``traffic_light_position`` doesn't survive
 # ``location.href`` navigations on macOS Big Sur+.
 objc2 = "0.5"
-objc2-foundation = { version = "0.2", features = ["NSGeometry"] }
+objc2-foundation = { version = "0.3", features = ["NSGeometry"] }
 # CFRunLoopObserver — fires after every main-thread layout pass so
 # we can immediately undo AppKit's reset of the traffic-light
 # cluster. Background polling can't outrun the reset; a runloop
