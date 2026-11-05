@@ -2,13 +2,14 @@
 
 An MCP server answers requests; a notification it sends on its own — from
 a background task, when an export finishes — needs the session, which the
-`mcp` package only hands to request handlers. So the lowlevel server's
-message dispatch is wrapped: the first message the host sends (its
-`initialized` notification, right after the handshake) attaches the
+`mcp` package only hands to request handlers. So the extension's server
+runs `HostSession.middleware` on every message igni sends: the first one
+(its `initialized` notification, right after the handshake) attaches the
 session here, and anything sent before that is held and flushed then.
 
-This reads one private method of `mcp` 1.x's lowlevel `Server`
-(`_handle_message`), which is why the dependency is pinned below 2.
+`mcp` 2 builds a `ServerSession` per message, but each one sends a
+notification of the process's own on the connection's channel, so the
+latest is as good as the first, and a new connection replaces the old.
 """
 
 from __future__ import annotations
@@ -16,10 +17,9 @@ from __future__ import annotations
 import asyncio
 import logging
 from collections import deque
-from collections.abc import Awaitable, Callable
 from typing import Any
 
-from mcp.server.lowlevel import Server
+from mcp.server.context import CallNext, HandlerResult, ServerRequestContext
 from mcp.server.session import ServerSession
 
 from igni_extension.notifications import ConditionsNotification, NotifyNotification
@@ -29,8 +29,6 @@ HostNotification = NotifyNotification | ConditionsNotification
 
 logger = logging.getLogger(__name__)
 
-Dispatch = Callable[..., Awaitable[None]]
-
 
 class HostSession:
     """The session to the host, once there is one, and what waits for it."""
@@ -38,31 +36,27 @@ class HostSession:
     #: Notifications kept while nobody is connected; the oldest go first.
     MAX_PENDING = 100
 
-    def __init__(self, server: Server[Any, Any]) -> None:
+    def __init__(self) -> None:
         self._session: ServerSession | None = None
         self._pending: deque[HostNotification] = deque()
         self._lock = asyncio.Lock()
-        self._wrap(server)
 
     @property
     def connected(self) -> bool:
         return self._session is not None
 
-    def _wrap(self, server: Server[Any, Any]) -> None:
-        dispatch: Dispatch = server._handle_message
-
-        async def attach_then_dispatch(
-            message: Any, session: ServerSession, *args: Any, **kwargs: Any
-        ) -> None:
-            if session is not self._session:
-                await self.attach(session)
-            await dispatch(message, session, *args, **kwargs)
-
-        server._handle_message = attach_then_dispatch  # type: ignore[method-assign]
+    async def middleware(
+        self, ctx: ServerRequestContext[Any, Any], call_next: CallNext
+    ) -> HandlerResult:
+        """An MCP server middleware: every message igni sends attaches its session."""
+        await self.attach(ctx.session)
+        return await call_next(ctx)
 
     async def attach(self, session: ServerSession) -> None:
+        self._session = session
+        if not self._pending:
+            return
         async with self._lock:
-            self._session = session
             while self._pending:
                 await session.send_notification(self._pending.popleft())  # type: ignore[arg-type]
 

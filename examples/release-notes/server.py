@@ -17,9 +17,10 @@ import json
 import os
 from pathlib import Path
 
-from mcp.server.fastmcp import FastMCP
+from mcp.server.mcpserver import MCPServer
+from mcp.server.mcpserver.exceptions import ToolError
 
-server = FastMCP("acme-notes")
+server = MCPServer("acme-notes")
 
 Path("server.pid").write_text(str(os.getpid()))
 
@@ -73,7 +74,7 @@ def note(version: str) -> str:
     """One release's note."""
     found = NOTES.get(version)
     if found is None:
-        raise ValueError(f"no note for {version}")
+        raise ToolError(f"no note for {version}")
     return json.dumps(found)
 
 
@@ -95,7 +96,7 @@ def save(version: str, body: str, revision: str) -> str:
     global _revision
     found = NOTES.get(version)
     if found is None:
-        raise ValueError(f"no note for {version}")
+        raise ToolError(f"no note for {version}")
     if found["revision"] != revision:
         return json.dumps({"conflict": found["revision"]})
 
@@ -112,7 +113,7 @@ def publish(version: str) -> str:
         if release["version"] == version:
             release["state"] = "published"
             return json.dumps(release)
-    raise ValueError(f"no release {version}")
+    raise ToolError(f"no release {version}")
 
 
 if __name__ == "__main__":

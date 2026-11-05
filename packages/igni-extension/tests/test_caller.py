@@ -71,8 +71,8 @@ class TestATool:
 
         [tool] = await ext.mcp.list_tools()
 
-        assert set(tool.inputSchema["properties"]) == {"prefix"}
-        assert tool.inputSchema.get("required") == ["prefix"]
+        assert set(tool.input_schema["properties"]) == {"prefix"}
+        assert tool.input_schema.get("required") == ["prefix"]
 
     async def test_a_plain_def_in_a_worker_thread_sees_its_caller(self) -> None:
         ext = IgniExtension("acme.example", environ={})
@@ -111,7 +111,7 @@ class TestATool:
         async with HostHarness(ext) as host:
             result = await host.call("whoami")
 
-        assert result.isError
+        assert result.is_error
         assert "no caller" in _text(result)
 
     async def test_an_optional_caller_is_none_without_one(self) -> None:

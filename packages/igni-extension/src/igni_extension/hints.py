@@ -43,11 +43,15 @@ class ToolHints(BaseModel):
     def annotations(self) -> ToolAnnotations:
         """MCP's `ToolAnnotations`, as the tool is listed to igni."""
         return ToolAnnotations(
-            readOnlyHint=self.read_only,
-            destructiveHint=self.destructive,
-            idempotentHint=self.idempotent,
-            openWorldHint=self.open_world,
+            read_only_hint=self.read_only,
+            destructive_hint=self.destructive,
+            idempotent_hint=self.idempotent,
+            open_world_hint=self.open_world,
         )
+
+    def wire(self) -> dict[str, bool]:
+        """The four as MCP spells them on the wire, and a manifest does."""
+        return self.annotations().model_dump(by_alias=True, exclude_none=True)
 
 
 class ToolHintsMissing(Exception):
@@ -75,10 +79,10 @@ class ToolHintsMissing(Exception):
         if annotations is None:
             return False
         return None not in (
-            annotations.readOnlyHint,
-            annotations.destructiveHint,
-            annotations.idempotentHint,
-            annotations.openWorldHint,
+            annotations.read_only_hint,
+            annotations.destructive_hint,
+            annotations.idempotent_hint,
+            annotations.open_world_hint,
         )
 
 

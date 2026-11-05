@@ -46,10 +46,10 @@ async def test_tools_are_registered_with_their_hints() -> None:
     assert shouted.content[0].text == "HI"  # type: ignore[union-attr]
     # What igni compares with the manifest: all four, as MCP spells them.
     assert tools["greet"].annotations is not None
-    assert tools["greet"].annotations.readOnlyHint is True
-    assert tools["greet"].annotations.openWorldHint is False
+    assert tools["greet"].annotations.read_only_hint is True
+    assert tools["greet"].annotations.open_world_hint is False
     assert tools["shout"].annotations is not None
-    assert tools["shout"].annotations.destructiveHint is True
+    assert tools["shout"].annotations.destructive_hint is True
 
 
 async def test_a_tool_that_leaves_a_hint_unstated_stops_the_extension_serving() -> None:

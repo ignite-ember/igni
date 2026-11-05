@@ -486,7 +486,7 @@ The process serves igni on one event loop. A plain `def` you hand the
 SDK — a tool, a hook handler, a reaction (`@ext.on`), a background job
 (`@ext.on_start`) — runs in a worker thread, so a slow one never holds
 the calls that arrive meanwhile; an `async def` is called as it is. A
-tool's schema is FastMCP's, from the function as you wrote it.
+tool's schema is `mcp`'s, from the function as you wrote it.
 
 Two things this does not do: blocking inside an `async def` still holds
 the loop, and threads share the GIL — CPU-heavy work belongs in a
@@ -700,7 +700,7 @@ async with HostHarness(ext) as host:              # igni's side of the MCP sessi
     [notification] = await host.received(1)
 
 assert summary.content[0].text == "/documents/runbook/summary in one line"
-assert not exported.isError
+assert not exported.is_error
 assert notification.title == "runbook.pdf"
 ```
 

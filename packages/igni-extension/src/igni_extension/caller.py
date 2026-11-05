@@ -31,7 +31,7 @@ from enum import StrEnum
 from functools import wraps
 from typing import Any, ClassVar, get_type_hints
 
-from mcp.server.lowlevel.server import request_ctx
+from mcp.server.context import CallNext, HandlerResult, ServerRequestContext
 from pydantic import BaseModel, ConfigDict, ValidationError
 
 
@@ -91,14 +91,8 @@ class Caller(BaseModel):
         scoped = _SCOPE.get()
         if scoped is not None:
             return scoped
-        try:
-            context = request_ctx.get()
-        except LookupError:
-            return None
-        meta = context.meta
-        if meta is None:
-            return None
-        return cls.of(meta.model_dump().get(cls.META_KEY))
+        meta = RequestMeta.current()
+        return cls.of(meta.get(cls.META_KEY)) if meta is not None else None
 
     @classmethod
     def required(cls) -> Caller:
@@ -114,6 +108,33 @@ class Caller(BaseModel):
 
 #: The caller of the call being served, where the SDK set it itself (a hook).
 _SCOPE: ContextVar[Caller | None] = ContextVar("igni_caller", default=None)
+
+#: The `_meta` of the MCP request being served, set by `RequestMeta.middleware`.
+_META: ContextVar[dict[str, Any] | None] = ContextVar("igni_request_meta", default=None)
+
+
+class RequestMeta:
+    """The `_meta` of the MCP request this code is serving, wherever it runs.
+
+    Set for the length of each request by `middleware`, which the
+    extension's server runs on every message igni sends, so a tool — and
+    anything it calls, on the loop or in a worker thread — reads the
+    request it serves: concurrent calls each see their own.
+    """
+
+    @staticmethod
+    def current() -> dict[str, Any] | None:
+        """The current request's `_meta`, or `None` outside a request (or when it had none)."""
+        return _META.get()
+
+    @staticmethod
+    async def middleware(ctx: ServerRequestContext[Any, Any], call_next: CallNext) -> HandlerResult:
+        """An MCP server middleware: the request's `_meta` is current while it is served."""
+        token = _META.set(dict(ctx.meta) if ctx.meta else None)
+        try:
+            return await call_next(ctx)
+        finally:
+            _META.reset(token)
 
 
 class CallerScope:
@@ -202,4 +223,4 @@ class CallerScope:
         return wrapper
 
 
-__all__ = ["Caller", "CallerKind", "CallerScope", "NoCaller"]
+__all__ = ["Caller", "CallerKind", "CallerScope", "NoCaller", "RequestMeta"]

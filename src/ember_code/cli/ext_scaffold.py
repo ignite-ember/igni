@@ -228,9 +228,9 @@ extension's UI asks, and only the ones ``permissions.rpc`` grants.
 
 import json
 
-from mcp.server.fastmcp import FastMCP
+from mcp.server.mcpserver import MCPServer
 
-server = FastMCP("extension")
+server = MCPServer("extension")
 
 
 @server.tool()
