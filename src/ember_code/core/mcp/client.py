@@ -346,18 +346,27 @@ class MCPClientManager:
         """Disconnect a single MCP server by name.
 
         Returns ``True`` if the server was previously connected
-        and its reference has been dropped, ``False`` if the
-        server was never in the connected set. MCP client
-        ``__aexit__`` triggers anyio cancel scope errors when
-        called from a different task than it was created in —
-        we abandon the connection and let the OS reclaim the
-        subprocess / socket on process exit.
+        and its connection closed, ``False`` if the server was
+        never in the connected set. A stdio connection is closed
+        by the task that owns it, so closing it from here is safe;
+        an SSE one is abandoned and the OS reclaims the socket.
         """
         client = self._clients.pop(name, None)
         if client is None:
             return False
         self._tool_filter.forget(name)
-        logger.debug("MCP '%s' — dropping connection reference", name)
+        transport = getattr(self.configs.get(name), "type", "")
+        if transport == "sse":
+            logger.debug("MCP '%s' (SSE) — dropping connection reference", name)
+            return True
+        # A stdio connection is closed, from any task: it lives in a task of
+        # its own (``stdio_binding.OwnedStdioConnection``). Dropped instead,
+        # its server would outlive it, and mcp 2's client would hold the
+        # event loop open on exit.
+        try:
+            await client.__aexit__(None, None, None)
+        except BaseException as exc:  # noqa: BLE001 — a close never fails a disconnect
+            logger.debug("MCP '%s' disconnect error (safe to ignore): %s", name, exc)
         return True
 
     # ── Client lookup ─────────────────────────────────────────────
@@ -473,7 +482,7 @@ class MCPClientManager:
         except Exception as exc:  # noqa: BLE001 — reported as "said nothing", not raised
             logger.info("MCP '%s' did not list its tools' annotations: %s", name, exc)
             return {}
-        return {tool.name: tool.annotations for tool in listed.tools}
+        return {tool.name: tool.annotations for tool in self._listed(listed, "tools")}
 
     # ── Resources / prompts (typed wire shapes) ─────────────────
 
@@ -492,7 +501,7 @@ class MCPClientManager:
         except Exception as exc:
             logger.debug("MCP '%s' list_resources failed: %s", name, exc)
             return []
-        return [MCPResource.from_sdk(r) for r in (result.resources or [])]
+        return [MCPResource.from_sdk(r) for r in self._listed(result, "resources")]
 
     async def get_prompts(self, name: str) -> list[MCPPrompt]:
         """Prompts exposed by a connected MCP server.
@@ -507,7 +516,20 @@ class MCPClientManager:
         except Exception as exc:
             logger.debug("MCP '%s' list_prompts failed: %s", name, exc)
             return []
-        return [MCPPrompt.from_sdk(p) for p in (result.prompts or [])]
+        return [MCPPrompt.from_sdk(p) for p in self._listed(result, "prompts")]
+
+    @staticmethod
+    def _listed(result: Any, field: str) -> list[Any]:
+        """The items of a ``list_*`` answer, from either session Agno may hold.
+
+        A stdio server's session is igni's own ``ClientSession``, which
+        answers with a result object (``result.tools``); Agno 3 connects
+        an SSE server through ``fastmcp.Client``, which answers with the
+        list itself.
+        """
+        if isinstance(result, list):
+            return result
+        return list(getattr(result, field, None) or [])
 
 
 class MCPConnectError(Exception):

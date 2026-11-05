@@ -83,7 +83,10 @@ class ToolHints(BaseModel):
         """
         if annotations is None:
             return None
-        raw = annotations if isinstance(annotations, dict) else annotations.model_dump()
+        # mcp 2 names the fields in snake_case; its wire spelling is the alias.
+        raw = (
+            annotations if isinstance(annotations, dict) else annotations.model_dump(by_alias=True)
+        )
         values = {key: raw.get(key) for key in cls.wire_names()}
         if any(value is None for value in values.values()):
             return None

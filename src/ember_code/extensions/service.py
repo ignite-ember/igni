@@ -104,7 +104,7 @@ class McpExtensionService:
                 f"'{method}' on '{self._server_name}' failed: {exc}", unanswered=True
             ) from exc
 
-        if getattr(result, "isError", False):
+        if getattr(result, "is_error", False):
             raise ExtensionServiceError(f"'{method}' reported: {self.unwrap(result)}")
         return self.unwrap(result)
 
@@ -148,7 +148,7 @@ class McpExtensionService:
             except json.JSONDecodeError:
                 return joined
 
-        structured = getattr(result, "structuredContent", None)
+        structured = getattr(result, "structured_content", None)
         if structured is not None:
             return structured
 

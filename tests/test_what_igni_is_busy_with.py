@@ -152,7 +152,7 @@ async def test_an_extension_call_is_busy_while_its_service_works():
     class Session:
         async def call_tool(self, method: str, args: dict[str, Any]) -> Any:
             during.append([b.holder for b in registry.busy()])
-            return type("Result", (), {"isError": False, "structuredContent": {"ok": 1}})()
+            return type("Result", (), {"is_error": False, "structured_content": {"ok": 1}})()
 
     class Client:
         async def get_session_for_run(self) -> Session:

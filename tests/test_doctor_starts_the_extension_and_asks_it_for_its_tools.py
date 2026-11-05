@@ -26,9 +26,9 @@ HINTS = {
 }
 
 SERVER = """
-from mcp.server.fastmcp import FastMCP
+from mcp.server.mcpserver import MCPServer
 
-server = FastMCP("t")
+server = MCPServer("t")
 
 
 @server.tool()

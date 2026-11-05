@@ -1,6 +1,6 @@
 """An MCP server from ``.mcp.json`` is connected, its tools filtered, and asked for more.
 
-Everything here runs a real stdio MCP server — a FastMCP script in the
+Everything here runs a real stdio MCP server — an MCPServer script in the
 test's own directory, started by :class:`MCPClientManager` through the
 same :class:`StdioMCPBinding` a session uses. What is checked is what a
 person sees through the MCP panel and the agent: which tools arrive,
@@ -26,10 +26,10 @@ from ember_code.core.mcp.config import MCPPolicy, MCPServerConfig, MCPTransport
 from ember_code.core.network_policy import NetworkPolicy
 
 SERVER = r"""
-from mcp.server.fastmcp import FastMCP
+from mcp.server.mcpserver import MCPServer
 from mcp.types import ToolAnnotations
 
-server = FastMCP("notes")
+server = MCPServer("notes")
 
 @server.tool(annotations=ToolAnnotations(readOnlyHint=True))
 def read_note(title: str) -> str:
@@ -58,13 +58,12 @@ TOOLS_ONLY_SERVER = r"""
 import anyio
 from mcp.server.lowlevel import Server
 from mcp.server.stdio import stdio_server
-from mcp.types import Tool
+from mcp.types import ListToolsResult, Tool
 
-server = Server("bare")
+async def list_tools(ctx, params):
+    return ListToolsResult(tools=[Tool(name="ping", description="Answers.", input_schema={"type": "object"})])
 
-@server.list_tools()
-async def list_tools():
-    return [Tool(name="ping", description="Answers.", inputSchema={"type": "object"})]
+server = Server("bare", on_list_tools=list_tools)
 
 async def main():
     async with stdio_server() as (read, write):
@@ -74,8 +73,8 @@ anyio.run(main)
 """
 
 EMPTY_SERVER = r"""
-from mcp.server.fastmcp import FastMCP
-FastMCP("empty").run()
+from mcp.server.mcpserver import MCPServer
+MCPServer("empty").run()
 """
 
 READ = "mcp_notes_read_note"
@@ -179,7 +178,7 @@ async def test_the_server_is_asked_for_its_resources_prompts_and_annotations(man
     assert (resource.uri, resource.mime_type) == ("notes://index", "text/plain")
     assert resource.description == "Every note's title."
     assert (prompt.name, prompt.arguments) == ("summarise", ["title"])
-    assert annotations["read_note"].readOnlyHint is True
+    assert annotations["read_note"].read_only_hint is True
     assert annotations["delete_note"] is None
 
 

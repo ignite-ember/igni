@@ -7,7 +7,7 @@ nothing (the transcript's ``is_error``, Anthropic's ``is_error`` on the
 tool result) said it had failed. Agno marks a call failed only when its
 entrypoint raises; the MCP result's text parts now become that error.
 
-A real stdio FastMCP server, called the way the agent calls it: through
+A real stdio MCP server, called the way the agent calls it: through
 Agno's ``FunctionCall``.
 """
 
@@ -28,14 +28,15 @@ from ember_code.core.mcp.config import MCPPolicy
 pytestmark = pytest.mark.asyncio
 
 SERVER = r"""
-from mcp.server.fastmcp import FastMCP
+from mcp.server.mcpserver import MCPServer
+from mcp.server.mcpserver.exceptions import ToolError
 
-server = FastMCP("tickets")
+server = MCPServer("tickets")
 
 @server.tool()
 def boom(x: str) -> str:
-    "Always fails."
-    raise RuntimeError("database connection lost (simulated)")
+    "Always fails, in its own words (mcp 2 sends any other exception without its message)."
+    raise ToolError("database connection lost (simulated)")
 
 @server.tool()
 def fine(x: str) -> str:
