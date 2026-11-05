@@ -203,8 +203,8 @@ class TestTheRuleIsReadable:
         that was survivable is that the check never ran."""
         accepted = _accepted_trailers()
 
-        assert len(accepted) == 4, accepted
-        assert len({_address(t) for t in accepted}) == 4, accepted
+        assert len(accepted) == 5, accepted
+        assert len({_address(t) for t in accepted}) == 5, accepted
 
     def test_it_names_the_bot_form_and_dependabot_is_an_instance(self):
         """Every Dependabot squash merge carries GitHub's trailer for the bot.
@@ -292,8 +292,9 @@ class TestTheBotFormIsNarrow:
     @pytest.mark.parametrize(
         "trailer",
         [
-            # A person's GitHub noreply address: same shape, no ``[bot]``.
-            "dmytro_zezyk <143008456+ignite-ember@users.noreply.github.com>",
+            # Another person's GitHub noreply address: same shape, no ``[bot]``.
+            # (The founder's own, 143008456+ignite-ember, is named in Rule 5.)
+            "someone_else <98765432+someone-else@users.noreply.github.com>",
             "someone <someone@users.noreply.github.com>",
             # ``[bot]`` without GitHub's id+ prefix or domain is not the forge's.
             "dependabot[bot] <dependabot[bot]@users.noreply.github.com>",
