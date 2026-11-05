@@ -43,7 +43,7 @@ classifiers = [
 # ``textual~=8.1`` quietly let 8.2.7 install and the renamed theme
 # ``textual-ansi`` → ``ansi-dark`` silently bricked the TUI.
 dependencies = [
-    "agno[openai,ddg,sqlite,sql,mcp]~=2.6.12",
+    "agno[openai,ddg,sqlite,sql,mcp]~=3.1.12",
     "aiosqlite~=0.22.1",
     "sqlalchemy[asyncio]~=2.1.6",
     "alembic~=1.20.1",
@@ -120,11 +120,8 @@ dev = [
 mcp = [
     # ``~=1.28.1`` capped CVE-2026-59951, whose fix is 1.30.0. This pin
     # has now blocked a fix once; widened to the minor.
-    # Held below 2: igni's MCP client is Agno 2.6's ``MCPTools``, which
-    # imports 1.x's ``streamablehttp_client`` (gone in 2.x; Agno needs
-    # ``mcp>=2.1`` only from its 3.0), and igni-extension's session hook
-    # reads 1.x's lowlevel server. mcp 2 moves with Agno 3.
-    "mcp~=1.30",
+    # mcp 2 came with Agno 3, whose ``mcp`` extra needs ``mcp>=2.1,<3``.
+    "mcp~=2.3",
 ]
 gemini = [
     "google-genai~=2.34.0",
@@ -147,7 +144,7 @@ otel = [
     "opentelemetry-exporter-otlp-proto-http~=1.45.2",
     "opentelemetry-exporter-otlp-proto-grpc~=1.45.2",
     "opentelemetry-instrumentation-httpx~=0.66b2",
-    "openinference-instrumentation-agno~=1.1.0",
+    "openinference-instrumentation-agno~=1.1.2",
 ]
 
 [project.scripts]
