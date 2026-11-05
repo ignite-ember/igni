@@ -115,6 +115,8 @@ class Rig:
                 created_at=int(time.time()),
             )
         )
+        # Agno 3 stores a session's runs in a table of their own.
+        await self.db.upsert_run(run, session_id=SESSION_ID, run_index=0)
 
     async def stored_name(self) -> str:
         row = await self.db.get_session(session_id=SESSION_ID, session_type=SessionType.AGENT)

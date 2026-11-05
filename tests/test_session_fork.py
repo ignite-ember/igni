@@ -10,6 +10,7 @@ contract that surfaced during the row 41 audit.
 
 from __future__ import annotations
 
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -17,6 +18,20 @@ import pytest
 from ember_code.backend.command_handler import CommandHandler
 from ember_code.core.session.persistence import SessionPersistence
 from ember_code.protocol.messages import CommandAction
+
+
+def _run(run_id: str) -> SimpleNamespace:
+    return SimpleNamespace(run_id=run_id, parent_run_id=None, session_id="source01", content=run_id)
+
+
+def _db() -> MagicMock:
+    """A session database as a fork writes to it: the row, then each run (Agno 3)."""
+    db = MagicMock()
+    db.upsert_session = AsyncMock()
+    db.get_runs = AsyncMock(return_value=[])
+    db.delete_runs = AsyncMock()
+    db.upsert_run = AsyncMock()
+    return db
 
 
 def _make_source_session(
@@ -32,7 +47,7 @@ def _make_source_session(
     source.session_data = session_data or {"session_name": "Original"}
     source.team_data = team_data or {"team_key": "team_val"}
     source.metadata = {"meta_key": "meta_val"}
-    source.runs = runs if runs is not None else ["run1", "run2"]
+    source.runs = [_run(r) for r in (runs if runs is not None else ["run1", "run2"])]
     source.summary = MagicMock(summary="A summary")
     source.created_at = 100
     source.updated_at = 200
@@ -64,9 +79,8 @@ class TestPersistenceFork:
         the 8-char prefix scheme so a future refactor can't drift
         back."""
         source = _make_source_session()
-        db = MagicMock()
+        db = _db()
         db.get_session = AsyncMock(return_value=source)
-        db.upsert_session = AsyncMock()
         p = SessionPersistence(db=db, session_id="source01")
         new_id = await p.fork()
         assert isinstance(new_id, str)
@@ -78,9 +92,8 @@ class TestPersistenceFork:
         the fresh id — confirmed by checking ``upsert_session``
         was called with ``session_id`` set to the returned id."""
         source = _make_source_session()
-        db = MagicMock()
+        db = _db()
         db.get_session = AsyncMock(return_value=source)
-        db.upsert_session = AsyncMock()
         p = SessionPersistence(db=db, session_id="source01")
         new_id = await p.fork()
 
@@ -98,9 +111,8 @@ class TestPersistenceFork:
         # Source was created in the past.
         source.created_at = 100
         source.updated_at = 200
-        db = MagicMock()
+        db = _db()
         db.get_session = AsyncMock(return_value=source)
-        db.upsert_session = AsyncMock()
         p = SessionPersistence(db=db, session_id="source01")
         await p.fork()
         # The fork should have updated both timestamps to "now"
@@ -119,14 +131,16 @@ class TestPersistenceFork:
             runs=["r1", "r2", "r3"],
             team_data={"team_state": {"key": "val"}},
         )
-        db = MagicMock()
+        db = _db()
         db.get_session = AsyncMock(return_value=source)
-        db.upsert_session = AsyncMock()
         p = SessionPersistence(db=db, session_id="source01")
         await p.fork()
 
         upserted = db.upsert_session.call_args[0][0]
-        assert upserted.runs == ["r1", "r2", "r3"]
+        assert [run.content for run in upserted.runs] == ["r1", "r2", "r3"]
+        # Under ids of their own, each stored in its own row.
+        assert {run.run_id for run in upserted.runs}.isdisjoint({"r1", "r2", "r3"})
+        assert db.upsert_run.await_count == 3
         assert upserted.team_data == {"team_state": {"key": "val"}}
         # ``extra`` field in session_data is preserved through fork.
         assert upserted.session_data["extra"] == "kept"
@@ -136,9 +150,8 @@ class TestPersistenceFork:
         source = _make_source_session(
             session_data={"session_name": "Original", "extra": "kept"},
         )
-        db = MagicMock()
+        db = _db()
         db.get_session = AsyncMock(return_value=source)
-        db.upsert_session = AsyncMock()
         p = SessionPersistence(db=db, session_id="source01")
         await p.fork(name="My Fork")
 
@@ -154,9 +167,8 @@ class TestPersistenceFork:
         source = _make_source_session(
             session_data={"session_name": "Original"},
         )
-        db = MagicMock()
+        db = _db()
         db.get_session = AsyncMock(return_value=source)
-        db.upsert_session = AsyncMock()
         p = SessionPersistence(db=db, session_id="source01")
         await p.fork()
 

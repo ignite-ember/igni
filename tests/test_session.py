@@ -10,6 +10,15 @@ from ember_code.core.session.core import Session
 from ember_code.core.utils import context as ctx_mod
 
 
+def _runs_db() -> MagicMock:
+    """A session database as compaction's run rewrite sees it (``run_history``)."""
+    db = MagicMock()
+    db.get_runs = AsyncMock(return_value=[])
+    db.delete_runs = AsyncMock()
+    db.upsert_run = AsyncMock()
+    return db
+
+
 def _boot_disabled() -> LearnBootResult:
     """Default ``create_learning_machine`` patch return: learning off."""
     return LearnBootResult(ok=False, machine=None, reason="disabled in test")
@@ -244,6 +253,7 @@ class TestSessionCompaction:
         mock_agno_session.summary = None
         session.main_team.aget_session = AsyncMock(return_value=mock_agno_session)
         session.main_team.asave_session = AsyncMock()
+        session.main_team.db = _runs_db()
         # PreCompact/PostCompact hooks added — stub the executor so the
         # await in compact_if_needed resolves with should_continue=True.
         mock_hook_result = MagicMock()
@@ -272,6 +282,7 @@ class TestSessionCompaction:
         mock_agno_session.runs = []
         session.main_team.aget_session = AsyncMock(return_value=mock_agno_session)
         session.main_team.asave_session = AsyncMock()
+        session.main_team.db = _runs_db()
         veto = MagicMock()
         veto.should_continue = False
         veto.message = "blocked"

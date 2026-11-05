@@ -48,7 +48,7 @@ class TestReadTool:
         (sub / "c.js").write_text("//")
 
         tools = FileTools(base_dir=tmp_path, enable_list_files=True)
-        result = tools.list_files(dir_path=str(tmp_path))
+        result = tools.list_files(directory=str(tmp_path))
         assert "a.py" in result
         assert "b.txt" in result
 
