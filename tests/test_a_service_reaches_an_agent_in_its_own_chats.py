@@ -229,6 +229,32 @@ async def test_files_arriving_during_a_run_are_held_until_it_ends(database_url: 
     assert rig.held.waiting() == []
 
 
+async def test_with_nothing_held_the_flusher_does_not_ask_the_database(
+    database_url: DatabaseUrl, monkeypatch: Any
+):
+    """It looks every couple of seconds; a VM just unpaused must not open a connection for it."""
+    rig = Inbox(database_url, files=Files(**{"a-photo": PNG, "a-form": PDF}))
+    flusher = HeldPostFlusher(held=rig.held, desk=rig.desk)  # type: ignore[arg-type]
+    assert await flusher.flush() == 0, "the first look, after a start"
+    asked: list[int] = []
+    session = rig.db.sync_session
+
+    def counted() -> Any:
+        asked.append(1)
+        return session()
+
+    monkeypatch.setattr(rig.db, "sync_session", counted)
+    assert await flusher.flush() == 0 and await flusher.flush() == 0
+    assert asked == [], "found none once: not asked again"
+
+    await rig.deliver(message("m0", text="open the chat", thread=CLAIM))
+    chat = rig.desk.posts[0].session_id
+    rig.desk.running.add(chat)
+    await rig.deliver(message("m1", text="photos", thread=CLAIM, **_files()))
+    rig.desk.running.clear()
+    assert await flusher.flush() == 1, "one held since: looked at again"
+
+
 async def test_an_approval_is_never_answered_and_its_run_never_cancelled(
     database_url: DatabaseUrl,
 ):
