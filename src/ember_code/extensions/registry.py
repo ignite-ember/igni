@@ -27,7 +27,7 @@ support ticket.
 from __future__ import annotations
 
 import logging
-from collections.abc import Callable
+from collections.abc import Callable, Collection
 from dataclasses import dataclass, field
 from enum import StrEnum
 
@@ -226,6 +226,44 @@ class ExtensionRegistry:
             return
         entry.faulty = reason
         self._announce(extension_id)
+
+    def authorise_caller(
+        self,
+        *,
+        caller: str,
+        method: str,
+        page_methods: Collection[str],
+        pool_methods: Collection[str],
+    ) -> None:
+        """Decide whether a message speaking for ``caller`` may call ``method`` at all.
+
+        Raises :class:`ExtensionRefused` with a sentence naming the fix.
+        ``caller`` is set by igni's window for the page it hosts, so this is
+        the server's own check of what that page may reach, in place of the
+        window's courtesy one:
+
+        * the extension must be installed;
+        * its own namespace, ``ext.<caller>.*``, goes on to :meth:`authorise`;
+        * the host model and its service token (``page_methods``) are a page's;
+        * igni's pool-level calls (``pool_methods`` — sessions, windows, the
+          platform's) are never a page's;
+        * any other base method only if the manifest's ``permissions.rpc``
+          grants it.
+        """
+        entry = self._installed.get(caller)
+        if entry is None:
+            raise ExtensionRefused(
+                f"no extension '{caller}' is installed, so nothing speaks for it."
+            )
+        if method.startswith(NAMESPACE) or method in page_methods:
+            return
+        if method in pool_methods:
+            raise ExtensionRefused(f"an extension's page does not reach '{method}'.")
+        if not entry.manifest.grants_rpc(method):
+            raise ExtensionRefused(
+                f"'{caller}' is not permitted to call '{method}'. "
+                "Add it to permissions.rpc in the manifest and reinstall."
+            )
 
     def authorise(self, *, caller: str | None, method: str) -> ExtensionMethod:
         """Decide whether ``caller`` may call ``method``.

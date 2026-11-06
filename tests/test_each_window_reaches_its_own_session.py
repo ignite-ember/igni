@@ -54,6 +54,7 @@ from ember_code.extensions.host.windows import WindowModelError
 from ember_code.extensions.service_events import DeliveryReceipt
 from ember_code.protocol import messages as msg
 from ember_code.protocol.rpc import RpcMethod
+from tests.host_model_helpers import manifest
 
 
 class _Hitl:
@@ -433,19 +434,35 @@ async def test_the_window_model_answers_and_refuses_with_the_reason(tmp_path):
 async def test_the_host_model_answers_only_an_extension_s_page(tmp_path):
     orchestrator, _, transport = _orchestrator(tmp_path)
     orchestrator.attach_host_model(_HostModel())
+    orchestrator.extensions.registry.install(manifest("acme.reviewer"))
 
     await orchestrator.dispatch(_rpc(RpcMethod.HOST_MODEL, "1", path="host.sessions"))
-    await orchestrator.dispatch(_rpc(RpcMethod.HOST_MODEL, "2", caller="acme", path="x"))
+    await orchestrator.dispatch(_rpc(RpcMethod.HOST_MODEL, "2", caller="acme.reviewer", path="x"))
 
     refused, answered = transport.sent
     assert refused.error == "host_model: only an extension's page reaches the host model"
-    assert answered.result == {"caller": "acme", "args": {"path": "x"}}
+    assert answered.result == {"caller": "acme.reviewer", "args": {"path": "x"}}
+
+
+async def test_nothing_speaks_for_an_extension_that_is_not_installed(tmp_path):
+    # `caller` is a field of the message; an id nothing installed answers to
+    # is refused before any handler hears it.
+    orchestrator, _, transport = _orchestrator(tmp_path)
+    host_model = _HostModel()
+    orchestrator.attach_host_model(host_model)
+
+    await orchestrator.dispatch(_rpc(RpcMethod.HOST_MODEL, "2", caller="nobody", path="x"))
+
+    assert "no extension 'nobody' is installed" in transport.sent[0].error
 
 
 async def test_a_page_s_token_needs_a_token_source(tmp_path):
     orchestrator, _, transport = _orchestrator(tmp_path)
+    orchestrator.extensions.registry.install(manifest("acme.reviewer"))
 
-    await orchestrator.dispatch(_rpc(RpcMethod.EXTENSION_SERVICE_TOKEN, "t", caller="acme"))
+    await orchestrator.dispatch(
+        _rpc(RpcMethod.EXTENSION_SERVICE_TOKEN, "t", caller="acme.reviewer")
+    )
 
     assert "only an extension's page asks for one" in transport.sent[0].error
 

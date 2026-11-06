@@ -22,7 +22,7 @@ callers that want the value object.
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Self
 
 from pydantic import BaseModel, PrivateAttr
 
@@ -51,6 +51,15 @@ class Message(BaseModel):
     #: by the transport from the connection, never read from the message,
     #: so a client cannot claim it. See :meth:`via_control`.
     _via_control: bool = PrivateAttr(default=False)
+    #: The connection this arrived on — set by the transport, never read
+    #: from the message, so a client cannot speak as another connection.
+    #: Empty for a message from a transport without connections (the
+    #: terminal's socket, an in-process client).
+    _from_client: str = PrivateAttr(default="")
+    #: The one connection this is for — set by whoever replies. Empty
+    #: broadcasts, as every message did before; a reply that carries a
+    #: secret or one extension's data is addressed instead.
+    _to_client: str = PrivateAttr(default="")
 
     @property
     def via_control(self) -> bool:
@@ -58,6 +67,22 @@ class Message(BaseModel):
 
     def mark_control(self) -> None:
         self._via_control = True
+
+    @property
+    def from_client(self) -> str:
+        return self._from_client
+
+    def mark_from(self, client_id: str) -> None:
+        self._from_client = client_id
+
+    @property
+    def to_client(self) -> str:
+        return self._to_client
+
+    def address_to(self, client_id: str) -> Self:
+        """Send this only to ``client_id``; an empty id leaves it a broadcast."""
+        self._to_client = client_id or ""
+        return self
 
 
 class RunHeader(BaseModel):

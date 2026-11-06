@@ -136,6 +136,17 @@ class Layer:
         only from a control connection (``X-Igni-Gateway: control``)."""
         return False
 
+    def connections_speak_for_extensions(self) -> bool:
+        """A connection may say it speaks for an extension (``RPCRequest.caller``).
+
+        On the desktop, yes: every connection the handshake admitted holds
+        the per-launch token, and igni's own window is the one that hosts
+        extension pages and forwards their calls. The boundary is the OS
+        user — the token is in an owner-only lockfile, and a process that
+        can read it can read the person's credentials too (SECURITY.md §10).
+        """
+        return True
+
     def fetches_own_events(self) -> bool:
         """igni pulls the person's service events itself, with their session, while online."""
         return True

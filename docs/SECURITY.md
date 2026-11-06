@@ -422,6 +422,44 @@ desktop app honours it only in a debug build (`cargo tauri dev`) and strips
 it from the backend's environment in a release build; the backend honours it
 with a warning in its log. Never set it on a machine you use for real work.
 
+**Speaking for an extension.** An extension's page reaches igni through the
+window that hosts it: the window forwards the page's calls with the
+extension's id as `RPCRequest.caller` (`IgniClient.asExtension`), and the
+page cannot choose it. But `caller` is a field of the message, so the backend
+does not take it on trust (`SessionOrchestrator._refuse_caller`,
+`ExtensionRegistry.authorise_caller`):
+
+| Rule | Where |
+|---|---|
+| Every message carries the connection it arrived on, stamped by the transport and never read from the message (`Message.from_client`) | `transport/websocket.py` |
+| A `caller` is honoured only where the layer lets a connection speak for an extension: on the desktop, any connection the handshake admitted; **in the cloud, none** — no Fleet client hosts a page, so `host_model`, `extension_service_token` and `ext.*` with a caller are refused before any handler runs | `Layer.connections_speak_for_extensions` |
+| The extension must be installed, and its page may call only its own `ext.<id>.*`, the host model, its service token, and base methods its manifest grants — never igni's pool-level calls (`attach_session`, `window_model`, the platform's) | `ExtensionRegistry.authorise_caller` |
+| An answer that carries a secret or one extension's data — a page's service token, a host-model reply, an extension call's result — goes to the connection that asked, not to every client attached (`Message.to_client`) | `SessionOrchestrator._reply`, `MessageDispatcher._reply` |
+| A window's connection, and the window framing a page (`home_window`), are the server's to know | `window_model`, `host_model` handlers |
+
+On the desktop the boundary is the OS user. The per-launch token is in an
+owner-only lockfile, and a separate secret for igni's own window would add
+nothing: a process that can read the lockfile can read
+`~/.igni/credentials.json` too, sandboxed extension processes are denied
+igni's ports (Seatbelt, bubblewrap) whatever they can read, and a second
+window must still be able to attach through the lockfile. A Fleet UI that
+hosts extension pages will need a mark the node agent attests, as it attests
+the control stream.
+
+Host signals for a page's subscriptions (`host_signal`) are still broadcast
+to every window: there is one subscriber per extension, shared by its pages
+in every window, its values are filtered by that extension's grants, and in
+the cloud nothing can subscribe.
+
+**Known, not yet closed.** The agent's own shell runs as the person, in the
+project, so it can read `.igni/backend.lock`, connect, and answer its own
+approvals. In the default permission mode the shell call that would do that
+needs an approval itself; in the modes that skip asking it does not. Keeping
+the agent's tools away from `.igni/backend.lock` is the planned fix. A
+window's self-declared `client_id` on `typing` and its `window` on
+`window_model` are still taken from the message — within one person, a
+nuisance rather than a hole.
+
 ---
 
 ## Enterprise Hardening
