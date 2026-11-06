@@ -23,7 +23,10 @@ igni needs is an exchange of it, and every exchange rotates it:
   presenting it again is reuse, which revokes the whole family on igni
   server; a person then signs in again, an app is re-issued. The window
   is one round trip and an fsync; the write is the first thing done
-  with the answer.
+  with the answer. The writes run off the event loop: a renewal comes
+  due while the VM is paused and runs the moment it is unpaused, so an
+  fsync on the event loop (the volume is network storage) held the
+  request that woke the VM — its WebSocket handshake — behind it.
 * ``invalid_grant`` — revoked, reused, expired after 90 idle days, the
   person signed out or was removed, the app deleted: a person's VM
   **needs sign-in**, an app's **needs re-issue**. Said to the windows
@@ -52,7 +55,7 @@ import httpx
 from pydantic import BaseModel, ValidationError
 
 from ember_code.core.activity import ActivityRegistry, background
-from ember_code.core.activity.http import busy_call
+from ember_code.core.activity.http import BusyAsyncClient
 from igni_cloud.guest.files import AtomicFile
 from igni_cloud.guest.watch import DirectoryWatch
 from igni_cloud.producer import ProducerRef, UnknownProducer
@@ -105,6 +108,30 @@ class VmCredentialExchange:
     ) -> None:
         self._api_url = api_url
         self._transport = transport
+        self._client: httpx.AsyncClient | None = None
+
+    def client(self) -> httpx.AsyncClient:
+        """One client for the VM's life, made at its first exchange.
+
+        Making one builds a TLS context (the CA bundle read and parsed) on
+        the event loop; a renewal that comes due while the VM is paused
+        runs right after the unpause, beside the request that woke it.
+        No connection is kept between exchanges (minutes apart, across
+        pauses and restores): each opens its own, as before.
+        """
+        if self._client is None:
+            self._client = BusyAsyncClient(
+                timeout=self.TIMEOUT_SECONDS,
+                transport=self._transport,
+                limits=httpx.Limits(max_keepalive_connections=0),
+                busy_holder="igni-server",
+            )
+        return self._client
+
+    async def aclose(self) -> None:
+        client, self._client = self._client, None
+        if client is not None:
+            await client.aclose()
 
     async def sign_in(self, session_token: str, organisation: str | None = None) -> TokenGrant:
         form = {"grant_type": self.SIGN_IN_GRANT, "subject_token": session_token}
@@ -122,13 +149,7 @@ class VmCredentialExchange:
         if not api_url:
             raise ExchangeFailed("no igni server is configured")
         try:
-            async with (
-                busy_call("igni-server", "VM credential"),
-                httpx.AsyncClient(
-                    timeout=self.TIMEOUT_SECONDS, transport=self._transport
-                ) as client,
-            ):
-                response = await client.post(f"{api_url.rstrip('/')}{self.PATH}", data=form)
+            response = await self.client().post(f"{api_url.rstrip('/')}{self.PATH}", data=form)
         except httpx.HTTPError as exc:
             raise ExchangeFailed(f"igni server could not be reached: {exc}") from exc
         if response.status_code == 400 and self._error_of(response) == "invalid_grant":
@@ -269,6 +290,7 @@ class VmCredentials:
                 with contextlib.suppress(asyncio.CancelledError):
                     await task
         self._timer = self._watcher = None
+        await self._exchange.aclose()
 
     async def sign_in(self, session_token: str, organisation: str | None = None) -> StateChange:
         """The gateway handed the person's session: exchange it for the VM's own credential."""
@@ -281,7 +303,7 @@ class VmCredentials:
             except ExchangeFailed as exc:
                 self._set(CredentialState.UNREACHABLE, str(exc))
                 return self._change()
-            self._take(grant)
+            await self._take(grant)
         return self._change()
 
     async def refresh(self, *, force: bool = True) -> StateChange:
@@ -302,16 +324,20 @@ class VmCredentials:
                 self._set(CredentialState.UNREACHABLE, str(exc))
                 self._arm(self.RETRY_SECONDS)
                 return self._change()
-            self._take(grant)
+            await self._take(grant)
         return self._change()
 
-    def _take(self, grant: TokenGrant) -> None:
-        # The new credential first: the one presented no longer works.
-        self._credential.write(grant.vm_credential)
-        self._token.write(grant.access_token.encode())
+    async def _take(self, grant: TokenGrant) -> None:
+        # Off the event loop: the credential's fsyncs reach the volume.
+        await asyncio.to_thread(self._write, grant)
         self._expires_at = self._clock() + grant.expires_in
         self._set(CredentialState.READY, "")
         self._arm(max(1.0, grant.expires_in - self.RENEW_BEFORE_SECONDS))
+
+    def _write(self, grant: TokenGrant) -> None:
+        # The new credential first: the one presented no longer works.
+        self._credential.write(grant.vm_credential)
+        self._token.write(grant.access_token.encode())
 
     def _revoked(self, reason: str) -> None:
         with contextlib.suppress(OSError):

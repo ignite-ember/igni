@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import stat
+import time
 from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qs
@@ -245,6 +246,44 @@ async def test_an_unreachable_server_keeps_the_last_token_and_tries_again(tmp_pa
     assert vm.token.read_text() == "token-1", "kept until it expires"
     vm.igni.down = False
     assert (await vm.keeper.refresh()).state is CredentialState.READY
+    await vm.keeper.stop()
+
+
+async def test_a_renewal_keeps_the_event_loop_free(tmp_path: Path, monkeypatch):
+    """A renewal due while the VM was paused runs as it is unpaused, beside
+    the request that woke it: the credential's fsyncs (network storage)
+    must not hold that request's handshake."""
+    vm = Vm(tmp_path)
+    await vm.keeper.sign_in(SESSION)
+    write_credential = CredentialFile.write
+
+    def slow_volume(self: CredentialFile, credential: str) -> None:
+        time.sleep(0.3)
+        write_credential(self, credential)
+
+    monkeypatch.setattr(CredentialFile, "write", slow_volume)
+    ticks: list[float] = []
+
+    async def the_handshake() -> None:
+        for _ in range(20):
+            ticks.append(time.monotonic())
+            await asyncio.sleep(0.01)
+
+    renewal = asyncio.ensure_future(vm.keeper.refresh())
+    await the_handshake()
+    assert (await renewal).state is CredentialState.READY
+    assert vm.token.read_text() == "token-2"
+    assert max(b - a for a, b in zip(ticks, ticks[1:], strict=False)) < 0.2, "the loop ran"
+    await vm.keeper.stop()
+
+
+async def test_one_client_for_every_exchange(tmp_path: Path):
+    """Not a client (and its TLS context) made on the event loop per renewal."""
+    vm = Vm(tmp_path)
+    await vm.keeper.sign_in(SESSION)
+    client = vm.keeper._exchange.client()
+    await vm.keeper.refresh()
+    assert vm.keeper._exchange.client() is client
     await vm.keeper.stop()
 
 
