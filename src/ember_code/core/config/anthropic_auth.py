@@ -19,7 +19,7 @@ the SDK.
 
 from __future__ import annotations
 
-from collections.abc import Generator
+from collections.abc import AsyncGenerator, Generator
 
 import httpx2
 
@@ -32,6 +32,21 @@ class AnthropicKeyAuth(httpx2.Auth):
     def __init__(self, key: str, cloud: CloudTokenAuth | None = None) -> None:
         self._key = key
         self._cloud = cloud
+
+    async def async_auth_flow(
+        self, request: httpx2.Request
+    ) -> AsyncGenerator[httpx2.Request, httpx2.Response]:
+        # Until igni server's token may be sent (CloudTokenAuth.ready).
+        if self._cloud is not None:
+            await self._cloud.ready()
+        flow = self.auth_flow(request)
+        request = next(flow)
+        while True:
+            response = yield request
+            try:
+                request = flow.send(response)
+            except StopIteration:
+                return
 
     def auth_flow(
         self, request: httpx2.Request

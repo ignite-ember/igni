@@ -48,6 +48,7 @@ from ember_code.core.db.engine import cache
 from ember_code.core.db.scope import Tenant
 from ember_code.core.layer import BackendHooks
 from ember_code.protocol import messages as msg
+from igni_cloud.credentials import EnvironmentCredentials
 from igni_cloud.guest.activity_file import ActivityFile
 from igni_cloud.guest.binding import ProducerBinding
 from igni_cloud.guest.credential import (
@@ -62,7 +63,7 @@ from igni_cloud.guest.files import ReadyFile
 from igni_cloud.guest.immortal import BaseObjects
 from igni_cloud.guest.paths import GuestPaths
 from igni_cloud.guest.practice import FirstAnswerPractice
-from igni_cloud.guest.resume import Restored, RestoreStep, RestoreWatch
+from igni_cloud.guest.resume import NextAnswer, Restored, RestoreStep, RestoreWatch
 from igni_cloud.guest.suspend import SuspendWatch
 from igni_cloud.guest.warm import WarmImports
 from igni_cloud.guest.watch import DirectoryWatch
@@ -111,6 +112,8 @@ class CloudGuest(BackendHooks):
         )
         self.warm = warm if warm is not None else WarmImports()
         self.entropy = ProcessEntropy()
+        #: igni's next answer after a wake (a pause tells igni nothing).
+        self.answers = NextAnswer()
         self._gc_freeze = gc_freeze
         self._practise = practise
         self.activity: ActivityFile | None = None
@@ -225,6 +228,8 @@ class CloudGuest(BackendHooks):
         if self.binding.bound is not None and on_rebind is not None:
             self.binding.watch(lambda _env: on_rebind())
         if self.credentials is not None:
+            # Its token is the one igni server's clients read: never handed out expired.
+            EnvironmentCredentials.kept_by(self.credentials)
             self.restores.on_restore(self._renew_credential, when=RestoreStep.LATER)
             background.start(
                 self.credentials.start(), holder="vm-credential", reason="a token from it"
@@ -248,6 +253,7 @@ class CloudGuest(BackendHooks):
 
     async def stop(self) -> None:
         if self.credentials is not None:
+            EnvironmentCredentials.kept_by(None)
             await self.credentials.stop()
         await self.restores.stop()
         StdoutLog.release()
@@ -280,6 +286,7 @@ class CloudGuest(BackendHooks):
             exchange=VmCredentialExchange(api_url),
             producer=bound.producer,
             on_state=self._credential_moved,
+            after_wake=self.answers.after,
         )
 
     def _credential_state(self) -> str | None:
@@ -313,9 +320,10 @@ class CloudGuest(BackendHooks):
         self._rewrite_now()
 
     def _sent(self, message: msg.Message) -> None:
-        """An answer: the first after a restore lets the waiting steps run."""
+        """An answer: the first after a restore or a wake lets the waiting steps run."""
         if message.type == "rpc_response":
             self.restores.answered()
+            self.answers.answered()
 
     def _rewrite_now(self) -> None:
         if self.activity is not None:

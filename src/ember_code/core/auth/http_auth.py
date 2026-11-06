@@ -11,11 +11,11 @@ in the cloud, ``credentials.json`` on the desktop).
 
 from __future__ import annotations
 
-from collections.abc import Generator
+from collections.abc import AsyncGenerator, Generator
 
 import httpx
 
-from ember_code.core.auth.credentials import CloudCredentials
+from ember_code.core.auth.credentials import CloudCredentials, CredentialsStore
 
 
 class CloudTokenAuth(httpx.Auth):
@@ -23,6 +23,9 @@ class CloudTokenAuth(httpx.Auth):
 
     Refused with a 401, the request goes again once if the token has
     changed meanwhile — it was rotated between the read and the answer.
+    An async client's request first waits until the token may be sent
+    (:meth:`CredentialsStore.ready`): in a VM just woken, a renewal that
+    came due while it was paused may still be under way.
     """
 
     def __init__(self, credentials_file: str | None = None) -> None:
@@ -30,6 +33,22 @@ class CloudTokenAuth(httpx.Auth):
 
     def token(self) -> str | None:
         return CloudCredentials(self._credentials_file).access_token
+
+    async def ready(self) -> None:
+        await CredentialsStore(self._credentials_file).ready()
+
+    async def async_auth_flow(
+        self, request: httpx.Request
+    ) -> AsyncGenerator[httpx.Request, httpx.Response]:
+        await self.ready()
+        flow = self.auth_flow(request)
+        request = next(flow)
+        while True:
+            response = yield request
+            try:
+                request = flow.send(response)
+            except StopIteration:
+                return
 
     def auth_flow(self, request: httpx.Request) -> Generator[httpx.Request, httpx.Response, None]:
         sent = self._apply(request)

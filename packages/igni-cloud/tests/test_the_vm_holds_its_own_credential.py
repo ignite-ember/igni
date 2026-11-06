@@ -9,12 +9,14 @@ from __future__ import annotations
 
 import asyncio
 import stat
+import time
 from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qs
 
 import httpx
 import pytest
+from igni_cloud.credentials import EnvironmentCredentials
 from igni_cloud.guest.credential import (
     CredentialFile,
     CredentialState,
@@ -23,7 +25,9 @@ from igni_cloud.guest.credential import (
     VmCredentials,
 )
 from igni_cloud.guest.files import AtomicFile
+from igni_cloud.guest.resume import NextAnswer, RestoreWatch
 
+from ember_code.core.auth.http_auth import CloudTokenAuth
 from ember_code.protocol import messages as msg
 from tests.host_model_helpers import HostRig
 
@@ -88,9 +92,39 @@ class FakeIgni:
             self.in_flight -= 1
 
 
+class WallClock:
+    """The guest's wall clock, moved by the test (a pause is a jump)."""
+
+    def __init__(self) -> None:
+        self.now = 1_800_000_000.0
+
+    def __call__(self) -> float:
+        return self.now
+
+
+class Wake:
+    """``after_wake``: held until the test says the first answer and its burst are through."""
+
+    def __init__(self) -> None:
+        self.waiting = asyncio.Event()
+        self.through = asyncio.Event()
+        self.burst: bool | None = None
+
+    async def __call__(self, *, burst: bool = True) -> None:
+        self.burst = burst
+        self.waiting.set()
+        await self.through.wait()
+
+
 class Vm:
     def __init__(
-        self, tmp_path: Path, producer: str = "person:u-ada", igni: FakeIgni | None = None
+        self,
+        tmp_path: Path,
+        producer: str = "person:u-ada",
+        igni: FakeIgni | None = None,
+        *,
+        clock: WallClock | None = None,
+        wake: Wake | None = None,
     ) -> None:
         self.igni = igni if igni is not None else FakeIgni()
         self.credential = CredentialFile(tmp_path / "vol" / "vm-credential")
@@ -105,6 +139,8 @@ class Vm:
             ),
             producer=producer,
             on_state=self.changes.append,
+            after_wake=wake,
+            clock=clock if clock is not None else time.time,
         )
 
 
@@ -246,6 +282,186 @@ async def test_an_unreachable_server_keeps_the_last_token_and_tries_again(tmp_pa
     vm.igni.down = False
     assert (await vm.keeper.refresh()).state is CredentialState.READY
     await vm.keeper.stop()
+
+
+async def test_a_renewal_keeps_the_event_loop_free(tmp_path: Path, monkeypatch):
+    """A renewal due while the VM was paused runs as it is unpaused, beside
+    the request that woke it: the credential's fsyncs (network storage)
+    must not hold that request's handshake."""
+    vm = Vm(tmp_path)
+    await vm.keeper.sign_in(SESSION)
+    write_credential = CredentialFile.write
+
+    def slow_volume(self: CredentialFile, credential: str) -> None:
+        time.sleep(0.3)
+        write_credential(self, credential)
+
+    monkeypatch.setattr(CredentialFile, "write", slow_volume)
+    ticks: list[float] = []
+
+    async def the_handshake() -> None:
+        for _ in range(20):
+            ticks.append(time.monotonic())
+            await asyncio.sleep(0.01)
+
+    renewal = asyncio.ensure_future(vm.keeper.refresh())
+    await the_handshake()
+    assert (await renewal).state is CredentialState.READY
+    assert vm.token.read_text() == "token-2"
+    assert max(b - a for a, b in zip(ticks, ticks[1:], strict=False)) < 0.2, "the loop ran"
+    await vm.keeper.stop()
+
+
+async def test_one_client_for_every_exchange(tmp_path: Path):
+    """Not a client (and its TLS context) made on the event loop per renewal."""
+    vm = Vm(tmp_path)
+    await vm.keeper.sign_in(SESSION)
+    client = vm.keeper._exchange.client()
+    await vm.keeper.refresh()
+    assert vm.keeper._exchange.client() is client
+    await vm.keeper.stop()
+
+
+@pytest.fixture
+def kept(monkeypatch: pytest.MonkeyPatch, cloud_layer: Any) -> Any:
+    """The cloud layer reads the keeper's token file; the keeper is forgotten after."""
+
+    def keep(vm: Vm) -> None:
+        monkeypatch.setenv(EnvironmentCredentials.TOKEN_FILE_ENV, str(vm.token))
+        EnvironmentCredentials.kept_by(vm.keeper)
+
+    yield keep
+    EnvironmentCredentials.kept_by(None)
+
+
+async def _paused_past_the_renewal(vm: Vm, clock: WallClock) -> None:
+    """Signed in; the renewal armed; then the VM paused past it (the wall clock jumps)."""
+    await vm.keeper.sign_in(SESSION)
+    vm.keeper._arm(0.05)  # the 14-minute timer, shortened
+    clock.now += 1000.0  # paused: the token (900 s) has expired
+    await asyncio.sleep(0.1)  # unpaused: the timer finds itself overdue
+
+
+async def test_a_renewal_due_during_a_pause_waits_for_the_first_answer(tmp_path: Path):
+    clock, wake = WallClock(), Wake()
+    vm = Vm(tmp_path, clock=clock, wake=wake)
+    await _paused_past_the_renewal(vm, clock)
+    assert wake.waiting.is_set(), "overdue by the wall clock: it waits"
+    assert wake.burst is False, "expired: renewed as soon as the first answer is out"
+    assert len(vm.igni.grants) == 1, "nothing sent beside the request that woke the VM"
+    wake.through.set()
+    for _ in range(100):
+        if len(vm.igni.grants) == 2:
+            break
+        await asyncio.sleep(0.01)
+    assert len(vm.igni.grants) == 2, "renewed once the first answer is through"
+    assert vm.token.read_text() == "token-2"
+    assert vm.credential.read() == vm.igni.current
+    await vm.keeper.stop()
+
+
+async def test_a_token_with_life_left_waits_for_the_burst_too(tmp_path: Path, kept: Any):
+    clock, wake = WallClock(), Wake()
+    vm = Vm(tmp_path, clock=clock, wake=wake)
+    kept(vm)
+    await vm.keeper.sign_in(SESSION)
+    vm.keeper._arm(0.05)
+    clock.now += 30.0  # overdue by the wall clock, the token still good
+    await asyncio.sleep(0.1)
+    assert wake.waiting.is_set() and wake.burst is True
+    assert EnvironmentCredentials.token() == "token-1", "still handed out meanwhile"
+    wake.through.set()
+    await vm.keeper.stop()
+
+
+async def test_a_timer_on_time_renews_at_once(tmp_path: Path):
+    clock, wake = WallClock(), Wake()
+    vm = Vm(tmp_path, clock=clock, wake=wake)
+    await vm.keeper.sign_in(SESSION)
+    vm.keeper._arm(0.02)
+    for _ in range(100):
+        if len(vm.igni.grants) == 2:
+            break
+        await asyncio.sleep(0.01)
+    assert len(vm.igni.grants) == 2
+    assert not wake.waiting.is_set(), "no pause: nothing to wait for"
+    await vm.keeper.stop()
+
+
+async def test_an_expired_token_is_never_handed_out(tmp_path: Path, kept: Any):
+    clock, wake = WallClock(), Wake()
+    vm = Vm(tmp_path, clock=clock, wake=wake)
+    kept(vm)
+    await vm.keeper.sign_in(SESSION)
+    assert EnvironmentCredentials.token() == "token-1"
+    clock.now += 900.0 - VmCredentials.SEND_MARGIN_SECONDS + 1  # about to expire
+    assert vm.token.read_text() == "token-1", "still in the file"
+    assert EnvironmentCredentials.token() == "", "but not handed out"
+    assert not EnvironmentCredentials().load().ok
+    await vm.keeper.stop()
+
+
+async def test_a_call_before_the_renewal_renews_at_once_and_only_once(tmp_path: Path, kept: Any):
+    clock, wake = WallClock(), Wake()
+    vm = Vm(tmp_path, clock=clock, wake=wake)
+    kept(vm)
+    await _paused_past_the_renewal(vm, clock)
+    assert wake.waiting.is_set()
+    # A model call made right after the wake: CloudTokenAuth waits until it may send.
+    sent: list[str | None] = []
+
+    async def model(request: httpx.Request) -> httpx.Response:
+        sent.append(request.headers.get("Authorization"))
+        return httpx.Response(200, json={})
+
+    async with httpx.AsyncClient(
+        auth=CloudTokenAuth(), transport=httpx.MockTransport(model)
+    ) as client:
+        await client.post("https://igni.test/v1/chat/completions", json={})
+    assert sent == ["Bearer token-2"], "a fresh token, never the expired one"
+    assert len(vm.igni.grants) == 2, "renewed at once for the call"
+    wake.through.set()
+    await asyncio.sleep(0.05)
+    assert len(vm.igni.grants) == 2, "the deferred renewal found it fresh: no second rotation"
+    assert vm.credential.read() == vm.igni.current
+    assert not vm.igni.revoked
+    await vm.keeper.stop()
+
+
+async def test_calls_during_a_renewal_wait_for_it(tmp_path: Path, kept: Any):
+    clock = WallClock()
+    vm = Vm(tmp_path, clock=clock)
+    kept(vm)
+    await vm.keeper.sign_in(SESSION)
+    clock.now += 1000.0
+    await asyncio.gather(*(EnvironmentCredentials().ready() for _ in range(5)))
+    assert vm.igni.most_at_once == 1
+    assert len(vm.igni.grants) == 2, "one renewal for all five"
+    assert EnvironmentCredentials.token() == "token-2"
+    await vm.keeper.stop()
+
+
+async def test_the_next_answer_and_its_burst(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setattr(RestoreWatch, "LATER_SECONDS", 0.2)
+    monkeypatch.setattr(RestoreWatch, "AFTER_ANSWER_SECONDS", 0.05)
+    answers = NextAnswer()
+    answers.answered()  # one before the wake does not count
+    waiting = asyncio.ensure_future(answers.after())
+    await asyncio.sleep(0.02)
+    assert not waiting.done()
+    started = time.monotonic()
+    answers.answered()
+    await waiting
+    assert 0.04 <= time.monotonic() - started < 0.15, "the burst after it"
+    started = time.monotonic()
+    await answers.after()
+    assert time.monotonic() - started >= 0.19, "no answer: a moment, then on"
+    waiting = asyncio.ensure_future(answers.after(burst=False))
+    await asyncio.sleep(0.01)
+    answers.answered()
+    started = time.monotonic()
+    await waiting
+    assert time.monotonic() - started < 0.04, "without the burst: at the answer"
 
 
 async def test_the_gateway_hands_the_session_over_the_rpc(tmp_path: Path):

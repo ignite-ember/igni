@@ -123,6 +123,14 @@ class CredentialSource(ABC):
     def clear(self) -> None:  # noqa: B027 - nothing to remove, unless a source says
         """Nothing to remove by default."""
 
+    async def ready(self) -> None:  # noqa: B027 - always ready, unless a source says
+        """Until the token :meth:`load` gives may be sent.
+
+        A source whose token is renewed while igni runs (the cloud's)
+        waits here for a renewal under way, or renews one that has
+        expired; one that keeps a fixed token is always ready.
+        """
+
 
 class CredentialsStore:
     """Read/write coordinator for one credential file.
@@ -205,6 +213,12 @@ class CredentialsStore:
             logger.warning("Credentials at %s don't match schema: %s", fp, exc)
             return LoadCredentialsResult(ok=False, reason="schema_mismatch", error=str(exc))
         return LoadCredentialsResult(ok=True, creds=creds)
+
+    async def ready(self) -> None:
+        """Until the token :meth:`load` gives may be sent (the layer's source says; a file always may)."""
+        source = Layers.current().credentials()
+        if source is not None:
+            await source.ready()
 
     def clear(self) -> None:
         """Delete the credential file if it exists (no-op otherwise)."""
