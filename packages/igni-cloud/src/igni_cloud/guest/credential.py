@@ -23,10 +23,19 @@ igni needs is an exchange of it, and every exchange rotates it:
   presenting it again is reuse, which revokes the whole family on igni
   server; a person then signs in again, an app is re-issued. The window
   is one round trip and an fsync; the write is the first thing done
-  with the answer. The writes run off the event loop: a renewal comes
-  due while the VM is paused and runs the moment it is unpaused, so an
-  fsync on the event loop (the volume is network storage) held the
-  request that woke the VM — its WebSocket handshake — behind it.
+  with the answer. The writes run off the event loop (the volume is
+  network storage).
+* **After a pause.** A VM paused past its renewal wakes with the timer
+  overdue — seen by the wall clock, as the guest is not told it was
+  paused. Renewing then shared the VM's one vCPU with the request that
+  woke it (its WebSocket handshake, then igni's first answer), so the
+  renewal waits for that first answer — and, while the token still has
+  life, for the burst of requests a window sends with it, as after a
+  restore. An expired one is renewed as soon as the first answer is
+  out: the next call to igni server needs it. Meanwhile an expired token
+  is never handed out (:mod:`igni_cloud.credentials`): a call to igni
+  server waits in :meth:`VmCredentials.ready` for the renewal, or
+  renews at once — the rotation rules above unchanged.
 * ``invalid_grant`` — revoked, reused, expired after 90 idle days, the
   person signed out or was removed, the app deleted: a person's VM
   **needs sign-in**, an app's **needs re-issue**. Said to the windows
@@ -46,7 +55,7 @@ import contextlib
 import logging
 import os
 import time
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from enum import StrEnum
 from pathlib import Path
 from typing import ClassVar
@@ -214,6 +223,10 @@ class VmCredentials:
     RENEW_BEFORE_SECONDS: ClassVar[float] = 60.0
     #: After igni server could not be reached.
     RETRY_SECONDS: ClassVar[float] = 30.0
+    #: A timer this much later than its due time by the wall clock slept through a pause.
+    OVERSLEPT_SECONDS: ClassVar[float] = 5.0
+    #: A token with less than this left is not handed out (a request takes a moment).
+    SEND_MARGIN_SECONDS: ClassVar[float] = 5.0
 
     def __init__(
         self,
@@ -223,6 +236,7 @@ class VmCredentials:
         exchange: VmCredentialExchange,
         producer: str,
         on_state: Callable[[StateChange], None] | None = None,
+        after_wake: Callable[..., Awaitable[None]] | None = None,
         clock: Callable[[], float] = time.time,
     ) -> None:
         self._credential = credential_file
@@ -231,6 +245,8 @@ class VmCredentials:
         #: ``person:<id>``, ``app:<id>`` or ``space:<id>``.
         self._producer = producer
         self._on_state = on_state
+        #: Until the first answer after a wake (``burst=True``: and the requests sent with it).
+        self._after_wake = after_wake
         self._clock = clock
         self._lock = asyncio.Lock()
         self._expires_at = 0.0
@@ -281,6 +297,22 @@ class VmCredentials:
             directory.close()
         if self._state is not CredentialState.READY:
             await self.refresh()
+
+    def expired(self) -> bool:
+        """The token in the file may no longer be sent (wall clock)."""
+        return bool(self._expires_at) and (
+            self._expires_at - self._clock() <= self.SEND_MARGIN_SECONDS
+        )
+
+    async def ready(self) -> None:
+        """Until the token may be sent: wait for a renewal under way, or renew it now.
+
+        Single flight with every other renewal (the lock); one renewed
+        meanwhile is fresh and not renewed again. A server that could
+        not be reached is tried again by its timer, not by every caller.
+        """
+        if self.expired() and self._state is CredentialState.READY:
+            await self.refresh(force=False)
 
     async def stop(self) -> None:
         ActivityRegistry.shared().off_rearm(self._schedule_soon)
@@ -376,7 +408,9 @@ class VmCredentials:
         if timer is not None:
             timer.cancel()
         with contextlib.suppress(RuntimeError):
-            self._timer = background.daemon(self._renew_in(seconds), name="vm-credential")
+            self._timer = background.daemon(
+                self._renew_in(seconds, due=self._clock() + seconds), name="vm-credential"
+            )
 
     def _schedule_soon(self) -> None:
         """``ActivityRegistry.rearm``: the monotonic clock may be far behind the wall clock."""
@@ -385,8 +419,18 @@ class VmCredentials:
             with contextlib.suppress(RuntimeError):
                 asyncio.get_running_loop().call_soon_threadsafe(self._arm, seconds)
 
-    async def _renew_in(self, seconds: float) -> None:
+    async def _renew_in(self, seconds: float, *, due: float) -> None:
+        """Renew in ``seconds``, due at ``due`` by the wall clock."""
         await asyncio.sleep(seconds)
+        if self._after_wake is not None and self._clock() - due > self.OVERSLEPT_SECONDS:
+            # Slept through a pause: not beside the request that woke the VM.
+            # An expired token is wanted by the next call to igni server (a
+            # model call, as likely as not): renewed as soon as the first
+            # answer is out. One still good waits for the window's burst too.
+            await self._after_wake(burst=not self.expired())
+            # A call that needed the token may have renewed it meanwhile.
+            await self.refresh(force=False)
+            return
         await self.refresh()
 
 

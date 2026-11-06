@@ -433,10 +433,8 @@ class BackendApp:
         # Its files are fetched as the producer: the person's session here,
         # the VM's own token in the cloud.
         producer_db = StorageLocator.from_settings(settings).project_database(self._project_dir)
-        signed_in = SignedInServer(
-            api_url=self._igni_api_url,
-            session=CredentialsSession(settings.auth.credentials_file),
-        )
+        session = CredentialsSession(settings.auth.credentials_file)
+        signed_in = SignedInServer(api_url=self._igni_api_url, session=session, ready=session.ready)
         desk = PoolChatDesk(self._orchestrator)
         held = HeldPosts(producer_db)
         self._held_posts = HeldPostFlusher(held=held, desk=desk)
@@ -580,11 +578,9 @@ class BackendApp:
         connection belongs to.
         """
         assert self._push_bridge is not None and self._backend is not None
+        session = CredentialsSession(settings.auth.credentials_file)
         center = NotificationCenter(
-            server=SignedInServer(
-                api_url=self._igni_api_url,
-                session=CredentialsSession(settings.auth.credentials_file),
-            ),
+            server=SignedInServer(api_url=self._igni_api_url, session=session, ready=session.ready),
             local=LocalNotificationStore.from_locator(StorageLocator.from_settings(settings)),
             announce=self._push_bridge.notifications_changed,
         )
@@ -662,7 +658,9 @@ class BackendApp:
         ExtensionHooks.shared().set_principal(person)
         # One exchange, one cache: an extension's process and its page
         # ask for the same token and igni is asked once.
-        exchange = ServiceTokenExchange(api_url=self._igni_api_url, session=session)
+        exchange = ServiceTokenExchange(
+            api_url=self._igni_api_url, session=session, ready=session.ready
+        )
         self._service_tokens = ServiceTokenEndpoint(exchange, principal=person)
         if self._orchestrator is not None and self._origins is not None:
             self._orchestrator.attach_page_tokens(

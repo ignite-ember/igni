@@ -45,7 +45,7 @@ class ServerAttachments:
 
     async def fetch(self, event_id: str, attachment: ItemAttachment) -> bytes:
         try:
-            api_url, session = self._server.current()
+            api_url, session = await self._server.signed_in()
         except NotSignedIn as exc:
             raise AttachmentUnavailable(f"nobody to fetch {attachment.filename} as: {exc}") from exc
         path = self.PATH.format(event_id=event_id, attachment_id=attachment.attachment_id)
