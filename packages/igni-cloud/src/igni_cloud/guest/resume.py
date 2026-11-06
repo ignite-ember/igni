@@ -226,4 +226,31 @@ class RestoreWatch:
             await self.check(woken_at=woken_at)
 
 
-__all__ = ["RestoreCallback", "RestoreStep", "RestoreWatch", "Restored"]
+class NextAnswer:
+    """Waits for igni's next answer and the burst a window sends with it.
+
+    After a pause nothing is written for igni to notice — the guest is
+    not told — so work found overdue on waking (a timer that slept
+    through it) waits here, as a restore's later steps wait in
+    :class:`RestoreWatch`, and with its timings.
+    """
+
+    def __init__(self) -> None:
+        self._answered = asyncio.Event()
+
+    def answered(self) -> None:
+        """igni sent an answer."""
+        self._answered.set()
+
+    async def after(self, *, burst: bool = True) -> None:
+        """Until the next answer, and with ``burst`` the requests sent with it, or a moment if none comes."""
+        self._answered.clear()
+        try:
+            await asyncio.wait_for(self._answered.wait(), RestoreWatch.LATER_SECONDS)
+        except TimeoutError:
+            return
+        if burst:
+            await asyncio.sleep(RestoreWatch.AFTER_ANSWER_SECONDS)
+
+
+__all__ = ["NextAnswer", "RestoreCallback", "RestoreStep", "RestoreWatch", "Restored"]

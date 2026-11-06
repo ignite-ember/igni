@@ -254,7 +254,7 @@ class NotificationStreamFollower:
 
     async def _follow_once(self) -> StreamOutcome:
         try:
-            api_url, session = self._server.current()
+            api_url, session = await self._server.signed_in()
         except NotSignedIn:
             return StreamOutcome.SIGNED_OUT
         headers = {

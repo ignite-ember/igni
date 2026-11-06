@@ -57,13 +57,13 @@ import hmac
 import logging
 import secrets
 import time
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 
 import httpx
 from pydantic import BaseModel, ValidationError
 
 from ember_code.core.activity.http import busy_call
-from ember_code.core.auth.credentials import CloudCredentials
+from ember_code.core.auth.credentials import CloudCredentials, CredentialsStore
 from ember_code.core.config.endpoint import is_configured
 from ember_code.extensions.origin import (
     HEAD_TIMEOUT,
@@ -119,6 +119,10 @@ class CredentialsSession:
     def __init__(self, credentials_file: str | None = None) -> None:
         self._credentials_file = credentials_file
 
+    async def ready(self) -> None:
+        """Until the session's token may be sent (:meth:`CredentialsStore.ready`)."""
+        await CredentialsStore(self._credentials_file).ready()
+
     def __call__(self) -> IgniSession | None:
         credentials = CloudCredentials(self._credentials_file)
         token = credentials.access_token
@@ -151,6 +155,7 @@ class ServiceTokenExchange:
         *,
         api_url: Callable[[], str | None],
         session: Callable[[], IgniSession | None],
+        ready: Callable[[], Awaitable[None]] | None = None,
         renew_before: float = RENEW_BEFORE_SECONDS,
         clock: Callable[[], float] = time.monotonic,
         transport: httpx.AsyncBaseTransport | None = None,
@@ -158,6 +163,7 @@ class ServiceTokenExchange:
     ) -> None:
         self._api_url = api_url
         self._session = session
+        self._ready = ready
         self._renew_before = renew_before
         self.clock = clock
         self._transport = transport
@@ -172,6 +178,9 @@ class ServiceTokenExchange:
             NotSignedIn: no igni session, or no igni server configured.
             TokenExchangeFailed: igni refused, or could not be reached.
         """
+        if self._ready is not None:
+            # A renewal of the session's own token under way (a VM just woken).
+            await self._ready()
         session = self._session()
         if session is None:
             # Signed out: nothing cached may outlive that.

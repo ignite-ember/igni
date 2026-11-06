@@ -135,7 +135,7 @@ class PersonEventPull:
                 await asyncio.sleep(self.INTERVAL_SECONDS)
 
     async def _call(self, path: str, body: dict[str, Any]) -> httpx.Response:
-        api_url, session = self._server.current()
+        api_url, session = await self._server.signed_in()
         try:
             async with (
                 busy_call("igni-server", "service events"),

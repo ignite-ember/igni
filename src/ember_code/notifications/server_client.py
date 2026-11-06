@@ -9,7 +9,7 @@ change both.
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 
 import httpx
 from pydantic import ValidationError
@@ -38,9 +38,24 @@ class SignedInServer:
         *,
         api_url: Callable[[], str | None],
         session: Callable[[], IgniSession | None],
+        ready: Callable[[], Awaitable[None]] | None = None,
     ) -> None:
         self._api_url = api_url
         self._session = session
+        self._ready = ready
+
+    async def signed_in(self) -> tuple[str, IgniSession]:
+        """:meth:`current`, once the session's token may be sent.
+
+        ``ready`` waits for a renewal under way (the cloud's token, in a
+        VM just woken) or renews one that has expired.
+
+        Raises:
+            NotSignedIn: nobody is signed in, or no server is configured.
+        """
+        if self._ready is not None:
+            await self._ready()
+        return self.current()
 
     def current(self) -> tuple[str, IgniSession]:
         """``(api_url, session)``.
@@ -114,7 +129,7 @@ class IgniNotificationsClient:
         params: dict[str, str] | None = None,
         json: dict | None = None,
     ) -> httpx.Response:
-        api_url, session = self._server.current()
+        api_url, session = await self._server.signed_in()
         try:
             async with (
                 busy_call("igni-server"),

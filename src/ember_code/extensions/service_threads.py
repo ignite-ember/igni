@@ -130,10 +130,21 @@ class HeldPost(BaseModel):
 
 
 class HeldPosts:
-    """Posts waiting for their chat's run to end, kept across restarts."""
+    """Posts waiting for their chat's run to end, kept across restarts.
+
+    Looked at every couple of seconds (``HeldPostFlusher``) and almost
+    always empty, so once a look finds none it is not asked again until
+    this instance holds one: the backend's one instance is the only
+    writer. A look was a synchronous query on the event loop — in a VM
+    just unpaused, the first of the wake (its connections are closed
+    before every pause), opening a connection while the request that
+    woke the VM waited.
+    """
 
     def __init__(self, db: Database) -> None:
         self._db = db
+        #: A look found none, and nothing has been held since.
+        self._none_held = False
 
     def hold(self, post: HeldPost) -> None:
         with self._db.sync_session() as session, session.begin():
@@ -150,16 +161,19 @@ class HeldPosts:
                         held_at=int(time.time() * 1000),
                     )
                 )
+        self._none_held = False
 
     def waiting(self) -> list[HeldPost]:
         """Oldest first."""
+        if self._none_held:
+            return []
         with self._db.sync_session() as session:
             rows = session.execute(
                 select(HeldPostModel)
                 .where(self._db.scope.where(HeldPostModel))
                 .order_by(HeldPostModel.held_at)
             ).scalars()
-            return [
+            posts = [
                 HeldPost(
                     event_id=row.event_id,
                     session_id=row.session_id,
@@ -169,6 +183,8 @@ class HeldPosts:
                 )
                 for row in rows
             ]
+        self._none_held = not posts
+        return posts
 
     def release(self, event_id: str) -> None:
         with self._db.sync_session() as session, session.begin():
