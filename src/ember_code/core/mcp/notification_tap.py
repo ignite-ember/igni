@@ -95,7 +95,8 @@ class NotificationTapStream(anyio.abc.ObjectReceiveStream[Any]):
         """The notification inside ``message``, when it is one this router takes."""
         if SessionMessage is None or not isinstance(message, SessionMessage):
             return None
-        root = message.message.root
-        if not isinstance(root, JSONRPCNotification):
+        # mcp 2's ``JSONRPCMessage`` is a plain union: no ``.root`` to unwrap.
+        inner = message.message
+        if not isinstance(inner, JSONRPCNotification):
             return None
-        return root if self._router.handles(root.method) else None
+        return inner if self._router.handles(inner.method) else None

@@ -13,10 +13,11 @@ import os
 import sys
 from pathlib import Path
 
-from mcp.server.fastmcp import Context, FastMCP
+from mcp.server.mcpserver import Context, MCPServer
+from mcp.server.mcpserver.exceptions import ToolError
 from pydantic import BaseModel
 
-server = FastMCP("acme-scanner")
+server = MCPServer("acme-scanner")
 
 # Its own pid, beside itself. The health test has to kill this
 # process to prove a crash is noticed, and finding it by scanning the
@@ -95,8 +96,12 @@ async def notify_me(ctx: Context, params: dict) -> str:
 
 @server.tool()
 def explode() -> str:
-    """Always fails, so the failure path is covered too."""
-    raise RuntimeError("the scanner fell over")
+    """Always fails, so the failure path is covered too.
+
+    A ``ToolError``: ``mcp`` 2 sends any other exception as "Error
+    executing tool", without its message.
+    """
+    raise ToolError("the scanner fell over")
 
 
 if __name__ == "__main__":

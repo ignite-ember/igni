@@ -16,6 +16,7 @@ from types import SimpleNamespace
 import pytest
 from agno.db.base import SessionType
 from agno.db.schemas.memory import UserMemory
+from agno.run.agent import RunOutput
 from agno.session import AgentSession
 from igni_cloud.storage.attachments import LargeObjectAttachments
 from igni_cloud.storage.scoped_agno import ScopedAsyncPostgresDb
@@ -128,6 +129,56 @@ async def test_agno_rows_are_kept_to_their_scope(postgres_url: str):
     await mine.upsert_user_memory(UserMemory(memory="likes tea", user_id="someone-else"))
     assert [m.memory for m in await mine.get_user_memories()] == ["likes tea"]  # type: ignore[union-attr]
     assert await theirs.get_user_memories() == []
+
+
+async def test_agno_runs_are_kept_to_their_scope(postgres_url: str):
+    """Agno 3 stores each run in a row of its own, and those rows are scoped too.
+
+    Runs are keyed by ``run_id`` alone, and Agno's run-id calls
+    (``get_run``, ``delete_run(s)``) take no user: the scope is the
+    wrapper's to hold.
+    """
+    url = DatabaseUrl.parse(postgres_url)
+    engine = cache.get_async_engine(url)
+
+    def agno_db(scope: StorageScope) -> ScopedAsyncPostgresDb:
+        return ScopedAsyncPostgresDb(
+            scope=scope,
+            db_engine=engine,
+            session_table="ember_sessions",
+            memory_table="ember_memories",
+        )
+
+    mine, theirs = agno_db(Scopes.fresh()), agno_db(Scopes.fresh())
+    session_id = uuid.uuid4().hex[:8]
+    now = int(time.time())
+    for db in (mine, theirs):
+        await db.upsert_session(
+            AgentSession(session_id=session_id, agent_id="igni", created_at=now)
+        )
+    run_id = uuid.uuid4().hex
+    await mine.upsert_run(
+        RunOutput(run_id=run_id, session_id=session_id, agent_id="igni", content="mine"),
+        session_id=session_id,
+        run_index=0,
+    )
+
+    stored = await mine.get_session(session_id, SessionType.AGENT)
+    assert [r.content for r in stored.runs] == ["mine"]  # type: ignore[union-attr]
+    other = await theirs.get_session(session_id, SessionType.AGENT)
+    assert not other.runs  # type: ignore[union-attr]
+    assert await theirs.get_runs(session_id=session_id) == []
+    assert await theirs.get_run(run_id) is None
+    assert await theirs.delete_run(run_id) is False
+    await theirs.delete_runs([run_id])
+    assert [r.run_id for r in await mine.get_runs(session_id=session_id)] == [run_id]  # type: ignore[union-attr]
+    with cache.get_engine(url).connect() as connection:
+        row = connection.execute(
+            text("SELECT session_id, user_id FROM ai.ember_sessions_runs WHERE run_id = :id"),
+            {"id": run_id},
+        ).one()
+    assert tuple(row) == (mine.stored_id(session_id), mine.scoped_user_id)
+    assert await mine.delete_run(run_id) is True
 
 
 def test_a_message_names_a_cloud_upload_and_it_is_read_through_the_store(

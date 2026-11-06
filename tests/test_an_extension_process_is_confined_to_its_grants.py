@@ -830,8 +830,8 @@ async def test_on_macos_the_process_cannot_hand_work_to_another_application(tmp_
 
 SERVER = r"""
 import os
-from mcp.server.fastmcp import FastMCP
-server = FastMCP("probe")
+from mcp.server.mcpserver import MCPServer
+server = MCPServer("probe")
 
 @server.tool()
 def where() -> str:

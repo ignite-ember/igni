@@ -18,6 +18,7 @@ import uuid
 from agno.db.base import SessionType
 
 from ember_code.core.session.persistence.db_protocol import AgnoSessionDb
+from ember_code.core.session.persistence.run_history import RunHistory
 from ember_code.core.session.schemas import ForkResult
 
 logger = logging.getLogger(__name__)
@@ -75,8 +76,13 @@ class SessionForker:
             sd = dict(source.session_data or {})
             sd["session_name"] = name
             source.session_data = sd
+        # The runs are copied under ids of their own: a run's id is the
+        # runs table's key, and the source's would overwrite its rows.
+        source.runs = RunHistory.copied(list(source.runs or []))
+        for run in source.runs:
+            run.session_id = new_id
         try:
-            await self._db.upsert_session(source, deserialize=True)
+            await RunHistory(self._db).save(source)
         except Exception as exc:
             logger.debug("Failed to upsert forked session: %s", exc)
             return ForkResult(ok=False, error=str(exc))

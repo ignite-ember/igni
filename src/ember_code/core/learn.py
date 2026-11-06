@@ -12,14 +12,93 @@ stateless leaf, no shared subject, no module-level state.
 """
 
 import logging
+from textwrap import dedent
+from typing import Any
 
 from agno.db.base import BaseDb
 from agno.learn import LearningMachine
+from agno.learn.stores import UserMemoryStore
 from pydantic import BaseModel, ConfigDict
 
 from ember_code.core.config.settings import Settings
 
 logger = logging.getLogger(__name__)
+
+
+class TrainedUserMemoryStore(UserMemoryStore):
+    """Agno 3's user-memory store, rendering its system-prompt block as Agno 2.6 did."""
+
+    def instructions(self) -> str:
+        # The guidance is inside ``build_context``'s block, where 2.6 put it.
+        return ""
+
+    def build_context(self, data: Any) -> str:
+        """Agno 2.6.22's ``UserMemoryStore.build_context``, verbatim."""
+        tool_docs = self._build_tool_documentation()
+        empty = (
+            dedent("""\
+                <user_memory>
+                No memories saved about this user yet.
+
+                """)
+            + tool_docs
+            + dedent("""
+                </user_memory>""")
+        )
+
+        if not data:
+            return empty if self._should_expose_tools else ""
+
+        memories_text = None
+        if hasattr(data, "get_memories_text"):
+            memories_text = data.get_memories_text()
+        elif hasattr(data, "memories") and data.memories:
+            memories_text = "\n".join(f"- {m.get('content', str(m))}" for m in data.memories)
+
+        if not memories_text:
+            return empty if self._should_expose_tools else ""
+
+        context = "<user_memory>\n"
+        context += memories_text + "\n"
+
+        context += dedent("""
+            <memory_application_guidelines>
+            Apply this knowledge naturally - respond as if you inherently know this information,
+            exactly as a colleague would recall shared history without narrating their thought process.
+
+            - Selectively apply memories based on relevance to the current query
+            - Never say "based on my memory" or "I remember that" - just use the information naturally
+            - Current conversation always takes precedence over stored memories
+            - Use memories to calibrate tone, depth, and examples without announcing it
+            </memory_application_guidelines>""")
+
+        if self._should_expose_tools:
+            context += (
+                dedent("""
+
+            <memory_updates>
+
+            """)
+                + tool_docs
+                + dedent("""
+            </memory_updates>""")
+            )
+
+        context += "\n</user_memory>"
+        return context
+
+
+class TrainedLearningMachine(LearningMachine):
+    """A ``LearningMachine`` whose user-memory store is :class:`TrainedUserMemoryStore`.
+
+    The store is resolved exactly as Agno resolves it — the machine's db,
+    model and limits filled into the config — and then built as the
+    trained-layout subclass.
+    """
+
+    def _create_user_memory_store(self, config: Any) -> Any:
+        store = super()._create_user_memory_store(config)
+        return TrainedUserMemoryStore(config=store.config, debug_mode=store.debug_mode)
 
 
 class LearnBootResult(BaseModel):
@@ -74,7 +153,8 @@ def create_learning_machine(settings: Settings, db: BaseDb | None = None) -> Lea
         return LearnBootResult(ok=False, machine=None, reason="no database configured")
 
     try:
-        lm = LearningMachine(
+        # The user-memory block as igni-1.0 was trained on it (``trained_layout``).
+        lm = TrainedLearningMachine(
             db=db,
             user_profile=settings.learning.user_profile,
             user_memory=settings.learning.to_user_memory_input(),

@@ -20,9 +20,9 @@ classifiers = [
     "Typing :: Typed",
 ]
 dependencies = [
-    # FastMCP is MCPServer in 2.x, and the session hook in
-    # `igni_extension.session` reads 1.x's lowlevel server.
-    "mcp>=1.30,<2",
+    # mcp 2 only: the server is `MCPServer`, and what the SDK needs of each
+    # request (its session, its `_meta`) it takes through server middleware.
+    "mcp>=2.3,<3",
     "httpx>=0.28.1",
     "pydantic>=2.11",
     "pydantic-settings>=2.8",

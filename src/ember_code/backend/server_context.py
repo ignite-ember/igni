@@ -40,6 +40,7 @@ from ember_code.backend.schemas_context import (
     PendingMessage,
     TruncateHistoryResult,
 )
+from ember_code.core.session.persistence.run_history import RunHistory
 from ember_code.core.session.token_estimate import TokenEstimate
 from ember_code.protocol import messages as msg
 
@@ -211,7 +212,8 @@ class ContextController:
         removed = len(runs) - cut_idx
         agno_session.runs = runs[:cut_idx]
         try:
-            await agent.asave_session(agno_session)
+            # The cut runs are deleted from their own table (``run_history``).
+            await RunHistory.save_for(agent, agno_session)
         except Exception as exc:
             logger.exception("truncate_history: save failed")
             return TruncateHistoryResult(removed=0, error=str(exc))

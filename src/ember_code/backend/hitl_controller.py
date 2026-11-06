@@ -465,7 +465,11 @@ class HitlController:
             if run.status == RunStatus.paused:
                 run.status = RunStatus.error
                 run.content = self.INTERRUPTED_RUN
-                saved = db.upsert_session(stored)
+                # The run, in its own row: Agno 3 stores runs apart from
+                # the session, and saving the session would not save it.
+                saved = db.upsert_run(
+                    run, session_id=stored.session_id, user_id=getattr(stored, "user_id", None)
+                )
                 if inspect.isawaitable(saved):
                     await saved
             return True

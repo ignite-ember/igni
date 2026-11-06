@@ -31,32 +31,31 @@ import contextlib
 import itertools
 import json
 import secrets
-from collections.abc import Callable
-from datetime import timedelta
+from collections.abc import Callable, Iterator
 from types import TracebackType
-from typing import Any
+from typing import Any, cast
 
 import anyio
 import httpx
 from anyio.abc import TaskGroup
 from anyio.streams.memory import MemoryObjectReceiveStream, MemoryObjectSendStream
 from mcp import ClientSession, types
-from mcp.server.lowlevel.server import request_ctx
+from mcp.client.extension import NotificationBinding
 from mcp.shared.message import SessionMessage
-from mcp.shared.session import RequestResponder
-from pydantic import BaseModel, RootModel
+from pydantic import BaseModel
 from websockets.asyncio.server import serve
 
-from igni_extension.caller import Caller, CallerKind
+from igni_extension.caller import Caller, CallerKind, RequestMeta
 from igni_extension.clock import Clock
 from igni_extension.extension import IgniExtension
 from igni_extension.host_model import SCHEMA_VERSION
 from igni_extension.notifications import (
     CONDITIONS_METHOD,
     NOTIFY_METHOD,
-    ConditionsNotification,
+    ConditionsParams,
     LocalNotification,
     NotifyNotification,
+    NotifyParams,
 )
 
 
@@ -188,20 +187,6 @@ class FakeHostTokenEndpoint:
         return f"{header}.{part(claims.model_dump_json().encode())}.{part(b'not-checked-here')}"
 
 
-class HostBoundNotification(
-    RootModel[types.ServerNotification | NotifyNotification | ConditionsNotification]
-):
-    """What the host's client accepts from an extension: MCP's own, and igni's."""
-
-
-class HostClientSession(ClientSession):
-    """An MCP client session that also understands igni's own notifications."""
-
-    def __init__(self, *args: Any, **kwargs: Any) -> None:
-        super().__init__(*args, **kwargs)
-        self._receive_notification_type = HostBoundNotification
-
-
 class HostHarness:
     """The igni host's MCP session with one extension, in this process."""
 
@@ -248,11 +233,21 @@ class HostHarness:
         self._tasks.start_soon(self._ext.serve, to_server_receive, from_server_send)
         self._tasks.start_soon(self._tap, from_server_receive, to_client_send)
         self._session = await self._stack.enter_async_context(
-            HostClientSession(
+            ClientSession(
                 to_client_receive,
                 to_server_send,
-                read_timeout_seconds=timedelta(seconds=self._timeout),
-                message_handler=self._on_message,
+                read_timeout_seconds=self._timeout,
+                # igni's own notifications, which `mcp` has no type for.
+                notification_bindings=[
+                    NotificationBinding(
+                        method=NOTIFY_METHOD, params_type=NotifyParams, handler=self._on_notify
+                    ),
+                    NotificationBinding(
+                        method=CONDITIONS_METHOD,
+                        params_type=ConditionsParams,
+                        handler=self._on_conditions,
+                    ),
+                ],
             )
         )
         await self._session.initialize()
@@ -272,8 +267,22 @@ class HostHarness:
         self, tool: str, arguments: dict[str, Any] | None = None, *, caller: Caller | None = None
     ) -> types.CallToolResult:
         """Call a tool as igni does: for `caller`, named in the request's `_meta`."""
-        meta = {Caller.META_KEY: caller.model_dump(mode="json")} if caller is not None else None
+        meta = (
+            self.request_meta({Caller.META_KEY: caller.model_dump(mode="json")})
+            if caller is not None
+            else None
+        )
         return await self.session.call_tool(tool, arguments or {}, meta=meta)
+
+    @staticmethod
+    def request_meta(values: dict[str, Any]) -> types.RequestParamsMeta:
+        """`values` as a request's `_meta`.
+
+        `RequestParamsMeta` is an open TypedDict (PEP 728 `extra_items`),
+        which mypy cannot yet check for keys it does not name, so the
+        dict is declared what it is here, once.
+        """
+        return cast(types.RequestParamsMeta, values)
 
     async def received(self, count: int) -> list[LocalNotification]:
         """Wait until the host has `count` notifications from the extension."""
@@ -302,19 +311,13 @@ class HostHarness:
                 self.raw.append(wire)
             await sink.send(message)
 
-    async def _on_message(
-        self,
-        message: RequestResponder[types.ServerRequest, types.ClientResult]
-        | types.ServerNotification
-        | Exception,
-    ) -> None:
-        root = getattr(message, "root", None)
-        if isinstance(root, NotifyNotification):
-            self.notifications.append(root.local())
-            self._changed.set()
-        elif isinstance(root, ConditionsNotification):
-            self.conditions.append(dict(root.params.conditions))
-            self._changed.set()
+    async def _on_notify(self, params: NotifyParams) -> None:
+        self.notifications.append(NotifyNotification(params=params).local())
+        self._changed.set()
+
+    async def _on_conditions(self, params: ConditionsParams) -> None:
+        self.conditions.append(dict(params.conditions))
+        self._changed.set()
 
 
 class HostCall(BaseModel):
@@ -653,55 +656,44 @@ class ConcurrencyHarness:
             raise ConcurrencyProblem("; ".join(problems))
 
     async def _one(self, host: HostHarness, index: int, call: ConcurrentCall) -> ConcurrentResult:
-        meta = {Caller.META_KEY: call.caller.model_dump(mode="json"), self.CALL_KEY: index}
+        meta = HostHarness.request_meta(
+            {Caller.META_KEY: call.caller.model_dump(mode="json"), self.CALL_KEY: index}
+        )
         loop = asyncio.get_running_loop()
         started = loop.time()
         result = await host.session.call_tool(call.tool, call.arguments, meta=meta)
         took = loop.time() - started
         return ConcurrentResult(
             call=call,
-            result=result.structuredContent
-            if result.structuredContent is not None
+            result=result.structured_content
+            if result.structured_content is not None
             else result.content,
-            is_error=bool(result.isError),
+            is_error=bool(result.is_error),
             took=took,
         )
 
     def _watch(self, calls: list[ConcurrentCall], leaks: list[str]) -> Callable[[], None]:
-        """Wrap every tool to compare the caller it sees with the one its call was sent with."""
-        manager = self._ext.mcp._tool_manager
-        originals: dict[str, Any] = {}
+        """Watch every tool call: the caller it sees, as it starts and ends, against the one sent."""
         call_key = self.CALL_KEY
-        for tool in manager.list_tools():
-            original = tool.fn
-            originals[tool.name] = (tool, original, tool.is_async)
-            run = OffTheLoopCall(original, tool.is_async)
 
-            async def watched(
-                *args: Any, _run: OffTheLoopCall = run, _name: str = tool.name, **kwargs: Any
-            ) -> Any:
-                expected = calls[ConcurrencyHarness.sent_index(call_key)].caller
-                ConcurrencyHarness.compare(leaks, _name, "as it started", expected)
-                try:
-                    return await _run(*args, **kwargs)
-                finally:
-                    ConcurrencyHarness.compare(leaks, _name, "as it ended", expected)
+        @contextlib.contextmanager
+        def watched(tool: str) -> Iterator[None]:
+            expected = calls[ConcurrencyHarness.sent_index(call_key)].caller
+            ConcurrencyHarness.compare(leaks, tool, "as it started", expected)
+            try:
+                yield
+            finally:
+                ConcurrencyHarness.compare(leaks, tool, "as it ended", expected)
 
-            tool.fn = watched
-            tool.is_async = True
-
-        def restore() -> None:
-            for tool, original, is_async in originals.values():
-                tool.fn = original
-                tool.is_async = is_async
-
-        return restore
+        stack = contextlib.ExitStack()
+        stack.enter_context(self._ext.observing(watched))
+        return stack.close
 
     @staticmethod
     def sent_index(key: str) -> int:
         """Which of the harness's calls the request being served is."""
-        meta = request_ctx.get().meta
-        raw = meta.model_dump().get(key) if meta is not None else None
+        meta = RequestMeta.current()
+        raw = meta.get(key) if meta is not None else None
         return int(raw) if raw is not None else -1
 
     @staticmethod
@@ -712,16 +704,3 @@ class ConcurrencyHarness:
                 f"{tool} {when} saw caller {seen.ref if seen else None!r}, "
                 f"but was called as {expected.ref!r}"
             )
-
-
-class OffTheLoopCall:
-    """A tool's function as FastMCP would call it: awaited when async, called when not."""
-
-    def __init__(self, fn: Callable[..., Any], is_async: bool) -> None:
-        self._fn = fn
-        self._is_async = is_async
-
-    async def __call__(self, *args: Any, **kwargs: Any) -> Any:
-        if self._is_async:
-            return await self._fn(*args, **kwargs)
-        return self._fn(*args, **kwargs)

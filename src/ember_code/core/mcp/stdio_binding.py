@@ -31,12 +31,14 @@ is the :class:`MCPTools`-specific adapter.
 
 from __future__ import annotations
 
+import asyncio
+import contextlib
 import logging
 import os
 import tempfile
-from datetime import timedelta
+from collections.abc import Callable
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from ember_code.core.mcp.naming import tool_name_prefix
 from ember_code.core.mcp.notification_tap import McpNotificationRouter
@@ -146,8 +148,8 @@ class StdioMCPBinding:
         its answer travels as the request's ``_meta``
         (:mod:`ember_code.core.mcp.request_meta`).
         """
-        # Must stay open for MCP session lifetime; ownership
-        # transfers to MCPTools via ``_errlog`` below.
+        # Must stay open for the MCP session's lifetime; the connection
+        # below owns it and closes it when the connection ends.
         errlog = open(os.fspath(self._errlog_path), "a")  # noqa: SIM115
         errlog.seek(0, os.SEEK_END)
         self._offsets[name] = errlog.tell()
@@ -163,43 +165,127 @@ class StdioMCPBinding:
             transport="stdio",
             tool_name_prefix=tool_name_prefix(name),
         )
+        # Seconds, as a float: mcp 2 takes no ``timedelta``.
+        read_timeout = float(getattr(mcp_tools, "timeout_seconds", 30) or 30)
 
-        # Drive stdio_client with our errlog handle instead of
-        # letting Agno default to sys.stderr.
-        mcp_tools._context = stdio_client(params, errlog=errlog)  # type: ignore[assignment]
-        session_params = await mcp_tools._context.__aenter__()
-        mcp_tools._active_contexts = [mcp_tools._context]
-        read, write = session_params[0:2]
-        if notifications is not None:
-            read = notifications.tap(name, read)
+        def session_for(read: Any, write: Any) -> Any:
+            if notifications is not None:
+                read = notifications.tap(name, read)
+            if RequestMetaSession is not None:
+                return RequestMetaSession(
+                    read,
+                    write,
+                    read_timeout_seconds=read_timeout,
+                    request_meta=request_meta,
+                    busy_holder=f"mcp:{name}",
+                )
+            return ClientSession(read, write, read_timeout_seconds=read_timeout)
 
-        timeout = getattr(mcp_tools, "timeout_seconds", 30) or 30
-        read_timeout = timedelta(seconds=timeout)
-        if RequestMetaSession is not None:
-            mcp_tools._session_context = RequestMetaSession(  # type: ignore[assignment]
-                read,
-                write,
-                read_timeout_seconds=read_timeout,
-                request_meta=request_meta,
-                busy_holder=f"mcp:{name}",
-            )
-        else:
-            mcp_tools._session_context = ClientSession(  # type: ignore[assignment]
-                read, write, read_timeout_seconds=read_timeout
-            )
-        mcp_tools.session = await mcp_tools._session_context.__aenter__()
-        mcp_tools._active_contexts.append(mcp_tools._session_context)
+        # The connection lives in a task of its own, so whichever task
+        # disconnects it, it is closed where it was opened
+        # (:class:`OwnedStdioConnection`). Agno's ``close`` / ``__aexit__``
+        # exit ``_context``, which is that connection.
+        connection = OwnedStdioConnection(params, errlog=errlog, session_for=session_for, name=name)
+        mcp_tools.session = await connection.open()
+        mcp_tools._context = connection  # type: ignore[assignment]
+        mcp_tools._active_contexts = [connection]
 
         # Initialize Agno tool functions from MCP session.
         # tool_name_prefix ensures MCP tools don't collide with
         # built-in tools (e.g. read_file → mcp_filesystem_read_file).
-        await mcp_tools.initialize()
+        try:
+            await mcp_tools.initialize()
+        except BaseException:
+            await connection.aclose()
+            raise
         # A tool that fails is a failed call, in its own words
         # (``tool_errors``); the session above records the failure.
         raise_on_failure(mcp_tools)
 
-        # Load-bearing: Agno's __aexit__ closes this handle.
-        # If we drop the assignment the file descriptor leaks.
-        mcp_tools._errlog = errlog
-
         return mcp_tools
+
+
+class OwnedStdioConnection:
+    """One stdio MCP connection, opened and closed by a task of its own.
+
+    ``mcp`` 2's ``stdio_client`` cannot be abandoned. Cancelled, its
+    stdout reader drains the server's stdout under a *shielded* scope
+    until the pipe closes — and nothing closes it but the client's own
+    exit, which stops the server. So a connection dropped without that
+    exit (igni used to drop them: in ``mcp`` 1 exiting one from another
+    task raised "cancel scope in a different task") keeps a task that no
+    cancellation ends, and the event loop never finishes closing: the
+    process hangs on its way out.
+
+    Here a dedicated task enters ``stdio_client`` and the session and
+    holds them until :meth:`aclose`, then exits both itself. Any task may
+    call :meth:`aclose`. Shaped like an async context manager, because
+    Agno's ``MCPTools.close`` / ``__aexit__`` exit ``_context``.
+    """
+
+    #: How long a closing connection may take before its task is cancelled.
+    CLOSE_TIMEOUT = 10.0
+
+    def __init__(
+        self,
+        params: Any,
+        *,
+        errlog: Any,
+        session_for: Callable[[Any, Any], Any],
+        name: str,
+    ) -> None:
+        self._params = params
+        self._errlog = errlog
+        self._session_for = session_for
+        self._name = name
+        self._closing = asyncio.Event()
+        self._task: asyncio.Task[None] | None = None
+
+    async def open(self) -> Any:
+        """Start the connection; the initialised-transport session once it is up."""
+        ready: asyncio.Future[Any] = asyncio.get_running_loop().create_future()
+        self._task = asyncio.create_task(self._own(ready), name=f"mcp-stdio:{self._name}")
+        try:
+            return await ready
+        except BaseException:
+            await self.aclose()
+            raise
+
+    async def _own(self, ready: asyncio.Future[Any]) -> None:
+        try:
+            async with contextlib.AsyncExitStack() as stack:
+                read, write = await stack.enter_async_context(
+                    stdio_client(self._params, errlog=self._errlog)
+                )
+                session = await stack.enter_async_context(self._session_for(read, write))
+                if not ready.done():
+                    ready.set_result(session)
+                await self._closing.wait()
+        except BaseException as exc:
+            if not ready.done():
+                ready.set_exception(
+                    exc if isinstance(exc, Exception) else ConnectionError(str(exc))
+                )
+            elif not isinstance(exc, asyncio.CancelledError):
+                logger.debug("MCP '%s' connection ended: %s", self._name, exc)
+            if isinstance(exc, asyncio.CancelledError):
+                raise
+        finally:
+            with contextlib.suppress(Exception):
+                self._errlog.close()
+
+    async def aclose(self) -> None:
+        """Close the session and stop the server, from whichever task asks."""
+        self._closing.set()
+        task = self._task
+        if task is None or task.done():
+            return
+        try:
+            await asyncio.wait_for(asyncio.shield(task), self.CLOSE_TIMEOUT)
+        except (TimeoutError, asyncio.CancelledError):
+            task.cancel()
+        except Exception as exc:  # noqa: BLE001 — closing reports, never raises
+            logger.debug("MCP '%s' close: %s", self._name, exc)
+
+    async def __aexit__(self, *_exc: object) -> None:
+        await self.aclose()

@@ -19,6 +19,7 @@ plane (``os.agno.com``). Any ``*.agno.com`` counts.
 
 from __future__ import annotations
 
+import asyncio
 import os
 from pathlib import Path
 
@@ -81,6 +82,12 @@ async def igni_turn(project_dir: Path, *, air_gapped: bool) -> tuple[str, Egress
         with EgressGuard(network=InternalNetwork()).watching() as log:
             session = Session(settings, project_dir=project_dir)
             response = await session.handle_message("Say something.")
+            # Agno 3 would post from a worker thread after the run returns
+            # (``agno.api.api``): give it the time to, while still watched.
+            for _ in range(20):
+                if agno_attempts(log):
+                    break
+                await asyncio.sleep(0.05)
         assert "/v1/chat/completions" in stub.paths, stub.paths
     return response, log
 
@@ -103,6 +110,12 @@ async def test_the_guard_sees_agno_telemetry_when_it_is_on(monkeypatch):
         agent = Agent(model=stub_model(stub))
         with EgressGuard(network=InternalNetwork()).watching() as log:
             await agent.arun("Say something.")
+            # Agno 3 posts its telemetry from a worker thread of its own
+            # (``agno.api.api``), after the run returns: wait for it.
+            for _ in range(100):
+                if agno_attempts(log):
+                    break
+                await asyncio.sleep(0.05)
 
     attempts = agno_attempts(log)
     assert attempts, "the control failed: Agno's telemetry made no attempt the guard could see"

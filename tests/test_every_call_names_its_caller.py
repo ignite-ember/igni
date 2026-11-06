@@ -18,7 +18,7 @@ from typing import Any
 import anyio
 import httpx
 import pytest
-from mcp.server.fastmcp import Context, FastMCP
+from mcp.server.mcpserver import Context, MCPServer
 from mcp.shared.message import SessionMessage
 
 from ember_code.core.auth.credentials import Credentials, CredentialsStore
@@ -114,12 +114,12 @@ class TestTheSignedInPerson:
 
 class TestAToolCallCarriesIt:
     async def test_every_tool_call_carries_the_providers_meta(self) -> None:
-        server = FastMCP("acme.example")
+        server = MCPServer("acme.example")
 
         @server.tool()
         async def whoami(ctx: Context) -> str:  # type: ignore[type-arg]
             meta = ctx.request_context.meta
-            return json.dumps(meta.model_dump().get("igni/principal") if meta else None)
+            return json.dumps(meta.get("igni/principal") if meta else None)
 
         to_server_send, to_server_receive = anyio.create_memory_object_stream[
             SessionMessage | Exception
@@ -129,10 +129,10 @@ class TestAToolCallCarriesIt:
         ](8)
         async with anyio.create_task_group() as tasks:
             tasks.start_soon(
-                server._mcp_server.run,
+                server._lowlevel_server.run,
                 to_server_receive,
                 to_client_send,
-                server._mcp_server.create_initialization_options(),
+                server._lowlevel_server.create_initialization_options(),
             )
             async with RequestMetaSession(
                 to_client_receive, to_server_send, request_meta=ADA.as_meta

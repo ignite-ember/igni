@@ -33,7 +33,7 @@ from agno.db.base import SessionType
 from agno.db.postgres import AsyncPostgresDb
 from agno.db.schemas.memory import UserMemory
 from agno.session import Session
-from sqlalchemy import Table
+from sqlalchemy import Table, select
 
 from ember_code.core.db.scope import StorageScope
 
@@ -53,6 +53,7 @@ class ScopedAsyncPostgresDb(AsyncPostgresDb):
     #: Agno's name attribute for each kind of table igni uses.
     _NAME_ATTRIBUTES: ClassVar[dict[str, str]] = {
         "sessions": "session_table_name",
+        "runs": "runs_table_name",
         "memories": "memory_table_name",
         "versions": "versions_table_name",
         "learnings": "learnings_table_name",
@@ -137,6 +138,7 @@ class ScopedAsyncPostgresDb(AsyncPostgresDb):
         session_type: SessionType | None = None,
         user_id: str | None = None,
         deserialize: bool | None = True,
+        runs_limit: int | None = None,
     ) -> Any:
         return self._plain(
             await super().get_session(
@@ -144,6 +146,7 @@ class ScopedAsyncPostgresDb(AsyncPostgresDb):
                 session_type=session_type,
                 user_id=self._scoped_user_id,
                 deserialize=deserialize,
+                runs_limit=runs_limit,
             )
         )
 
@@ -160,6 +163,8 @@ class ScopedAsyncPostgresDb(AsyncPostgresDb):
         sort_by: str | None = None,
         sort_order: str | None = None,
         deserialize: bool | None = True,
+        include_runs: bool = True,
+        filter_expr: dict[str, Any] | None = None,
     ) -> Any:
         return self._plain(
             await super().get_sessions(
@@ -174,6 +179,8 @@ class ScopedAsyncPostgresDb(AsyncPostgresDb):
                 sort_by=sort_by,
                 sort_order=sort_order,
                 deserialize=deserialize,
+                include_runs=include_runs,
+                filter_expr=filter_expr,
             )
         )
 
@@ -201,6 +208,105 @@ class ScopedAsyncPostgresDb(AsyncPostgresDb):
         stored.session_id = self.stored_id(session.session_id)
         stored.user_id = self._scoped_user_id
         return self._plain(await super().upsert_session(stored, deserialize=deserialize))
+
+    # ── Runs ──────────────────────────────────────────────────────
+    #
+    # Agno 3 keeps each run in a row of its own (``<session_table>_runs``),
+    # keyed by ``run_id`` and tied to its session's row by ``session_id``.
+    # A run is written under the session's stored id and the scope's
+    # ``user_id`` — the column the row-level security policy reads — and
+    # every read, cancel and delete is limited to the scope's runs.
+
+    async def upsert_run(
+        self,
+        run: Any,
+        session_id: str,
+        user_id: str | None = None,
+        run_index: int | None = None,
+    ) -> None:
+        await super().upsert_run(
+            run,
+            session_id=self.stored_id(session_id),
+            user_id=self._scoped_user_id,
+            run_index=run_index,
+        )
+
+    async def get_runs(
+        self,
+        session_id: str | None = None,
+        user_id: str | None = None,
+        agent_id: str | None = None,
+        team_id: str | None = None,
+        workflow_id: str | None = None,
+        status: Any = None,
+        limit: int | None = None,
+        page: int | None = None,
+        sort_by: str | None = None,
+        sort_order: str | None = None,
+        deserialize: bool | None = True,
+    ) -> Any:
+        return self._plain(
+            await super().get_runs(
+                session_id=self.stored_id(session_id) if session_id is not None else None,
+                user_id=self._scoped_user_id,
+                agent_id=agent_id,
+                team_id=team_id,
+                workflow_id=workflow_id,
+                status=status,
+                limit=limit,
+                page=page,
+                sort_by=sort_by,
+                sort_order=sort_order,
+                deserialize=deserialize,
+            )
+        )
+
+    async def get_run(self, run_id: str, deserialize: bool | None = True) -> Any:
+        if not await self._owned([run_id]):
+            return None
+        return self._plain(await super().get_run(run_id, deserialize=deserialize))
+
+    async def cancel_pending_run(
+        self,
+        run_id: str,
+        *,
+        session_id: str,
+        reason: str,
+        user_id: str | None = None,
+        expected_status: str = "PENDING",
+    ) -> bool:
+        return await super().cancel_pending_run(
+            run_id,
+            session_id=self.stored_id(session_id),
+            reason=reason,
+            user_id=self._scoped_user_id,
+            expected_status=expected_status,
+        )
+
+    async def delete_run(self, run_id: str) -> bool:
+        if not await self._owned([run_id]):
+            return False
+        return await super().delete_run(run_id)
+
+    async def delete_runs(self, run_ids: list[str]) -> None:
+        owned = await self._owned(run_ids)
+        if owned:
+            await super().delete_runs(owned)
+
+    async def _owned(self, run_ids: list[str]) -> list[str]:
+        """Which of ``run_ids`` are this scope's: Agno's own run-id calls take no scope."""
+        if not run_ids:
+            return []
+        table = await self._get_table(table_type="runs")
+        if table is None:
+            return []
+        async with self.async_session_factory() as sess:
+            found = await sess.execute(
+                select(table.c.run_id).where(
+                    table.c.run_id.in_(run_ids), table.c.user_id == self._scoped_user_id
+                )
+            )
+            return [row[0] for row in found]
 
     # ── Memories ──────────────────────────────────────────────────
 

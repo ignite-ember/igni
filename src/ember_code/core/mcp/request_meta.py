@@ -57,6 +57,6 @@ class RequestMetaSession(ClientSession):
             except Exception as exc:
                 record_failure(f"calling {name} failed: {exc}", answered=False)
                 raise
-        if result.isError:
+        if result.is_error:
             record_failure(error_text(result), answered=True)
         return result

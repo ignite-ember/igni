@@ -62,14 +62,12 @@ class MCPResource(BaseModel):
     @classmethod
     def from_sdk(cls, resource: Any) -> MCPResource:
         """Project an ``mcp.types.Resource`` SDK object into the
-        wire model. Coerces the SDK's camelCase ``mimeType`` to
-        the snake-case ``mime_type`` field and tolerates ``None``
-        on any optional attribute."""
+        wire model, tolerating ``None`` on any optional attribute."""
         return cls(
             uri=str(getattr(resource, "uri", "") or ""),
             name=getattr(resource, "name", "") or "",
             description=getattr(resource, "description", "") or "",
-            mime_type=getattr(resource, "mimeType", "") or "",
+            mime_type=getattr(resource, "mime_type", "") or "",
         )
 
 

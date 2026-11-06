@@ -28,6 +28,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from ember_code.core.config.settings import Settings
+from ember_code.core.db.agno_schema import AgnoSchema
 from ember_code.core.db.locator import StorageLocator
 from ember_code.core.db.providers import SharedStorages
 
@@ -100,6 +101,10 @@ class StorageManager:
         path = url.file
         if path is not None and not storage.shared:
             path.parent.mkdir(parents=True, exist_ok=True)
+            # A file an earlier igni wrote has Agno 2's tables (``agno_schema``).
+            AgnoSchema.ensure_current(
+                path, session_table=self.SESSION_TABLE, memory_table=self.MEMORY_TABLE
+            )
             return _agno_sqlite.AsyncSqliteDb(
                 db_file=str(path),
                 session_table=self.SESSION_TABLE,

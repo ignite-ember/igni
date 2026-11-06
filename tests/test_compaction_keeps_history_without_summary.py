@@ -27,6 +27,15 @@ from ember_code.core.session.compaction import CompactionCoordinator
 from ember_code.core.session.compaction import coordinator as coordinator_mod
 
 
+def _runs_db() -> MagicMock:
+    """A session database as compaction's run rewrite sees it (``run_history``)."""
+    db = MagicMock()
+    db.get_runs = AsyncMock(return_value=[])
+    db.delete_runs = AsyncMock()
+    db.upsert_run = AsyncMock()
+    return db
+
+
 class _NullSummaryManager:
     """Agno's summariser, doing what a failing provider makes it do:
     returning without ever writing ``session.summary``."""
@@ -50,6 +59,7 @@ def _session_stub(agno_session):
     s.main_team = SimpleNamespace()
     s.main_team.aget_session = AsyncMock(return_value=agno_session)
     s.main_team.asave_session = AsyncMock()
+    s.main_team.db = _runs_db()
     s.main_team.model = SimpleNamespace()
     s.rebuild_main_team = MagicMock()
     s.hook_executor = SimpleNamespace()
@@ -59,7 +69,9 @@ def _session_stub(agno_session):
 
 def _conversation(summary=None):
     """An agno session carrying real history worth losing."""
-    return SimpleNamespace(runs=[SimpleNamespace(), SimpleNamespace()], summary=summary)
+    return SimpleNamespace(
+        session_id="sess-1", runs=[SimpleNamespace(), SimpleNamespace()], summary=summary
+    )
 
 
 @pytest.fixture
@@ -158,6 +170,7 @@ class TestSummaryProduced:
         # in-memory object says.
         s = _session_stub(_conversation())
         s.main_team.asave_session = AsyncMock(side_effect=RuntimeError("db is locked"))
+        s.main_team.db = _runs_db()
         coord = CompactionCoordinator(s)
         coord._fallback.summarise = AsyncMock(return_value="a recap")
 

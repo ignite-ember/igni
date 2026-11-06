@@ -24,7 +24,7 @@ from typing import Any
 import anyio
 import pytest
 from mcp.shared.message import SessionMessage
-from mcp.types import JSONRPCMessage, JSONRPCNotification
+from mcp.types import JSONRPCNotification
 
 from ember_code.core.mcp.client import MCPClientManager
 from ember_code.core.mcp.notification_tap import McpNotificationRouter
@@ -286,9 +286,7 @@ async def test_marking_everything_read_tells_the_server_nothing_local(tmp_path):
 
 
 def _session_message(method: str, params: dict[str, Any]) -> SessionMessage:
-    return SessionMessage(
-        message=JSONRPCMessage(JSONRPCNotification(jsonrpc="2.0", method=method, params=params))
-    )
+    return SessionMessage(message=JSONRPCNotification(jsonrpc="2.0", method=method, params=params))
 
 
 async def test_the_tap_takes_its_method_and_passes_everything_else():

@@ -22,6 +22,7 @@ from typing import TYPE_CHECKING, Any, ClassVar
 
 from agno.db import sqlite as _agno_sqlite
 
+from ember_code.core.db.agno_schema import AgnoSchema
 from ember_code.core.db.urls import DatabaseUrl, Dialect
 
 if TYPE_CHECKING:
@@ -64,6 +65,7 @@ class SqliteStorage(SharedStorage):
     ) -> Any:
         assert url.file is not None
         url.file.parent.mkdir(parents=True, exist_ok=True)
+        AgnoSchema.ensure_current(url.file, session_table=session_table, memory_table=memory_table)
         return _agno_sqlite.AsyncSqliteDb(
             db_file=str(url.file), session_table=session_table, memory_table=memory_table
         )

@@ -80,8 +80,15 @@ class LocalNotification(BaseModel):
         return line
 
 
+#: igni's notifications spell their fields as written (`event_key`); `mcp` 2's
+#: own models would send them camelCased (`eventKey`), which igni does not read.
+AS_WRITTEN = ConfigDict(alias_generator=None)
+
+
 class NotifyParams(types.NotificationParams):
     """`params` of the MCP notification: a `LocalNotification`, field for field."""
+
+    model_config = AS_WRITTEN
 
     kind: str
     title: str
@@ -121,6 +128,8 @@ class ConditionsParams(types.NotificationParams):
     texts again — they describe something that changed (a new commit's
     project map), not something that comes and goes.
     """
+
+    model_config = AS_WRITTEN
 
     conditions: dict[str, bool] = Field(max_length=MAX_CONDITIONS)
     #: Present only when asking; absent, it is just conditions.

@@ -37,7 +37,7 @@ async def test_a_notification_crosses_the_wire_as_the_host_reads_it() -> None:
         result = await host.session.call_tool("export", {"slug": "runbook"})
         [received] = await host.received(1)
 
-    assert not result.isError
+    assert not result.is_error
     assert received == EXPORT_READY
     assert host.raw == [
         {

@@ -311,8 +311,8 @@ class _Block:
 class _Result:
     def __init__(self, content: list[Any], structured: Any = None, error: bool = False) -> None:
         self.content = content
-        self.structuredContent = structured
-        self.isError = error
+        self.structured_content = structured
+        self.is_error = error
 
 
 def test_text_wins_over_structured_content() -> None:

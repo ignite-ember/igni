@@ -7,12 +7,11 @@ import textwrap
 from pathlib import Path
 
 import anyio
-from mcp import StdioServerParameters, types
+from mcp import ClientSession, StdioServerParameters
+from mcp.client.extension import NotificationBinding
 from mcp.client.stdio import stdio_client
-from mcp.shared.session import RequestResponder
 
-from igni_extension.notifications import NotifyNotification
-from igni_extension.testing import HostClientSession
+from igni_extension.notifications import NOTIFY_METHOD, NotifyNotification, NotifyParams
 
 SCRIPT = textwrap.dedent(
     """
@@ -44,15 +43,13 @@ async def test_a_process_serves_tools_and_notifies_over_stdio(tmp_path: Path) ->
     received: list[NotifyNotification] = []
     arrived = anyio.Event()
 
-    async def on_message(
-        message: RequestResponder[types.ServerRequest, types.ClientResult]
-        | types.ServerNotification
-        | Exception,
-    ) -> None:
-        root = getattr(message, "root", None)
-        if isinstance(root, NotifyNotification):
-            received.append(root)
-            arrived.set()
+    async def on_notify(params: NotifyParams) -> None:
+        received.append(NotifyNotification(params=params))
+        arrived.set()
+
+    igni_notifications = [
+        NotificationBinding(method=NOTIFY_METHOD, params_type=NotifyParams, handler=on_notify)
+    ]
 
     server = StdioServerParameters(
         command=sys.executable, args=[str(script)], env={"PYTHONPATH": str(source)}
@@ -60,13 +57,13 @@ async def test_a_process_serves_tools_and_notifies_over_stdio(tmp_path: Path) ->
     with anyio.fail_after(30):
         async with (
             stdio_client(server) as (read, write),
-            HostClientSession(read, write, message_handler=on_message) as session,
+            ClientSession(read, write, notification_bindings=igni_notifications) as session,
         ):
             await session.initialize()
             result = await session.call_tool("export", {"slug": "runbook"})
             await arrived.wait()
 
-    assert not result.isError
+    assert not result.is_error
     [notification] = received
     assert notification.local().title == "runbook.pdf"
     assert notification.params.event_key == "export:e1"
@@ -112,7 +109,7 @@ async def test_work_started_with_the_process_runs_until_igni_closes_it(tmp_path:
     with anyio.fail_after(30):
         async with (
             stdio_client(server) as (read, write),
-            HostClientSession(read, write) as session,
+            ClientSession(read, write) as session,
         ):
             await session.initialize()
             result = await session.call_tool("is_running", {})
@@ -121,5 +118,5 @@ async def test_work_started_with_the_process_runs_until_igni_closes_it(tmp_path:
         while not marker.exists():
             await anyio.sleep(0.05)
 
-    assert not result.isError
+    assert not result.is_error
     assert marker.read_text() == "stopped"

@@ -34,6 +34,7 @@ from ember_code.core.session.compaction.context_breakdown_reporter import (
     ContextBreakdownReporter,
 )
 from ember_code.core.session.compaction.fallback_summariser import FallbackSummariser
+from ember_code.core.session.persistence.run_history import RunHistory
 from ember_code.core.session.schemas import (
     CompactResult,
     ContextBreakdown,
@@ -160,7 +161,9 @@ class CompactionCoordinator:
         agno_session.runs = []
         history_cleared = True
         try:
-            await session.main_team.asave_session(agno_session)
+            # Agno 3 saves a session's row apart from its runs; the runs
+            # are cleared from their own table (``run_history``).
+            await RunHistory.save_for(session.main_team, agno_session)
             logger.info("Session runs cleared from DB")
         except Exception as e:
             # The DB still holds the runs, and the rebuilt agent reloads

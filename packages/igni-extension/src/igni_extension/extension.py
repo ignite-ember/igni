@@ -14,18 +14,20 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import functools
 import sys
-from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
+from collections.abc import AsyncIterator, Awaitable, Callable, Iterator, Mapping
 from typing import Any
 
 import anyio
 import httpx
 from anyio.streams.memory import MemoryObjectReceiveStream, MemoryObjectSendStream
-from mcp.server.fastmcp import FastMCP
+from mcp.server.mcpserver import MCPServer
+from mcp.server.mcpserver.exceptions import ToolError
 from mcp.shared.message import SessionMessage
 from pydantic import BaseModel
 
-from igni_extension.caller import CallerScope
+from igni_extension.caller import CallerScope, RequestMeta
 from igni_extension.channel import HostConnection
 from igni_extension.clock import Clock
 from igni_extension.environment import ExtensionEnvironment
@@ -44,6 +46,9 @@ from igni_extension.threads import OffTheLoop
 from igni_extension.tokens import HostTokens
 
 AnyFunction = Callable[..., Any]
+
+#: Entered around each tool call, given the tool's name, in the call's context.
+ToolObserver = Callable[[str], contextlib.AbstractContextManager[Any]]
 
 
 class ToolNames(BaseModel):
@@ -94,8 +99,21 @@ class IgniExtension:
         self.environment = ExtensionEnvironment.read(environ)
         #: What it ships for this platform: `ext.assets.path("neo4j")`.
         self.assets = self.environment.assets
-        self.mcp = FastMCP(extension_id, instructions=instructions)
-        self._session = HostSession(self.mcp._mcp_server)
+        self._session = HostSession()
+        #: The MCP server igni talks to. Every message igni sends passes the
+        #: two middlewares: the request's `_meta` is current while it is
+        #: served (`Caller.current()`), and its session is kept so the
+        #: process can speak first (`igni_extension.session`).
+        self.mcp = MCPServer(
+            extension_id,
+            instructions=instructions,
+            middleware=[RequestMeta.middleware, self._session.middleware],
+        )
+        #: What each tool `ext.tool` registered says it is, by its name.
+        self._hints: dict[str, ToolHints] = {}
+        #: Told of every call to a tool `ext.tool` registered, around it, in
+        #: the call's own context — what `testing.ConcurrencyHarness` watches.
+        self._observers: list[ToolObserver] = []
         self._signals = SignalHandlers()
         self._hooks = HookHandlers()
         self._service_events = ServiceEventHandlers()
@@ -127,7 +145,8 @@ class IgniExtension:
         tool says it is (`igni_extension.hints`). The same four go in
         the manifest's `permissions.tools` for a tool the agent calls.
         A plain `def` runs in a worker thread, so it never holds the
-        other calls (`igni_extension.threads`). A parameter typed
+        other calls (`mcp` does this, as `igni_extension.threads` does for
+        the SDK's other callbacks). A parameter typed
         `Caller` receives whom the call is for, and is not part of the
         tool's input (`igni_extension.caller`).
         """
@@ -135,32 +154,81 @@ class IgniExtension:
             name=name, description=description, annotations=hints.annotations()
         )
 
-        def off_the_loop(fn: AnyFunction) -> AnyFunction:
+        def registered(fn: AnyFunction) -> AnyFunction:
+            tool = name or fn.__name__
             # A parameter typed `Caller` is filled from the call, and is
-            # not part of the tool's input (`igni_extension.caller`).
-            served = CallerScope.inject(fn)
-            register(served)
-            # The schema is FastMCP's, from `fn` as written; only how it is
-            # run changes — a plain `def` in a worker thread (`threads`).
-            if not OffTheLoop.is_async(served):
-                tool = self.mcp._tool_manager.get_tool(name or fn.__name__)
-                if tool is not None:
-                    tool.fn = OffTheLoop.wrap(served)
-                    tool.is_async = True
+            # not part of the tool's input (`igni_extension.caller`). The
+            # schema is `mcp`'s, from the function as written; a plain `def`
+            # it runs in a worker thread.
+            register(self._observed(tool, CallerScope.inject(fn)))
+            self._hints[tool] = hints
             # `lookup_ticket.manifest_name`: the line `permissions.tools` needs.
             with contextlib.suppress(AttributeError, TypeError):
-                fn.manifest_name = ToolNames.of(self.id, name or fn.__name__).manifest  # type: ignore[attr-defined]
+                fn.manifest_name = ToolNames.of(self.id, tool).manifest  # type: ignore[attr-defined]
             return fn
 
-        return off_the_loop
+        return registered
+
+    def _observed(self, tool: str, fn: AnyFunction) -> AnyFunction:
+        """`fn` as the server runs it: observed, and failing in its own words.
+
+        The observers are told of each call (`observing`). An exception
+        the tool raises reaches igni — and the model — as its message, as
+        it did on `mcp` 1: `mcp` 2 would send only "Error executing tool",
+        which tells nobody what went wrong. A plain `def` stays plain, so
+        `mcp` still runs it in a worker thread.
+        """
+        observers = self._observers
+
+        def in_its_own_words(error: Exception) -> ToolError:
+            return (
+                error
+                if isinstance(error, ToolError)
+                else ToolError(str(error) or type(error).__name__)
+            )
+
+        if OffTheLoop.is_async(fn):
+
+            @functools.wraps(fn)
+            async def observed_async(*args: Any, **kwargs: Any) -> Any:
+                with contextlib.ExitStack() as stack:
+                    for observer in list(observers):
+                        stack.enter_context(observer(tool))
+                    try:
+                        return await fn(*args, **kwargs)
+                    except Exception as error:
+                        raise in_its_own_words(error) from error
+
+            return observed_async
+
+        @functools.wraps(fn)
+        def observed(*args: Any, **kwargs: Any) -> Any:
+            with contextlib.ExitStack() as stack:
+                for observer in list(observers):
+                    stack.enter_context(observer(tool))
+                try:
+                    return fn(*args, **kwargs)
+                except Exception as error:
+                    raise in_its_own_words(error) from error
+
+        return observed
+
+    @contextlib.contextmanager
+    def observing(self, observer: ToolObserver) -> Iterator[None]:
+        """Tell `observer` of every tool call for as long as the block runs."""
+        self._observers.append(observer)
+        try:
+            yield
+        finally:
+            self._observers.remove(observer)
 
     def tool_names(self, tool: str) -> ToolNames:
         """Every name `tool` goes by: in code, in the manifest, from a page, in igni.
 
         `KeyError` for a tool this extension does not register.
         """
-        if self.mcp._tool_manager.get_tool(tool) is None:
-            known = ", ".join(sorted(t.name for t in self.mcp._tool_manager.list_tools()))
+        if tool not in self._hints:
+            known = ", ".join(sorted(self._hints))
             raise KeyError(f"{self.id} registers no tool {tool!r} (it has: {known or 'none'})")
         return ToolNames.of(self.id, tool)
 
@@ -170,28 +238,18 @@ class IgniExtension:
         What `igni-service-bundle` writes into the bundle's manifest when
         the extension's own leaves `permissions.tools` out, so the hints
         are stated once, here. `python -m igni_extension.manifest <module>`
-        prints it. A tool with a hint unstated is `ToolHintsMissing`.
+        prints it. It lists the tools `ext.tool` registered, each of which
+        states all four hints; a tool added on `ext.mcp` directly is
+        declared in the manifest by hand (and `check_tools` still holds
+        it to the four).
         """
-        tools = sorted(self.mcp._tool_manager.list_tools(), key=lambda tool: tool.name)
-        missing = [tool.name for tool in tools if not ToolHintsMissing.complete(tool.annotations)]
-        if missing:
-            raise ToolHintsMissing(missing)
-        listed: list[dict[str, Any]] = []
-        for tool in tools:
-            annotations = tool.annotations
-            assert annotations is not None  # checked just above
-            listed.append(
-                {
-                    "name": ToolNames.of(self.id, tool.name).manifest,
-                    "annotations": {
-                        "readOnlyHint": annotations.readOnlyHint,
-                        "destructiveHint": annotations.destructiveHint,
-                        "idempotentHint": annotations.idempotentHint,
-                        "openWorldHint": annotations.openWorldHint,
-                    },
-                }
-            )
-        return listed
+        return [
+            {
+                "name": ToolNames.of(self.id, tool).manifest,
+                "annotations": hints.wire(),
+            }
+            for tool, hints in sorted(self._hints.items())
+        ]
 
     def on[T](
         self, signal: Signal[T]
@@ -385,5 +443,8 @@ class IgniExtension:
     ) -> None:
         """Serve one MCP session over the given streams (what `run` does over stdio)."""
         await self.check_tools()
-        server = self.mcp._mcp_server
+        # `MCPServer` has no public way to serve given streams yet; `mcp`'s
+        # own in-memory transport reaches the same attribute
+        # (`mcp.client._memory`, "TODO: Make `lowlevel_server` public").
+        server = self.mcp._lowlevel_server
         await server.run(read_stream, write_stream, server.create_initialization_options())

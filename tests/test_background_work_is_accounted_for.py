@@ -42,6 +42,10 @@ ALLOWED: dict[tuple[str, str], str] = {
     ("core/activity/background.py", "create_task"): "the helper itself",
     ("core/activity/background.py", "ensure_future"): "the helper itself",
     ("core/activity/background.py", "Thread"): "the helper itself",
+    ("core/mcp/stdio_binding.py", "create_task"): (
+        "a stdio MCP connection's owner, alive exactly as long as the connection: "
+        "an open connection is not busy, and draining would wait on it until disconnect"
+    ),
     ("extensions/sandbox/bridge.py", "Thread"): (
         "runs inside an extension's Linux sandbox under igni's interpreter with -I, "
         "importing nothing of igni's; its relay threads are not igni's work"

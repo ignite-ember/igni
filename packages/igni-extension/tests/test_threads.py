@@ -11,7 +11,7 @@ import time
 from collections.abc import AsyncIterator
 
 import pytest
-from mcp.server.fastmcp import FastMCP
+from mcp.server.mcpserver import MCPServer
 
 from igni_extension import Hooks, IgniExtension, Reject, ToolHints
 from igni_extension.hooks import PlanSubmit
@@ -83,10 +83,10 @@ async def test_a_hook_is_answered_while_a_sync_tool_runs(host: FakeHost) -> None
 
 
 async def test_running_it_in_a_thread_leaves_its_schema_as_fastmcp_made_it() -> None:
-    plain = FastMCP("plain")
+    plain = MCPServer("plain")
     plain.tool(annotations=HINTS.annotations())(slow_sum)
-    expected = {tool.name: tool.inputSchema for tool in await plain.list_tools()}
+    expected = {tool.name: tool.input_schema for tool in await plain.list_tools()}
 
-    listed = {tool.name: tool.inputSchema for tool in await _extension().mcp.list_tools()}
+    listed = {tool.name: tool.input_schema for tool in await _extension().mcp.list_tools()}
 
     assert listed["slow_sum"] == expected["slow_sum"]
