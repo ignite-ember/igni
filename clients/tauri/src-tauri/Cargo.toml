@@ -2,7 +2,7 @@
 name = "igni-app"
 # Kept in lockstep with ``igni-core.version`` by
 # ``scripts/sync-version.mjs`` (also drives the runtime's
-# ``IGNITE_EMBER_VERSION`` pin via ``CARGO_PKG_VERSION``).
+# ``IGNI_CORE_VERSION`` pin via ``CARGO_PKG_VERSION``).
 version = "1.0.3"
 description = "igni — standalone desktop app"
 edition = "2021"

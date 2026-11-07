@@ -104,7 +104,7 @@ const PAGE_HTML = String.raw`<!doctype html>
     --success: #2f8a4c; --warning: #b7791f; --danger: #c0392b;
     --accent-blue: #3b6fd8; --accent-blue-text: #2f5bb8;
     --accent-green-text: #2f7a45; --accent-orange-text: #a3591a; --accent-red-text: #b0322a;
-    --ember-gradient: linear-gradient(135deg, #ff7a2f, #e8452c);
+    --igni-gradient: linear-gradient(135deg, #ff7a2f, #e8452c);
     --radius-sm: 6px; --radius: 10px; --radius-lg: 14px; --radius-pill: 999px;
     --font-ui: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
     --font-mono: ui-monospace, Menlo, monospace;
@@ -162,7 +162,7 @@ const PAGE_HTML = String.raw`<!doctype html>
   .actions { display: flex; gap: 8px; margin-top: auto; padding-top: 4px; }
   button { font: inherit; font-size: var(--text-md); border-radius: var(--radius-pill); padding: 7px 14px; cursor: pointer;
            border: 1px solid var(--border); background: var(--bg-surface); color: var(--fg); }
-  button.primary { background: var(--ember-gradient); color: #fff; border: 0; font-weight: 600; }
+  button.primary { background: var(--igni-gradient); color: #fff; border: 0; font-weight: 600; }
   @media (max-width: 760px) {
     .wrap { padding: 8px 12px 0; gap: 10px; }
     .body { grid-template-columns: 1fr; overflow: auto; }

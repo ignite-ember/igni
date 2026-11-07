@@ -34,7 +34,7 @@ jobs:
     uses: ./.github/workflows/ci.yml
 
   # The desktop app installs igni's backend on first launch, pinned to its
-  # own version (``ignite-ember==CARGO_PKG_VERSION``). So a release is the
+  # own version (``igni-core==CARGO_PKG_VERSION``). So a release is the
   # version igni-core already published to PyPI, and nothing else: the tag
   # must name ``igni-core.version``, the committed Tauri files must carry
   # it, and PyPI must serve it — or the app would ship pointing at a
@@ -74,14 +74,14 @@ jobs:
           set -euo pipefail
           VERSION="$(tr -d '[:space:]' < igni-core.version)"
           for i in $(seq 1 20); do
-            if curl -fsSL -o /dev/null "https://pypi.org/pypi/ignite-ember/${VERSION}/json"; then
-              echo "ignite-ember ${VERSION} is on PyPI"
+            if curl -fsSL -o /dev/null "https://pypi.org/pypi/igni-core/${VERSION}/json"; then
+              echo "igni-core ${VERSION} is on PyPI"
               exit 0
             fi
             echo "  attempt $i/20 — not yet, waiting 30s"
             sleep 30
           done
-          echo "::error::ignite-ember ${VERSION} is not on PyPI; release igni-core v${VERSION} first"
+          echo "::error::igni-core ${VERSION} is not on PyPI; release igni-core v${VERSION} first"
           exit 1
 
   # Tauri desktop installers — see build-tauri below. Why a draft first:
@@ -729,7 +729,7 @@ jobs:
           # Tag is ``v0.6.0`` / ``v0.6.0-rc.1`` etc. ``pip_version``
           # is the PyPI-installable form (no leading ``v``); previous
           # body used ``${{ github.ref_name }}`` directly, which gave
-          # the broken ``pip install ignite-ember==v0.6.0-rc.1`` snippet
+          # the broken ``pip install igni-core==v0.6.0-rc.1`` snippet
           # (pip rejects the ``v`` prefix).
           PIP_VERSION="${GITHUB_REF#refs/tags/v}"
           echo "pip_version=$PIP_VERSION" >> "$GITHUB_OUTPUT"
@@ -780,7 +780,7 @@ jobs:
 
           **Desktop app:** download the installer for your platform
           (``.dmg``, ``.msi`` or ``.AppImage``) below. On first launch it
-          installs igni's backend, ``ignite-ember==${{ steps.notes.outputs.pip_version }}``,
+          installs igni's backend, ``igni-core==${{ steps.notes.outputs.pip_version }}``,
           released from [ignite-ember/igni-core](https://github.com/ignite-ember/igni-core/releases).
 
           ## Verify

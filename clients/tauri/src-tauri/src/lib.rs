@@ -1,6 +1,6 @@
 //! igni desktop shell.
 //!
-//! Spawns the Python backend (`python -m ember_code.backend --ws-port 0`),
+//! Spawns the Python backend (`python -m igni_core.backend --ws-port 0`),
 //! waits for its JSON ready line to learn the bound WebSocket port, then
 //! opens the shared web UI (clients/web) pointed at that port via the
 //! `?ws=` query param. The backend self-terminates if this process dies
@@ -13,7 +13,7 @@
 //! (``#igni_ws_token=…``: never sent to any server, kept across
 //! reloads). The web client offers it as the WebSocket subprotocol
 //! ``igni-token.<token>``; the backend refuses connections without it
-//! (``src/ember_code/transport/ws_auth.py``). The secret makes the
+//! (``src/igni_core/transport/ws_auth.py``). The secret makes the
 //! connection igni's window, the only one that answers the agent's
 //! approval requests; it is never written to disk, where the agent could
 //! read it — the lockfile carries a program's token instead.
@@ -168,12 +168,12 @@ const PLATFORM: &str = "linux";
 /// Responsibilities (in order):
 ///   1. Stamp ``data-host="tauri"`` + ``data-platform="<os>"`` on
 ///      ``<html>`` so the host-aware CSS rules match.
-///   2. Expose ``window.__EMBER_PICK_DIR__`` for the project-lock
+///   2. Expose ``window.__IGNI_PICK_DIR__`` for the project-lock
 ///      chip's native folder picker.
-///   3. Populate ``window.__EMBER_HOST__`` with native bridges:
+///   3. Populate ``window.__IGNI_HOST__`` with native bridges:
 ///      ``openFile``, ``revealInFolder``, ``notify``, ``setAppTitle``.
-///   4. Bridge ``ember-menu`` Tauri events to the same
-///      ``ember-host`` CustomEvent the rest of the app dispatches
+///   4. Bridge ``igni-menu`` Tauri events to the same
+///      ``igni-host`` CustomEvent the rest of the app dispatches
 ///      on.
 const INIT_SCRIPT: &str = r#"
 (function () {
@@ -182,7 +182,7 @@ const INIT_SCRIPT: &str = r#"
   html.dataset.platform = '__PLATFORM__';
 })();
 
-window.__EMBER_PICK_DIR__ = (start) =>
+window.__IGNI_PICK_DIR__ = (start) =>
   window.__TAURI__.core.invoke('plugin:dialog|open', {
     options: {
       directory: true,
@@ -195,7 +195,7 @@ function openExternalUrl(url) {
   return window.__TAURI__.core.invoke('plugin:opener|open_url', { url });
 }
 
-window.__EMBER_HOST__ = Object.assign(window.__EMBER_HOST__ || {}, {
+window.__IGNI_HOST__ = Object.assign(window.__IGNI_HOST__ || {}, {
   openFile: (path) => window.__TAURI__.core.invoke(
     'plugin:opener|open_path', { path }
   ),
@@ -262,7 +262,7 @@ window.__EMBER_HOST__ = Object.assign(window.__EMBER_HOST__ || {}, {
       e.preventDefault();
       e.stopPropagation();
       openExternalUrl(href).catch((err) =>
-        console.warn('[ember] open_url failed:', err)
+        console.warn('[igni] open_url failed:', err)
       );
     },
     true
@@ -276,7 +276,7 @@ window.__EMBER_HOST__ = Object.assign(window.__EMBER_HOST__ || {}, {
   window.open = function (url) {
     if (isExternal(url)) {
       openExternalUrl(url).catch((err) =>
-        console.warn('[ember] window.open failed:', err)
+        console.warn('[igni] window.open failed:', err)
       );
       return null;
     }
@@ -285,17 +285,17 @@ window.__EMBER_HOST__ = Object.assign(window.__EMBER_HOST__ || {}, {
 })();
 
 if (window.__TAURI__ && window.__TAURI__.event) {
-  window.__TAURI__.event.listen('ember-menu', (e) => {
+  window.__TAURI__.event.listen('igni-menu', (e) => {
     const id = e && e.payload;
     if (typeof id !== 'string') return;
-    window.dispatchEvent(new CustomEvent('ember-host', {
-      detail: { type: 'ember:menu', payload: { id } }
+    window.dispatchEvent(new CustomEvent('igni-host', {
+      detail: { type: 'igni:menu', payload: { id } }
     }));
   });
   // Mirror native fullscreen state into a ``data-fullscreen`` attr
   // on ``<html>`` so CSS can collapse the header gutter when the
   // OS hides our traffic-light cluster behind the slide-down panel.
-  window.__TAURI__.event.listen('ember-fullscreen', (e) => {
+  window.__TAURI__.event.listen('igni-fullscreen', (e) => {
     const on = !!(e && e.payload);
     document.documentElement.dataset.fullscreen = on ? 'true' : 'false';
   });
@@ -319,17 +319,17 @@ if (window.__TAURI__ && window.__TAURI__.event) {
     }, 30);
   }
   waitForInvoke((invoke) => {
-    console.log('[ember] fullscreen-detection wired');
+    console.log('[igni] fullscreen-detection wired');
     const sync = async () => {
       try {
-        const fs = await invoke('ember_is_fullscreen');
+        const fs = await invoke('igni_is_fullscreen');
         const prev = document.documentElement.dataset.fullscreen === 'true';
         if (!!fs !== prev) {
           document.documentElement.dataset.fullscreen = fs ? 'true' : 'false';
-          console.log('[ember] fullscreen ->', fs);
+          console.log('[igni] fullscreen ->', fs);
         }
       } catch (e) {
-        console.warn('[ember] ember_is_fullscreen failed:', e);
+        console.warn('[igni] igni_is_fullscreen failed:', e);
       }
     };
     sync();
@@ -375,7 +375,7 @@ fn spawn_backend(
     let mut cmd = Command::new(&install.python);
     cmd.args([
         "-m",
-        "ember_code.backend",
+        "igni_core.backend",
         "--ws-port",
         "0",
         "--project-dir",
@@ -561,7 +561,7 @@ fn parse_ready_line(line: &str) -> Option<u16> {
 /// Custom items emit ``menu`` events the JS side picks up by id —
 /// see the ``on_menu_event`` registration after the builder. We use
 /// this for app-specific actions (New Chat, Restart Backend) that
-/// the FE handles via ``window.addEventListener('ember-host', …)``.
+/// the FE handles via ``window.addEventListener('igni-host', …)``.
 fn build_menu(app: &tauri::AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
     // ── App / About menu (macOS-only — Linux/Windows merge it into Help) ──
     let app_meta = AboutMetadata {
@@ -765,7 +765,7 @@ fn permitted_updater(app: &AppHandle) -> Result<Option<tauri_plugin_updater::Upd
 /// check in `App.tsx` calls this on every connect, and before F126 it
 /// contacted github.com regardless.
 #[tauri::command]
-async fn ember_check_update(app: AppHandle) -> Result<serde_json::Value, String> {
+async fn igni_check_update(app: AppHandle) -> Result<serde_json::Value, String> {
     let current_version = env!("CARGO_PKG_VERSION").to_string();
 
     let Some(updater) = permitted_updater(&app)? else {
@@ -798,7 +798,7 @@ async fn ember_check_update(app: AppHandle) -> Result<serde_json::Value, String>
 /// Download + verify + install the pending update, then relaunch.
 /// Called from the FE's "Install" button on the update banner.
 #[tauri::command]
-async fn ember_install_update(app: AppHandle) -> Result<(), String> {
+async fn igni_install_update(app: AppHandle) -> Result<(), String> {
     // The same gate. Installing is a bigger outbound request than
     // checking, and a caller that reached this without a check — the
     // banner persisted across a config change, say — must not make it.
@@ -827,7 +827,7 @@ async fn ember_install_update(app: AppHandle) -> Result<(), String> {
 /// ``NSWindow.styleMask`` check — no allocation, no IPC barrier
 /// beyond the invoke itself.
 #[tauri::command]
-fn ember_is_fullscreen(window: tauri::WebviewWindow) -> bool {
+fn igni_is_fullscreen(window: tauri::WebviewWindow) -> bool {
     window.is_fullscreen().unwrap_or(false)
 }
 
@@ -884,7 +884,7 @@ fn build_diagnostic_report() -> String {
     let marker_path = cache.join("igni-install.json");
 
     let dev_backend = std::env::var("IGNI_DEV_BACKEND").ok();
-    let ember_python = std::env::var("IGNI_PYTHON").ok();
+    let igni_python = std::env::var("IGNI_PYTHON").ok();
     let dev_ack = std::env::var("IGNITE_EMBER_DEV").ok();
     let dev_active = dev_ack
         .as_deref()
@@ -892,8 +892,8 @@ fn build_diagnostic_report() -> String {
 
     let active_python = if dev_active && dev_backend.as_deref().is_some_and(|s| !s.is_empty()) {
         std::path::PathBuf::from(dev_backend.as_deref().unwrap())
-    } else if dev_active && ember_python.as_deref().is_some_and(|s| !s.is_empty()) {
-        std::path::PathBuf::from(ember_python.as_deref().unwrap())
+    } else if dev_active && igni_python.as_deref().is_some_and(|s| !s.is_empty()) {
+        std::path::PathBuf::from(igni_python.as_deref().unwrap())
     } else {
         venv_python.clone()
     };
@@ -916,7 +916,7 @@ fn build_diagnostic_report() -> String {
     out.push('\n');
     let backend_source = if dev_active
         && (dev_backend.as_deref().is_some_and(|s| !s.is_empty())
-            || ember_python.as_deref().is_some_and(|s| !s.is_empty()))
+            || igni_python.as_deref().is_some_and(|s| !s.is_empty()))
     {
         "dev override"
     } else {
@@ -936,14 +936,14 @@ fn build_diagnostic_report() -> String {
     ));
     out.push_str(&format!(
         "IGNI_PYTHON             : {}\n",
-        ember_python.as_deref().unwrap_or("<unset>")
+        igni_python.as_deref().unwrap_or("<unset>")
     ));
     out.push_str(&format!(
         "IGNITE_EMBER_DEV         : {}\n",
         dev_ack.as_deref().unwrap_or("<unset>")
     ));
     if (dev_backend.as_deref().is_some_and(|s| !s.is_empty())
-        || ember_python.as_deref().is_some_and(|s| !s.is_empty()))
+        || igni_python.as_deref().is_some_and(|s| !s.is_empty()))
         && !dev_active
     {
         out.push_str("                           ↑ override env var set without ack — ignored\n");
@@ -1052,7 +1052,7 @@ fn build_app_window(
     Ok(window)
 }
 
-/// Emit ``ember-fullscreen`` whenever the window enters or leaves
+/// Emit ``igni-fullscreen`` whenever the window enters or leaves
 /// native fullscreen, so the FE can shrink the header gutter from
 /// 48 → 16 px and slide the hamburger / brand into the freed space.
 /// Native fullscreen detaches the traffic-light cluster (it lives
@@ -1060,7 +1060,7 @@ fn build_app_window(
 #[cfg(target_os = "macos")]
 fn install_fullscreen_watcher(window: &tauri::WebviewWindow) {
     let was_fullscreen = Arc::new(AtomicBool::new(window.is_fullscreen().unwrap_or(false)));
-    let _ = window.emit("ember-fullscreen", was_fullscreen.load(Ordering::Relaxed));
+    let _ = window.emit("igni-fullscreen", was_fullscreen.load(Ordering::Relaxed));
     let w_for_event = window.clone();
     let flag = was_fullscreen.clone();
     window.on_window_event(move |event| {
@@ -1068,7 +1068,7 @@ fn install_fullscreen_watcher(window: &tauri::WebviewWindow) {
             let is_fs = w_for_event.is_fullscreen().unwrap_or(false);
             if is_fs != flag.load(Ordering::Relaxed) {
                 flag.store(is_fs, Ordering::Relaxed);
-                let _ = w_for_event.emit("ember-fullscreen", is_fs);
+                let _ = w_for_event.emit("igni-fullscreen", is_fs);
             }
         }
     });
@@ -1308,7 +1308,7 @@ fn bootstrap_and_open(app: &AppHandle, project_dir: &str) -> Result<(), String> 
     let app_for_progress = app.clone();
     let progress: Box<dyn Fn(&str) + Sync> = Box::new(move |msg: &str| {
         if let Some(w) = app_for_progress.get_webview_window("main") {
-            let _ = w.emit("ember-bootstrap-progress", msg.to_string());
+            let _ = w.emit("igni-bootstrap-progress", msg.to_string());
         }
     });
 
@@ -1322,7 +1322,7 @@ fn bootstrap_and_open(app: &AppHandle, project_dir: &str) -> Result<(), String> 
     // kill when we attached, and a backend the plugins own survives
     // this app quitting.
     let (port, ws_token, version_info) =
-        match discovery::discover(project_dir, runtime::IGNITE_EMBER_VERSION)
+        match discovery::discover(project_dir, runtime::IGNI_CORE_VERSION)
     {
         discovery::Decision::Attach {
             port,
@@ -1343,7 +1343,7 @@ fn bootstrap_and_open(app: &AppHandle, project_dir: &str) -> Result<(), String> 
                 ws_token,
                 BackendVersionInfo {
                     actual: Some(wire_version),
-                    expected: runtime::IGNITE_EMBER_VERSION.to_string(),
+                    expected: runtime::IGNI_CORE_VERSION.to_string(),
                     source: "discovered",
                 },
             )
@@ -1356,7 +1356,7 @@ fn bootstrap_and_open(app: &AppHandle, project_dir: &str) -> Result<(), String> 
                 "Another igni backend is running for this project on version {running}, \
                  but this app is {}. Close the other client (or restart it on the \
                  matching version) and reopen igni.",
-                runtime::IGNITE_EMBER_VERSION
+                runtime::IGNI_CORE_VERSION
             ));
         }
         discovery::Decision::Spawn => {
@@ -1536,7 +1536,7 @@ fn reposition_traffic_lights(window: &tauri::WebviewWindow, x: f64, y: f64) {
         // normally resize no longer exists in its windowed form,
         // and any ``setFrame:`` here is either a no-op or churns
         // the panel layout. The FE drops the header gutter while
-        // we're in this state via the ``ember-fullscreen`` event.
+        // we're in this state via the ``igni-fullscreen`` event.
         const NS_WINDOW_STYLE_MASK_FULLSCREEN: u64 = 1u64 << 14;
         let style_mask: u64 = msg_send![ns_window, styleMask];
         if style_mask & NS_WINDOW_STYLE_MASK_FULLSCREEN != 0 {
@@ -1656,9 +1656,9 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             set_app_title,
             reinstall_backend,
-            ember_is_fullscreen,
-            ember_check_update,
-            ember_install_update,
+            igni_is_fullscreen,
+            igni_check_update,
+            igni_install_update,
         ])
         .setup(|app| {
             // Native menu — has to be set before the first window
@@ -1690,9 +1690,9 @@ pub fn run() {
                 if let Err(e) = bootstrap_and_open(&app_handle, &dir_for_bootstrap) {
                     if let Some(w) = app_handle.get_webview_window("main") {
                         let escaped = serde_json::to_string(&e).unwrap_or_default();
-                        let _ = w.emit("ember-bootstrap-error", &e);
+                        let _ = w.emit("igni-bootstrap-error", &e);
                         let _ = w.eval(&format!(
-                            "document.body.innerHTML = '<div class=\"ember-loading-error\">Bootstrap failed: ' + {} + '</div>';",
+                            "document.body.innerHTML = '<div class=\"igni-loading-error\">Bootstrap failed: ' + {} + '</div>';",
                             escaped
                         ));
                     }
@@ -1702,11 +1702,11 @@ pub fn run() {
 
             Ok(())
         })
-        // Native menu items emit ``ember-menu`` events on the
+        // Native menu items emit ``igni-menu`` events on the
         // ``main`` webview; the FE picks them up via
-        // ``window.addEventListener('ember-menu', e => …)`` and
+        // ``window.addEventListener('igni-menu', e => …)`` and
         // routes them through the existing host-bridge dispatcher
-        // (the ``ember-host`` dispatcher, reached through a separate
+        // (the ``igni-host`` dispatcher, reached through a separate
         // channel because Tauri's emit format is not a DOM
         // CustomEvent).
         .on_menu_event(|app, event| match event.id().as_ref() {
@@ -1741,7 +1741,7 @@ pub fn run() {
             }
             id => {
                 if let Some(w) = focused_window(app) {
-                    let _ = w.emit("ember-menu", id.to_string());
+                    let _ = w.emit("igni-menu", id.to_string());
                 }
             }
         })
@@ -1824,7 +1824,7 @@ mod tests {
         //
         // Everything above tests the decision; none of it proves the
         // decision is *asked for*. Removing the gate from
-        // `ember_check_update` failed nothing, because a
+        // `igni_check_update` failed nothing, because a
         // `#[tauri::command]` takes an `AppHandle` and needs a running
         // Tauri application to call — there is no unit test that can
         // reach it.
@@ -1836,7 +1836,7 @@ mod tests {
         // notice.
         // Each body is read up to the next command, not to the end of
         // the file. The first version took "everything after
-        // ember_install_update" — which includes *this test*, where the
+        // igni_install_update" — which includes *this test*, where the
         // string appears in the assertion literals, so the rule matched
         // itself and could not fail. Third time in this review a source
         // sweep has read its own text as evidence.
@@ -1850,7 +1850,7 @@ mod tests {
 
         let source = include_str!("lib.rs");
 
-        for name in ["ember_check_update", "ember_install_update"] {
+        for name in ["igni_check_update", "igni_install_update"] {
             let body = body_of(source, name);
             assert!(
                 body.contains("permitted_updater(") || body.contains("UpdatePolicy::load()"),
@@ -2139,7 +2139,7 @@ mod tests {
     // it from cargo test. What we CAN lock down is the contract the
     // INIT_SCRIPT string has to honor for the feature to work at all:
     // the right Tauri command name, capture-phase listener, scheme
-    // allowlist, window.open shim, and __EMBER_HOST__.openUrl bridge.
+    // allowlist, window.open shim, and __IGNI_HOST__.openUrl bridge.
     // Any future edit that flips one of these silently (e.g. dropping
     // ``true`` from addEventListener and losing capture-phase
     // interception, or typoing ``plugin:opener|open_url``) trips a
@@ -2229,12 +2229,12 @@ mod tests {
     #[test]
     fn init_script_exposes_openurl_on_ember_host() {
         // ``host.openUrl(url)`` in the FE looks up
-        // ``window.__EMBER_HOST__.openUrl``. Anything that drops the
+        // ``window.__IGNI_HOST__.openUrl``. Anything that drops the
         // ``openUrl: openExternalUrl`` line moves the welcome screen
         // "Sign in" link silently back to navigating-the-webview.
         assert!(
             INIT_SCRIPT.contains("openUrl: openExternalUrl"),
-            "__EMBER_HOST__.openUrl must be wired to openExternalUrl"
+            "__IGNI_HOST__.openUrl must be wired to openExternalUrl"
         );
     }
 

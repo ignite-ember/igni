@@ -221,7 +221,7 @@ async function trustedHome(projectDir: string): Promise<string> {
     VENV_PYTHON,
     [
       "-c",
-      "import sys; from ember_code.core.workspace_trust.service import WorkspaceTrust; " +
+      "import sys; from igni_core.core.workspace_trust.service import WorkspaceTrust; " +
         "WorkspaceTrust().trust(sys.argv[1])",
       projectDir,
     ],
@@ -432,7 +432,7 @@ export const test = base.extend<{
       VENV_PYTHON,
       [
         "-m",
-        "ember_code.backend",
+        "igni_core.backend",
         "--ws-port",
         "0",
         "--project-dir",

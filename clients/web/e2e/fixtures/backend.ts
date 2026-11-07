@@ -50,7 +50,7 @@ export interface FixtureBackend {
   clientCount(): number;
   /**
    * The window models this backend keeps, as the real one does
-   * (``ember_code.extensions.host.windows``): every ``window_model``
+   * (``igni_core.extensions.host.windows``): every ``window_model``
    * request is answered from them and each change is pushed back as
    * ``window_model_changed`` with its revision and the writer's token.
    */

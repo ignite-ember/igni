@@ -45,7 +45,7 @@ export function AccountChip({
   return (
     <button
       className="chip"
-      style={{ background: "var(--ember-gradient)", color: "#fff", border: "none" }}
+      style={{ background: "var(--igni-gradient)", color: "#fff", border: "none" }}
       onClick={onLogIn}
     >
       Log in

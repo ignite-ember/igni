@@ -418,11 +418,11 @@ export default function App() {
   }, []);
 
   // Desktop-shell → web-UI event bus. The Tauri shell dispatches
-  // ``ember-host`` CustomEvents on ``window`` (``{type, payload}`` in
+  // ``igni-host`` CustomEvents on ``window`` (``{type, payload}`` in
   // ``detail``) for its native menu items.
   useEffect(() => {
     const dispatch = (type: string, payload: Record<string, unknown>) => {
-      if (type === "ember:menu") {
+      if (type === "igni:menu") {
         // Native-menu items routed through the host bridge. ``id``
         // is the menu item identifier the native side registered.
         const id = String(payload.id ?? "");
@@ -458,9 +458,9 @@ export default function App() {
       const { type, payload } = ev.detail || { type: "", payload: {} };
       dispatch(type, payload || {});
     };
-    window.addEventListener("ember-host", onCustom);
+    window.addEventListener("igni-host", onCustom);
     return () => {
-      window.removeEventListener("ember-host", onCustom);
+      window.removeEventListener("igni-host", onCustom);
     };
   }, []);
 
@@ -521,7 +521,7 @@ export default function App() {
     [windowModel],
   );
   // Ref to the latest ``checkForUpdate`` closure so the once-mounted
-  // ``ember-host`` listener (deps ``[]``) can call the current version.
+  // ``igni-host`` listener (deps ``[]``) can call the current version.
   const checkForUpdateRef = useRef<
     ((silent?: boolean) => Promise<void>) | null
   >(null);
@@ -553,7 +553,7 @@ export default function App() {
           }
         ).__TAURI__?.core?.invoke;
         const info = tauriInvoke
-          ? ((await tauriInvoke("ember_check_update")) as UpdateInfo)
+          ? ((await tauriInvoke("igni_check_update")) as UpdateInfo)
           : await client.rpc<UpdateInfo | null>("check_for_update");
         if (!info) return;
         if (info.available) {
@@ -575,7 +575,7 @@ export default function App() {
   useEffect(() => {
     checkForUpdateRef.current = checkForUpdate;
   }, [checkForUpdate]);
-  // DEV-ONLY: set ``VITE_EMBER_FAKE_UPDATE=1`` to surface the modal
+  // DEV-ONLY: set ``VITE_IGNI_FAKE_UPDATE=1`` to surface the modal
   // + OS notification at launch without contacting GitHub Releases.
   // Remove before shipping.
   const fakeUpdateDone = useRef(false);
@@ -583,7 +583,7 @@ export default function App() {
     if (fakeUpdateDone.current) return;
     const env = (import.meta as unknown as { env?: Record<string, string> })
       .env;
-    if (!env?.VITE_EMBER_FAKE_UPDATE) return;
+    if (!env?.VITE_IGNI_FAKE_UPDATE) return;
     fakeUpdateDone.current = true;
     announceUpdate({
       available: true,
@@ -714,11 +714,11 @@ export default function App() {
   useEffect(() => {
     const setTitle = (
       window as unknown as {
-        __EMBER_HOST__?: {
+        __IGNI_HOST__?: {
           setAppTitle?: (folder: string, org: string) => void;
         };
       }
-    ).__EMBER_HOST__?.setAppTitle;
+    ).__IGNI_HOST__?.setAppTitle;
     if (typeof setTitle !== "function") return;
     const folder = projectDir
       ? projectDir.split("/").filter(Boolean).pop() || projectDir
@@ -781,7 +781,7 @@ export default function App() {
         const cur = tauri.window!.getCurrentWindow!();
         void cur.startDragging();
       } catch (err) {
-        console.warn("[ember] startDragging failed", err);
+        console.warn("[igni] startDragging failed", err);
       }
     };
     el.addEventListener("mousedown", onDown);

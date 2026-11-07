@@ -49,7 +49,7 @@ export function FPSCounter() {
   );
 }
 
-const FPS_STORAGE_KEY = "ember_fps_visible";
+const FPS_STORAGE_KEY = "igni_fps_visible";
 const FPS_TOGGLE_EVENT = "ember:toggle-fps";
 
 function readFpsVisible(): boolean {

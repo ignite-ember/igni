@@ -40,7 +40,7 @@
 .workflow-run[data-status="running"] { border-left-color: var(--accent-blue-text); }
 .workflow-run[data-status="completed"] { border-left-color: var(--accent-green-text, #7cc57f); }
 .workflow-run[data-status="failed"] { border-left-color: var(--accent-red-text, #f09393); }
-.workflow-run[data-status="cancelled"] { border-left-color: var(--ember-orange); }
+.workflow-run[data-status="cancelled"] { border-left-color: var(--igni-orange); }
 
 /* ── Header ────────────────────────────────────────────────────── */
 
@@ -71,7 +71,7 @@
 .workflow-run[data-status="running"] .workflow-run-glyph { color: var(--accent-blue-text); }
 .workflow-run[data-status="completed"] .workflow-run-glyph { color: var(--accent-green-text, #7cc57f); }
 .workflow-run[data-status="failed"] .workflow-run-glyph { color: var(--accent-red-text, #f09393); }
-.workflow-run[data-status="cancelled"] .workflow-run-glyph { color: var(--ember-orange); }
+.workflow-run[data-status="cancelled"] .workflow-run-glyph { color: var(--igni-orange); }
 
 .workflow-run-title {
   display: inline-flex;
@@ -115,8 +115,8 @@
 }
 
 .workflow-run-pill.tone-warn {
-  color: var(--ember-orange);
-  background: color-mix(in srgb, var(--ember-orange) 14%, transparent);
+  color: var(--igni-orange);
+  background: color-mix(in srgb, var(--igni-orange) 14%, transparent);
 }
 
 .workflow-run-pill.tone-bad {
@@ -164,7 +164,7 @@
 }
 
 .workflow-run-count.count-running .workflow-run-count-icon {
-  animation: ember-pulse 1.4s ease-in-out infinite;
+  animation: igni-pulse 1.4s ease-in-out infinite;
 }
 
 .workflow-run-error {
@@ -181,7 +181,7 @@
   margin-right: 6px;
 }
 
-@keyframes ember-pulse {
+@keyframes igni-pulse {
   0%, 100% { opacity: 1; }
   50% { opacity: 0.4; }
 }
@@ -214,7 +214,7 @@
 .workflow-phase[data-status="running"] { border-left-color: var(--accent-blue-text); }
 .workflow-phase[data-status="completed"] { border-left-color: var(--accent-green-text, #7cc57f); }
 .workflow-phase[data-status="failed"] { border-left-color: var(--accent-red-text, #f09393); }
-.workflow-phase[data-status="cancelled"] { border-left-color: var(--ember-orange); }
+.workflow-phase[data-status="cancelled"] { border-left-color: var(--igni-orange); }
 
 .workflow-phase-header {
   display: flex;
@@ -261,10 +261,10 @@
 .workflow-phase[data-status="running"] .workflow-phase-node { color: var(--accent-blue-text); }
 .workflow-phase[data-status="completed"] .workflow-phase-node { color: var(--accent-green-text, #7cc57f); }
 .workflow-phase[data-status="failed"] .workflow-phase-node { color: var(--accent-red-text, #f09393); }
-.workflow-phase[data-status="cancelled"] .workflow-phase-node { color: var(--ember-orange); }
+.workflow-phase[data-status="cancelled"] .workflow-phase-node { color: var(--igni-orange); }
 
 .workflow-phase[data-status="running"] .workflow-phase-node {
-  animation: ember-pulse 1.4s ease-in-out infinite;
+  animation: igni-pulse 1.4s ease-in-out infinite;
   box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent-blue) 18%, transparent);
 }
 
@@ -301,8 +301,8 @@
 }
 
 .workflow-phase-pill.tone-warn {
-  color: var(--ember-orange);
-  background: color-mix(in srgb, var(--ember-orange) 14%, transparent);
+  color: var(--igni-orange);
+  background: color-mix(in srgb, var(--igni-orange) 14%, transparent);
 }
 
 .workflow-phase-pill.tone-bad {
@@ -362,7 +362,7 @@
   border-left: 2px solid var(--accent-red, #e54848);
 }
 .workflow-agent[data-status="timeout"] {
-  border-left: 2px solid var(--ember-orange);
+  border-left: 2px solid var(--igni-orange);
 }
 
 .workflow-agent-glyph {
@@ -382,7 +382,7 @@
 .workflow-agent[data-status="running"] .workflow-agent-glyph { color: var(--accent-blue-text); }
 .workflow-agent[data-status="completed"] .workflow-agent-glyph { color: var(--accent-green-text, #7cc57f); }
 .workflow-agent[data-status="failed"] .workflow-agent-glyph { color: var(--accent-red-text, #f09393); }
-.workflow-agent[data-status="timeout"] .workflow-agent-glyph { color: var(--ember-orange); }
+.workflow-agent[data-status="timeout"] .workflow-agent-glyph { color: var(--igni-orange); }
 
 .workflow-agent-label {
   font-family: var(--font-mono);
@@ -417,8 +417,8 @@
 }
 
 .workflow-agent-pill.tone-warn {
-  color: var(--ember-orange);
-  background: color-mix(in srgb, var(--ember-orange) 14%, transparent);
+  color: var(--igni-orange);
+  background: color-mix(in srgb, var(--igni-orange) 14%, transparent);
 }
 
 .workflow-agent-pill.tone-bad {
@@ -618,13 +618,13 @@
 }
 
 .workflow-run-banner.tone-warn {
-  background: color-mix(in srgb, var(--ember-orange) 14%, transparent);
+  background: color-mix(in srgb, var(--igni-orange) 14%, transparent);
   border-bottom-color: color-mix(
     in srgb,
-    var(--ember-orange) 35%,
+    var(--igni-orange) 35%,
     transparent
   );
-  color: var(--ember-orange);
+  color: var(--igni-orange);
 }
 
 .workflow-run-banner-icon {

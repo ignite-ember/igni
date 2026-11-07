@@ -33,7 +33,7 @@ function req(overrides: Partial<HITLRequest> = {}): HITLRequest {
     tool_name: "edit_file",
     friendly_name: "Edit",
     tool_args: {
-      file_path: "src/ember_code/cli.py",
+      file_path: "src/igni_core/cli.py",
       old_string: '"""CLI interface for igni."""',
       new_string: "# ember CLI entry point\n" + '"""CLI interface for igni."""',
     },

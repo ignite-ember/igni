@@ -6,7 +6,7 @@
  * Two host modes:
  *   • Tauri (window.__TAURI__.core.invoke present) — button
  *     reads "Install & restart", click invokes
- *     ``ember_install_update`` and the app relaunches itself.
+ *     ``igni_install_update`` and the app relaunches itself.
  *   • Plain web — button reads "Download", click opens the
  *     download URL in a new tab.
  *
@@ -67,12 +67,12 @@ describe("UpdatePrompt — Tauri host", () => {
     expect(screen.getByRole("button", { name: "Install & restart" })).toBeTruthy();
   });
 
-  it("clicking install fires ember_install_update via invoke", () => {
+  it("clicking install fires igni_install_update via invoke", () => {
     const invoke = (window as { __TAURI__?: { core?: { invoke?: ReturnType<typeof vi.fn> } } })
       .__TAURI__!.core!.invoke!;
     render(<UpdatePrompt info={info} onDismiss={() => undefined} />);
     fireEvent.click(screen.getByRole("button", { name: "Install & restart" }));
-    expect(invoke).toHaveBeenCalledWith("ember_install_update");
+    expect(invoke).toHaveBeenCalledWith("igni_install_update");
   });
 
   it("flips to 'Installing…' while the invoke is in-flight", async () => {

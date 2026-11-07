@@ -26,7 +26,7 @@ if [[ ! -f "$DMG" ]]; then
   exit 2
 fi
 
-WORK="$(mktemp -d -t ember-dmg)"
+WORK="$(mktemp -d -t igni-dmg)"
 trap 'rm -rf "$WORK"' EXIT
 
 RW="$WORK/rw.dmg"

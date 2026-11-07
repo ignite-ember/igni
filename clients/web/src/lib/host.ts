@@ -7,7 +7,7 @@
  * Host detection is by feature, not user-agent:
  *
  *   • Tauri          → injects `window.__TAURI__` and (when our
- *                       desktop client wires the bridge) `__EMBER_HOST__.openFile`
+ *                       desktop client wires the bridge) `__IGNI_HOST__.openFile`
  *   • Plain browser  → no native open available — fall back to the
  *                       in-app preview modal (driven by an onPreview
  *                       callback the caller supplies).
@@ -65,7 +65,7 @@ declare global {
   interface Window {
     __TAURI__?: unknown;
     __TAURI_INTERNALS__?: unknown;
-    __EMBER_HOST__?: NativeBridge;
+    __IGNI_HOST__?: NativeBridge;
   }
 }
 
@@ -183,7 +183,7 @@ export class Host {
   async openExternal(url: string): Promise<boolean> {
     if (!isOpenableLink(url)) return false;
     try {
-      const bridge = window.__EMBER_HOST__;
+      const bridge = window.__IGNI_HOST__;
       if (this.kind === "tauri" && bridge?.openUrl) {
         await Promise.resolve(bridge.openUrl(url));
         return true;
@@ -204,13 +204,13 @@ export class Host {
    * plain web (the caller should fall back to its in-app toast).
    *
    * Wiring per host:
-   *   • ``__EMBER_HOST__.notify`` when the shell injected one
+   *   • ``__IGNI_HOST__.notify`` when the shell injected one
    *   • Tauri          → ``plugin:notification|notify`` (mac/Windows banner)
    */
   async notify(payload: NotifyPayload): Promise<boolean> {
     if (!payload?.title && !payload?.body) return false;
     try {
-      const bridge = window.__EMBER_HOST__;
+      const bridge = window.__IGNI_HOST__;
       if (bridge?.notify) {
         await Promise.resolve(bridge.notify(payload));
         return true;
@@ -242,13 +242,13 @@ export class Host {
     try {
       switch (this.kind) {
         case "tauri": {
-          const bridge = window.__EMBER_HOST__;
+          const bridge = window.__IGNI_HOST__;
           if (bridge?.openFile) {
             await Promise.resolve(bridge.openFile(path));
             return true;
           }
           // Tauri injects __TAURI__ but our desktop client may not yet
-          // have wired __EMBER_HOST__. Try the standard shell plugin.
+          // have wired __IGNI_HOST__. Try the standard shell plugin.
           const tauri = (window as unknown as { __TAURI__?: { core?: { invoke?: Function } } })
             .__TAURI__;
           if (tauri?.core?.invoke) {

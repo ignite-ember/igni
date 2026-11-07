@@ -5,11 +5,11 @@
    red #DC2626 gradient, monospace for tool/terminal content. */
 
 :root {
-  --ember-orange: #f97316;
-  --ember-orange-hover: #fb923c;
-  --ember-red: #dc2626;
-  --ember-gradient: linear-gradient(135deg, #f97316, #dc2626);
-  --ember-gradient-soft: linear-gradient(
+  --igni-orange: #f97316;
+  --igni-orange-hover: #fb923c;
+  --igni-red: #dc2626;
+  --igni-gradient: linear-gradient(135deg, #f97316, #dc2626);
+  --igni-gradient-soft: linear-gradient(
     135deg,
     rgba(249, 115, 22, 0.1),
     rgba(220, 38, 38, 0.06)
@@ -589,8 +589,8 @@ button {
   gap: var(--space-5);
   padding: 5px 14px;
   font-size: var(--text-sm);
-  background: var(--ember-gradient-soft);
-  border-bottom: 1px solid color-mix(in srgb, var(--ember-orange) 35%, transparent);
+  background: var(--igni-gradient-soft);
+  border-bottom: 1px solid color-mix(in srgb, var(--igni-orange) 35%, transparent);
   color: var(--fg-muted);
 }
 
@@ -683,14 +683,14 @@ button {
   font-weight: 600;
   font-family: var(--font-ui);
   color: var(--accent-orange-text, #fb9c5a);
-  background: color-mix(in srgb, var(--ember-orange) 14%, transparent);
-  border: 1px solid color-mix(in srgb, var(--ember-orange) 50%, transparent);
+  background: color-mix(in srgb, var(--igni-orange) 14%, transparent);
+  border: 1px solid color-mix(in srgb, var(--igni-orange) 50%, transparent);
   cursor: pointer;
   white-space: nowrap;
   transition: background 0.12s ease, border-color 0.12s ease;
 }
 .brand-update:hover {
-  background: color-mix(in srgb, var(--ember-orange) 22%, transparent);
+  background: color-mix(in srgb, var(--igni-orange) 22%, transparent);
   border-color: var(--accent-orange-text, #fb9c5a);
 }
 
@@ -859,7 +859,7 @@ button {
    row until the user hovers the very top edge. We reclaim the ~48
    px of left-padding the windowed mode reserves for them and slide
    the hamburger + brand into that space. The Rust side emits
-   ``ember-fullscreen`` whenever the window's fullscreen state
+   ``igni-fullscreen`` whenever the window's fullscreen state
    changes (see ``on_window_event`` in lib.rs). */
 :root[data-host="tauri"][data-platform="mac"][data-fullscreen="true"]
   .sidebar:not(.closed) .sidebar-head {
@@ -1171,8 +1171,8 @@ button {
   bottom: 22px;
   width: 4px;
   border-radius: 3px;
-  background: var(--ember-orange);
-  box-shadow: 0 0 12px 1px color-mix(in srgb, var(--ember-orange) 60%, transparent);
+  background: var(--igni-orange);
+  box-shadow: 0 0 12px 1px color-mix(in srgb, var(--igni-orange) 60%, transparent);
   animation: search-target-bar 2.4s cubic-bezier(0.16, 1, 0.3, 1);
   transform-origin: center;
   pointer-events: none;
@@ -1180,20 +1180,20 @@ button {
 @keyframes search-target-pulse {
   0% {
     box-shadow:
-      0 0 0 2px color-mix(in srgb, var(--ember-orange) 75%, transparent),
-      0 0 36px 6px color-mix(in srgb, var(--ember-orange) 30%, transparent);
+      0 0 0 2px color-mix(in srgb, var(--igni-orange) 75%, transparent),
+      0 0 36px 6px color-mix(in srgb, var(--igni-orange) 30%, transparent);
     transform: scale(1.012);
   }
   18% {
     box-shadow:
-      0 0 0 1.5px color-mix(in srgb, var(--ember-orange) 45%, transparent),
-      0 0 24px 2px color-mix(in srgb, var(--ember-orange) 18%, transparent);
+      0 0 0 1.5px color-mix(in srgb, var(--igni-orange) 45%, transparent),
+      0 0 24px 2px color-mix(in srgb, var(--igni-orange) 18%, transparent);
     transform: scale(1);
   }
   45% {
     box-shadow:
-      0 0 0 1.5px color-mix(in srgb, var(--ember-orange) 55%, transparent),
-      0 0 24px 4px color-mix(in srgb, var(--ember-orange) 22%, transparent);
+      0 0 0 1.5px color-mix(in srgb, var(--igni-orange) 55%, transparent),
+      0 0 24px 4px color-mix(in srgb, var(--igni-orange) 22%, transparent);
   }
   100% {
     box-shadow: 0 0 0 0 transparent;
@@ -1231,10 +1231,10 @@ button {
   gap: 0;
 }
 .chip-search.active {
-  background: color-mix(in srgb, var(--ember-orange) 18%, transparent);
-  border-color: color-mix(in srgb, var(--ember-orange) 55%, transparent);
+  background: color-mix(in srgb, var(--igni-orange) 18%, transparent);
+  border-color: color-mix(in srgb, var(--igni-orange) 55%, transparent);
   color: var(--accent-orange-text, #fb9c5a);
-  box-shadow: 0 0 12px 0 color-mix(in srgb, var(--ember-orange) 35%, transparent);
+  box-shadow: 0 0 12px 0 color-mix(in srgb, var(--igni-orange) 35%, transparent);
 }
 
 /* ── Find-in-conversation bar ──────────────────────────────────────
@@ -1253,7 +1253,7 @@ button {
   box-shadow:
     0 16px 40px rgba(0, 0, 0, 0.42),
     0 4px 8px rgba(0, 0, 0, 0.22),
-    0 0 0 1px color-mix(in srgb, var(--ember-orange) 22%, transparent);
+    0 0 0 1px color-mix(in srgb, var(--igni-orange) 22%, transparent);
   z-index: 25;
   overflow: hidden;
   /* Centering transform: at rest, the element is anchored by its
@@ -1286,7 +1286,7 @@ button {
     box-shadow:
       0 16px 40px rgba(0, 0, 0, 0.42),
       0 4px 8px rgba(0, 0, 0, 0.22),
-      0 0 0 1px color-mix(in srgb, var(--ember-orange) 22%, transparent);
+      0 0 0 1px color-mix(in srgb, var(--igni-orange) 22%, transparent);
   }
 }
 /* Subtle ember glow that pulses once on open to draw the eye. */
@@ -1296,7 +1296,7 @@ button {
   inset: -1px;
   border-radius: inherit;
   pointer-events: none;
-  box-shadow: 0 0 32px 4px color-mix(in srgb, var(--ember-orange) 28%, transparent);
+  box-shadow: 0 0 32px 4px color-mix(in srgb, var(--igni-orange) 28%, transparent);
   opacity: 0;
   animation: search-bar-glow 0.9s ease-out 0.05s;
 }
@@ -1377,7 +1377,7 @@ button {
   background: color-mix(in srgb, var(--fg) 5%, transparent);
 }
 .chat-search-result.active {
-  background: color-mix(in srgb, var(--ember-orange) 14%, transparent);
+  background: color-mix(in srgb, var(--igni-orange) 14%, transparent);
 }
 .chat-search-result.unreachable {
   opacity: 0.45;
@@ -1392,7 +1392,7 @@ button {
   min-width: 38px;
 }
 .chat-search-role-user {
-  color: color-mix(in srgb, var(--ember-orange) 75%, var(--fg-faint));
+  color: color-mix(in srgb, var(--igni-orange) 75%, var(--fg-faint));
 }
 .chat-search-snippet {
   flex: 1;
@@ -1402,7 +1402,7 @@ button {
   white-space: nowrap;
 }
 .chat-search-snippet mark {
-  background: color-mix(in srgb, var(--ember-orange) 45%, transparent);
+  background: color-mix(in srgb, var(--igni-orange) 45%, transparent);
   color: var(--fg);
   padding: 0 1px;
   border-radius: 2px;
@@ -1559,7 +1559,7 @@ button {
 .user-code-pill-snippet {
   display: block;
   margin: 6px 0;
-  border: 1px solid color-mix(in srgb, var(--ember-orange) 25%, transparent);
+  border: 1px solid color-mix(in srgb, var(--igni-orange) 25%, transparent);
   border-radius: 6px;
   overflow: hidden;
 }
@@ -1711,8 +1711,8 @@ button {
 }
 
 .msg-user.mode-shell {
-  background: color-mix(in srgb, var(--ember-orange) 14%, transparent);
-  border: 1px solid color-mix(in srgb, var(--ember-orange) 40%, transparent);
+  background: color-mix(in srgb, var(--igni-orange) 14%, transparent);
+  border: 1px solid color-mix(in srgb, var(--igni-orange) 40%, transparent);
   color: var(--accent-orange-text, #fb9c5a);
   font-family: var(--font-mono);
   font-size: var(--text-md);
@@ -1820,7 +1820,7 @@ button {
   padding: var(--space-4) var(--space-6);
   border-radius: var(--radius-sm);
   border: 1px solid var(--border-soft);
-  background: color-mix(in srgb, var(--ember-orange) 6%, transparent);
+  background: color-mix(in srgb, var(--igni-orange) 6%, transparent);
   color: var(--fg);
   font-size: var(--text-md);
   line-height: 1.4;
@@ -2501,7 +2501,7 @@ button {
   border-radius: var(--radius-circle);
   border: 1.5px solid color-mix(in srgb, var(--accent-blue) 35%, transparent);
   border-top-color: var(--accent-blue-text);
-  animation: ember-spin 0.9s linear infinite;
+  animation: igni-spin 0.9s linear infinite;
   flex-shrink: 0;
 }
 
@@ -2520,7 +2520,7 @@ button {
   border-radius: var(--radius-circle);
   border: 1.5px solid color-mix(in srgb, var(--fg-muted) 30%, transparent);
   border-top-color: var(--fg-muted);
-  animation: ember-spin 0.9s linear infinite;
+  animation: igni-spin 0.9s linear infinite;
   flex-shrink: 0;
 }
 
@@ -2530,7 +2530,7 @@ button {
   }
 }
 
-@keyframes ember-spin {
+@keyframes igni-spin {
   to {
     transform: rotate(360deg);
   }
@@ -2644,7 +2644,7 @@ button {
 
 .orch-agent-dot.status-running {
   background: var(--accent-blue);
-  animation: ember-pulse 1.4s ease-in-out infinite;
+  animation: igni-pulse 1.4s ease-in-out infinite;
 }
 .orch-agent-dot.status-done {
   background: var(--accent-green, #4caf50);
@@ -2653,10 +2653,10 @@ button {
   background: var(--accent-red, #e54848);
 }
 .orch-agent-dot.status-paused {
-  background: var(--ember-orange);
+  background: var(--igni-orange);
 }
 
-@keyframes ember-pulse {
+@keyframes igni-pulse {
   0%, 100% { opacity: 1; }
   50% { opacity: 0.4; }
 }
@@ -2695,7 +2695,7 @@ button {
 }
 .orch-agent-status.status-paused {
   color: var(--accent-orange-text, #fb9c5a);
-  background: color-mix(in srgb, var(--ember-orange) 14%, transparent);
+  background: color-mix(in srgb, var(--igni-orange) 14%, transparent);
 }
 
 .orch-agent-counts {
@@ -2729,7 +2729,7 @@ button {
   background: color-mix(in srgb, var(--accent-blue) 14%, transparent);
 }
 .orch-count.count-running .orch-count-icon {
-  animation: ember-pulse 1.4s ease-in-out infinite;
+  animation: igni-pulse 1.4s ease-in-out infinite;
 }
 .orch-count.count-done {
   color: var(--accent-green-text);
@@ -2832,15 +2832,15 @@ button {
   letter-spacing: 0.02em;
   border-radius: 6px;
   cursor: pointer;
-  border: 1px solid color-mix(in srgb, var(--ember-orange) 40%, transparent);
-  background: color-mix(in srgb, var(--ember-orange) 12%, transparent);
+  border: 1px solid color-mix(in srgb, var(--igni-orange) 40%, transparent);
+  background: color-mix(in srgb, var(--igni-orange) 12%, transparent);
   color: var(--accent-orange-text, #fb9c5a);
   flex-shrink: 0;
 }
 
 .orch-retry-btn:hover {
-  background: color-mix(in srgb, var(--ember-orange) 22%, transparent);
-  border-color: color-mix(in srgb, var(--ember-orange) 60%, transparent);
+  background: color-mix(in srgb, var(--igni-orange) 22%, transparent);
+  border-color: color-mix(in srgb, var(--igni-orange) 60%, transparent);
 }
 
 .orch-retry-btn:active {
@@ -2853,8 +2853,8 @@ button {
    user message asking it to respawn this specialist. */
 .orch-agent-retry {
   padding: var(--space-5) var(--space-7) var(--space-6);
-  background: color-mix(in srgb, var(--ember-orange) 5%, transparent);
-  border-top: 1px solid color-mix(in srgb, var(--ember-orange) 25%, transparent);
+  background: color-mix(in srgb, var(--igni-orange) 5%, transparent);
+  border-top: 1px solid color-mix(in srgb, var(--igni-orange) 25%, transparent);
   display: flex;
   flex-direction: column;
   gap: var(--space-3);
@@ -3149,7 +3149,7 @@ button {
   align-self: stretch;
   border: 1px solid var(--border-soft);
   border-radius: var(--radius);
-  background: color-mix(in srgb, var(--ember-orange) 5%, transparent);
+  background: color-mix(in srgb, var(--igni-orange) 5%, transparent);
   padding: var(--space-5) var(--space-7);
   display: flex;
   flex-direction: column;
@@ -3165,7 +3165,7 @@ button {
 .loop-iteration-badge {
   gap: var(--space-3);
   padding: 2px 9px;
-  background: color-mix(in srgb, var(--ember-orange) 18%, transparent);
+  background: color-mix(in srgb, var(--igni-orange) 18%, transparent);
   color: var(--accent-orange-text, #fb9c5a);
   font-size: var(--text-sm);
   letter-spacing: 0.02em;
@@ -3766,7 +3766,7 @@ button {
 }
 
 .composer:focus-within {
-  border-color: color-mix(in srgb, var(--ember-orange) 55%, var(--border));
+  border-color: color-mix(in srgb, var(--igni-orange) 55%, var(--border));
 }
 
 .composer textarea {
@@ -3937,8 +3937,8 @@ button {
   font-weight: 700;
   padding: 3px 9px;
   border-radius: var(--radius-pill);
-  background: var(--ember-gradient-soft);
-  border: 1px solid color-mix(in srgb, var(--ember-orange) 45%, transparent);
+  background: var(--igni-gradient-soft);
+  border: 1px solid color-mix(in srgb, var(--igni-orange) 45%, transparent);
   color: var(--accent-orange-text, #fb9c5a);
 }
 
@@ -3963,7 +3963,7 @@ button {
   width: 34px;
   height: 34px;
   border-radius: var(--radius-circle);
-  background: var(--ember-gradient);
+  background: var(--igni-gradient);
   color: #fff;
   font-size: var(--text-lg);
   cursor: pointer;
@@ -4005,7 +4005,7 @@ button {
   display: inline-flex;
   align-items: stretch;
   height: 34px;
-  background: var(--ember-gradient);
+  background: var(--igni-gradient);
   border-radius: var(--radius-pill);
   flex-shrink: 0;
   transition: transform 0.12s ease, box-shadow 0.12s ease;
@@ -4054,7 +4054,7 @@ button {
 
    The button children stay ``background: transparent`` (set
    above) so the wrapper's gradient shows through both halves.
-   Default mode keeps the original ``--ember-gradient`` (no
+   Default mode keeps the original ``--igni-gradient`` (no
    per-mode rule needed). */
 
 .send-split[data-mode="plan"] {
@@ -4063,7 +4063,7 @@ button {
 
 .send-split[data-mode="acceptEdits"] {
   /* Yellow → red gradient. Pure amber/orange (``#d97706``)
-     was visually indistinguishable from the ember-orange
+     was visually indistinguishable from the igni-orange
      default because the ember gradient is itself orange-to-red
      — auto-edit looked like a slightly darker Execute. Yellow
      is the natural "permissive but watch the shell" signal and
@@ -4348,7 +4348,7 @@ button {
 }
 
 .ui-check input {
-  accent-color: var(--ember-orange);
+  accent-color: var(--igni-orange);
   width: 14px;
   height: 14px;
   cursor: pointer;
@@ -4379,7 +4379,7 @@ button {
 }
 
 .ui-switch[aria-checked="true"] {
-  background: var(--ember-orange);
+  background: var(--igni-orange);
 }
 
 .ui-switch::after {
@@ -4439,7 +4439,7 @@ button {
   width: 14px;
   height: 14px;
   border: 2px solid var(--border);
-  border-top-color: var(--ember-orange);
+  border-top-color: var(--igni-orange);
   border-radius: var(--radius-circle);
   animation: ui-spin 0.7s linear infinite;
 }
@@ -4467,7 +4467,7 @@ button {
 .ui-progress-fill {
   height: 100%;
   border-radius: var(--radius-pill);
-  background: var(--ember-gradient);
+  background: var(--igni-gradient);
   transition: width 0.2s ease;
 }
 
@@ -4515,7 +4515,7 @@ button {
 
 .ui-tab[aria-selected="true"] {
   color: var(--fg);
-  border-bottom-color: var(--ember-orange);
+  border-bottom-color: var(--igni-orange);
 }
 
 /* ── Text ─────────────────────────────────────────────────────── */
@@ -4579,7 +4579,7 @@ button {
 }
 
 .btn-primary {
-  background: var(--ember-gradient);
+  background: var(--igni-gradient);
   border: none;
   color: #fff;
 }
@@ -4590,13 +4590,13 @@ button {
 .btn-primary:disabled,
 .btn-primary[aria-disabled="true"] {
   opacity: 0.6;
-  background: var(--ember-gradient);
+  background: var(--igni-gradient);
   color: rgba(255, 255, 255, 0.85);
 }
 
 .btn-primary:hover:not(:disabled) {
   box-shadow: 0 6px 18px rgba(249, 115, 22, 0.3);
-  background: var(--ember-gradient);
+  background: var(--igni-gradient);
 }
 
 .btn-danger {
@@ -5431,7 +5431,7 @@ button {
 
 .mini-tag.ephemeral {
   color: var(--accent-orange-text, #fb9c5a);
-  border-color: color-mix(in srgb, var(--ember-orange) 40%, transparent);
+  border-color: color-mix(in srgb, var(--igni-orange) 40%, transparent);
 }
 
 .agent-tags .mini-tag {
@@ -5728,7 +5728,7 @@ button {
 
 .watcher-pill:hover {
   border-color: var(--accent-orange-text, #fb9c5a);
-  background: color-mix(in srgb, var(--ember-orange) 6%, var(--bg-surface));
+  background: color-mix(in srgb, var(--igni-orange) 6%, var(--bg-surface));
 }
 
 .watcher-pill-dot {
@@ -6091,7 +6091,7 @@ button {
 
 .task-filter.active .task-filter-count {
   color: var(--accent-orange-text, #fb9c5a);
-  background: color-mix(in srgb, var(--ember-orange) 14%, transparent);
+  background: color-mix(in srgb, var(--igni-orange) 14%, transparent);
 }
 
 .task-search {
@@ -6175,13 +6175,13 @@ button {
    not "a path". Inherits everything else from .file-pill /
    .inline-pill. */
 .file-pill.code-pill {
-  background: color-mix(in srgb, var(--ember-orange) 12%, transparent);
-  border-color: color-mix(in srgb, var(--ember-orange) 35%, transparent);
+  background: color-mix(in srgb, var(--igni-orange) 12%, transparent);
+  border-color: color-mix(in srgb, var(--igni-orange) 35%, transparent);
   color: var(--accent-orange-text, #fb9c5a);
 }
 
 .file-pill.code-pill:hover {
-  background: color-mix(in srgb, var(--ember-orange) 22%, transparent);
+  background: color-mix(in srgb, var(--igni-orange) 22%, transparent);
 }
 
 /* ── (legacy) Pasted-code reference card ───────────────────────
@@ -6311,7 +6311,7 @@ button {
   width: 5px;
   height: 5px;
   border-radius: var(--radius-circle);
-  background: var(--ember-orange);
+  background: var(--igni-orange);
   animation: typing-bounce 1s ease-in-out infinite;
 }
 
@@ -6452,7 +6452,7 @@ button {
 /* Composer drag-and-drop highlight + uploading chip. */
 .composer-zone.drag-hot .composer {
   border-color: var(--accent-orange-text, #fb9c5a);
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--ember-orange) 22%, transparent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--igni-orange) 22%, transparent);
 }
 
 .composer-chip-attach.uploading {
@@ -6770,7 +6770,7 @@ button {
   font-size: var(--text-sm);
   background: var(--bg-inset);
   border: 1px solid var(--border-soft);
-  border-left: 3px solid var(--ember-orange);
+  border-left: 3px solid var(--igni-orange);
   border-radius: 8px;
   padding: 9px 12px;
   color: var(--accent-orange-text, #fb9c5a);
@@ -8388,7 +8388,7 @@ button {
 
 .watcher-row--selected {
   border-color: var(--accent-orange-text, #fb9c5a);
-  background: color-mix(in srgb, var(--ember-orange) 6%, var(--bg-surface));
+  background: color-mix(in srgb, var(--igni-orange) 6%, var(--bg-surface));
 }
 
 .watcher-row--stopped {
@@ -9222,7 +9222,7 @@ button {
   margin-left: 6px;
   padding: 0 4px;
   border-radius: var(--radius-pill);
-  background: var(--ember-gradient);
+  background: var(--igni-gradient);
   color: #fff;
   font-size: var(--text-2xs);
   font-weight: 700;
@@ -9240,7 +9240,7 @@ button {
   height: 15px;
   padding: 0 3px;
   border-radius: var(--radius-pill);
-  background: var(--ember-gradient);
+  background: var(--igni-gradient);
   color: #fff;
   font-size: var(--text-2xs);
   font-weight: 700;

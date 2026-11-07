@@ -6,7 +6,7 @@
  * what is selected, the composer, toasts, the dialog, where the
  * transcript is scrolled, whether the window has focus, and which
  * session it shows are fields of a model the backend keeps per window
- * (`ember_code.extensions.host.windows`). igni's own views are the
+ * (`igni_core.extensions.host.windows`). igni's own views are the
  * first client of that model: they read it through {@link useWindowField}
  * and change it through {@link WindowModel.write} — the same path an
  * extension's `host.ui` takes on the backend, so every change is a

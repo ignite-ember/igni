@@ -7,7 +7,7 @@ also igni's web client.
 | | |
 |---|---|
 | Download | [Releases](https://github.com/ignite-ember/igni-app/releases): `.dmg`, `.msi`, `.AppImage`; installed apps update themselves |
-| Backend | [igni-core](https://github.com/ignite-ember/igni-core), installed on first launch as `ignite-ember==<this app's version>` |
+| Backend | [igni-core](https://github.com/ignite-ember/igni-core), installed on first launch as `igni-core==<this app's version>` |
 | SDKs | [igni-sdk](https://github.com/ignite-ember/igni-sdk): the extension bridge, the React floor and the stylesheet this UI is drawn with |
 
 The app and the backend are released together under one version:

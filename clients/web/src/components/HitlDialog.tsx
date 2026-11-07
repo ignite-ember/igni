@@ -28,7 +28,7 @@ export interface HitlDecision {
  *  names (``Edit``, ``Write``, ``NotebookEdit``) AND the internal
  *  Agno function names (``edit_file`` etc.) because the BE may
  *  surface either depending on call site. Mirrors
- *  ``FILE_EDIT_TOOLS`` in ``src/ember_code/core/config/permission_eval.py``. */
+ *  ``FILE_EDIT_TOOLS`` in ``src/igni_core/core/config/permission_eval.py``. */
 const EDIT_TOOL_NAMES: ReadonlySet<string> = new Set([
   "Edit",
   "Write",

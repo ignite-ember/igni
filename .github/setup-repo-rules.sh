@@ -12,7 +12,7 @@
 
 set -euo pipefail
 
-REPO="ignite-ember/igni"
+REPO="ignite-ember/igni-app"
 OWNER="dmytrozezyk"
 
 echo "==> Configuring rulesets for $REPO"

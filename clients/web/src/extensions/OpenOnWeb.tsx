@@ -4,7 +4,7 @@
  * An extension igni server introduced belongs to a service, and the
  * service's URL is its `client_uri` — the client's home page, as RFC
  * 7591 defines it. The backend reports it as `web_url`
- * (`ember_code.extensions.web_home`); a development install reports its
+ * (`igni_core.extensions.web_home`); a development install reports its
  * `serviceUrl` setting when one is set. Nothing is shown without one.
  *
  * A plain external anchor, the way igni opens every external link: the

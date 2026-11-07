@@ -319,12 +319,12 @@ describe("the native folder picker", () => {
 
   it("passes the start folder and returns the pick", async () => {
     const pick = vi.fn(async (start?: string) => `${start}/b`);
-    win.__EMBER_PICK_DIR__ = pick;
+    win.__IGNI_PICK_DIR__ = pick;
     await expect(mod.pickNativeDirectory("/a")).resolves.toBe("/a/b");
   });
 
   it("reads a picker that throws as a cancel", async () => {
-    win.__EMBER_PICK_DIR__ = async () => {
+    win.__IGNI_PICK_DIR__ = async () => {
       throw new Error("dialog crashed");
     };
     await expect(mod.pickNativeDirectory()).resolves.toBeNull();
