@@ -83,6 +83,13 @@ class CloudLayer(Layer):
         # to it and strips it from every client's.
         return True
 
+    def connections_speak_for_extensions(self) -> bool:
+        # No. Every client of a VM's igni is the producer, through the
+        # gateway — igni's web UI, or a program with their token — and none
+        # of them hosts an extension's page. A Fleet UI that does will need
+        # a mark the node agent attests, as the control header is.
+        return False
+
     def fetches_own_events(self) -> bool:
         # The gateway pulls them and delivers them on its control stream.
         return False

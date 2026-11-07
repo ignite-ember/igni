@@ -47,7 +47,7 @@ from ember_code.core.layer import Layers
 from ember_code.core.session.client_state import ClientStateStore
 from ember_code.core.session.session_directories import SessionDirectoryStore
 from ember_code.extensions.host.windows import WindowModelError, WindowRequest
-from ember_code.extensions.registry import ExtensionRegistry
+from ember_code.extensions.registry import ExtensionRefused, ExtensionRegistry
 from ember_code.extensions.rpc import ExtensionRpc
 from ember_code.extensions.service_events import ServiceEvent, ServiceEventInbox
 from ember_code.extensions.service_token import (
@@ -57,6 +57,7 @@ from ember_code.extensions.service_token import (
     TokenExchangeFailed,
 )
 from ember_code.protocol import messages as msg
+from ember_code.protocol.messages import Message
 from ember_code.protocol.rpc import RpcMethod
 
 logger = logging.getLogger(__name__)
@@ -348,9 +349,9 @@ class SessionOrchestrator:
                 str(args.get("session_id") or ""), str(args.get("project_dir") or "")
             )
         except ValueError as exc:
-            await self._transport.send(msg.RPCResponse(id=message.id or "", error=str(exc)))
+            await self._reply(message, msg.RPCResponse(id=message.id or "", error=str(exc)))
             return
-        await self._transport.send(msg.RPCResponse(id=message.id or "", result=result.model_dump()))
+        await self._reply(message, msg.RPCResponse(id=message.id or "", result=result.model_dump()))
         await self._show_waiting_approvals(result.session_id)
 
     async def _show_waiting_approvals(self, session_id: str) -> None:
@@ -380,19 +381,23 @@ class SessionOrchestrator:
         drops its optimistic copy and shows the model's.
         """
         if self._host_model is None:
-            await self._transport.send(
-                msg.RPCResponse(id=message.id or "", error="window_model: no host model")
+            await self._reply(
+                message, msg.RPCResponse(id=message.id or "", error="window_model: no host model")
             )
             return
         try:
-            request = WindowRequest.model_validate(dict(message.args or {}))
+            args = dict(message.args or {})
+            # A window's connection is the one it spoke on, never one it names.
+            if getattr(message, "from_client", ""):
+                args["connection_id"] = message.from_client
+            request = WindowRequest.model_validate(args)
             result = self._host_model.handle_window(request)
         except (ValidationError, WindowModelError) as exc:
-            await self._transport.send(
-                msg.RPCResponse(id=message.id or "", error=f"window_model: {exc}")
+            await self._reply(
+                message, msg.RPCResponse(id=message.id or "", error=f"window_model: {exc}")
             )
             return
-        await self._transport.send(msg.RPCResponse(id=message.id or "", result=result))
+        await self._reply(message, msg.RPCResponse(id=message.id or "", result=result))
 
     async def _handle_host_model(self, message: Any) -> None:
         """``host_model``: an extension's page reaching the host object model.
@@ -405,15 +410,28 @@ class SessionOrchestrator:
         """
         caller = getattr(message, "caller", None)
         if self._host_model is None or not caller:
-            await self._transport.send(
+            await self._reply(
+                message,
                 msg.RPCResponse(
                     id=message.id or "",
                     error="host_model: only an extension's page reaches the host model",
-                )
+                ),
             )
             return
-        reply = await self._host_model.handle_page(caller, dict(message.args or {}))
-        await self._transport.send(msg.RPCResponse(id=message.id or "", result=reply))
+        args = dict(message.args or {})
+        # The page's window is the one framing it — the window on the
+        # connection that forwarded this — not whatever the request says.
+        # The argument stands only until that window has said who it is.
+        windows = getattr(self._host_model, "windows", None)
+        framing = (
+            windows.by_connection(message.from_client)
+            if windows is not None and getattr(message, "from_client", "")
+            else None
+        )
+        if framing:
+            args["home_window"] = framing
+        reply = await self._host_model.handle_page(caller, args)
+        await self._reply(message, msg.RPCResponse(id=message.id or "", result=reply))
 
     async def _handle_service_token(self, message: Any) -> None:
         """``extension_service_token``: a page's token for its own service.
@@ -428,29 +446,69 @@ class SessionOrchestrator:
         caller = getattr(message, "caller", None)
         tokens = self._page_tokens
         if tokens is None or not caller:
-            await self._transport.send(
+            await self._reply(
+                message,
                 msg.RPCResponse(
                     id=message.id or "",
                     error="extension_service_token: only an extension's page asks for one",
-                )
+                ),
             )
             return
         try:
             reply = await tokens.for_page(caller)
         except (NoService, NotSignedIn, TokenExchangeFailed) as exc:
-            await self._transport.send(
+            await self._reply(
+                message,
                 msg.RPCResponse(
                     id=message.id or "",
                     result=PageTokenReply(ok=False, error=str(exc)).model_dump(),
-                )
+                ),
             )
             return
-        await self._transport.send(
+        await self._reply(
+            message,
             msg.RPCResponse(
                 id=message.id or "",
                 result=PageTokenReply(ok=True, **reply.model_dump()).model_dump(),
-            )
+            ),
         )
+
+    async def _reply(self, request: Any, response: Message) -> None:
+        """Answer ``request`` on the connection it came on, and on no other.
+
+        A pool-level answer can carry a secret (a page's service token) or
+        one extension's view of the model; broadcast, every client attached
+        would read it. A request from a transport without connections (the
+        terminal's) has no ``from_client``, and its answer is broadcast as
+        before.
+        """
+        await self._transport.send(response.address_to(getattr(request, "from_client", "") or ""))
+
+    #: What a message speaking for an extension may reach besides its own
+    #: ``ext.<id>.*`` and the base methods its manifest grants.
+    PAGE_RPCS: frozenset[str] = frozenset({RpcMethod.HOST_MODEL, RpcMethod.EXTENSION_SERVICE_TOKEN})
+
+    def _refuse_caller(self, message: Any) -> str | None:
+        """Why a message saying it speaks for ``message.caller`` is refused, or ``None``.
+
+        ``caller`` is set by igni's window for the extension page it hosts
+        (``IgniClient.asExtension``). It is a field of the message, so it is
+        honoured only where the layer says a connection may speak for an
+        extension (never in the cloud), for an installed extension, and only
+        for what that extension's page may call.
+        """
+        if not Layers.current().connections_speak_for_extensions():
+            return f"{message.method}: no connection to this igni speaks for an extension"
+        try:
+            self._extensions.registry.authorise_caller(
+                caller=message.caller,
+                method=message.method,
+                page_methods=self.PAGE_RPCS,
+                pool_methods=POOL_LEVEL_RPCS,
+            )
+        except ExtensionRefused as exc:
+            return f"{message.method}: {exc}"
+        return None
 
     #: Calls only the platform makes: a layer may take them from its control
     #: connection alone (``Layer.platform_calls_need_control``).
@@ -474,17 +532,18 @@ class SessionOrchestrator:
         sign_in = self._vm_sign_in
         token = args.get("session_token")
         if sign_in is None or not isinstance(token, str) or not token:
-            await self._transport.send(
+            await self._reply(
+                message,
                 msg.RPCResponse(
                     id=message.id or "",
                     error="vm_sign_in: a producer's VM takes the person's session_token",
-                )
+                ),
             )
             return
         organisation = args.get("organisation")
         change = await sign_in(token, organisation if isinstance(organisation, str) else None)
-        await self._transport.send(
-            msg.RPCResponse(id=message.id or "", result=change.model_dump(mode="json"))
+        await self._reply(
+            message, msg.RPCResponse(id=message.id or "", result=change.model_dump(mode="json"))
         )
 
     def attach_event_inbox(self, inbox: ServiceEventInbox | None) -> None:
@@ -495,8 +554,8 @@ class SessionOrchestrator:
         """``deliver_service_events``: ``{events: [...]}`` → which to acknowledge."""
         inbox = self._event_inbox
         if inbox is None:
-            await self._transport.send(
-                msg.RPCResponse(id=message.id or "", error="this igni takes no events")
+            await self._reply(
+                message, msg.RPCResponse(id=message.id or "", error="this igni takes no events")
             )
             return
         try:
@@ -504,16 +563,17 @@ class SessionOrchestrator:
                 ServiceEvent.model_validate(e) for e in (message.args or {}).get("events", [])
             ]
         except ValidationError as exc:
-            await self._transport.send(
-                msg.RPCResponse(id=message.id or "", error=f"not events: {exc}")
+            await self._reply(
+                message, msg.RPCResponse(id=message.id or "", error=f"not events: {exc}")
             )
             return
         receipt = await inbox.deliver(events)
-        await self._transport.send(
+        await self._reply(
+            message,
             msg.RPCResponse(
                 id=message.id or "",
                 result={**receipt.model_dump(mode="json"), "acknowledge": receipt.acknowledge},
-            )
+            ),
         )
 
     def attach_page_tokens(self, tokens: PageServiceTokens | None) -> None:
@@ -602,6 +662,11 @@ class SessionOrchestrator:
         assert self._pool is not None
         assert self._dir_registry is not None
         try:
+            if isinstance(message, msg.RPCRequest) and message.caller:
+                refusal = self._refuse_caller(message)
+                if refusal is not None:
+                    await self._reply(message, msg.RPCResponse(id=message.id or "", error=refusal))
+                    return
             if isinstance(message, msg.RPCRequest) and message.method in POOL_LEVEL_RPCS:
                 if message.method == RpcMethod.ATTACH_SESSION:
                     await self._handle_attach_session(message)
@@ -610,11 +675,12 @@ class SessionOrchestrator:
                 elif message.method == RpcMethod.EXTENSION_SERVICE_TOKEN:
                     await self._handle_service_token(message)
                 elif message.method in self.PLATFORM_RPCS and not self._from_platform(message):
-                    await self._transport.send(
+                    await self._reply(
+                        message,
                         msg.RPCResponse(
                             id=message.id or "",
                             error=f"{message.method}: only on the platform's control connection",
-                        )
+                        ),
                     )
                 elif message.method == RpcMethod.DELIVER_SERVICE_EVENTS:
                     await self._handle_service_events(message)

@@ -188,6 +188,14 @@ own window id as `home_window`, so a page's `host.ui` is its own window.
 The backend's reply is the same `{op, id, ok, result, error}` object,
 returned as the RPC's result (an RPC error string would lose `code`).
 
+The backend does not take either on trust. `caller` is honoured only from a
+connection the layer lets speak for an extension — on the desktop any the
+handshake admitted, in the cloud none — and only for an installed extension;
+`home_window` is replaced by the window on the connection that forwarded the
+request, once that window has hydrated. The reply goes to that connection
+alone, not to every window ([SECURITY.md](SECURITY.md) §10, "Speaking for an
+extension").
+
 A page's subscriptions are one set per extension, kept by the host; its
 signals reach the windows as the `host_signal` push
 (`{extension_id, signal, value}`), and each window posts them into that
@@ -219,7 +227,8 @@ and the backend answers for the service recorded on that extension's
 origin (`PageServiceTokens`) from the same exchange and cache as the
 process's token endpoint. `hello` carries that service as `serviceUrl`
 (`null` when there is none). The bridge keeps the token until a minute
-before it expires.
+before it expires. The answer, carrying the token, goes only to the window
+that asked.
 
 ## Versions
 

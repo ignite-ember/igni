@@ -953,6 +953,8 @@ That proves the easy half and should not be quoted as more. All four of its RPCs
 
 **Not an enum member.** `RpcMethod` stays closed, because closing it is what gives the base its "every method is registered or boot fails" guarantee. Extension methods arrive with a manifest rather than at import time, so they get a prefix checked by a registry. Anything under `ext.` is answered there, including a malformed name — falling back would reproduce the `Unknown RPC method` that hid this.
 
+**Before them, the message itself** (`SessionOrchestrator._refuse_caller`): a request carrying `caller` comes from a connection the layer lets speak for an extension (on the desktop any the handshake admitted, in the cloud none), names an installed extension, and asks for something a page may reach — its own namespace, the host model, its service token, or a base method its manifest grants, never igni's pool-level calls. The answer goes to the asking connection only.
+
 **Five checks, in this order**, each raising with a sentence that names the fix:
 
 1. the name parses as an extension method;
@@ -963,7 +965,7 @@ That proves the easy half and should not be quoted as more. All four of its RPCs
 
 Authorisation is decided before the service is consulted, and that ordering is tested rather than asserted: otherwise a permissions problem surfaces as a connection error and sends an author looking in the wrong place.
 
-**Enforced here, not in the client.** The web client checks the grant before forwarding too, but a frame is a renderer; its check is a courtesy that makes the error immediate.
+**Enforced here, not in the client.** The web client checks the grant before forwarding too, but a frame is a renderer; its check is a courtesy that makes the error immediate. That holds for base methods a manifest grants as well: the backend checks `permissions.rpc` for them before the base table answers.
 
 **The transport is MCP**, per §Principles. An extension's service answers `ext.<id>.<method>` as a tool call named `<method>`, on the same server that serves the agent. Two grant lists over one server: `permissions.tools` is what the *agent* may call, `permissions.rpc` what the extension's own *UI* may call. `structuredContent` is used where a server sends it; otherwise text blocks are joined and parsed as JSON when they are JSON, because that is what a server written for a UI sends.
 

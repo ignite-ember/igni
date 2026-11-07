@@ -344,8 +344,8 @@ class MessageDispatcher:
 
         handler = self._rpc_table.get(message.method)
         if handler is None:
-            await self._transport.send(
-                msg.RPCResponse.fail(req_id, f"Unknown RPC method: {message.method}")
+            await self._reply(
+                message, msg.RPCResponse.fail(req_id, f"Unknown RPC method: {message.method}")
             )
             return
         try:
@@ -354,9 +354,9 @@ class MessageDispatcher:
                 result = await result
             if isinstance(result, Message):
                 result = result.model_copy(update={"id": req_id})
-                await self._transport.send(result)
+                await self._reply(message, result)
             else:
-                await self._transport.send(msg.RPCResponse.ok(req_id, _serialize(result)))
+                await self._reply(message, msg.RPCResponse.ok(req_id, _serialize(result)))
         except KeyError as exc:
             # A handler reading `args["session_id"]` on a call that
             # omitted it raises `KeyError('session_id')`, and
@@ -377,12 +377,13 @@ class MessageDispatcher:
             # every handler, and it is a better trade than the caller
             # being told only `'url'`.
             logger.error("RPC %s failed: missing argument %s", message.method, exc)
-            await self._transport.send(
-                msg.RPCResponse.fail(req_id, f"{message.method}: {exc} is a required argument")
+            await self._reply(
+                message,
+                msg.RPCResponse.fail(req_id, f"{message.method}: {exc} is a required argument"),
             )
         except Exception as exc:
             logger.error("RPC %s failed: %s", message.method, exc, exc_info=True)
-            await self._transport.send(msg.RPCResponse.fail(req_id, str(exc)))
+            await self._reply(message, msg.RPCResponse.fail(req_id, str(exc)))
 
     async def _on_extension_rpc(self, message: Any, req_id: str) -> None:
         """Serve one ``ext.<id>.<method>`` call.
@@ -396,12 +397,13 @@ class MessageDispatcher:
         machinery above, which is about something else entirely.
         """
         if self._extensions is None:
-            await self._transport.send(
+            await self._reply(
+                message,
                 msg.RPCResponse.fail(
                     req_id,
                     f"{message.method}: this backend has no extension support, "
                     "so nothing can answer the 'ext.' namespace.",
-                )
+                ),
             )
             return
         try:
@@ -415,13 +417,25 @@ class MessageDispatcher:
             # system working. Logged at info so an administrator
             # chasing "why can it not call this" has a record.
             logger.info("extension rpc %s refused: %s", message.method, exc)
-            await self._transport.send(msg.RPCResponse.fail(req_id, str(exc)))
+            await self._reply(message, msg.RPCResponse.fail(req_id, str(exc)))
             return
         except Exception as exc:
             logger.error("extension rpc %s failed: %s", message.method, exc, exc_info=True)
-            await self._transport.send(msg.RPCResponse.fail(req_id, str(exc)))
+            await self._reply(message, msg.RPCResponse.fail(req_id, str(exc)))
             return
-        await self._transport.send(msg.RPCResponse.ok(req_id, _serialize(result)))
+        await self._reply(message, msg.RPCResponse.ok(req_id, _serialize(result)))
+
+    async def _reply(self, request: Any, response: Message) -> None:
+        """Answer a call; one made for an extension, on its window's connection only.
+
+        A call made for an extension (``caller``) answers with that
+        extension's data — its service's replies, base data its manifest was
+        granted — and every other client attached would read it if it were
+        broadcast. igni's own calls are broadcast as before.
+        """
+        if getattr(request, "caller", None):
+            response.address_to(getattr(request, "from_client", "") or "")
+        await self._transport.send(response)
 
 
 def _serialize(value: Any) -> Any:

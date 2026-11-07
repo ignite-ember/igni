@@ -94,7 +94,27 @@ class CompositeTransport(Transport):
             if watch is not None:
                 watch(watcher)
 
+    def owns_client(self, client_id: str) -> bool:
+        """Whether any child has the connection ``client_id``."""
+        return any(
+            owns(client_id)
+            for owns in (getattr(t, "owns_client", None) for t in self._transports)
+            if owns is not None
+        )
+
     async def send(self, message: Message) -> None:
+        if message.to_client:
+            # A reply addressed to one connection: only the child that owns
+            # it gets it — never the terminal's socket, which would show it
+            # to everyone there.
+            for t in self._transports:
+                owns = getattr(t, "owns_client", None)
+                if owns is not None and owns(message.to_client):
+                    with contextlib.suppress(Exception):
+                        await t.send(message)
+                    return
+            logger.debug("reply to %s dropped: no transport has that connection", message.to_client)
+            return
         for t in self._transports:
             with contextlib.suppress(Exception):
                 await t.send(message)

@@ -715,7 +715,10 @@ on its control stream. **Both platform calls are taken only from the
 platform's control connection:** the node agent adds `X-Igni-Gateway:
 control` to the upgrade of the gateway's `stream?control=1` and strips
 it from every other stream, and igni reads it off the connection, never
-off a message (a client sending either call gets an error);
+off a message (a client sending either call gets an error). **No connection
+speaks for an extension:** a message naming one (`caller`) is refused from
+any stream, so no Fleet client reaches an extension's host-model grants,
+its `ext.*` methods or a token for its service;
 igni exchanges it (`vm-sign-in` grant). An app's the node agent writes to
 the volume once; igni takes it when it appears, without a restart. The
 credential lives in `IGNI_VM_CREDENTIAL_FILE` (on the volume, `0600`,

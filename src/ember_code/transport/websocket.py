@@ -255,6 +255,9 @@ class WebSocketServerTransport(ListeningTransport):
                     raw = raw.decode()
                 msg = self._registry.deserialize(raw)
                 if msg is not None:
+                    # Which connection said it: from the connection, never
+                    # from the message (see ``Message.from_client``).
+                    msg.mark_from(client_id)
                     if control:
                         msg.mark_control()
                     await self._inbox.put(msg)
@@ -265,9 +268,33 @@ class WebSocketServerTransport(ListeningTransport):
             logger.info("FE client %s detached (%d left)", client_id, len(self._conns))
             self._tell_watchers("detached", client_id)
 
+    def owns_client(self, client_id: str) -> bool:
+        """Whether ``client_id`` is a connection of this transport."""
+        return client_id in self._conns
+
+    async def _send_to(self, client_id: str, message: Message) -> None:
+        """Send ``message`` to one connection only — a reply addressed to it.
+
+        A reply that carries a secret (a page's service token) or one
+        extension's data (its host-model answers, its calls' results)
+        goes to the window that asked and nobody else; every other
+        message is still broadcast. Not stamped with ``event_seq``, so
+        no other client sees a gap in its sequence. A connection that
+        has gone takes its reply with it.
+        """
+        client = self._conns.get(client_id)
+        if client is None:
+            logger.debug("reply to %s dropped: the connection has gone", client_id)
+            return
+        result = await client.send(message.model_dump_json(), timeout=self._broadcast_send_timeout)
+        if not result.ok:
+            logger.debug("WS send to %s failed (%s)", client_id, result.reason)
+            self._conns.pop(client_id, None)
+
     async def send(self, message: Message) -> None:
         """Broadcast to every attached client concurrently; drop dead /
-        stalled connections.
+        stalled connections. A message addressed to one connection
+        (``Message.to_client``) goes to that connection only.
 
         Concurrency matters here: with multiple sessions live on one
         BE, a single wedged client (e.g. a webview the OS suspended
@@ -280,6 +307,9 @@ class WebSocketServerTransport(ListeningTransport):
         if self._closed or not self._conns:
             # No views attached (e.g. all webviews mid-reload). Events
             # are fire-and-forget; RPC callers re-issue after reconnect.
+            return
+        if message.to_client:
+            await self._send_to(message.to_client, message)
             return
         # Stamp a per-stream monotonic ``event_seq`` so the FE can
         # dedup events that arrive twice (e.g. when two WebSocket
