@@ -80,6 +80,13 @@ NOT_REACHABLE: tuple[Unreachable, ...] = (
         "No `permissions.host` grant — having a service is the grant — and the audience "
         "is that extension's own service, never one it names.",
     ),
+    Unreachable(
+        key="approver_tokens",
+        what="Letting a program answer approval requests (`mint_approver_token`, "
+        "`revoke_approver_tokens`)",
+        why="The person's decision, made in igni's own window: an extension that could "
+        "mint the token could approve its own agent's calls (SECURITY §10).",
+    ),
 )
 
 _ROWS = {row.key for row in NOT_REACHABLE}
@@ -195,6 +202,8 @@ RPC_UNREACHABLE: dict[RpcMethod, str] = {
     RpcMethod.VM_SIGN_IN: "credentials",
     RpcMethod.GET_WORKSPACE_TRUST: "workspace_trust",
     RpcMethod.SET_WORKSPACE_TRUST: "workspace_trust",
+    RpcMethod.MINT_APPROVER_TOKEN: "approver_tokens",
+    RpcMethod.REVOKE_APPROVER_TOKENS: "approver_tokens",
 }
 
 

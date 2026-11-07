@@ -22,9 +22,32 @@ callers that want the value object.
 
 from __future__ import annotations
 
+from enum import StrEnum
 from typing import Any, Self
 
 from pydantic import BaseModel, PrivateAttr
+
+
+class Standing(StrEnum):
+    """What a connection may do, decided at its handshake (``transport/ws_auth.py``).
+
+    * ``WINDOW`` — igni's own window: it offered the launch secret, which
+      only the process that started the backend holds. Everything,
+      approving the agent's tool calls and speaking for an extension
+      included. A connection to a backend that requires no secret (one
+      started by hand, a cloud VM's behind its gateway) and a message from
+      a transport without connections (the terminal's) stand here too.
+    * ``APPROVER`` — a program the window let answer the agent's approval
+      requests, with a token it minted. A program otherwise.
+    * ``PROGRAM`` — a program that attached with the lockfile's token. It
+      runs sessions, but approves nothing, speaks for no extension and
+      loosens no rule (``backend/standing_policy.py``): the agent, which
+      can read the lockfile, must not be able to approve itself.
+    """
+
+    WINDOW = "window"
+    APPROVER = "approver"
+    PROGRAM = "program"
 
 
 class Message(BaseModel):
@@ -60,6 +83,9 @@ class Message(BaseModel):
     #: broadcasts, as every message did before; a reply that carries a
     #: secret or one extension's data is addressed instead.
     _to_client: str = PrivateAttr(default="")
+    #: What the connection this arrived on may do — set by the transport
+    #: from the handshake, never read from the message.
+    _standing: Standing = PrivateAttr(default=Standing.WINDOW)
 
     @property
     def via_control(self) -> bool:
@@ -72,8 +98,13 @@ class Message(BaseModel):
     def from_client(self) -> str:
         return self._from_client
 
-    def mark_from(self, client_id: str) -> None:
+    def mark_from(self, client_id: str, standing: Standing = Standing.WINDOW) -> None:
         self._from_client = client_id
+        self._standing = standing
+
+    @property
+    def standing(self) -> Standing:
+        return self._standing
 
     @property
     def to_client(self) -> str:

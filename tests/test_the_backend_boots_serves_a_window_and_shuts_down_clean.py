@@ -153,7 +153,8 @@ async def test_the_websocket_flag_alone_builds_a_websocket(tmp_path):
     try:
         assert isinstance(transport, WebSocketServerTransport)
         assert builder.ws_transport is transport
-        assert builder.ws_token == "t0k"
+        # The lockfile carries a program's token, never the launch secret.
+        assert builder.program_token and builder.program_token != "t0k"
         assert transport.port > 0
     finally:
         await transport.close()

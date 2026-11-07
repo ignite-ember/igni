@@ -144,6 +144,7 @@ export type CommandAction =
   | "watcher"
   | "compact"
   | "ctx"
+  | "programs"
   | "run_prompt";
 
 export interface CommandResult extends BaseMessage {

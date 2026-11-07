@@ -30,6 +30,7 @@ from typing import Any
 
 from pydantic import ValidationError
 
+from ember_code.backend import standing_policy
 from ember_code.backend.login_coordinator import LoginCoordinator
 from ember_code.backend.message_dispatcher import MessageDispatcher
 from ember_code.backend.push_bridge import PushNotificationBridge
@@ -41,6 +42,7 @@ from ember_code.backend.schemas_rpc import (
 )
 from ember_code.backend.session_pool import SessionPool, SessionRuntime
 from ember_code.backend.session_stamping_transport import SessionStampingTransport
+from ember_code.backend.standing_policy import ApproverTokens
 from ember_code.core.activity import background
 from ember_code.core.db.locator import StorageLocator
 from ember_code.core.layer import Layers
@@ -59,6 +61,7 @@ from ember_code.extensions.service_token import (
 from ember_code.protocol import messages as msg
 from ember_code.protocol.messages import Message
 from ember_code.protocol.rpc import RpcMethod
+from ember_code.protocol.schemas.enums import CommandResultKind
 
 logger = logging.getLogger(__name__)
 
@@ -136,6 +139,7 @@ class SessionOrchestrator:
         # and whoever wants to see what windows send.
         self._host_model: Any = None
         self._page_tokens: PageServiceTokens | None = None
+        self._approver_tokens: ApproverTokens | None = None
         self._event_inbox: ServiceEventInbox | None = None
         self._vm_sign_in: VmSignIn | None = None
         self._inbound_watchers: list[Any] = []
@@ -576,6 +580,59 @@ class SessionOrchestrator:
             ),
         )
 
+    async def _refuse(self, message: Any, reason: str) -> None:
+        """Tell the connection that sent ``message`` why it was not done.
+
+        Each in the shape its sender waits for, sent to that connection
+        alone: an RPC its error, a slash command an error result, and an
+        approval an ``Error`` and the end of the stream it would have
+        resumed, so a client following that stream stops waiting.
+        """
+        req_id = message.id or ""
+        if isinstance(message, msg.RPCRequest):
+            await self._reply(message, msg.RPCResponse(id=req_id, error=reason))
+            return
+        if isinstance(message, msg.Command):
+            await self._reply(
+                message, msg.CommandResult(id=req_id, kind=CommandResultKind.ERROR, content=reason)
+            )
+            return
+        session_id = message.session_id or ""
+        await self._reply(message, msg.Error(id=req_id, session_id=session_id, text=reason))
+        await self._reply(message, msg.StreamEnd(id=req_id, session_id=session_id))
+
+    def attach_approver_tokens(self, tokens: ApproverTokens | None) -> None:
+        """Who mints the tokens a program answers approval requests with."""
+        self._approver_tokens = tokens
+
+    async def _handle_approver_tokens(self, message: Any) -> None:
+        """``mint_approver_token`` → ``{token}``; ``revoke_approver_tokens`` → ``{revoked}``.
+
+        Only igni's window reaches this (``standing_policy``). The token is
+        the answer to the window that asked, and to no other connection.
+        """
+        tokens = self._approver_tokens
+        if message.method == RpcMethod.REVOKE_APPROVER_TOKENS:
+            revoked = await tokens.revoke_approver_tokens() if tokens is not None else 0
+            await self._reply(
+                message, msg.RPCResponse(id=message.id or "", result={"revoked": revoked})
+            )
+            return
+        token = tokens.mint_approver_token() if tokens is not None else None
+        if token is None:
+            await self._reply(
+                message,
+                msg.RPCResponse(
+                    id=message.id or "",
+                    error=(
+                        f"{message.method}: this igni takes no token, so every "
+                        "connection may already answer approval requests"
+                    ),
+                ),
+            )
+            return
+        await self._reply(message, msg.RPCResponse(id=message.id or "", result={"token": token}))
+
     def attach_page_tokens(self, tokens: PageServiceTokens | None) -> None:
         """Where an extension page's ``bridge.service`` token comes from."""
         self._page_tokens = tokens
@@ -662,6 +719,11 @@ class SessionOrchestrator:
         assert self._pool is not None
         assert self._dir_registry is not None
         try:
+            # A program (the lockfile's token) decides nothing for the person.
+            refused = standing_policy.refusal(message)
+            if refused is not None:
+                await self._refuse(message, refused)
+                return
             if isinstance(message, msg.RPCRequest) and message.caller:
                 refusal = self._refuse_caller(message)
                 if refusal is not None:
@@ -686,6 +748,11 @@ class SessionOrchestrator:
                     await self._handle_service_events(message)
                 elif message.method == RpcMethod.VM_SIGN_IN:
                     await self._handle_vm_sign_in(message)
+                elif message.method in (
+                    RpcMethod.MINT_APPROVER_TOKEN,
+                    RpcMethod.REVOKE_APPROVER_TOKENS,
+                ):
+                    await self._handle_approver_tokens(message)
                 else:
                     await self._handle_window_model(message)
                 return

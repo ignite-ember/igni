@@ -259,8 +259,10 @@ class BackendSupervisor:
         is a real cost but the FE can survive it.
 
         ``ws_token``, when the WebSocket requires one, goes in too, and
-        the file is then readable by its owner only: another igni client
-        attaching to this backend needs it, and nobody else may have it.
+        the file is then readable by its owner only. It is the *program*
+        token, never the launch secret: a client attaching through this
+        file runs sessions but approves nothing (``standing_policy``),
+        because the agent can read it too.
         """
         version = self._resolve_wire_version()
         lock = Lockfile(self._project_dir)

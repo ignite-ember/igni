@@ -49,7 +49,7 @@ from ember_code.transport.base import ListeningTransport
 # import CompositeTransport`` import path used by tests and callers
 # keeps working after CompositeTransport moved to its own module.
 from ember_code.transport.composite import CompositeTransport
-from ember_code.transport.ws_auth import HandshakeGuard
+from ember_code.transport.ws_auth import HandshakeGuard, Standing
 
 if TYPE_CHECKING:
     from websockets.asyncio.server import Server, ServerConnection
@@ -138,6 +138,8 @@ class WebSocketServerTransport(ListeningTransport):
         # client_id → live client wrapper. Insertion order preserved so
         # broadcast order is stable (oldest first).
         self._conns: dict[str, MirroredClient] = {}
+        # client_id → what that connection may do, from its handshake.
+        self._standings: dict[str, Standing] = {}
         # Monotonic per-stream event sequence. Increments on every
         # ``send()``; resets to 0 on ``stream_end`` so the next turn
         # starts fresh from 1. See :meth:`send` for the FE dedup
@@ -186,6 +188,33 @@ class WebSocketServerTransport(ListeningTransport):
     def requires_token(self) -> bool:
         """Whether connections must offer the per-launch token."""
         return self._guard.requires_token
+
+    @property
+    def program_token(self) -> str | None:
+        """The token for programs attaching through the lockfile."""
+        return self._guard.program_token
+
+    def mint_approver_token(self) -> str | None:
+        """See :meth:`HandshakeGuard.mint_approver_token`."""
+        return self._guard.mint_approver_token()
+
+    async def revoke_approver_tokens(self) -> int:
+        """Forget every approver token, and drop the programs connected with one.
+
+        How many tokens there were. A dropped program can reconnect only
+        as what the lockfile's token makes it: a program that approves
+        nothing.
+        """
+        revoked = self._guard.revoke_approver_tokens()
+        approvers = [
+            client
+            for client_id, client in list(self._conns.items())
+            if self._standings.get(client_id) is Standing.APPROVER
+        ]
+        for client in approvers:
+            with contextlib.suppress(Exception):
+                await client.conn.close(code=1008, reason="approver token revoked")
+        return revoked
 
     async def wait_for_connection(self, timeout: float | None = 30.0) -> None:
         """Wait for the first client. ``timeout=None`` waits forever —
@@ -241,6 +270,14 @@ class WebSocketServerTransport(ListeningTransport):
         self._conns[client_id] = client
         self._connected.set()
         control = self.is_control(conn)
+        # Decided by the token offered at the handshake, which let it in.
+        request = getattr(conn, "request", None)
+        standing = (
+            (self._guard.standing(request) or Standing.PROGRAM)
+            if request is not None
+            else Standing.PROGRAM
+        )
+        self._standings[client_id] = standing
         try:
             # Tell the client who it is so it can recognise its own
             # broadcast echoes. First — before logging it, too: whatever
@@ -257,7 +294,7 @@ class WebSocketServerTransport(ListeningTransport):
                 if msg is not None:
                     # Which connection said it: from the connection, never
                     # from the message (see ``Message.from_client``).
-                    msg.mark_from(client_id)
+                    msg.mark_from(client_id, standing)
                     if control:
                         msg.mark_control()
                     await self._inbox.put(msg)
@@ -265,6 +302,7 @@ class WebSocketServerTransport(ListeningTransport):
             logger.info("WS client %s ended: %s", client_id, exc)
         finally:
             self._conns.pop(client_id, None)
+            self._standings.pop(client_id, None)
             logger.info("FE client %s detached (%d left)", client_id, len(self._conns))
             self._tell_watchers("detached", client_id)
 

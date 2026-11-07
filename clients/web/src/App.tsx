@@ -110,6 +110,7 @@ import { AgentsPanel } from "./components/panels/AgentsPanel";
 import { FilePreview } from "./components/FilePreview";
 import { FirstRunSetup } from "./components/FirstRunSetup";
 import { HooksPanel } from "./components/panels/HooksPanel";
+import { ProgramsPanel } from "./components/panels/ProgramsPanel";
 import { Toasts } from "./components/Toasts";
 import { HostDialog } from "./components/HostDialog";
 import { UpdatePrompt } from "./components/UpdatePrompt";
@@ -2711,6 +2712,9 @@ export default function App() {
           case "ctx":
             goPage({ kind: "context", label: "Context" });
             return;
+          case "programs":
+            goPage({ kind: "programs", label: "Programs" });
+            return;
           case "run_prompt":
             // Two sources land here:
             //  - Skills expand to a bare prompt → render nothing extra,
@@ -3513,6 +3517,9 @@ export default function App() {
             )}
             {page.kind === "hooks" && (
               <HooksPanel client={client} onClose={goChat} />
+            )}
+            {page.kind === "programs" && (
+              <ProgramsPanel client={client} onClose={goChat} />
             )}
             {page.kind === "workflows" && (
               <WorkflowsPage

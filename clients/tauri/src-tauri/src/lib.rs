@@ -13,7 +13,10 @@
 //! (``#igni_ws_token=…``: never sent to any server, kept across
 //! reloads). The web client offers it as the WebSocket subprotocol
 //! ``igni-token.<token>``; the backend refuses connections without it
-//! (``src/ember_code/transport/ws_auth.py``).
+//! (``src/ember_code/transport/ws_auth.py``). The secret makes the
+//! connection igni's window, the only one that answers the agent's
+//! approval requests; it is never written to disk, where the agent could
+//! read it — the lockfile carries a program's token instead.
 
 mod discovery;
 mod runtime;
@@ -1330,8 +1333,11 @@ fn bootstrap_and_open(app: &AppHandle, project_dir: &str) -> Result<(), String> 
             // Skips the whole Python bootstrap — no interpreter
             // resolution, no model prefetch — so this path is near
             // instant on a warm project.
-            // The token that backend's launcher gave it, read from
-            // its owner-only lockfile; ``None`` when it requires none.
+            // The program token from that backend's owner-only
+            // lockfile (``None`` when it requires none). It is not the
+            // launch secret, which only the launcher holds, so a window
+            // attached this way runs sessions but answers no approval
+            // request (docs/SECURITY.md §10, "What a connection may do").
             (
                 port,
                 ws_token,
