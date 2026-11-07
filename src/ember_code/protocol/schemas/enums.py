@@ -98,6 +98,7 @@ class CommandAction(StrEnum):
     WATCHER = "watcher"  # opens the background-process panel
     COMPACT = "compact"
     CTX = "ctx"  # opens the context-breakdown page
+    PROGRAMS = "programs"  # opens the approver-token page
     RUN_PROMPT = "run_prompt"
 
 

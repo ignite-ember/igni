@@ -22,9 +22,25 @@ process. Two checks run at the handshake, before the upgrade:
   igni-token.<token>``. The server answers with ``igni.v1`` only, so the
   token is never echoed. Compared with :func:`hmac.compare_digest`.
 
+The token a connection offered also decides what it may do
+(:class:`~ember_code.protocol.schemas.envelope.Standing`):
+
+* the launch secret makes it igni's **window**. Only the launcher holds
+  it: it is never written to disk, so the agent — which runs as the same
+  OS user and reads whatever its tools can — never has it;
+* the **program** token, minted here and published in the owner-only
+  lockfile for programs that attach (the SDK's ``Local``), makes it a
+  program. A program approves nothing, speaks for no extension and
+  loosens no rule (``backend/standing_policy.py``);
+* an **approver** token, minted on the window's request
+  (``mint_approver_token``) and held only in memory, makes it a program
+  that may also answer approval requests. The person hands it to the
+  program they chose; a restart forgets every one.
+
 Without a token (a backend started by hand, or in the
 cloud, where the gateway authenticates every client and nothing outside
-the VM reaches the port) only the Origin check applies.
+the VM reaches the port) only the Origin check applies, and every
+connection is a window.
 ``X-Igni-Gateway: control`` never exempts a connection from the token: on
 a desktop anybody can send that header.
 
@@ -37,10 +53,13 @@ from __future__ import annotations
 import hmac
 import logging
 import os
+import secrets
 from collections.abc import MutableMapping, Sequence
 from http import HTTPStatus
 from typing import TYPE_CHECKING, Any
 from urllib.parse import urlsplit
+
+from ember_code.protocol.schemas.envelope import Standing
 
 if TYPE_CHECKING:
     from websockets.asyncio.server import ServerConnection
@@ -53,6 +72,7 @@ __all__ = [
     "TOKEN_ENV",
     "TOKEN_PROTOCOL_PREFIX",
     "HandshakeGuard",
+    "Standing",
     "origin_allowed",
     "take_token_from_environment",
 ]
@@ -113,42 +133,94 @@ def _offered_protocols(headers: Any) -> list[str]:
     return [p.strip() for value in values for p in value.split(",") if p.strip()]
 
 
+def _new_token() -> str:
+    """32 random bytes, base64url: valid in a WebSocket subprotocol."""
+    return secrets.token_urlsafe(32)
+
+
 class HandshakeGuard:
     """The handshake checks for one listening socket.
 
     ``token`` is the per-launch secret, or ``None`` when none was given
-    (then only the Origin check applies).
+    (then only the Origin check applies and every connection is a
+    window). With one, the guard mints the program token for the lockfile.
     """
 
     def __init__(self, token: str | None = None) -> None:
         self._token = token or None
+        self._program_token = _new_token() if self._token is not None else None
+        self._approver_tokens: list[str] = []
 
     @property
     def requires_token(self) -> bool:
         return self._token is not None
+
+    @property
+    def program_token(self) -> str | None:
+        """The token a program attaching through the lockfile offers."""
+        return self._program_token
+
+    def mint_approver_token(self) -> str | None:
+        """A new token for a program that may answer approval requests.
+
+        ``None`` when this socket takes no token: every connection is a
+        window already.
+        """
+        if self._token is None:
+            return None
+        token = _new_token()
+        self._approver_tokens.append(token)
+        return token
+
+    def revoke_approver_tokens(self) -> int:
+        """Forget every approver token; how many there were.
+
+        A program already connected with one keeps its connection until
+        it drops — its standing was decided at the handshake.
+        """
+        count = len(self._approver_tokens)
+        self._approver_tokens.clear()
+        return count
+
+    def standing(self, request: Request) -> Standing | None:
+        """What a connection made with ``request`` may do; ``None`` when refused."""
+        return self._standing_or_reason(request)[0]
 
     def refusal(self, request: Request) -> str | None:
         """Why ``request`` is refused, or ``None`` when it may connect.
 
         The reason never contains the token, offered or expected.
         """
+        return self._standing_or_reason(request)[1]
+
+    def _standing_or_reason(self, request: Request) -> tuple[Standing | None, str | None]:
         headers = request.headers
         origin = headers.get("Origin")
         if origin is not None and not origin_allowed(origin):
-            return f"foreign origin {origin!r}"
+            return None, f"foreign origin {origin!r}"
         if self._token is None:
-            return None
+            return Standing.WINDOW, None
         offered = [
-            p[len(TOKEN_PROTOCOL_PREFIX) :]
+            p[len(TOKEN_PROTOCOL_PREFIX) :].encode()
             for p in _offered_protocols(headers)
             if p.startswith(TOKEN_PROTOCOL_PREFIX)
         ]
         if not offered:
-            return "no token"
-        expected = self._token.encode()
-        if not any(hmac.compare_digest(o.encode(), expected) for o in offered):
-            return "wrong token"
-        return None
+            return None, "no token"
+        known = [(self._token, Standing.WINDOW)]
+        known += [(t, Standing.APPROVER) for t in self._approver_tokens]
+        if self._program_token is not None:
+            known.append((self._program_token, Standing.PROGRAM))
+        # Every comparison runs, whichever matches: the time taken says
+        # nothing about which token, if any, was offered.
+        found: Standing | None = None
+        for token, standing in known:
+            expected = token.encode()
+            if any(hmac.compare_digest(o, expected) for o in offered) and found is None:
+                found = standing
+        if found is None:
+            return None, "wrong token"
+        return found, None
 
     def process_request(self, connection: ServerConnection, request: Request) -> Response | None:
         """``websockets`` hook: refuse with 403 before the upgrade."""

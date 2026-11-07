@@ -401,10 +401,10 @@ generates 32 random bytes (base64url) at each launch of the backend:
 | App → backend | `IGNI_WS_TOKEN` in the child's environment; the backend removes it from its own environment at start | Never on the command line, which `ps` shows; never inherited by the agent's shell commands, hooks or MCP servers |
 | App → its webview | The URL fragment, `index.html?ws=…#igni_ws_token=…` | A fragment is never sent to a server or written to a request log, and it survives reloads |
 | Webview → backend | `Sec-WebSocket-Protocol: igni.v1, igni-token.<token>`; the backend answers `igni.v1` only | The one handshake field a page can set; unlike a query string it ends up in no log |
-| Another igni client on the same project | `ws_token` in `.igni/backend.lock`, which is then written owner-only (0600) | A second desktop window or instance attaches to the running backend instead of starting a duplicate |
+| A program on the same project | `ws_token` in `.igni/backend.lock`, which is then written owner-only (0600): a **different** token, the program token, which the backend mints | A script or the SDK attaches to the running backend instead of starting a duplicate, without holding the window's secret |
 
 The backend compares with `hmac.compare_digest` and refuses a connection
-without the token, with a wrong one, or from a foreign origin even with the
+without a token, with a wrong one, or from a foreign origin even with the
 right one. `X-Igni-Gateway: control` does not stand in for the token: on a
 desktop anybody can send that header.
 
@@ -422,6 +422,41 @@ desktop app honours it only in a debug build (`cargo tauri dev`) and strips
 it from the backend's environment in a release build; the backend honours it
 with a warning in its log. Never set it on a machine you use for real work.
 
+**What a connection may do.** The token a connection offered decides its
+standing (`Standing`, stamped on every message it sends by the transport,
+never read from the message):
+
+| Token | Standing | May |
+|---|---|---|
+| The launch secret, held by the desktop app and never written to disk | igni's **window** | everything |
+| The program token, from the lockfile | a **program** | run sessions: prompts, cancelling, reading history and status, switching sessions and models, MCP connections, plan mode |
+| An approver token the window minted (`/programs`) | an **approver** | what a program may, and answer approval requests, each for that once |
+
+A program — and so the agent, whose tools run as the person and can read
+the lockfile — decides nothing for the person (`backend/standing_policy.py`).
+It is refused, before any handler runs:
+
+- answering an approval request (`hitl_response`, `hitl_response_batch`,
+  `approve_plan`), unless it is an approver;
+- speaking for an extension (`caller`, `host_model`, `window_model`,
+  `extension_service_token`);
+- loosening a rule: the `/bypass` and `/accept` modes, a saved permission
+  rule, workspace trust, plugins and marketplaces (`/plugin` too),
+  extension settings, promoting an agent, `/eject`, and a shell command
+  outside a run (`run_shell`);
+- changing whom igni signs in to (`login`, `/login`, `/logout`,
+  `set_server`, the cloud credential calls);
+- minting or revoking approver tokens.
+
+An approver may do none of these either, except answer approvals, and only
+for that once: an answer that would save a permission rule (`always`,
+`similar`) or switch the permission mode before resuming is refused. The
+person makes an approver token in igni's window (`/programs`) and gives it
+to the program they chose. The backend keeps approver tokens in memory
+only, so quitting igni forgets every one, and revoking them drops the
+approvers connected with one. A desktop window attached to a backend it
+did not start (through the lockfile) is a program too.
+
 **Speaking for an extension.** An extension's page reaches igni through the
 window that hosts it: the window forwards the page's calls with the
 extension's id as `RPCRequest.caller` (`IgniClient.asExtension`), and the
@@ -432,33 +467,41 @@ does not take it on trust (`SessionOrchestrator._refuse_caller`,
 | Rule | Where |
 |---|---|
 | Every message carries the connection it arrived on, stamped by the transport and never read from the message (`Message.from_client`) | `transport/websocket.py` |
-| A `caller` is honoured only where the layer lets a connection speak for an extension: on the desktop, any connection the handshake admitted; **in the cloud, none** — no Fleet client hosts a page, so `host_model`, `extension_service_token` and `ext.*` with a caller are refused before any handler runs | `Layer.connections_speak_for_extensions` |
+| A `caller` is honoured only from igni's window, and only where the layer lets a connection speak for an extension: on the desktop, the window's connections; **in the cloud, none** — no Fleet client hosts a page, so `host_model`, `extension_service_token` and `ext.*` with a caller are refused before any handler runs | `Layer.connections_speak_for_extensions` |
 | The extension must be installed, and its page may call only its own `ext.<id>.*`, the host model, its service token, and base methods its manifest grants — never igni's pool-level calls (`attach_session`, `window_model`, the platform's) | `ExtensionRegistry.authorise_caller` |
 | An answer that carries a secret or one extension's data — a page's service token, a host-model reply, an extension call's result — goes to the connection that asked, not to every client attached (`Message.to_client`) | `SessionOrchestrator._reply`, `MessageDispatcher._reply` |
 | A window's connection, and the window framing a page (`home_window`), are the server's to know | `window_model`, `host_model` handlers |
 
-On the desktop the boundary is the OS user. The per-launch token is in an
-owner-only lockfile, and a separate secret for igni's own window would add
-nothing: a process that can read the lockfile can read
-`~/.igni/credentials.json` too, sandboxed extension processes are denied
-igni's ports (Seatbelt, bubblewrap) whatever they can read, and a second
-window must still be able to attach through the lockfile. A Fleet UI that
-hosts extension pages will need a mark the node agent attests, as it attests
-the control stream.
+On the desktop the boundary against other software is the OS user: a process
+that can read the lockfile can read `~/.igni/credentials.json` too, and
+sandboxed extension processes are denied igni's ports (Seatbelt,
+bubblewrap) whatever they can read. The window's own secret is not for
+that boundary. It is for the agent: the agent runs as the person, so it can
+read anything the lockfile holds, and the person's approvals mean nothing if
+the agent can give them. The secret stays out of every file the agent's
+tools can reach. Messages are not signed: the standing is the connection's,
+decided once at its handshake, and a signing key would sit where the secret
+does. A Fleet UI that hosts extension pages will need a mark the node agent
+attests, as it attests the control stream.
 
 Host signals for a page's subscriptions (`host_signal`) are still broadcast
 to every window: there is one subscriber per extension, shared by its pages
 in every window, its values are filtered by that extension's grants, and in
 the cloud nothing can subscribe.
 
-**Known, not yet closed.** The agent's own shell runs as the person, in the
-project, so it can read `.igni/backend.lock`, connect, and answer its own
-approvals. In the default permission mode the shell call that would do that
-needs an approval itself; in the modes that skip asking it does not. Keeping
-the agent's tools away from `.igni/backend.lock` is the planned fix. A
-window's self-declared `client_id` on `typing` and its `window` on
-`window_model` are still taken from the message — within one person, a
-nuisance rather than a hole.
+**Known, not yet closed.**
+
+- In a cloud VM the backend listens on `127.0.0.1:8765` without a token,
+  because the gateway authenticates every client before the node agent opens
+  a stream. The agent's shell in that VM can reach the port too, and every
+  connection there is a window. The fix is for the guest's bridge to hold a
+  launch secret, as the desktop app does.
+- The agent can still edit what igni reads from disk: a permission rule or
+  a hook in the project's `.igni/` files. In the default mode that write
+  needs an approval; in the modes that skip asking it does not.
+- A window's self-declared `client_id` on `typing` and its `window` on
+  `window_model` are still taken from the message: within one person, a
+  nuisance rather than a hole.
 
 ---
 

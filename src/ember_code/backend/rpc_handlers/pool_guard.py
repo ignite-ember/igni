@@ -29,6 +29,8 @@ POOL_LEVEL_RPCS: frozenset[RpcMethod] = frozenset(
         RpcMethod.EXTENSION_SERVICE_TOKEN,
         RpcMethod.DELIVER_SERVICE_EVENTS,
         RpcMethod.VM_SIGN_IN,
+        RpcMethod.MINT_APPROVER_TOKEN,
+        RpcMethod.REVOKE_APPROVER_TOKENS,
     }
 )
 

@@ -321,6 +321,10 @@ class RpcMethod(StrEnum):
     # credential (igni server's service-identity §16). Pool-level: the
     # credential is the VM's. Answers the credential's state.
     VM_SIGN_IN = "vm_sign_in"
+    # igni's window lets a program answer approval requests: a token for
+    # it, held in memory (``backend/standing_policy.py``).
+    MINT_APPROVER_TOKEN = "mint_approver_token"  # noqa: S105 — an RPC method's name, not a secret
+    REVOKE_APPROVER_TOKENS = "revoke_approver_tokens"  # noqa: S105 — an RPC method's name, not a secret
 
 
 def validate_rpc_table(registered_keys: Iterable[str]) -> None:

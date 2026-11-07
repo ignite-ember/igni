@@ -108,10 +108,13 @@ class TransportBuilder:
         self._ws_transport: Any = None
 
     @property
-    def ws_token(self) -> str | None:
-        """The token WS clients must offer, published in the lockfile
-        so a second igni client on this project can attach."""
-        return self._ws_token
+    def program_token(self) -> str | None:
+        """The token a program attaching to this backend offers, published
+        in the owner-only lockfile. Never the launch secret, which is the
+        window's alone (``transport/ws_auth.py``)."""
+        if self._ws_transport is None:
+            return None
+        return self._ws_transport.program_token
 
     @property
     def ws_transport(self) -> Any:
@@ -423,6 +426,9 @@ class BackendApp:
             origins=self._origins,
             notifications=self._notifications,
         )
+        # The WebSocket's guard mints the tokens igni's window hands a
+        # program it lets answer approval requests.
+        self._orchestrator.attach_approver_tokens(self._transport_builder.ws_transport)
         pool = self._orchestrator.setup_pool()
         self._supervisor.set_pool(pool)
         self._start_host_model()
@@ -738,7 +744,7 @@ class BackendApp:
             # opening the same project can discover this BE.
             assert self._supervisor is not None
             self._supervisor.write_discovery_lockfile(
-                ws_transport.port, ws_token=self._transport_builder.ws_token
+                ws_transport.port, ws_token=self._transport_builder.program_token
             )
         if self._socket_path is not None:
             ready.socket = str(self._socket_path)

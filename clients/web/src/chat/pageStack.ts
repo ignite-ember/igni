@@ -52,6 +52,7 @@ export const BASE_PAGE_KINDS = [
   "loop",
   "help",
   "context",
+  "programs",
 ] as const;
 
 /** One of the thirteen above — still exact, for the app's own code. */

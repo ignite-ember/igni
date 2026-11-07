@@ -426,6 +426,7 @@ rules are EXTENSIBILITY §6, *A page and its own service*.
 | Delivering a service's events (`deliver_service_events`) | The platform's: it hands the producer the events services sent their extensions. An extension hears its own as `@ext.on_service_event`, and igni posts nothing for them: the handler acts through its own host calls (*Opening a chat for an event*, below). It does not deliver them. |
 | Workspace trust (`get_workspace_trust`, `set_workspace_trust`, the `workspace_trust_required` push) | Trusting a folder lets it run its own code; that is the person's decision, made in igni's own dialog or `igni trust`, never an extension's. |
 | A page's token for its own service (`extension_service_token`) | Not igni's to model: it is how a page reaches its own service (`bridge.service`), the page's half of what `ext.service` is for the process. No `permissions.host` grant — having a service is the grant — and the audience is that extension's own service, never one it names. |
+| Letting a program answer approval requests (`mint_approver_token`, `revoke_approver_tokens`) | The person's decision, made in igni's own window: an extension that could mint the token could approve its own agent's calls (SECURITY §10). |
 
 Anything else missing from this table is a bug in it.
 

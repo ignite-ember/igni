@@ -64,9 +64,11 @@ class LockfilePayload(BaseModel):
     cleaning up.
 
     ``ws_token`` is present only when the backend's WebSocket requires
-    the per-launch token (a desktop-shell launch); it is left out of the
-    file otherwise, so the key-set above is unchanged for every other
-    backend. A file that carries it is written owner-only (0600).
+    a token (a desktop-shell launch); it is left out of the file
+    otherwise, so the key-set above is unchanged for every other
+    backend. A file that carries it is written owner-only (0600). It is
+    the program token, which approves nothing — never the launch secret
+    igni's window holds (``transport/ws_auth.py``).
     """
 
     pid: int

@@ -221,6 +221,11 @@ export const VIEW_STATE: Record<string, Partial<Record<Category, string[]>>> = {
     data: ["rows"],
     pending: ["error"],
   },
+  "components/panels/ProgramsPanel.tsx": {
+    data: ["token", "revoked"],
+    disclosure: ["copied"],
+    pending: ["busy", "error"],
+  },
   "components/panels/LoginPanel.tsx": {
     data: ["statusText"],
   },

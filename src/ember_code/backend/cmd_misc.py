@@ -123,3 +123,8 @@ async def cmd_skills(_handler: CommandHandler, _args: str) -> CommandResult:
 async def cmd_mcp(_handler: CommandHandler, _args: str) -> CommandResult:
     """Two-line shim for :class:`McpCommand`."""
     return McpCommand().open_panel()
+
+
+async def cmd_programs(_handler: CommandHandler, _args: str) -> CommandResult:
+    """``/programs``: the window's page for approver tokens (``standing_policy``)."""
+    return CommandResult.for_action(CommandAction.PROGRAMS)

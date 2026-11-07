@@ -8133,6 +8133,53 @@ button {
   margin: 12px 0;
 }
 
+/* ── Programs panel ─────────────────────────────────────────────── */
+
+.programs {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  max-width: 62ch;
+}
+
+.programs-lead {
+  margin: 0;
+  color: var(--fg);
+}
+
+.programs-note {
+  margin: 0;
+  font-size: var(--text-sm);
+  color: var(--fg-muted);
+}
+
+.programs-token {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-4);
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-sm);
+}
+
+.programs-token-label {
+  font-size: var(--text-sm);
+  color: var(--fg-muted);
+}
+
+.programs-token-value {
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+  overflow-wrap: anywhere;
+  user-select: all;
+}
+
+.programs-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
 /* ── Hooks panel ────────────────────────────────────────────────── */
 
 .hooks-count {
