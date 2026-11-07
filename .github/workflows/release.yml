@@ -5,6 +5,10 @@ on:
     tags:
       - "v*"
 
+# The desktop app. igni's backend is released from ignite-ember/igni-core
+# under the same version; this checks that version is on PyPI before it
+# builds anything (core-published).
+#
 # Read-only by default. The jobs that write to the release say so
 # themselves (`contents: write`), and the one job that mints provenance
 # asks for `id-token` and `attestations` on its own.
@@ -29,123 +33,64 @@ jobs:
     needs: authorize
     uses: ./.github/workflows/ci.yml
 
-  publish-pypi:
+  # The desktop app installs igni's backend on first launch, pinned to its
+  # own version (``ignite-ember==CARGO_PKG_VERSION``). So a release is the
+  # version igni-core already published to PyPI, and nothing else: the tag
+  # must name ``igni-core.version``, the committed Tauri files must carry
+  # it, and PyPI must serve it — or the app would ship pointing at a
+  # backend no one can install.
+  core-published:
     needs: ci
     runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      id-token: write  # trusted publishing
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      # The release has two version universes and nothing used to make
-      # them agree. Tag-derived: latest.json's ``version`` field and the
-      # ``pip install 'ignite-ember==…'`` line in the release body.
-      # Commit-derived: pyproject.toml, which hatchling stamps onto the
-      # wheel and sync-version.mjs copies into tauri.conf.json /
-      # Cargo.toml (``CARGO_PKG_VERSION``, what the updater plugin
-      # compares latest.json against). Tag ``v1.0.4`` on a tree still at
-      # 1.0.3 shipped a release whose own page contradicted itself, and
-      # an installed desktop app that stays "out of date" forever: the
-      # updater downloads the bundle, the bundle reports 1.0.3, the
-      # feed still says 1.0.4, so it offers the same update on every
-      # launch. This is the first step of publish-pypi and every other
-      # job needs it transitively, so the whole release stops here.
-      - name: Verify tag matches pyproject version
+      - name: The tag names igni-core.version
         run: |
           set -euo pipefail
           TAG_V="${GITHUB_REF#refs/tags/v}"
-          PY_V="$(grep -m1 -E '^version[[:space:]]*=' pyproject.toml | sed -E 's/.*"([^"]+)".*/\1/')"
-          if [ "$TAG_V" != "$PY_V" ]; then
-            echo "::error::tag v$TAG_V does not match pyproject.toml version $PY_V — bump pyproject (and run scripts/sync-version.mjs) or retag"
+          CORE_V="$(tr -d '[:space:]' < igni-core.version)"
+          if [ "$TAG_V" != "$CORE_V" ]; then
+            echo "::error::tag v$TAG_V does not match igni-core.version $CORE_V — set igni-core.version (and run scripts/sync-version.mjs) or retag"
             exit 1
           fi
-          echo "tag and pyproject agree on $PY_V"
 
-      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
-        with:
-          python-version: "3.12"
-
-      - name: Install uv
-        uses: astral-sh/setup-uv@38f3f104447c67c051c4a08e39b64a148898af3a # v4.2.0
-
-      # Belt-and-suspenders: ``pyproject.toml`` is the SoT, but
-      # ``src/ember_code/__init__.py``'s ``__version__`` lives outside
-      # the build backend's reach. If a release goes out without the
-      # author having run ``scripts/sync-version.mjs`` locally, this
-      # step makes sure the published wheel exposes the right
-      # ``__version__`` at import time.
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
-          node-version: "20"
+          node-version: "24"
 
-      - name: Sync version across all clients
-        run: node scripts/sync-version.mjs
-
-      # …and then fail if it had anything to do. The fixup above only
-      # helps THIS job: build-tauri checks the tag out fresh and never
-      # runs the syncer, so a stale ``clients/tauri/src-tauri/Cargo.toml``
-      # is what the shipped bundle reports as CARGO_PKG_VERSION — the
-      # value the updater plugin compares against latest.json's
-      # tag-derived ``version``. Mismatched, the app re-offers the same
-      # update on every launch, forever.
-      - name: Fail if the committed client versions were out of sync
+      - name: The committed Tauri files carry it
         run: |
           set -euo pipefail
+          node scripts/sync-version.mjs
           if ! git diff --quiet; then
-            echo "::error::client version files were not in sync with pyproject.toml — run 'node scripts/sync-version.mjs' and commit before tagging"
+            echo "::error::the Tauri version files were not in sync with igni-core.version — run 'node scripts/sync-version.mjs' and commit before tagging"
             git diff --stat
             exit 1
           fi
 
-      - name: Build package
-        run: uv build
+      - name: PyPI serves that backend
+        run: |
+          set -euo pipefail
+          VERSION="$(tr -d '[:space:]' < igni-core.version)"
+          for i in $(seq 1 20); do
+            if curl -fsSL -o /dev/null "https://pypi.org/pypi/ignite-ember/${VERSION}/json"; then
+              echo "ignite-ember ${VERSION} is on PyPI"
+              exit 0
+            fi
+            echo "  attempt $i/20 — not yet, waiting 30s"
+            sleep 30
+          done
+          echo "::error::ignite-ember ${VERSION} is not on PyPI; release igni-core v${VERSION} first"
+          exit 1
 
-      # The same bytes PyPI gets, for release-evidence: it attaches them to
-      # the GitHub release (for installs that cannot reach PyPI), lists them
-      # in SHA256SUMS and attests their provenance.
-      - name: Keep the wheel and sdist
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-        with:
-          name: python-dist
-          path: dist/
-          if-no-files-found: error
-          retention-days: 30
-
-      # With trusted publishing this also uploads PEP 740 attestations to
-      # PyPI (the action's default), so `pypi.org` shows where each file
-      # was built.
-      - name: Publish to PyPI
-        uses: pypa/gh-action-pypi-publish@7245906fb61fa33a13554f9d5fb856fe61758086 # v1.14.3
-        with:
-          skip-existing: true
-
-  # Tauri desktop installers — mac (Apple Silicon only), windows, linux.
-  # Tauri Action handles the per-platform bundle (.dmg/.msi/.AppImage),
-  # generates the updater signatures, and uploads everything to the
-  # GitHub Release. ``tagName`` matches the tag we're already on so
-  # all artifacts land on one release page.
-  #
-  # Secrets required (configure in repo → Settings → Secrets):
-  #   TAURI_SIGNING_PRIVATE_KEY          base64 of the updater priv key
-  #   TAURI_SIGNING_PRIVATE_KEY_PASSWORD passphrase for the priv key
-  # Optional (Apple notarization):
-  #   APPLE_CERTIFICATE                  .p12 base64
-  #   APPLE_CERTIFICATE_PASSWORD
-  #   APPLE_SIGNING_IDENTITY             "Developer ID Application: …"
-  #   APPLE_ID / APPLE_PASSWORD / APPLE_TEAM_ID
-  #
-  # Why a pre-create-release step: ``tauri-action`` v0 needs a
-  # ``releaseId`` to upload its bundles to. Under a push-tag event
-  # (we trigger by pushing a ``v*`` tag, not by clicking "Create
-  # release") there's no existing release, and the action's
-  # find-or-create-by-tag path errors with "Release not found or
-  # created" — possibly because the three matrix legs race to
-  # create the same release. Pre-creating it as a draft serialises
-  # the creation; the matrix uploads in parallel; the final
-  # ``github-release`` job downgrades draft → published.
+  # Tauri desktop installers — see build-tauri below. Why a draft first:
+  # ``tauri-action`` needs a ``releaseId`` to upload to, and the matrix
+  # legs racing to create the release by tag failed with "Release not
+  # found or created"; pre-creating it as a draft serialises that, and
+  # ``github-release`` publishes it at the end.
   prepare-release:
-    needs: publish-pypi
+    needs: core-published
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -168,6 +113,20 @@ jobs:
           # once every artifact has landed.
           body: ""
 
+  # Tauri desktop installers — mac (Apple Silicon only), windows, linux.
+  # Tauri Action handles the per-platform bundle (.dmg/.msi/.AppImage),
+  # generates the updater signatures, and uploads everything to the
+  # GitHub Release. ``tagName`` matches the tag we're already on so
+  # all artifacts land on one release page.
+  #
+  # Secrets required (configure in repo → Settings → Secrets):
+  #   TAURI_SIGNING_PRIVATE_KEY          base64 of the updater priv key
+  #   TAURI_SIGNING_PRIVATE_KEY_PASSWORD passphrase for the priv key
+  # Optional (Apple notarization):
+  #   APPLE_CERTIFICATE                  .p12 base64
+  #   APPLE_CERTIFICATE_PASSWORD
+  #   APPLE_SIGNING_IDENTITY             "Developer ID Application: …"
+  #   APPLE_ID / APPLE_PASSWORD / APPLE_TEAM_ID
   build-tauri:
     needs: prepare-release
     permissions:
@@ -185,6 +144,19 @@ jobs:
     runs-on: ${{ matrix.platform }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      # The web bundle builds the SDKs from igni-sdk's source, at
+      # ../igni-sdk beside this checkout (clients/web/tsconfig.json's
+      # `paths`). A checkout lands inside the workspace, so it is moved out.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ignite-ember/igni-sdk
+          path: .igni-sdk
+          persist-credentials: false
+
+      - name: Put igni-sdk beside this checkout
+        shell: bash
+        run: mv .igni-sdk ../igni-sdk
 
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
@@ -593,13 +565,11 @@ jobs:
   # the user's side of this job.
   #
   # One SHA256SUMS covers everything: the desktop installers and updater
-  # payload already on the draft, the wheel and sdist, and
-  # the SBOMs. Provenance is minted for every line of it in one
-  # attestation, and the cosign signature is over it too, so one signed
-  # file vouches for every other — the shape of igni server's bundle
-  # MANIFEST.
+  # payload already on the draft, and the SBOM. Provenance is minted for
+  # every line of it in one attestation, and the cosign signature is over
+  # it too, so one signed file vouches for every other.
   release-evidence:
-    needs: [prepare-release, publish-pypi, build-tauri, updater-json]
+    needs: [prepare-release, build-tauri, updater-json]
     runs-on: ubuntu-latest
     permissions:
       contents: write      # read the draft's assets, attach the evidence
@@ -614,17 +584,9 @@ jobs:
         with:
           persist-credentials: false
 
-      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
-
       - name: Version
         id: v
         run: echo "version=${TAG#v}" >> "$GITHUB_OUTPUT"
-
-      - name: Download the wheel and sdist
-        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
-        with:
-          name: python-dist
-          path: dist/python
 
       # By release ID, not tag: a draft cannot be looked up by its tag
       # (see github-release below). Evidence from an earlier attempt of this
@@ -643,22 +605,14 @@ jobs:
             gh api -H 'Accept: application/octet-stream' \
               "repos/${GITHUB_REPOSITORY}/releases/assets/${id}" > "dist/release/${name}"
           done
-          cp dist/python/* dist/release/
           ls -la dist/release
 
-      # ── SBOMs: one per kind of thing a user installs ─────────────────
+      # ── SBOM ─────────────────────────────────────────────────────────
       #
-      # The wheel's from uv.lock, every extra but `dev` — what `pip install
-      # 'ignite-ember[…]'` can bring in. The desktop app's from its
-      # lockfiles: the web UI's npm tree is inside it, plus the Tauri
-      # shell's crates. Development dependencies are left out: they do not
-      # ship.
-      - name: SBOM — Python package
-        run: |
-          uv export --frozen --no-dev --all-extras --no-extra dev \
-            --format cyclonedx1.5 --preview-features sbom-export \
-            -o "dist/release/ignite-ember-${{ steps.v.outputs.version }}.cdx.json"
-
+      # From the desktop app's lockfiles: the web UI's npm tree is inside
+      # it, plus the Tauri shell's crates. Development dependencies are
+      # left out: they do not ship. The backend it installs carries its own
+      # SBOM on igni-core's release of the same version.
       - name: Stage the desktop app's lockfiles
         run: |
           set -euo pipefail
@@ -757,10 +711,10 @@ jobs:
         run: |
           set -euo pipefail
           gh release upload "$TAG" --repo "$GITHUB_REPOSITORY" --clobber \
-            dist/python/* dist/release/*.cdx.json dist/evidence/*
+            dist/release/*.cdx.json dist/evidence/*
 
   github-release:
-    needs: [prepare-release, publish-pypi, build-tauri, updater-json, release-evidence]
+    needs: [prepare-release, build-tauri, updater-json, release-evidence]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -811,7 +765,8 @@ jobs:
         run: |
           set -euo pipefail
           # Every asset is already on the draft: the Tauri bundles from
-          # the build-tauri matrix, the evidence from release-evidence.
+          # the build-tauri matrix, latest.json, the evidence from
+          # release-evidence.
 
           # Compose the final body + publish (draft → false). We use
           # the API directly because ``gh release edit`` can't take
@@ -823,18 +778,10 @@ jobs:
 
           ## Install
 
-          **Python (CLI / library):**
-          ```bash
-          pip install 'ignite-ember[decisions]==${{ steps.notes.outputs.pip_version }}'
-          # or
-          uv pip install 'ignite-ember[decisions]==${{ steps.notes.outputs.pip_version }}'
-          # ``[decisions]`` adds igni's decisions service (Laya, torch) for
-          # Bypass mode's last check and ``host.decide``; leave it out on a
-          # backend that points IGNI_DECISIONS_URL at a shared one.
-          ```
-
           **Desktop app:** download the installer for your platform
-          (``.dmg``, ``.msi`` or ``.AppImage``) below.
+          (``.dmg``, ``.msi`` or ``.AppImage``) below. On first launch it
+          installs igni's backend, ``ignite-ember==${{ steps.notes.outputs.pip_version }}``,
+          released from [ignite-ember/igni-core](https://github.com/ignite-ember/igni-core/releases).
 
           ## Verify
 
@@ -856,185 +803,3 @@ jobs:
             -F prerelease=$PRERELEASE \
             --jq '{id, name, draft, prerelease, html_url}'
 
-  update-homebrew:
-    needs: publish-pypi
-    # Skip on RC / alpha / beta / dev tags. The brew formula
-    # tracks the latest STABLE release; pre-release tags don't
-    # actually publish a new PyPI sdist (the version in
-    # ``pyproject.toml`` is the SoT, ``skip-existing: true`` silently
-    # no-ops the publish on RC tags). The homebrew job would 404 on
-    # the non-existent ``ignite_ember-X.Y.Zrc1.tar.gz`` file. Run
-    # only on tags WITHOUT a hyphen (i.e. ``v1.2.3`` not
-    # ``v1.2.3-rc.1``).
-    if: ${{ !contains(github.ref_name, '-') }}
-    runs-on: ubuntu-latest
-    steps:
-      - name: Wait for PyPI propagation
-        run: sleep 30
-
-      - name: Get tag version
-        id: version
-        # ``version``  is the raw tag (used for the Brew formula's
-        # ``ignite-ember==X`` pin — pip normalises during install so
-        # both forms work). ``pypi_version`` is the PEP-440-normalised
-        # form used in the PyPI sdist URL: ``files.pythonhosted.org``
-        # serves files under the normalised name, so ``0.6.0-rc.1``
-        # has to become ``0.6.0rc1`` to resolve.
-        run: |
-          RAW="${GITHUB_REF#refs/tags/v}"
-          NORM=$(python3 -c "
-          import re, sys
-          v = sys.argv[1]
-          # PEP 440 pre/post/dev: collapse the separator + lowercase the kind.
-          v = re.sub(r'[-_.]?(alpha|a)[-_.]?(\d+)', r'a\2', v, flags=re.I)
-          v = re.sub(r'[-_.]?(beta|b)[-_.]?(\d+)', r'b\2', v, flags=re.I)
-          v = re.sub(r'[-_.]?(rc|c|pre|preview)[-_.]?(\d+)', r'rc\2', v, flags=re.I)
-          v = re.sub(r'[-_.]?(post|rev|r)[-_.]?(\d+)', r'.post\2', v, flags=re.I)
-          v = re.sub(r'[-_.]?dev[-_.]?(\d+)', r'.dev\1', v, flags=re.I)
-          print(v)
-          " "$RAW")
-          echo "version=$RAW" >> "$GITHUB_OUTPUT"
-          echo "pypi_version=$NORM" >> "$GITHUB_OUTPUT"
-          echo "raw=$RAW pypi=$NORM"
-
-      - name: Wait for PyPI CDN to propagate
-        # ``publish-pypi`` completes the moment Warehouse accepts the
-        # upload, but the ``files.pythonhosted.org`` CDN needs 1–5
-        # minutes to expose the sdist. Polling the JSON index is
-        # cheap and gives an unambiguous signal (returns 200 as soon
-        # as the version's release row is queryable), so we gate the
-        # download step on that instead of blindly retrying curl.
-        run: |
-          VERSION="${{ steps.version.outputs.pypi_version }}"
-          URL="https://pypi.org/pypi/ignite-ember/${VERSION}/json"
-          for i in $(seq 1 20); do
-            if curl -fsSL -o /dev/null "$URL"; then
-              echo "pypi visible after $((i*30 - 30))s"
-              exit 0
-            fi
-            echo "  attempt $i/20 — not yet, waiting 30s"
-            sleep 30
-          done
-          echo "::error::PyPI JSON index never returned 200 for ignite-ember==$VERSION after 10 minutes"
-          exit 1
-
-      - name: Download sdist and compute SHA
-        id: sha
-        run: |
-          VERSION="${{ steps.version.outputs.pypi_version }}"
-          URL="https://files.pythonhosted.org/packages/source/i/ignite-ember/ignite_ember-${VERSION}.tar.gz"
-          # JSON index is up (previous step gated on that), but the
-          # sdist file itself can lag a beat longer on the CDN. Keep
-          # a shorter retry loop here as a safety net rather than the
-          # sole propagation gate.
-          for i in $(seq 1 10); do
-            if curl -fsSL -o sdist.tar.gz "$URL"; then
-              SHA=$(sha256sum sdist.tar.gz | awk '{print $1}')
-              echo "sha256=$SHA" >> "$GITHUB_OUTPUT"
-              exit 0
-            fi
-            echo "  attempt $i/10 — sdist not yet on CDN, waiting 30s"
-            sleep 30
-          done
-          echo "::error::sdist file never appeared on files.pythonhosted.org after 5 minutes"
-          exit 1
-
-      - name: Update Homebrew tap
-        env:
-          HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
-        run: |
-          VERSION="${{ steps.version.outputs.version }}"
-          SHA="${{ steps.sha.outputs.sha256 }}"
-
-          git clone "https://x-access-token:${HOMEBREW_TAP_TOKEN}@github.com/ignite-ember/homebrew-tap.git" /tmp/homebrew-tap
-          cd /tmp/homebrew-tap
-
-          # Simple formula: create venv, pip install from PyPI (uses wheels)
-          # NOTE: Homebrew derives the class name from the formula file
-          # via ``Formula.class_s``: ``ignite-ember`` → ``IgniteEmber``
-          # (PascalCase, hyphens dropped). A lowercase leading letter
-          # makes it invalid Ruby and Homebrew silently refuses to load
-          # the formula — the reason releases v0.7.0 through v0.8.3
-          # never propagated to ``brew upgrade`` users.
-          cat > Formula/ignite-ember.rb << 'FORMULA'
-          class IgniteEmber < Formula
-            include Language::Python::Virtualenv
-
-            desc "AI coding assistant with multi-agent orchestration"
-            homepage "https://ignite-ember.sh"
-            url "PLACEHOLDER_URL"
-            sha256 "PLACEHOLDER_SHA"
-            # Apache-2.0, matching ``LICENSE`` at the repo root and
-            # ``license = "Apache-2.0"`` in pyproject.toml. This said
-            # "MIT" for every release published so far, which put a
-            # licence the project has never shipped under on the tap
-            # page brew users read before installing. Homebrew validates
-            # this string against its SPDX list, so keep it SPDX-exact.
-            license "Apache-2.0"
-
-            depends_on "git"
-            depends_on "python@3.12"
-            depends_on "ripgrep"
-
-            skip_clean "libexec"
-
-            def install
-              venv = virtualenv_create(libexec, "python3.12")
-              system libexec/"bin/python3.12", "-m", "pip", "install", "--prefer-binary", "ignite-ember==PLACEHOLDER_VERSION"
-              # Both console scripts from pyproject's [project.scripts].
-              # ``igni`` is the canonical command and the one README and
-              # QUICKSTART tell brew users to type; for every release up
-              # to now only ``ignite-ember`` was linked, so the
-              # documented install path shipped without the documented
-              # command. The test below runs ``igni`` for that reason —
-              # dropping this line again fails the formula's own test.
-              bin.install_symlink libexec/"bin/ignite-ember"
-              bin.install_symlink libexec/"bin/igni"
-
-              # Clear dylib IDs from Rust-built Python extensions so Homebrew's
-              # install_name_tool fixup doesn't fail on them.
-              Dir.glob(libexec/"lib/**/*.so").each do |so|
-                MachO::Tools.change_dylib_id(so, "") rescue nil
-              end
-            end
-
-            test do
-              # Run the canonical name first: ``brew test`` is the only
-              # thing that would have caught the missing symlink, and it
-              # was pointed at the other binary.
-              assert_match "igni", shell_output("#{bin}/igni --version")
-              assert_match "igni", shell_output("#{bin}/ignite-ember --version")
-            end
-          end
-          FORMULA
-
-          # Fix heredoc indentation and replace placeholders
-          sed -i 's/^          //' Formula/ignite-ember.rb
-          PYPI_VERSION="${{ steps.version.outputs.pypi_version }}"
-          sed -i "s|PLACEHOLDER_URL|https://files.pythonhosted.org/packages/source/i/ignite-ember/ignite_ember-${PYPI_VERSION}.tar.gz|" Formula/ignite-ember.rb
-          sed -i "s|PLACEHOLDER_SHA|${SHA}|" Formula/ignite-ember.rb
-          sed -i "s|PLACEHOLDER_VERSION|${VERSION}|" Formula/ignite-ember.rb
-
-          # Belt-and-suspenders: parse the generated Ruby before we
-          # push it, so a future rebrand can't silently ship an
-          # unparseable formula again. ``ruby -c`` returns non-zero on
-          # any syntax error; combined with the class-name comment
-          # above this catches both the specific past regression and
-          # anything else that breaks parsing.
-          if ! ruby -c Formula/ignite-ember.rb; then
-            echo "::error::Generated Homebrew formula is not valid Ruby — aborting"
-            exit 1
-          fi
-
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add Formula/ignite-ember.rb
-          # ``git commit`` fails with exit 1 when nothing is staged,
-          # which would fail the job on a re-run of the same tag.
-          # Skip cleanly instead — the tap is already up-to-date.
-          if git diff --cached --quiet; then
-            echo "Formula unchanged for ${VERSION}; nothing to push."
-            exit 0
-          fi
-          git commit -m "Update ignite-ember to ${VERSION}"
-          git push

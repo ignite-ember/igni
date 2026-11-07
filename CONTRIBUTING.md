@@ -13,7 +13,9 @@ installation that has not upgraded yet.
 ## Security advisories
 
 A fixed vulnerability is published as a **GitHub Security Advisory on
-`ignite-ember/igni`** (the Security tab, then Advisories), with a CVE
+`ignite-ember/igni-app`** (formerly `ignite-ember/igni`; the Security tab,
+then Advisories), for any of igni's repositories — igni-core and igni-sdk
+included, with a CVE
 identifier assigned through GitHub, which is a CVE Numbering Authority for
 what it hosts, so the identifier is requested from the advisory itself.
 
@@ -35,9 +37,9 @@ what it hosts, so the identifier is requested from the advisory itself.
 
 Watching the repository for security alerts is how to hear of one. Because
 only the macOS desktop app updates itself, the advisory is what tells
-everyone else to upgrade. The SDKs published from this repository
-(`igni-service`, `igni-extension` and the `@ignite-ember` npm packages) are
-covered by the same advisories. The paid modules are not public
+everyone else to upgrade. The SDKs published from igni-sdk
+(`igni-service`, `igni-extension`, `igni-client` and the `@ignite-ember` npm
+packages) are covered by the same advisories. The paid modules are not public
 repositories, so their customers are told directly instead. The policy is
 igni server's, and so is the way it meets the Cyber Resilience Act's
 reporting duties (Art. 14, Annex I Part II(4)), described in igni server's vulnerability management document.
@@ -45,26 +47,28 @@ reporting duties (Art. 14, Annex I Part II(4)), described in igni server's vulne
 ## Before you start
 
 For anything larger than a small fix, open an issue first and say what you
-want to change and why. It saves you writing something we cannot take, for
-example because it would make igni call out of the customer's network:
-`tests/test_nothing_phones_home.py` and
-`tests/test_an_air_gapped_install_makes_no_outbound_call.py` fail the build
-if it does, and a new outbound call is off by default.
+want to change and why.
 
 ## Setting up
 
-You need Python 3.12 (the version in `.python-version`),
-[uv](https://docs.astral.sh/uv/), and Node 20 if you work on the clients.
+You need Node 24, Rust (stable) for the desktop shell, and
+[uv](https://docs.astral.sh/uv/) for a backend to run against. This
+repository is igni's desktop app and web UI; the other two are checked out
+beside it:
 
 ```bash
-git clone https://github.com/ignite-ember/igni.git
-cd igni
-uv sync --extra dev
-uv run igni              # the CLI from your checkout
+git clone https://github.com/ignite-ember/igni-app.git
+git clone https://github.com/ignite-ember/igni-sdk.git   # the SDKs the UI is built with
+git clone https://github.com/ignite-ember/igni-core.git  # the backend
+(cd igni-core && uv sync)
+cd igni-app && make install
 ```
 
-[docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) covers the layout of the
-repository and the clients in more detail.
+The web client builds `@ignite-ember/ui-react`, the extension bridge and the
+stylesheet from `../igni-sdk`'s source (`clients/web/tsconfig.json`,
+`vite.config.ts`; vite also reads `IGNI_SDK_DIR`). The browser suite and the
+desktop shell's smoke test run igni-core's backend from its venv
+(`../igni-core`, or `IGNI_CORE_DIR`).
 
 ## Checks
 
@@ -72,46 +76,25 @@ Run these before you open a pull request. CI (`.github/workflows/ci.yml`)
 runs the same ones, and a pull request is merged only when they pass.
 
 ```bash
-uv run ruff check src/ tests/
-uv run ruff format --check src/ tests/
-uv run mypy src/ember_code/
-uv run pytest tests/ -q          # the whole Python suite
-make packages-check              # the Python SDKs under packages/, each in its own env
+make typecheck       # the web client
+make test            # its unit tests, with the coverage floor (vite.config.ts)
+make tauri-test      # the desktop shell's Rust tests
+make e2e             # the browser suite
 ```
 
-If you touch the web UI (`clients/web`, which the desktop app loads and which
-is the web client):
-
-```bash
-cd clients/web
-npm ci
-npx tsc -b --noEmit
-npx vitest run
-npx playwright test              # the browser suite
-```
-
-The Python suite runs every test as if inside a customer's network: a test
-that reaches the internet fails unless it carries the `reaches_the_internet`
-marker. It also fails the run if a test leaves files in the repository root.
-
-CI measures coverage too, and fails below a floor that only goes up: line and
-branch coverage of `src/ember_code` (`--cov-fail-under` in the `test` job),
-and the web suite's `coverage.thresholds` in `clients/web/vite.config.ts`
-(`npx vitest run --coverage`). To see where you stand:
-
-```bash
-uv run pytest tests/ -q --cov=ember_code --cov-branch --cov-report=term-missing
-cd clients/web && npx vitest run --coverage
-```
+`clients/web/src/protocol/wire-schema.json` is a copy of the
+`docs/wire-schema.json` igni-core publishes; a test fails while it differs from
+igni-core's beside this repository. When the protocol changes, copy it over in
+the same pull request as the code that reads the change.
 
 ## What a change needs
 
 - **A test.** New behaviour comes with tests that exercise it, and a bug fix
   with the test that fails without the fix. A test that passes either way
   proves nothing.
-- **The docs a reader would otherwise find wrong.** `docs/` is checked: every
-  repository path it quotes must exist and every config key it documents
-  must be a real setting (`tests/test_the_docs_name_real_things.py`).
+- **The docs a reader would otherwise find wrong.** igni's documentation is
+  igni-core's (`docs/` there, where it is checked); this repository's own is
+  `docs/DESIGN_SYSTEM.md`.
 - **The code standards.** [CODE_STANDARDS.md](CODE_STANDARDS.md) describes
   how the code here is written; review holds a change to it.
 

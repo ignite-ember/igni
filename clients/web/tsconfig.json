@@ -2,14 +2,15 @@
   "compilerOptions": {
     "baseUrl": ".",
     "paths": {
-      "@ignite-ember/ui-react": ["../../packages/ui-react/src/index.ts"],
-      "@ignite-ember/ui-react/*": ["../../packages/ui-react/src/*"],
-      "@ignite-ember/test-utils/*": ["../../packages/test-utils/*"],
-      "@ignite-ember/extension-bridge": ["../../packages/extension-bridge/src/index.ts"],
-      "@ignite-ember/extension-bridge/*": ["../../packages/extension-bridge/src/*"],
-      "@ignite-ember/ui-css": ["../ui/igni-ui.css"],
+      "@ignite-ember/ui-react": ["../../../igni-sdk/packages/ui-react/src/index.ts"],
+      "@ignite-ember/ui-react/*": ["../../../igni-sdk/packages/ui-react/src/*"],
+      "@ignite-ember/test-utils/*": ["../../../igni-sdk/packages/test-utils/*"],
+      "@ignite-ember/extension-bridge": ["../../../igni-sdk/packages/extension-bridge/src/index.ts"],
+      "@ignite-ember/extension-bridge/*": ["../../../igni-sdk/packages/extension-bridge/src/*"],
+      "@ignite-ember/ui-css": ["../../../igni-sdk/clients/ui/igni-ui.css"],
       /*
-       * ``examples/`` and ``packages/`` sit outside this directory,
+       * igni-sdk's ``packages/`` (at ``../igni-sdk``, beside this
+       * repository: vite.config.ts says why) sit outside this directory,
        * so Node resolution walking up from them never reaches our
        * ``node_modules``. An extension author has these in their
        * own; here they have to be pointed at, or neither the example
@@ -62,11 +63,8 @@
    * client's config is one flat project.
    */
   /*
-   * ``../../examples`` for the same reason ``e2e`` is here, and it had
-   * already happened again: the reference extension shipped with a
-   * docstring claiming "this compiles", against a file no compiler had
-   * ever read. It imported an alias that did not exist and a stylesheet
-   * that was not there, and nothing said so.
+   * The SDKs and their examples are type-checked in igni-sdk; what this
+   * project reads of them is what ``paths`` points at.
    */
-  "include": ["src", "e2e", "scripts", "../../examples", "../../packages"]
+  "include": ["src", "e2e", "scripts"]
 }

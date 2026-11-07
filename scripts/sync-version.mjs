@@ -1,10 +1,12 @@
 #!/usr/bin/env node
 // Single source-of-truth version syncer.
 //
-// ``pyproject.toml`` is the canonical version for the entire igni
-// project. This script copies it into the files that carry their own
-// copy: the Python package's ``__init__.py`` and the Tauri shell's
-// ``tauri.conf.json`` and ``Cargo.toml``.
+// ``igni-core.version`` is the version of igni's backend this app installs
+// on first launch (``ignite-ember==<it>``), and the app's own version:
+// the two are released in lockstep (release.yml checks PyPI has it). This
+// script copies it into the files that carry their own copy: the Tauri
+// shell's ``tauri.conf.json`` and ``Cargo.toml``, whose version is the
+// ``CARGO_PKG_VERSION`` the shell pins the backend to.
 //
 // Run from anywhere — the script resolves paths relative to itself.
 //
@@ -21,18 +23,11 @@ import { fileURLToPath } from "node:url";
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(here, "..");
 
-const pyprojectPath = join(repoRoot, "pyproject.toml");
-const pyproject = readFileSync(pyprojectPath, "utf8");
-
-// Permissive line-level match — the only ``version = "…"`` at the top
-// of ``[project]`` is the package's own. We deliberately don't pull in
-// a TOML parser to keep this script dep-free.
-const versionMatch = pyproject.match(/^\s*version\s*=\s*"([^"]+)"/m);
-if (!versionMatch) {
-  console.error("could not find version in pyproject.toml");
+const igniteEmberVersion = readFileSync(join(repoRoot, "igni-core.version"), "utf8").trim();
+if (!/^\d+\.\d+\.\d+([-.]?[0-9A-Za-z.]+)?$/.test(igniteEmberVersion)) {
+  console.error(`igni-core.version is not a version: ${JSON.stringify(igniteEmberVersion)}`);
   process.exit(1);
 }
-const igniteEmberVersion = versionMatch[1];
 
 // Two kinds of targets:
 //
@@ -42,12 +37,6 @@ const igniteEmberVersion = versionMatch[1];
 //     untouched. The pattern's capture groups frame the literal
 //     that gets swapped.
 const targets = [
-  {
-    kind: "patch",
-    label: "Python package (__init__.py)",
-    path: join(repoRoot, "src/ember_code/__init__.py"),
-    pattern: /(__version__\s*=\s*")[^"]+(")/,
-  },
   {
     kind: "patch",
     label: "Tauri config (tauri.conf.json)",

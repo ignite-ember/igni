@@ -35,22 +35,22 @@ use std::process::{Child, Command, Stdio};
 use std::thread;
 use std::time::{Duration, Instant};
 
-/// Resolve the repo root by walking up from the manifest dir until
-/// we see a ``pyproject.toml`` (the workspace marker).
+/// The repository root: ``clients/tauri/src-tauri`` is three levels down.
 fn repo_root() -> PathBuf {
     let manifest = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let mut probe = manifest.clone();
-    loop {
-        if probe.join("pyproject.toml").is_file() {
-            return probe;
-        }
-        if !probe.pop() {
-            panic!(
-                "couldn't find repo root (no pyproject.toml) starting from {}",
-                manifest.display()
-            );
-        }
-    }
+    manifest
+        .ancestors()
+        .nth(3)
+        .map(PathBuf::from)
+        .expect("clients/tauri/src-tauri sits three levels below the repository root")
+}
+
+/// igni-core's checkout, whose venv runs the backend: ``IGNI_CORE_DIR``,
+/// or ``igni-core`` beside this repository.
+fn igni_core() -> PathBuf {
+    std::env::var_os("IGNI_CORE_DIR")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| repo_root().join("..").join("igni-core"))
 }
 
 /// Find child PIDs of ``parent_pid`` whose command line mentions
@@ -189,10 +189,10 @@ fn tauri_binary_boots_be_and_watchdog_cleans_up_on_exit() {
     );
 
     let root = repo_root();
-    let venv_python = root.join(".venv").join("bin").join("python");
+    let venv_python = igni_core().join(".venv").join("bin").join("python");
     assert!(
         venv_python.is_file(),
-        "expected venv python at {} — run `uv sync` from repo root first",
+        "expected venv python at {} — run `uv sync` in igni-core's checkout (IGNI_CORE_DIR) first",
         venv_python.display()
     );
     let dist_index = root.join("clients/web/dist/index.html");
