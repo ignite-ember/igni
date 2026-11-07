@@ -157,7 +157,7 @@ jobs:
       # `e2e/fixtures/live-be.ts` spawns a backend whenever this venv
       # exists, so preparing it is what enables that coverage.
       - name: Install uv
-        uses: astral-sh/setup-uv@38f3f104447c67c051c4a08e39b64a148898af3a # v4.2.0
+        uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
 
       - name: Install the backend for the live-backend E2E
         working-directory: igni-core
@@ -288,7 +288,7 @@ jobs:
           python-version-file: igni-core/.python-version
 
       - name: Install uv
-        uses: astral-sh/setup-uv@38f3f104447c67c051c4a08e39b64a148898af3a # v4.2.0
+        uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
 
       # The test points the shell at this venv (IGNI_DEV_BACKEND), so no
       # managed-runtime download happens.
