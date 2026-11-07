@@ -2,14 +2,16 @@
 //!
 //! On first launch the Tauri shell now self-provisions everything
 //! the BE needs: downloads ``uv``, asks uv to install a pinned
-//! CPython, creates a managed venv, installs ``ignite-ember`` at
+//! CPython, creates a managed venv, installs ``igni-core`` at
 //! the pinned version, and prefetches igni's decision model
 //! (Laya). Subsequent launches reuse the cache and skip
 //! straight to spawning the BE — overhead drops to sub-100ms.
 //!
 //! Everything lives under a per-user cache dir
-//! (``~/Library/Caches/ember-code`` on macOS, ``$XDG_CACHE_HOME``
-//! on Linux, ``%LOCALAPPDATA%\ember-code`` on Windows).
+//! (``~/Library/Caches/igni`` on macOS, ``$XDG_CACHE_HOME/igni``
+//! on Linux, ``%LOCALAPPDATA%\igni`` on Windows). An install made
+//! before the rename keeps its ``ember-code`` directory: the venv in it
+//! records absolute paths, so moving it would cost a full reinstall.
 //!
 //! **Dev override.** When ``IGNI_DEV_BACKEND`` is set we use that
 //! Python path verbatim and skip every download. This is the
@@ -30,10 +32,16 @@ const UV_VERSION: &str = "0.5.7";
 /// Also the wire version discovery compares a running backend's
 /// lockfile against — the BE stamps its own package `__version__`
 /// there, and this is the version we pin it to. See `discovery.rs`.
-pub(crate) const IGNITE_EMBER_VERSION: &str = env!("CARGO_PKG_VERSION");
-const INSTALL_MARKER: &str = "ember-install.json";
+pub(crate) const IGNI_CORE_VERSION: &str = env!("CARGO_PKG_VERSION");
+const INSTALL_MARKER: &str = "igni-install.json";
+/// The marker's name before the rename, read when there is no
+/// [`INSTALL_MARKER`]; the next write uses the new name.
+const LEGACY_INSTALL_MARKER: &str = "ember-install.json";
+/// The cache directory's name, and its name before the rename.
+const CACHE_DIR: &str = "igni";
+const LEGACY_CACHE_DIR: &str = "ember-code";
 
-/// 1 GB. Sized for uv (~25 MB) + CPython (~50 MB) + ignite-ember +
+/// 1 GB. Sized for uv (~25 MB) + CPython (~50 MB) + igni-core +
 /// transitives (laya / transformers / torch — ~600 MB unpacked) +
 /// headroom. The decision model itself (~1.7 GB) is fetched after. Failing
 /// fast here is much kinder than letting pip die mid-install.
@@ -45,13 +53,13 @@ const MIN_BOOTSTRAP_FREE_BYTES: u64 = 1024 * 1024 * 1024;
 /// the plugin-managed directory so a clean reinstall wipes
 /// everything.
 ///
-/// ``actual_cli_version`` is the ``ember_code.__version__`` reported
+/// ``actual_cli_version`` is the ``igni_core.__version__`` reported
 /// by the chosen interpreter, captured at bootstrap time so
 /// ``lib.rs`` can propagate it into the WKWebView URL — the shared
 /// web bundle's ``BackendVersionChip`` reads the values off the
 /// query string and renders a mismatch warning when the installed
 /// CLI drifts from the pinned build. ``None`` on any probe failure
-/// (dev override at a Python without ``ember_code`` importable,
+/// (dev override at a Python without ``igni_core`` importable,
 /// sandbox denies subprocess, etc.).
 pub struct BackendInstall {
     pub python: PathBuf,
@@ -90,7 +98,7 @@ pub(crate) const RUNTIME_PYTHON_ENV: &str = "IGNI_RUNTIME_PYTHON";
 ///
 /// The supported way to run the desktop app where it cannot download its
 /// runtime — an air-gapped network, or a locked-down estate. Whoever
-/// installs the app installs `ignite-ember[decisions]` from their own
+/// installs the app installs `igni-core[decisions]` from their own
 /// mirror into an interpreter and names it here. Unlike `IGNI_PYTHON` it
 /// needs no `IGNITE_EMBER_DEV=1`: it is an administrator's decision,
 /// written in the settings an administrator owns.
@@ -112,14 +120,14 @@ pub(crate) fn provisioned_install(
     if !is_executable(&python) {
         return Err(format!(
             "runtime_python ({}) is not an executable. Point it (or {RUNTIME_PYTHON_ENV}) at the \
-             interpreter ignite-ember is installed in.",
+             interpreter igni-core is installed in.",
             python.display()
         ));
     }
     let Some(actual) = probe(&python) else {
         return Err(format!(
-            "runtime_python ({}) runs, but cannot import ember_code. Install \
-             ignite-ember[decisions]=={expected} into it from your package mirror.",
+            "runtime_python ({}) runs, but cannot import igni_core. Install \
+             igni-core[decisions]=={expected} into it from your package mirror.",
             python.display()
         ));
     };
@@ -127,7 +135,7 @@ pub(crate) fn provisioned_install(
         // Shown in the app too (the version chip); not fatal, as with the
         // managed venv after a manual upgrade.
         eprintln!(
-            "runtime_python at {} runs ignite-ember {actual}; this app is built for {expected}.",
+            "runtime_python at {} runs igni-core {actual}; this app is built for {expected}.",
             python.display()
         );
     }
@@ -145,14 +153,14 @@ pub(crate) fn provisioned_install(
 /// uv…" / "Installing Python…" / …).
 pub type ProgressFn<'a> = &'a (dyn Fn(&str) + Sync);
 
-/// Resolve a Python interpreter with ``ignite-ember`` installed and
+/// Resolve a Python interpreter with ``igni-core`` installed and
 /// its decision model pre-warmed. Bootstraps on first
 /// call; returns cached on subsequent calls.
 ///
 /// Returns an error with a human-readable message on any failure —
 /// the caller surfaces it in the UI; we never panic.
 pub fn ensure_backend_python(progress: ProgressFn) -> Result<BackendInstall, String> {
-    let expected = IGNITE_EMBER_VERSION.to_string();
+    let expected = IGNI_CORE_VERSION.to_string();
 
     // ── Dev / user overrides ──
     // Both ``IGNI_DEV_BACKEND`` and ``IGNI_PYTHON`` are opt-in
@@ -167,7 +175,7 @@ pub fn ensure_backend_python(progress: ProgressFn) -> Result<BackendInstall, Str
         .ok()
         .map(|s| s.trim().to_string())
         .filter(|s| !s.is_empty());
-    let ember_python = std::env::var("IGNI_PYTHON")
+    let igni_python = std::env::var("IGNI_PYTHON")
         .ok()
         .map(|s| s.trim().to_string())
         .filter(|s| !s.is_empty());
@@ -179,7 +187,7 @@ pub fn ensure_backend_python(progress: ProgressFn) -> Result<BackendInstall, Str
             if let Some(ref v) = actual {
                 if v != &expected {
                     eprintln!(
-                        "IGNI_DEV_BACKEND at {} runs ignite-ember {}, plugin pinned to {}. \
+                        "IGNI_DEV_BACKEND at {} runs igni-core {}, plugin pinned to {}. \
                          Continuing (dev mode).",
                         dev, v, expected
                     );
@@ -201,7 +209,7 @@ pub fn ensure_backend_python(progress: ProgressFn) -> Result<BackendInstall, Str
             );
         }
     }
-    if let Some(py) = ember_python.clone() {
+    if let Some(py) = igni_python.clone() {
         if dev_ack {
             let path = PathBuf::from(&py);
             let actual = probe_cli_version(&path);
@@ -271,7 +279,7 @@ pub fn ensure_backend_python(progress: ProgressFn) -> Result<BackendInstall, Str
     );
     if plan.venv_version_mismatch {
         eprintln!(
-            "Managed venv marker says ignite={} but the interpreter reports {} — reinstalling ignite-ember.",
+            "Managed venv marker says ignite={} but the interpreter reports {} — reinstalling igni-core.",
             have.ignite.as_deref().unwrap_or("<none>"),
             venv_actual_version.as_deref().unwrap_or("<probe failed>")
         );
@@ -284,7 +292,7 @@ pub fn ensure_backend_python(progress: ProgressFn) -> Result<BackendInstall, Str
     if plan.any() && UpdatePolicy::load().air_gapped() {
         return Err(format!(
             "igni is air-gapped (air_gapped: true), so the desktop app will not download its Python \
-             runtime. Install ignite-ember[decisions]=={IGNITE_EMBER_VERSION} from your package mirror \
+             runtime. Install igni-core[decisions]=={IGNI_CORE_VERSION} from your package mirror \
              into a Python {PYTHON_VERSION} interpreter and set runtime_python in \
              ~/.igni/config.yaml or managed settings (or {RUNTIME_PYTHON_ENV}) to its path, then \
              start the app again. (Cache directory for a managed install: {}.)",
@@ -304,7 +312,7 @@ pub fn ensure_backend_python(progress: ProgressFn) -> Result<BackendInstall, Str
 
     // ── 2-3. Python + venv ──
     // The venv is tied to its Python, so a Python bump (or a missing venv)
-    // wipes and recreates it; a fresh venv has no ignite-ember in it.
+    // wipes and recreates it; a fresh venv has no igni-core in it.
     if plan.rebuild_venv {
         if venv_dir.exists() {
             progress("Refreshing managed venv…");
@@ -328,13 +336,13 @@ pub fn ensure_backend_python(progress: ProgressFn) -> Result<BackendInstall, Str
         write_marker(&marker_path, &have)?;
     }
 
-    // ── 4-5. ignite-ember + prefetch ──
-    // `uv pip install ignite-ember==X` upgrades (or downgrades) in place.
+    // ── 4-5. igni-core + prefetch ──
+    // `uv pip install igni-core==X` upgrades (or downgrades) in place.
     if plan.install_ignite {
         progress(if plan.rebuild_venv {
-            "Installing ignite-ember (one-time)…"
+            "Installing igni-core (one-time)…"
         } else {
-            "Updating ignite-ember…"
+            "Updating igni-core…"
         });
         run_uv(
             &uv_path,
@@ -345,7 +353,7 @@ pub fn ensure_backend_python(progress: ProgressFn) -> Result<BackendInstall, Str
                 venv_python.to_string_lossy().as_ref(),
                 // ``decisions``: igni's decisions service (Laya), which
                 // the backend starts beside itself on first use.
-                &format!("ignite-ember[decisions]=={IGNITE_EMBER_VERSION}"),
+                &format!("igni-core[decisions]=={IGNI_CORE_VERSION}"),
             ],
         )?;
 
@@ -355,7 +363,7 @@ pub fn ensure_backend_python(progress: ProgressFn) -> Result<BackendInstall, Str
         // model; with the model already in `HF_HOME` it only loads it.
         progress("Checking igni's decision model (~1.7 GB on first install)…");
         let mut cmd = Command::new(&venv_python);
-        cmd.args(["-m", "ember_code.prefetch_models"]);
+        cmd.args(["-m", "igni_core.prefetch_models"]);
         cmd.env("HF_HOME", &hf_home);
         let status = cmd
             .status()
@@ -401,7 +409,7 @@ struct ComponentVersions {
 
 impl ComponentVersions {
     fn current() -> Self {
-        Self::of(UV_VERSION, PYTHON_VERSION, IGNITE_EMBER_VERSION)
+        Self::of(UV_VERSION, PYTHON_VERSION, IGNI_CORE_VERSION)
     }
 
     fn of(uv: &str, python: &str, ignite: &str) -> Self {
@@ -440,6 +448,7 @@ fn parse_marker(contents: &str) -> ComponentVersions {
 
 fn read_marker(path: &Path) -> ComponentVersions {
     fs::read_to_string(path)
+        .or_else(|_| fs::read_to_string(path.with_file_name(LEGACY_INSTALL_MARKER)))
         .map(|s| parse_marker(&s))
         .unwrap_or_default()
 }
@@ -463,9 +472,9 @@ struct InstallPlan {
     fetch_uv: bool,
     /// Wipe and recreate the venv (installs the Python first).
     rebuild_venv: bool,
-    /// ``uv pip install ignite-ember==X`` into the venv, then prefetch.
+    /// ``uv pip install igni-core==X`` into the venv, then prefetch.
     install_ignite: bool,
-    /// The interpreter reports an ignite-ember other than the one wanted.
+    /// The interpreter reports an igni-core other than the one wanted.
     venv_version_mismatch: bool,
 }
 
@@ -476,7 +485,7 @@ impl InstallPlan {
 }
 
 /// Decide, without touching the disk or the network, what the bootstrap
-/// does. `venv_actual` is the ignite-ember the venv's interpreter reports
+/// does. `venv_actual` is the igni-core the venv's interpreter reports
 /// (``None`` when it is missing or the probe failed; only a positive
 /// mismatch acts on it).
 fn plan_install(
@@ -521,9 +530,9 @@ fn is_ack_value(v: &str) -> bool {
     v == "1" || v.eq_ignore_ascii_case("true")
 }
 
-/// Return ``ember_code.__version__`` as reported by the given
+/// Return ``igni_core.__version__`` as reported by the given
 /// Python interpreter, or ``None`` on any failure. 2s subprocess
-/// timeout — the real observed cost for a cold ``import ember_code;
+/// timeout — the real observed cost for a cold ``import igni_core;
 /// print(__version__)`` is 30-80ms; the ceiling is a safety net
 /// against a wedged interpreter blocking the whole bootstrap.
 pub fn probe_cli_version(python: &Path) -> Option<String> {
@@ -533,7 +542,7 @@ pub fn probe_cli_version(python: &Path) -> Option<String> {
     let mut cmd = Command::new(python);
     cmd.args([
         "-c",
-        "import ember_code, sys; sys.stdout.write(ember_code.__version__)",
+        "import igni_core, sys; sys.stdout.write(igni_core.__version__)",
     ]);
     // ``stderr`` merged so a Python-side import error doesn't
     // leak onto the parent's console; we only care about
@@ -570,8 +579,20 @@ pub fn reset_cache() -> Result<(), String> {
 
 fn cache_root() -> Result<PathBuf, String> {
     dirs::cache_dir()
-        .map(|d| d.join("ember-code"))
+        .map(|d| cache_root_in(&d))
         .ok_or_else(|| "could not resolve per-user cache dir".to_string())
+}
+
+/// ``igni`` under the per-user cache dir, unless an install from before
+/// the rename is there as ``ember-code`` and nothing yet as ``igni``.
+fn cache_root_in(cache_dir: &Path) -> PathBuf {
+    let current = cache_dir.join(CACHE_DIR);
+    let legacy = cache_dir.join(LEGACY_CACHE_DIR);
+    if !current.exists() && legacy.exists() {
+        legacy
+    } else {
+        current
+    }
 }
 
 /// Cache root for display-only callers (Doctor dialog). Never fails
@@ -774,7 +795,7 @@ mod tests {
     #[test]
     fn is_executable_detects_real_file() {
         let tmp = std::env::temp_dir().join(format!(
-            "ember_runtime_test_{}",
+            "igni_runtime_test_{}",
             std::process::id()
         ));
         fs::write(&tmp, b"hi").unwrap();
@@ -811,7 +832,7 @@ mod tests {
         // should probe the closest existing ancestor instead of
         // erroring on the missing leaf.
         let nonexistent = std::env::temp_dir()
-            .join("ember_runtime_test_does_not_exist")
+            .join("igni_runtime_test_does_not_exist")
             .join("nested")
             .join("further");
         assert!(ensure_free_space(&nonexistent, 0).is_ok());
@@ -955,13 +976,13 @@ mod tests {
 
     #[test]
     fn an_interpreter_without_igni_is_refused() {
-        // `true` exists and is executable everywhere this runs, and has no ember_code.
+        // `true` exists and is executable everywhere this runs, and has no igni_core.
         let python = PathBuf::from(if cfg!(windows) { "C:/Windows/System32/whoami.exe" } else { "/usr/bin/true" });
         if !is_executable(&python) {
             return;
         }
         let err = provisioned_install(python, "1.0.3".into(), |_| None).err().expect("refused");
-        assert!(err.contains("cannot import ember_code"), "{err}");
+        assert!(err.contains("cannot import igni_core"), "{err}");
     }
 
     // ── Per-component install plan ──
@@ -1127,5 +1148,41 @@ mod tests {
             "only the venv is ever removed"
         );
         assert!(body.contains("remove_dir_all(&venv_dir)"));
+    }
+
+    fn scratch(name: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("igni_runtime_{name}_{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    #[test]
+    fn a_fresh_install_caches_under_igni() {
+        let caches = scratch("fresh_cache");
+        assert_eq!(cache_root_in(&caches), caches.join("igni"));
+        let _ = fs::remove_dir_all(&caches);
+    }
+
+    #[test]
+    fn an_install_from_before_the_rename_keeps_its_cache_where_it_is() {
+        // Its venv records absolute paths: moving it would mean reinstalling.
+        let caches = scratch("legacy_cache");
+        fs::create_dir_all(caches.join("ember-code")).unwrap();
+        assert_eq!(cache_root_in(&caches), caches.join("ember-code"));
+        fs::create_dir_all(caches.join("igni")).unwrap();
+        assert_eq!(cache_root_in(&caches), caches.join("igni"));
+        let _ = fs::remove_dir_all(&caches);
+    }
+
+    #[test]
+    fn the_marker_from_before_the_rename_is_read_until_the_new_one_is_written() {
+        let cache = scratch("legacy_marker");
+        let marker = cache.join(INSTALL_MARKER);
+        fs::write(cache.join("ember-install.json"), "uv=0.5.7;python=3.12;ignite=1.0.3").unwrap();
+        assert_eq!(read_marker(&marker).ignite.as_deref(), Some("1.0.3"));
+        write_marker(&marker, &ComponentVersions::of("0.5.7", "3.12", "1.0.4")).unwrap();
+        assert_eq!(read_marker(&marker).ignite.as_deref(), Some("1.0.4"));
+        let _ = fs::remove_dir_all(&cache);
     }
 }

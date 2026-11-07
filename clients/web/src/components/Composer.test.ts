@@ -55,7 +55,7 @@ describe("BUILTIN_COMMANDS — structural contract", () => {
 
   it("ships every BE command handler in the autocomplete menu", () => {
     // ALL non-alias entries from ``CommandHandler._COMMANDS`` in
-    // ``src/ember_code/backend/command_handler.py`` must appear in
+    // ``src/igni_core/backend/command_handler.py`` must appear in
     // ``BUILTIN_COMMANDS`` — otherwise a user types ``/x`` and the
     // menu silently omits it even though the BE handles it. This
     // list is the single source of truth; when a new handler is

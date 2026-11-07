@@ -72,7 +72,7 @@ const SCENARIOS: Scenario[] = [
     key: "cancelled",
     title: "User hit Esc mid-stream",
     subtitle:
-      "Banner reason: cancelled. Left-border accent: ember-orange. " +
+      "Banner reason: cancelled. Left-border accent: igni-orange. " +
       "FE-side stamp via markAssistantInterrupted('cancelled'); " +
       "BE-side stamp via run_controller.cancel_run.",
     reason: "cancelled",
@@ -82,7 +82,7 @@ const SCENARIOS: Scenario[] = [
     key: "errored",
     title: "Agent raised mid-run",
     subtitle:
-      "Banner reason: errored. Left-border accent: ember-red. The " +
+      "Banner reason: errored. Left-border accent: igni-red. The " +
       "error string is shown inline so the user can tell apart " +
       '"I stopped it" from "it crashed".',
     reason: "errored",

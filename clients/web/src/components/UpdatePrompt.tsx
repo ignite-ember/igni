@@ -36,7 +36,7 @@ export function UpdatePrompt({
     setBusy(true);
     setError(null);
     try {
-      await invoke("ember_install_update");
+      await invoke("igni_install_update");
     } catch (e) {
       setBusy(false);
       setError(String(e));

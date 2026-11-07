@@ -1,5 +1,5 @@
 /**
- * TypeScript mirror of src/ember_code/protocol/messages.py.
+ * TypeScript mirror of src/igni_core/protocol/messages.py.
  *
  * Wire format: one JSON object per WebSocket text frame; the `type`
  * field discriminates. Field names match the Pydantic models exactly —

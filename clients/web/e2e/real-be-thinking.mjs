@@ -67,7 +67,7 @@ function log(...a) {
 }
 
 async function bootBE() {
-  const projectDir = await fs.mkdtemp(path.join(os.tmpdir(), "ember-think-"));
+  const projectDir = await fs.mkdtemp(path.join(os.tmpdir(), "igni-think-"));
   await fs.mkdir(path.join(projectDir, ".igni"), { recursive: true });
   // Force a working MiniMax-M2.7 registry entry (key from
   // IGNI_E2E_MINIMAX_KEY) as the default. M2.7 is the project's real
@@ -91,7 +91,7 @@ async function bootBE() {
 
   const proc = spawn(
     VENV_PYTHON,
-    ["-m", "ember_code.backend", "--ws-port", "0", "--project-dir", projectDir],
+    ["-m", "igni_core.backend", "--ws-port", "0", "--project-dir", projectDir],
     {
       cwd: REPO_ROOT,
       env: {

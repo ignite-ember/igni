@@ -15,8 +15,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 interface WindowLike {
   location: { search: string; hash?: string };
-  __EMBER_WS_URL__?: string;
-  __EMBER_WS_TOKEN__?: string;
+  __IGNI_WS_URL__?: string;
+  __IGNI_WS_TOKEN__?: string;
 }
 interface MetaTagLike {
   content: string;
@@ -64,10 +64,10 @@ describe("resolveWsUrl precedence", () => {
   });
 
   it("reads no meta tag and no global", () => {
-    // The ``ember-ws-url`` meta tag and ``__EMBER_WS_URL__`` were the
+    // The ``ember-ws-url`` meta tag and ``__IGNI_WS_URL__`` were the
     // IDE plugins' delivery paths; igni no longer ships them, and a
     // page that sets either still talks to the dev port.
-    win.__EMBER_WS_URL__ = "ws://global.example";
+    win.__IGNI_WS_URL__ = "ws://global.example";
     metaTag = { content: "ws://meta.example" };
     expect(resolveWsUrl()).toBe("ws://127.0.0.1:8765");
   });
@@ -122,7 +122,7 @@ describe("resolveWsToken", () => {
   });
 
   it("falls back to the meta tag, then the global", () => {
-    win.__EMBER_WS_TOKEN__ = "from-global";
+    win.__IGNI_WS_TOKEN__ = "from-global";
     expect(resolveWsToken()).toBe("from-global");
     metaTag = { content: "from-meta" };
     expect(resolveWsToken()).toBe("from-meta");

@@ -2,7 +2,7 @@
 // Single source-of-truth version syncer.
 //
 // ``igni-core.version`` is the version of igni's backend this app installs
-// on first launch (``ignite-ember==<it>``), and the app's own version:
+// on first launch (``igni-core==<it>``), and the app's own version:
 // the two are released in lockstep (release.yml checks PyPI has it). This
 // script copies it into the files that carry their own copy: the Tauri
 // shell's ``tauri.conf.json`` and ``Cargo.toml``, whose version is the
@@ -51,7 +51,7 @@ const targets = [
     path: join(repoRoot, "clients/tauri/src-tauri/Cargo.toml"),
     // The Cargo package version doubles as ``CARGO_PKG_VERSION``
     // in ``runtime.rs`` — the value pinned in
-    // ``uv pip install ignite-ember==<X>``. Drift here means the
+    // ``uv pip install igni-core==<X>``. Drift here means the
     // Tauri shell installs a wrong ignite version on first launch.
     pattern: /(^version\s*=\s*")[^"]+(")/m,
   },

@@ -22,12 +22,12 @@ describe("applyTheme", () => {
   it("maps brand keys onto the stylesheet's tokens", () => {
     const { applied, rejected } = applyTheme({ accent: "#123456" }, root);
     expect(rejected).toEqual([]);
-    expect(applied["--ember-orange"]).toBe("#123456");
-    expect(root.style.getPropertyValue("--ember-orange")).toBe("#123456");
+    expect(applied["--igni-orange"]).toBe("#123456");
+    expect(root.style.getPropertyValue("--igni-orange")).toBe("#123456");
   });
 
   it("also writes --accent, the stylesheet's other name for the same thing", () => {
-    // Found by running it. ``theme.css`` reads ``--ember-orange`` in 47
+    // Found by running it. ``theme.css`` reads ``--igni-orange`` in 47
     // places and bare ``--accent`` in 17 more, and never defines the
     // latter — so setting only the first left those 17 on igni's
     // orange while the rest of the product had changed.
@@ -51,7 +51,7 @@ describe("applyTheme", () => {
       root,
     );
     expect(rejected).toContain("accent");
-    expect(applied["--ember-orange"]).toBeUndefined();
+    expect(applied["--igni-orange"]).toBeUndefined();
     expect(root.getAttribute("style") ?? "").not.toContain("display");
   });
 
@@ -61,7 +61,7 @@ describe("applyTheme", () => {
     for (const bad of ["red", "rgb(1,2,3)", "var(--x)", "url(http://x)", "#12"]) {
       const { applied, rejected } = applyTheme({ accent: bad }, root);
       expect(rejected, bad).toContain("accent");
-      expect(applied["--ember-orange"], bad).toBeUndefined();
+      expect(applied["--igni-orange"], bad).toBeUndefined();
     }
   });
 
@@ -69,12 +69,12 @@ describe("applyTheme", () => {
     // It spans the header and primary buttons; leaving it at igni's
     // orange while the accent moved reads as a bug, not as branding.
     const { applied } = applyTheme({ accent: "#111111", danger: "#222222" }, root);
-    expect(applied["--ember-gradient"]).toBe("linear-gradient(135deg, #111111, #222222)");
+    expect(applied["--igni-gradient"]).toBe("linear-gradient(135deg, #111111, #222222)");
   });
 
   it("does not compose a gradient from a rejected colour", () => {
     const { applied } = applyTheme({ accent: "#fff)); }" }, root);
-    expect(applied["--ember-gradient"]).toBeUndefined();
+    expect(applied["--igni-gradient"]).toBeUndefined();
   });
 
   it("clears what it owns when the theme goes away", () => {
@@ -83,9 +83,9 @@ describe("applyTheme", () => {
     applyTheme({ accent: "#123456", danger: "#654321" }, root);
     const { applied } = applyTheme(null, root);
     expect(applied).toEqual({});
-    expect(root.style.getPropertyValue("--ember-orange")).toBe("");
+    expect(root.style.getPropertyValue("--igni-orange")).toBe("");
     expect(root.style.getPropertyValue("--accent")).toBe("");
-    expect(root.style.getPropertyValue("--ember-gradient")).toBe("");
+    expect(root.style.getPropertyValue("--igni-gradient")).toBe("");
   });
 
   it("ignores keys outside the allowlist", () => {
@@ -93,7 +93,7 @@ describe("applyTheme", () => {
     // would let the server write any custom property it liked.
     applyTheme({ "--evil": "#fff", accent: "#123456" } as never, root);
     expect(root.style.getPropertyValue("--evil")).toBe("");
-    expect(root.style.getPropertyValue("--ember-orange")).toBe("#123456");
+    expect(root.style.getPropertyValue("--igni-orange")).toBe("#123456");
   });
 });
 

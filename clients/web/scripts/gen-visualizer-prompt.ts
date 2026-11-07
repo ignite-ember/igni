@@ -26,7 +26,10 @@ import { fileURLToPath } from "node:url";
 import { catalog } from "../src/components/jsonRender/catalog";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const OUT = resolve(__dirname, "..", "..", "..", "src", "ember_code", "bundled_agents", "visualizer.md");
+// The visualizer agent ships with igni's backend, in igni-core: its
+// checkout beside this repository (IGNI_CORE_DIR, or ../igni-core).
+const IGNI_CORE = process.env.IGNI_CORE_DIR ?? resolve(__dirname, "..", "..", "..", "..", "igni-core");
+const OUT = resolve(IGNI_CORE, "src", "igni_core", "bundled_agents", "visualizer.md");
 if (!OUT.endsWith(join("bundled_agents", "visualizer.md"))) {
   throw new Error(`Unexpected output path: ${OUT}`);
 }

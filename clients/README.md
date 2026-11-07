@@ -4,7 +4,7 @@ One shared web UI, served as the web client and hosted by one thin
 native shell — all speaking the same FE↔BE protocol the TUI used, over a
 loopback WebSocket added in```
                        ┌──────────────────────────────┐
-                       │   python -m ember_code.backend │
+                       │   python -m igni_core.backend │
                        │   --ws-port 0                 │
                        └──────────────┬───────────────┘
                                       │ ws://127.0.0.1:<port>
@@ -32,7 +32,7 @@ loopback WebSocket added in```
 The VS Code and JetBrains plugins that used to live here were dropped
 (D19); they are in the git history.
 
-The shell spawns `python -m ember_code.backend --ws-port 0
+The shell spawns `python -m igni_core.backend --ws-port 0
 --project-dir <dir>` (interpreter override: `IGNI_PYTHON`), parses the
 JSON ready line for `ws_port`, and points the web UI at it. Process
 lifecycle: killed by the shell on close + BE's `IGNI_PARENT_PID`

@@ -70,7 +70,7 @@ afterEach(() => {
   // meta from a failed test would otherwise leak into later ones.
   document
     .querySelectorAll(
-      'meta[name="ember-expected-cli"], meta[name="ember-actual-cli"], meta[name="ember-backend-source"]',
+      'meta[name="igni-expected-cli"], meta[name="igni-actual-cli"], meta[name="igni-backend-source"]',
     )
     .forEach((el) => el.remove());
 });
@@ -149,9 +149,9 @@ describe("BackendVersionChip — input sources", () => {
     // longer ships. A page carrying the tags and no params shows nothing.
     withMetas(
       {
-        "ember-expected-cli": "0.8.3",
-        "ember-actual-cli": "0.8.3",
-        "ember-backend-source": "managed_venv",
+        "igni-expected-cli": "0.8.3",
+        "igni-actual-cli": "0.8.3",
+        "igni-backend-source": "managed_venv",
       },
       () => {
         const { container } = render(<BackendVersionChip />);

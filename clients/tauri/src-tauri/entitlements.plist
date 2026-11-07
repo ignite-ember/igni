@@ -6,7 +6,7 @@
     JITs JavaScript at runtime. Without these the page crashes on
     first JS execution under hardened runtime.
   - disable-library-validation: the Tauri shell spawns
-    ``python -m ember_code.backend`` and that interpreter loads .so
+    ``python -m igni_core.backend`` and that interpreter loads .so
     extensions from pip-installed wheels (NOT signed by our team).
     Hardened runtime rejects unsigned dylibs by default; disabling
     library validation lets the bundled venv work as-is. Library

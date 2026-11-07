@@ -1193,7 +1193,7 @@ function appendText(items: ChatItem[], text: string, thinking: boolean): ChatIte
  * Pure w.r.t. items.
  *
  * The ``content_delta`` branch routes by ``is_thinking`` directly
- * — the BE's :func:`ember_code.core.text_tags.split_inline_think_tags`
+ * — the BE's :func:`igni_core.core.text_tags.split_inline_think_tags`
  * already peeled any literal `` tags out of the wire (see
  * ``docs/STREAMING_BUG_INVESTIGATION.md``), so the FE never has
  * to think about partial carries or React StrictMode replay. The

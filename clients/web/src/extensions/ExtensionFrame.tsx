@@ -18,7 +18,7 @@
  * The method check is not the last word, and for a while it was the
  * only word. The frame is untrusted, so the backend re-checks the
  * same grant against the installed manifest — see
- * `ember_code.extensions.registry.ExtensionRegistry.authorise`. This
+ * `igni_core.extensions.registry.ExtensionRegistry.authorise`. This
  * one exists so a refusal is immediate and legible rather than a
  * round trip; it is a courtesy, not the decision.
  *

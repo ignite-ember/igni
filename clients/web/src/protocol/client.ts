@@ -2,7 +2,7 @@
  * IgniClient — WebSocket protocol client for the igni backend.
  *
  * Responsibilities:
- *  - connect/reconnect to `python -m ember_code.backend --ws-port N`
+ *  - connect/reconnect to `python -m igni_core.backend --ws-port N`
  *  - correlate request/response pairs via the `id` field
  *  - demultiplex streamed run events (same `id` until `stream_end`)
  *  - fan out uncorrelated events (status updates, push notifications)
@@ -14,11 +14,11 @@
  * unless it checks who connects, so a backend the desktop shell spawned
  * requires the shell's per-launch token. The shell puts it in the URL
  * fragment (`#igni_ws_token=…`, never sent to a server, kept across
- * reloads); an embedder can also use `<meta name="ember-ws-token">` or
- * `window.__EMBER_WS_TOKEN__`. It goes to the backend as the WebSocket
+ * reloads); an embedder can also use `<meta name="igni-ws-token">` or
+ * `window.__IGNI_WS_TOKEN__`. It goes to the backend as the WebSocket
  * subprotocol `igni-token.<token>` next to `igni.v1` — the one handshake
  * field a browser lets a page set, and unlike the query string it ends
- * up in no request log. See `src/ember_code/transport/ws_auth.py`.
+ * up in no request log. See `src/igni_core/transport/ws_auth.py`.
  */
 
 import type { RPCResponse, ServerMessage } from "./messages";
@@ -28,12 +28,12 @@ declare global {
   interface Window {
     /** The backend's per-launch WebSocket token, for an embedder that
      *  injects globals rather than navigating with a fragment. */
-    __EMBER_WS_TOKEN__?: string;
+    __IGNI_WS_TOKEN__?: string;
     /** Native OS folder picker, injected by the embedding shell
      *  (Tauri dialog plugin). Receives the session's currently locked dir
      *  as the starting location; resolves to an absolute path or
      *  null on cancel. */
-    __EMBER_PICK_DIR__?: (start?: string) => Promise<string | null>;
+    __IGNI_PICK_DIR__?: (start?: string) => Promise<string | null>;
   }
 }
 
@@ -42,9 +42,9 @@ declare global {
 export async function pickNativeDirectory(
   start?: string,
 ): Promise<string | null | undefined> {
-  if (!window.__EMBER_PICK_DIR__) return undefined;
+  if (!window.__IGNI_PICK_DIR__) return undefined;
   try {
-    return await window.__EMBER_PICK_DIR__(start);
+    return await window.__IGNI_PICK_DIR__(start);
   } catch {
     return null;
   }
@@ -73,12 +73,12 @@ export function resolveWsToken(): string {
   const fromFragment = new URLSearchParams(hash.replace(/^#/, "")).get(WS_TOKEN_FRAGMENT_KEY);
   const metaTag =
     typeof document !== "undefined"
-      ? (document.querySelector('meta[name="ember-ws-token"]') as HTMLMetaElement | null)
+      ? (document.querySelector('meta[name="igni-ws-token"]') as HTMLMetaElement | null)
       : null;
   return (
     fromFragment ||
     metaTag?.content ||
-    (typeof window !== "undefined" ? window.__EMBER_WS_TOKEN__ : "") ||
+    (typeof window !== "undefined" ? window.__IGNI_WS_TOKEN__ : "") ||
     ""
   ).trim();
 }

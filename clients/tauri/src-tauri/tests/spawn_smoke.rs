@@ -54,7 +54,7 @@ fn igni_core() -> PathBuf {
 }
 
 /// Find child PIDs of ``parent_pid`` whose command line mentions
-/// ``ember_code.backend``. Uses ``ps`` so we don't take any deps.
+/// ``igni_core.backend``. Uses ``ps`` so we don't take any deps.
 fn find_be_descendant(parent_pid: u32) -> Option<u32> {
     // ``-A`` lists every process; ``-o pid=,ppid=,command=`` strips
     // the header so each line is "pid ppid command...".
@@ -86,7 +86,7 @@ fn find_be_descendant(parent_pid: u32) -> Option<u32> {
                 continue;
             }
             let rest = parts.collect::<Vec<_>>().join(" ");
-            if rest.contains("ember_code.backend") {
+            if rest.contains("igni_core.backend") {
                 return Some(pid);
             }
             seen.push(pid);
@@ -225,7 +225,7 @@ fn tauri_binary_boots_be_and_watchdog_cleans_up_on_exit() {
     // it's where ``state.db`` (sessions, prefs, …) lives and the BE
     // fails-to-ready if the path doesn't resolve to a directory.
     let project_dir = std::env::temp_dir()
-        .join(format!("ember-tauri-smoke-{}", std::process::id()));
+        .join(format!("igni-tauri-smoke-{}", std::process::id()));
     std::fs::create_dir_all(&project_dir).expect("create temp project dir");
 
     // Spawn the shell with the project venv as the BE python so
@@ -274,7 +274,7 @@ fn tauri_binary_boots_be_and_watchdog_cleans_up_on_exit() {
         // acknowledging dev mode, and "startup is broken" is what
         // somebody would have spent the afternoon on.
         panic!(
-            "Tauri (pid={tauri_pid}) never spawned an ember_code.backend child \
+            "Tauri (pid={tauri_pid}) never spawned an igni_core.backend child \
              within 30s. Either startup is broken, or the dev-backend override \
              was declined and the shell is bootstrapping a managed venv over the \
              network — check stderr for the IGNITE_EMBER_DEV notice."

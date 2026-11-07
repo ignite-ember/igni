@@ -151,7 +151,7 @@ fn verified_group_layer(home: &std::path::Path, managed: Option<&str>, user: Opt
 }
 
 /// The managed-settings file, at the path the backend reads
-/// (`ember_code.core.paths.managed_policy_dir`).
+/// (`igni_core.core.paths.managed_policy_dir`).
 fn managed_settings_path() -> Option<PathBuf> {
     let dir = if cfg!(target_os = "macos") {
         PathBuf::from("/Library/Application Support/igni")

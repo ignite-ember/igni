@@ -48,7 +48,7 @@ const HEX_COLOUR = /^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$/;
  * server write *any* custom property, including ones later code comes
  * to trust for something other than colour.
  *
- * `accent` writes two. `theme.css` reads `--ember-orange` in 47 places
+ * `accent` writes two. `theme.css` reads `--igni-orange` in 47 places
  * and bare `--accent` in 17 more — and never defines `--accent`, so
  * those 17 fall back to igni's orange no matter what the group asked
  * for. Both are set, which is the difference between branding most of
@@ -66,7 +66,7 @@ const HEX_COLOUR = /^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$/;
  * contrast-checked variant from the accent.
  */
 const COLOUR_TOKENS: ReadonlyArray<[keyof GroupTheme, readonly string[]]> = [
-  ["accent", ["--ember-orange", "--accent"]],
+  ["accent", ["--igni-orange", "--accent"]],
   ["danger", ["--danger"]],
   ["success", ["--success"]],
 ];
@@ -75,7 +75,7 @@ const COLOUR_TOKENS: ReadonlyArray<[keyof GroupTheme, readonly string[]]> = [
  *  what it set and nothing else. */
 const OWNED_PROPERTIES = [
   ...COLOUR_TOKENS.flatMap(([, props]) => props),
-  "--ember-gradient",
+  "--igni-gradient",
 ];
 
 export interface AppliedTheme {
@@ -120,12 +120,12 @@ export function applyTheme(
   // header and primary buttons, and leaving it at igni's orange while
   // the accent moved would read as a bug rather than as branding.
   // Built from values already validated above.
-  const from = applied["--ember-orange"];
+  const from = applied["--igni-orange"];
   const to = applied["--danger"] ?? from;
   if (from) {
     const gradient = `linear-gradient(135deg, ${from}, ${to})`;
-    root.style.setProperty("--ember-gradient", gradient);
-    applied["--ember-gradient"] = gradient;
+    root.style.setProperty("--igni-gradient", gradient);
+    applied["--igni-gradient"] = gradient;
   }
 
   return { applied, rejected };
