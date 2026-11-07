@@ -53,7 +53,10 @@ export type LiveBe = {
 // Playwright runs specs as ES modules, so ``__dirname`` is undefined.
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 export const REPO_ROOT = path.resolve(HERE, "..", "..", "..", "..");
-export const VENV_PYTHON = path.join(REPO_ROOT, ".venv", "bin", "python");
+// The backend is igni-core's: its checkout's venv (``uv sync`` there),
+// ``IGNI_CORE_DIR`` or ``../igni-core`` beside this repository.
+export const IGNI_CORE = process.env.IGNI_CORE_DIR ?? path.resolve(REPO_ROOT, "..", "igni-core");
+export const VENV_PYTHON = path.join(IGNI_CORE, ".venv", "bin", "python");
 
 /** The reason a run cannot have a backend, or null if it can. */
 export function whyNoBackend(
@@ -63,8 +66,9 @@ export function whyNoBackend(
   if (fs.existsSync(VENV_PYTHON)) return null;
   return (
     `no backend available: ${VENV_PYTHON} does not exist and ` +
-    `IGNI_LIVE_WS is unset. Create the venv (\`uv sync\` at the repo ` +
-    `root) or point IGNI_LIVE_WS at a running backend.`
+    `IGNI_LIVE_WS is unset. Create the venv (\`uv sync\` in an igni-core ` +
+    `checkout, IGNI_CORE_DIR or ../igni-core) or point IGNI_LIVE_WS at a ` +
+    `running backend.`
   );
 }
 

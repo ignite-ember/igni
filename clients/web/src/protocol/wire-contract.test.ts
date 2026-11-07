@@ -5,11 +5,21 @@
  * (DiffRow shape, is_ephemeral, loop_status fields, pending content);
  * this test turns the next one into a red test instead of a blank UI.
  *
- * Regenerate the snapshot after BE protocol changes:
- *     uv run python scripts/dump_wire_schema.py
+ * The snapshot is igni-core's: it publishes `docs/wire-schema.json`
+ * (`make contracts` there), and this file is a copy of it. Refresh it
+ * from an igni-core checkout when the protocol changes; the last test
+ * here fails while the copy differs from one beside this repository.
  */
+import { existsSync, readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import schema from "./wire-schema.json";
+
+const HERE = dirname(fileURLToPath(import.meta.url));
+/** igni-core's checkout: `IGNI_CORE_DIR`, or `../igni-core` beside this repository. */
+const IGNI_CORE = process.env.IGNI_CORE_DIR ?? join(HERE, "..", "..", "..", "..", "..", "igni-core");
+const PUBLISHED = join(IGNI_CORE, "docs", "wire-schema.json");
 
 const messages = schema.messages as Record<string, string[]>;
 const rpc = schema.rpc as Record<string, string[]>;
@@ -85,5 +95,16 @@ describe("wire contract", () => {
     const fields = rpc[key];
     expect(fields, `rpc payload "${key}" missing from wire-schema.json`).toBeDefined();
     for (const f of reads) expect(fields, `${key}.${f}`).toContain(f);
+  });
+});
+
+// Without a checkout of igni-core this skips; CI checks one out, and there
+// a missing copy fails rather than skips.
+describe.skipIf(!existsSync(PUBLISHED) && !process.env.CI)("the snapshot is igni-core's", () => {
+  it("equals the docs/wire-schema.json igni-core publishes", () => {
+    const copy = readFileSync(join(HERE, "wire-schema.json"), "utf8");
+    expect(copy, "copy igni-core's docs/wire-schema.json over src/protocol/wire-schema.json").toBe(
+      readFileSync(PUBLISHED, "utf8"),
+    );
   });
 });

@@ -38,7 +38,9 @@ import { fileURLToPath } from "node:url";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = path.resolve(HERE, "..", "..", "..");
-const VENV_PYTHON = path.join(REPO_ROOT, ".venv", "bin", "python");
+// The backend is igni-core's: IGNI_CORE_DIR, or ../igni-core beside this repo.
+const IGNI_CORE = process.env.IGNI_CORE_DIR ?? path.resolve(REPO_ROOT, "..", "igni-core");
+const VENV_PYTHON = path.join(IGNI_CORE, ".venv", "bin", "python");
 const FE_URL = "http://127.0.0.1:5179";
 
 const MINIMAX_KEY = process.env.IGNI_E2E_MINIMAX_KEY;
